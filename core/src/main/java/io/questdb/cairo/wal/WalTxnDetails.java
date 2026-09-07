@@ -32,6 +32,8 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.CarrierLocal;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
@@ -55,6 +57,7 @@ public class WalTxnDetails implements QuietCloseable {
     private static final CarrierLocal<DirectString> DIRECT_STRING = new CarrierLocal<>(DirectString::new);
     private static final int FLAG_IS_LAST_SEGMENT_USAGE = 0x2;
     private static final int FLAG_IS_OOO = 0x1;
+    private static final Log LOG = LogFactory.getLog(WalTxnDetails.class);
     private static final int SEQ_TXN_OFFSET = 0;
     private static final int COMMIT_TO_TIMESTAMP_OFFSET = SEQ_TXN_OFFSET + 1;
     private static final int WAL_TXN_ID_WAL_SEG_ID_OFFSET = COMMIT_TO_TIMESTAMP_OFFSET + 1;
@@ -81,6 +84,7 @@ public class WalTxnDetails implements QuietCloseable {
     WalTxnDetailsSlice txnSlice = new WalTxnDetailsSlice();
     private long currentSymbolIndexesStartOffset = 0;
     private long currentSymbolStringMemStartOffset = 0;
+    private long invalidSymbolDiffSeqTxn = Long.MAX_VALUE;
     private long startSeqTxn = 0;
     // Stores all symbol metadata for the stored transactions.
     // The format is 4 int header / SYMBOL_MAP_RECORD_HEADER_INTS
@@ -524,6 +528,10 @@ public class WalTxnDetails implements QuietCloseable {
         final long lastLoadedSeqTxn = getLastSeqTxn();
         long loadFromSeqTxn = appliedSeqTxn + 1;
 
+        if (invalidSymbolDiffSeqTxn <= loadFromSeqTxn) {
+            invalidSymbolDiffSeqTxn = Long.MAX_VALUE;
+        }
+
         if (lastLoadedSeqTxn >= loadFromSeqTxn && startSeqTxn <= loadFromSeqTxn) {
             int shift = (int) (loadFromSeqTxn - startSeqTxn);
             long newSymbolsOffset = getMinSymbolIndexOffsetFromTxn(loadFromSeqTxn);
@@ -561,6 +569,9 @@ public class WalTxnDetails implements QuietCloseable {
 
         int initialSize = transactionMeta.size();
         do {
+            if (loadFromSeqTxn >= invalidSymbolDiffSeqTxn) {
+                break;
+            }
             long rowsLoaded = loadTransactionDetails(tempPath, transactionLogCursor, loadFromSeqTxn, rootLen, txnLoadCount);
             totalRowsLoadedToApply += rowsLoaded;
             loadFromSeqTxn = getLastSeqTxn() + 1;
@@ -577,6 +588,19 @@ public class WalTxnDetails implements QuietCloseable {
         } while (rowsToLoad > 0
                 && getLastSeqTxn() < transactionLogCursor.getMaxTxn()
                 && clock.getTicks() < deadlineMicros);
+
+        long lastSeqTxn = getLastSeqTxn();
+        if (invalidSymbolDiffSeqTxn <= lastSeqTxn) {
+            if (invalidSymbolDiffSeqTxn == appliedSeqTxn + 1) {
+                throwInvalidSymbolDiff();
+            }
+            long trimmedRows = 0;
+            for (long seqTxn = invalidSymbolDiffSeqTxn; seqTxn <= lastSeqTxn; seqTxn++) {
+                trimmedRows += getSegmentRowHi(seqTxn) - getSegmentRowLo(seqTxn);
+            }
+            totalRowsLoadedToApply -= trimmedRows;
+            transactionMeta.setPos((int) ((invalidSymbolDiffSeqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE));
+        }
 
         if (transactionMeta.size() == initialSize) {
             // No transactions loaded, no need to do anything
@@ -742,7 +766,7 @@ public class WalTxnDetails implements QuietCloseable {
                             }
                             flags |= (commitInfo.getDedupMode() << 24);
                             transactionMeta.set(txnMetaOffset + WAL_TXN_ROW_IN_ORDER_DATA_TYPE, Numbers.encodeLowHighInts(flags, walTxnType));
-                            transactionMeta.set(txnMetaOffset + WAL_TXN_SYMBOL_DIFF_OFFSET, saveSymbols(commitInfo, seqTxn));
+                            transactionMeta.set(txnMetaOffset + WAL_TXN_SYMBOL_DIFF_OFFSET, saveSymbols(commitInfo, seqTxn, walId, segmentId));
                             if (walTxnType == WalTxnType.MAT_VIEW_DATA) {
                                 WalEventCursor.MatViewDataInfo matViewDataInfo = walEventCursor.getMatViewDataInfo();
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, matViewDataInfo.getLastRefreshBaseTableTxn());
@@ -788,7 +812,7 @@ public class WalTxnDetails implements QuietCloseable {
         return totalRowsLoaded;
     }
 
-    private long saveSymbols(SymbolMapDiffCursor commitInfo, long seqTxn) {
+    private long saveSymbols(SymbolMapDiffCursor commitInfo, long seqTxn, int walId, int segmentId) {
         var symbolMem = getSymbolMem();
         SymbolMapDiff symbolMapDiff;
         int symbolCount = 0;
@@ -820,8 +844,19 @@ public class WalTxnDetails implements QuietCloseable {
             long symbolValueOffset = symbolMem.getAppendOffset() + currentSymbolStringMemStartOffset;
 
             while ((entry = symbolMapDiff.nextEntry()) != null) {
-                final int key = entry.getKey() - cleanSymbolCount;
-                assert key == symbolIndex;
+                final int actualKey = entry.getKey();
+                final int expectedKey = cleanSymbolCount + symbolIndex;
+                if (actualKey != expectedKey && seqTxn < invalidSymbolDiffSeqTxn) {
+                    invalidSymbolDiffSeqTxn = seqTxn;
+                    LOG.critical().$("invalid WAL symbol diff key [seqTxn=").$(seqTxn)
+                            .$(", walId=").$(walId)
+                            .$(", segmentId=").$(segmentId)
+                            .$(", columnIndex=").$(symbolMapDiff.getColumnIndex())
+                            .$(", cleanSymbolCount=").$(cleanSymbolCount)
+                            .$(", expectedKey=").$(expectedKey)
+                            .$(", actualKey=").$(actualKey)
+                            .I$();
+                }
                 symbolIndex++;
                 entry.appendSymbolTo(symbolMem);
             }
@@ -865,6 +900,14 @@ public class WalTxnDetails implements QuietCloseable {
     private WalTxnDetailsSlice sortSliceByWalAndSegment(long startSeqTxn, int blockTransactionCount) {
         assert blockTransactionCount > 1;
         return txnSlice.of(startSeqTxn, blockTransactionCount);
+    }
+
+    private void throwInvalidSymbolDiff() {
+        throw CairoException.critical(0)
+                .put("invalid WAL symbol diff key [seqTxn=").put(invalidSymbolDiffSeqTxn)
+                .put(", walId=").put(getWalId(invalidSymbolDiffSeqTxn))
+                .put(", segmentId=").put(getSegmentId(invalidSymbolDiffSeqTxn))
+                .put(']');
     }
 
     private class SymbolMapDiffCursorImpl implements SymbolMapDiffCursor {

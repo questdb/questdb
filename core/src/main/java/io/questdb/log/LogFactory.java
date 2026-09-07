@@ -101,6 +101,7 @@ public class LogFactory implements Closeable {
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
     private final StringSink sink = new StringSink();
     private boolean configured = false;
+    private boolean isThreadHaltComplete;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
 
@@ -139,6 +140,17 @@ public class LogFactory implements Closeable {
             logFactory.close(true);
             INSTANCE = null;
         }
+    }
+
+    public static synchronized void closeInstanceWithin(long timeoutNanos) {
+        final LogFactory logFactory = INSTANCE;
+        if (logFactory == null) {
+            return;
+        }
+        if (!logFactory.closeWithin(true, timeoutNanos)) {
+            throw new IllegalStateException("logging worker pool did not halt");
+        }
+        INSTANCE = null;
     }
 
     public static void configureRootDir(String rootDir) {
@@ -247,8 +259,15 @@ public class LogFactory implements Closeable {
     }
 
     public void close(boolean flush) {
+        closeInternal(flush, 0, false);
+    }
+
+    private synchronized boolean closeInternal(boolean flush, long deadlineNanos, boolean isBounded) {
         if (closed.compareAndSet(false, true)) {
-            haltThread();
+            if (isBounded ? !haltThreadBy(deadlineNanos) : !haltThread()) {
+                closed.set(false);
+                return false;
+            }
             for (int i = 0, n = jobs.size(); i < n; i++) {
                 LogWriter job = jobs.get(i);
                 try {
@@ -271,6 +290,11 @@ public class LogFactory implements Closeable {
                 Misc.free(scopeConfigs.getQuick(i));
             }
         }
+        return true;
+    }
+
+    private boolean closeWithin(boolean flush, long timeoutNanos) {
+        return closeInternal(flush, System.nanoTime() + Math.max(0, timeoutNanos), true);
     }
 
     public Log create(Class<?> clazz) {
@@ -710,10 +734,26 @@ public class LogFactory implements Closeable {
         return scopeConfigMap.get(k);
     }
 
-    private void haltThread() {
-        if (running.compareAndSet(true, false)) {
-            loggingWorkerPool.halt();
+    private boolean haltThread() {
+        if (isThreadHaltComplete) {
+            return true;
         }
+        running.set(false);
+        loggingWorkerPool.halt();
+        isThreadHaltComplete = true;
+        return true;
+    }
+
+    private boolean haltThreadBy(long deadlineNanos) {
+        if (isThreadHaltComplete) {
+            return true;
+        }
+        running.set(false);
+        if (!loggingWorkerPool.haltBy(deadlineNanos)) {
+            return false;
+        }
+        isThreadHaltComplete = true;
+        return true;
     }
 
     @TestOnly

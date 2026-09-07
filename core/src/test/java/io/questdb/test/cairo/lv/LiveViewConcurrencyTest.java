@@ -636,6 +636,15 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                             "the notification worker must advance the view before the fallback resumes",
                             instance.getLastProcessedSeqTxn() > processedBefore
                     );
+                    // The guard compares the watermark against max(cached head, writerTxn), so a
+                    // read-order swap only shows while the base apply trails the view. Nothing
+                    // drains the WAL queue here; pin that, or a fixture edit that applies the
+                    // commit first leaves this test green under the swap.
+                    Assert.assertTrue(
+                            "the base writerTxn must trail the view watermark, or a read-order swap in the ahead guard goes undetected",
+                            engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("base")).getWriterTxn()
+                                    < instance.getLastProcessedSeqTxn()
+                    );
                 } finally {
                     releaseFallback.countDown();
                     fallbackThread.join(30_000);

@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.ShardedMapCursor;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -45,6 +44,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MCSequence;
@@ -68,7 +68,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private final MessageBus messageBus;
     // Borrowed non-group-by views into recordFunctions; the factory owns and closes the functions.
     private final ObjList<Function> nonGroupByFunctions;
-    private final AtomicBooleanCircuitBreaker postAggregationCircuitBreaker; // used to signal cancellation to merge shard workers
+    private final PostAggregationCircuitBreaker postAggregationCircuitBreaker; // used to signal cancellation to merge shard workers
     private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
     private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
     private final VirtualRecord recordA;
@@ -94,7 +94,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         this.nonGroupByFunctions = GroupByUtils.extractNonGroupByFunctions(recordFunctions);
         recordA = new VirtualRecord(recordFunctions);
         recordB = new VirtualRecord(recordFunctions);
-        postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+        postAggregationCircuitBreaker = new PostAggregationCircuitBreaker(engine);
         // Start closed so the first of() runs atom.reopen(), which opens the lazy
         // (openOnInit=false) allocators and binds the per-query tracker before any
         // allocation. Skipping reopen() on the first cursor would leave the allocator's
@@ -222,7 +222,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     postAggregationStartedCounter
             );
             if (postAggregationCircuitBreaker.checkIfTripped()) {
-                throwTimeoutException();
+                throwPostAggregationException();
             }
             // The shards contain non-intersecting row groups, so we can return what's in the shards without merging them.
             shardedCursor.of(shards);
@@ -317,7 +317,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
 
         if (postAggregationCircuitBreaker.checkIfTripped()) {
-            throwTimeoutException();
+            throwPostAggregationException();
         }
 
         // Now merge everything into the destination list.
@@ -346,12 +346,15 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 .I$();
     }
 
-    private void throwTimeoutException() {
+    private void throwPostAggregationException() {
+        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        if (postAggregationCircuitBreaker.hasError()) {
+            throw postAggregationCircuitBreaker.buildError();
+        }
         if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
             throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
         }
+        throw CairoException.queryTimedOut();
     }
 
     void buildMapConditionally() {

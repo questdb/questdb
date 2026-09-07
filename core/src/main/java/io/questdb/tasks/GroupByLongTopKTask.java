@@ -24,8 +24,8 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.Mutable;
@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class GroupByLongTopKTask implements Mutable {
     private AsyncGroupByAtom atom;
-    private AtomicBooleanCircuitBreaker circuitBreaker;
+    private PostAggregationCircuitBreaker circuitBreaker;
     private CountDownLatchSPI doneLatch;
     private Function func;
     private int limit = -1;
@@ -58,7 +58,7 @@ public class GroupByLongTopKTask implements Mutable {
         return atom;
     }
 
-    public AtomicBooleanCircuitBreaker getCircuitBreaker() {
+    public PostAggregationCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
     }
 
@@ -87,7 +87,7 @@ public class GroupByLongTopKTask implements Mutable {
     }
 
     public void of(
-            AtomicBooleanCircuitBreaker circuitBreaker,
+            PostAggregationCircuitBreaker circuitBreaker,
             AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch,
             AsyncGroupByAtom atom,

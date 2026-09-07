@@ -36,7 +36,9 @@ import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 
 public abstract class WorkerPoolManager implements Target {
 
@@ -48,6 +50,7 @@ public abstract class WorkerPoolManager implements Target {
     protected final WorkerPool sharedPoolWrite;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
+    private final ReentrantLock haltLock = new ReentrantLock();
     private final AtomicBoolean running = new AtomicBoolean();
 
     public WorkerPoolManager(ServerConfiguration config) {
@@ -105,7 +108,12 @@ public abstract class WorkerPoolManager implements Target {
     }
 
     public void halt() {
-        halt(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+        haltLock.lock();
+        try {
+            halt0(0, false);
+        } finally {
+            haltLock.unlock();
+        }
     }
 
     /**
@@ -113,28 +121,65 @@ public abstract class WorkerPoolManager implements Target {
      * <p>
      * The deadline is shared across all pools: each pool gets the time remaining until the deadline,
      * so a single wedged pool cannot reset the budget for the next one. This keeps server shutdown
-     * bounded even when a worker thread is stuck. See {@link WorkerPool#halt(long)} for the
-     * log-and-proceed behaviour and its tradeoff.
+     * bounded even when a worker thread is stuck. Timed-out pools retain worker-owned resources
+     * so a later {@link #haltBy(long)} attempt can finish safely.
      *
      * @param deadlineNanos absolute deadline from {@link System#nanoTime()} by which all pools should be halted
+     * @deprecated use {@link #haltBy(long)} and inspect its completion result
      */
+    @Deprecated
     public void halt(long deadlineNanos) {
+        haltBy(deadlineNanos);
+    }
+
+    public boolean haltBy(long deadlineNanos) {
+        boolean isInterrupted = false;
+        boolean isLocked = haltLock.tryLock();
+        while (!isLocked) {
+            final long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) {
+                if (isInterrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                return false;
+            }
+            try {
+                isLocked = haltLock.tryLock(remainingNanos, TimeUnit.NANOSECONDS);
+            } catch (InterruptedException e) {
+                isInterrupted = true;
+            }
+        }
+        try {
+            return halt0(deadlineNanos, true);
+        } finally {
+            haltLock.unlock();
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private boolean halt0(long deadlineNanos, boolean isBounded) {
         // halt is idempotent, and start may have not been called, still
         // we want to free pool resources, so we do not check the closed
         // flag, but we ensure it is true at the end.
+        boolean isComplete = true;
         ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
         for (int i = 0, limit = poolNames.size(); i < limit; i++) {
             CharSequence name = poolNames.getQuick(i);
             WorkerPool pool = dedicatedPools.get(name);
-            closePool(pool, "closing dedicated pool [name=", deadlineNanos);
+            isComplete &= closePool(pool, "closing dedicated pool [name=", deadlineNanos, isBounded);
         }
-        dedicatedPools.clear();
 
-        closePool(sharedPoolNetwork, "closing shared Network pool [name=", deadlineNanos);
-        closePool(sharedPoolQuery, "closing shared Query pool [name=", deadlineNanos);
-        closePool(sharedPoolWrite, "closing shared Write pool [name=", deadlineNanos);
+        isComplete &= closePool(sharedPoolNetwork, "closing shared Network pool [name=", deadlineNanos, isBounded);
+        isComplete &= closePool(sharedPoolQuery, "closing shared Query pool [name=", deadlineNanos, isBounded);
+        isComplete &= closePool(sharedPoolWrite, "closing shared Write pool [name=", deadlineNanos, isBounded);
 
         closed.set(true);
+        if (isComplete) {
+            dedicatedPools.clear();
+        }
+        return isComplete;
     }
 
     @Override
@@ -176,15 +221,19 @@ public abstract class WorkerPoolManager implements Target {
         }
     }
 
-    private void closePool(WorkerPool p, String message, long deadlineNanos) {
+    private boolean closePool(WorkerPool p, String message, long deadlineNanos, boolean isBounded) {
         if (p != null) {
             LOG.debug().$(message).$(p.getPoolName())
                     .$(", workers=").$(p.getWorkerCount())
                     .I$();
-            // Hand the pool only the time remaining until the shared deadline so the bound holds
-            // across all pools rather than restarting per pool.
-            p.halt(Math.max(1, deadlineNanos - System.nanoTime()));
+            return isBounded ? p.haltBy(deadlineNanos) : haltPool(p);
         }
+        return true;
+    }
+
+    private boolean haltPool(WorkerPool pool) {
+        pool.halt();
+        return true;
     }
 
     /**

@@ -26,6 +26,9 @@ package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
+import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -122,6 +125,87 @@ public class CoveringIndexMemoryLimitTest extends AbstractCairoTest {
                                     e.isOutOfMemory()
                             );
                             TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testEagerPatternCoveringFramesAreCappedByPerQueryLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE pattern_t (" +
+                                        "  ts TIMESTAMP," +
+                                        "  sym SYMBOL INDEX TYPE POSTING INCLUDE (payload)," +
+                                        "  payload VARCHAR" +
+                                        ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                                sqlExecutionContext
+                        );
+                        // Four matching symbols cover exactly 2% of the rows, keeping the adaptive
+                        // route inside its 1/50 admission boundary. Only matching rows carry a wide
+                        // value, so fixture creation stays small while eager merged frames retain
+                        // more than the 8 MiB query limit.
+                        engine.execute(
+                                "INSERT INTO pattern_t SELECT" +
+                                        "  (x * 1000L)::timestamp," +
+                                        "  CASE WHEN x % 50 = 0" +
+                                        "    THEN 'match' || ((x / 50) % 4)" +
+                                        "    ELSE 'other'" +
+                                        "  END," +
+                                        "  CASE WHEN x % 50 = 0" +
+                                        "    THEN rpad('x'::varchar, 1000, 'x')" +
+                                        "    ELSE 'x'::varchar" +
+                                        "  END" +
+                                        " FROM long_sequence(500_000)",
+                                sqlExecutionContext
+                        );
+                        engine.releaseAllWriters();
+
+                        AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+                        CoveringIndexRecordCursorFactory.resetCoveredRowsWrittenForTesting();
+                        SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled = true;
+                        try {
+                            final StringSink sink = new StringSink();
+                            CairoException failure = null;
+                            try {
+                                TestUtils.printSql(
+                                        engine,
+                                        sqlExecutionContext,
+                                        "SELECT sym, sum(length(payload))" +
+                                                " FROM pattern_t" +
+                                                " WHERE sym LIKE 'match%'" +
+                                                " GROUP BY sym ORDER BY sym",
+                                        sink
+                                );
+                            } catch (CairoException e) {
+                                failure = e;
+                            }
+                            Assert.assertEquals(1, AdaptiveSymbolPatternRecordCursorFactory.testCoveringInvocations.get());
+                            Assert.assertEquals(0, AdaptiveSymbolPatternRecordCursorFactory.testScanInvocations.get());
+                            Assert.assertTrue(
+                                    "the eager multi-key covering merge must materialize rows before the breach",
+                                    CoveringIndexRecordCursorFactory.getCoveredRowsWrittenForTesting() > 0
+                            );
+                            if (failure == null) {
+                                Assert.fail("expected eager pattern covering frames to breach the per-query memory limit");
+                            }
+                            Assert.assertTrue(
+                                    "expected isOutOfMemory(), got: " + failure.getFlyweightMessage(),
+                                    failure.isOutOfMemory()
+                            );
+                            TestUtils.assertContains(failure.getFlyweightMessage(), "query memory limit exceeded");
+                            TestUtils.assertContains(failure.getFlyweightMessage(), "workload=QUERY");
+                        } finally {
+                            SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled = false;
+                            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+                            CoveringIndexRecordCursorFactory.resetCoveredRowsWrittenForTesting();
                         }
                     },
                     configuration,

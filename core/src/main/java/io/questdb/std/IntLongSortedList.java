@@ -24,34 +24,41 @@
 
 package io.questdb.std;
 
+/**
+ * A min-poll priority queue of (index, value) pairs, ordered by {@code value}
+ * ascending, backed by an array binary min-heap: O(log N) {@link #add},
+ * {@link #pollValue}, {@link #pollAndReplace}. The name is historical (it was a
+ * sorted array); callers use it only as a min-heap ({@link #peekIndex},
+ * {@link #pollAndReplace}, {@link #pollValue}). Values are assumed distinct by
+ * every current caller (k-way row-id merges), so tie-order is unspecified.
+ */
 public class IntLongSortedList implements Mutable {
-    private final LongList buf;
-    private final IntList src;
+    private int[] indices = new int[8];
     private int size;
-
-    public IntLongSortedList() {
-        this.buf = new LongList(8);
-        this.src = new IntList(8);
-        this.size = 0;
-    }
+    private long[] values = new long[8];
 
     public void add(int index, long value) {
-        int p = binSearch(value);
-        if (p < size) {
-            buf.setPos(size + 1);
-            src.setPos(size + 1);
-            buf.arrayCopy(p, p + 1, size - p);
-            src.arrayCopy(p, p + 1, size - p);
+        if (size == values.length) {
+            values = java.util.Arrays.copyOf(values, size << 1);
+            indices = java.util.Arrays.copyOf(indices, size << 1);
         }
-        buf.extendAndSet(p, value);
-        src.extendAndSet(p, index);
-        size++;
+        int i = size++;
+        // sift up
+        while (i > 0) {
+            int parent = (i - 1) >>> 1;
+            if (values[parent] <= value) {
+                break;
+            }
+            values[i] = values[parent];
+            indices[i] = indices[parent];
+            i = parent;
+        }
+        values[i] = value;
+        indices[i] = index;
     }
 
     @Override
     public void clear() {
-        buf.zero(0);
-        src.zero(0);
         size = 0;
     }
 
@@ -59,72 +66,50 @@ public class IntLongSortedList implements Mutable {
         return size > 0;
     }
 
-    public int peekBottom() {
-        return src.getQuick(size - 1);
-    }
-
     public int peekIndex() {
-        return src.getQuick(0);
+        assert size > 0 : "peekIndex on empty heap";
+        return indices[0];
     }
 
     public long pollAndReplace(int index, long value) {
-        long v = buf.getQuick(0);
-        int p = binSearch(value);
-        if (p > 1) {
-            p--;
-            buf.arrayCopy(1, 0, p);
-            src.arrayCopy(1, 0, p);
-
-            buf.setQuick(p, value);
-            src.setQuick(p, index);
-        } else {
-            buf.setQuick(0, value);
-            src.setQuick(0, index);
-        }
-        return v;
+        assert size > 0 : "pollAndReplace on empty heap";
+        final long old = values[0];
+        siftDownFromRoot(value, index);
+        return old;
     }
 
     public long pollValue() {
-        long v = buf.getQuick(0);
-        if (size > 0) {
-            buf.arrayCopy(1, 0, --size);
-            src.arrayCopy(1, 0, size);
+        assert size > 0 : "pollValue on empty heap";
+        final long old = values[0];
+        final int last = --size;
+        if (last > 0) {
+            siftDownFromRoot(values[last], indices[last]);
         }
-        return v;
+        return old;
     }
 
     public int size() {
         return size;
     }
 
-    @SuppressWarnings("StatementWithEmptyBody")
-    private int binSearch(long v) {
-        int low = 0;
-        int high = size;
-
-        while (high - low > 65) {
-            int mid = (low + high - 1) >>> 1;
-            long midVal = buf.getQuick(mid);
-
-            if (midVal < v)
-                low = mid + 1;
-            else if (midVal > v)
-                high = mid;
-            else {
-                while (++mid < high && buf.getQuick(mid) == v) {
-                }
-                return mid;
+    // Place (value, index) at the root and sift it down to restore the heap.
+    private void siftDownFromRoot(long value, int index) {
+        int i = 0;
+        final int half = size >>> 1;
+        while (i < half) {
+            int child = (i << 1) + 1;
+            final int right = child + 1;
+            if (right < size && values[right] < values[child]) {
+                child = right;
             }
-        }
-        return scanSearch(v, low);
-    }
-
-    private int scanSearch(long v, int low) {
-        for (int i = low; i < size; i++) {
-            if (buf.getQuick(i) > v) {
-                return i;
+            if (values[child] >= value) {
+                break;
             }
+            values[i] = values[child];
+            indices[i] = indices[child];
+            i = child;
         }
-        return size;
+        values[i] = value;
+        indices[i] = index;
     }
 }

@@ -24,12 +24,19 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.PostingGenLookup;
+import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
@@ -60,17 +67,346 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
 
     private static final long CACHE_NOT_PRESENT = -1L;
 
+    @Test
+    public void testRankedEfClippedOrdinalsAndLegacyCompatibility() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 4_096;
+            final long srcSize = (long) count * Long.BYTES;
+            final long maxEncodedSize = PostingIndexUtils.computeMaxEncodedSize(count);
+            final long src = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
+            final long encoded = Unsafe.malloc(maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
+            final long legacy = Unsafe.malloc(maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
+            try (PostingIndexUtils.EncodeContext context = new PostingIndexUtils.EncodeContext()) {
+                long value = 0;
+                for (int i = 0; i < count; i++) {
+                    value += 17 + (i & 31);
+                    Unsafe.putLong(src + (long) i * Long.BYTES, value);
+                }
+                context.ensureCapacity(count);
+                final int encodedSize = PostingIndexUtils.encodeKeyNative(
+                        src,
+                        count,
+                        encoded,
+                        context,
+                        PostingIndexUtils.ENCODING_EF
+                );
+                final int legacySize = PostingIndexUtils.efPrefixSize(encoded);
+                assertTrue("ranked EF must append metadata after the legacy prefix", encodedSize > legacySize);
+                assertTrue(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize));
+
+                // An old decoder stops at the self-sized EF prefix and ignores the trailer.
+                final long[] decoded = new long[count];
+                PostingIndexUtils.decodeKeyEF(encoded, decoded);
+                for (int i = 0; i < count; i++) {
+                    assertEquals(Unsafe.getLong(src + (long) i * Long.BYTES), decoded[i]);
+                }
+
+                assertEquals(0, PostingIndexUtils.efLowerBound(encoded, encodedSize, 0));
+                for (int targetIndex = 0; targetIndex < count; targetIndex++) {
+                    final long target = Unsafe.getLong(src + (long) targetIndex * Long.BYTES);
+                    assertEquals(targetIndex, PostingIndexUtils.efLowerBound(encoded, encodedSize, target));
+                    assertEquals(target, PostingIndexUtils.efSelectRanked(encoded, encodedSize, targetIndex));
+                    if (target < Long.MAX_VALUE) {
+                        assertEquals(targetIndex + 1, PostingIndexUtils.efLowerBound(encoded, encodedSize, target + 1));
+                    }
+                }
+                assertEquals(count, PostingIndexUtils.efLowerBound(encoded, encodedSize, Long.MAX_VALUE));
+
+                // New code keeps old unranked EF readable, but declines bounded rank/select.
+                Unsafe.copyMemory(encoded, legacy, legacySize);
+                assertFalse(PostingIndexUtils.hasEfRankTrailer(legacy, legacySize));
+                assertEquals(-1, PostingIndexUtils.efLowerBound(legacy, legacySize, decoded[count / 2]));
+                assertEquals(Numbers.LONG_NULL, PostingIndexUtils.efSelectRanked(legacy, legacySize, count / 2));
+                final long[] legacyDecoded = new long[count];
+                PostingIndexUtils.decodeKeyEF(legacy, legacyDecoded);
+                assertArrayEquals(decoded, legacyDecoded);
+
+                // A clipped/truncated or malformed trailer never becomes partially trusted.
+                assertFalse(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize - 1));
+                assertEquals(-1, PostingIndexUtils.efLowerBound(encoded, encodedSize - 1, decoded[count / 2]));
+                final int trailerMagic = Unsafe.getInt(encoded + legacySize);
+                Unsafe.putInt(encoded + legacySize, trailerMagic ^ 1);
+                assertFalse(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize));
+                assertEquals(Numbers.LONG_NULL,
+                        PostingIndexUtils.efSelectRanked(encoded, encodedSize, count / 2));
+                Unsafe.putInt(encoded + legacySize, trailerMagic);
+                assertTrue(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize));
+
+                // Header, extent, endpoint ranks, and the local difference between the final two
+                // interior checkpoints all survive this paired mutation. Every ranked consumer must
+                // still reject the later checkpoint
+                // independently before using its corrupt absolute ordinal for high/low-bit addressing.
+                final long trailer = encoded + legacySize;
+                final long checkpoints = trailer + 16;
+                final int checkpointCount = Unsafe.getInt(trailer + 12);
+                final int laterCheckpoint = checkpointCount - 2;
+                final int firstCheckpoint = laterCheckpoint - 1;
+                final int checkpointEntrySize = 2 * Integer.BYTES;
+                final long firstCheckpointAddress = checkpoints + (long) firstCheckpoint * checkpointEntrySize;
+                final long laterCheckpointAddress = checkpoints + (long) laterCheckpoint * checkpointEntrySize;
+                final int firstCheckpointRank = Unsafe.getInt(firstCheckpointAddress);
+                final int laterCheckpointRank = Unsafe.getInt(laterCheckpointAddress);
+                assertTrue("fixture must have adjacent interior checkpoints",
+                        firstCheckpointRank > 0 && laterCheckpointRank > firstCheckpointRank && laterCheckpointRank < count);
+                Unsafe.putInt(firstCheckpointAddress, firstCheckpointRank + 1);
+                Unsafe.putInt(laterCheckpointAddress, laterCheckpointRank + 1);
+                assertEquals(-1, PostingIndexUtils.efRankBeforeHighWord(encoded, encodedSize, laterCheckpoint * 8));
+                assertEquals(Numbers.LONG_NULL,
+                        PostingIndexUtils.efSelectRanked(encoded, encodedSize, laterCheckpointRank));
+                assertEquals(-1,
+                        PostingIndexUtils.efLowerBound(encoded, encodedSize, Unsafe.getLong(src + (long) laterCheckpointRank * Long.BYTES)));
+                Unsafe.putInt(firstCheckpointAddress, firstCheckpointRank);
+                Unsafe.putInt(laterCheckpointAddress, laterCheckpointRank);
+                assertTrue(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize));
+            } finally {
+                Unsafe.free(legacy, maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(encoded, maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(src, srcSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testRankedEfBackwardReaderRetainsCheckpointState() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "ranked_ef_bwd_checkpoint_state";
+                final int pathLen = path.size();
+                final int count = 1_000;
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, PostingIndexUtils.ENCODING_EF)) {
+                    writer.of(path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(0);
+                    long rowId = 0;
+                    for (int i = 0; i < count; i++) {
+                        rowId += 11 + (i & 15);
+                        writer.add(0, rowId);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, 0, 0, null, null, 0);
+                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                    int previousHighWord = (int) fieldValue(cursor, "efHighWordIdx");
+                    final int highWordCount = previousHighWord + 1;
+                    assertTrue("fixture must span multiple rank checkpoints", previousHighWord >= 16);
+                    int checkpointTransitions = 0;
+                    int previousCheckpoint = -1;
+                    int rows = 0;
+                    while (cursor.hasNext()) {
+                        cursor.next();
+                        rows++;
+                        final int currentHighWord = (int) fieldValue(cursor, "efHighWordIdx");
+                        if (currentHighWord != previousHighWord) {
+                            assertEquals("dense fixture must visit every high word", previousHighWord - 1, currentHighWord);
+                            final int decodedHighWord = currentHighWord + 1;
+                            final int checkpoint = decodedHighWord >>> 3;
+                            assertEquals("backward scan must retain the validated checkpoint across adjacent words",
+                                    checkpoint, fieldValue(cursor, "efRankedCheckpoint"));
+                            if (checkpoint != previousCheckpoint) {
+                                checkpointTransitions++;
+                                previousCheckpoint = checkpoint;
+                            }
+                            previousHighWord = currentHighWord;
+                        }
+                    }
+                    assertEquals(count, rows);
+                    assertEquals("full traversal must enter each checkpoint exactly once",
+                            (highWordCount + 7) >>> 3, checkpointTransitions);
+                    assertEquals("ranked EF must not build the legacy lazy rank directory",
+                            0, fieldValue(cursor, "efRankDirAddr"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRankedEfBackwardReaderResetsStateAfterSparseHighWords() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "ranked_ef_bwd_sparse_state";
+                final int pathLen = path.size();
+                final int count = 1_000;
+                final long[] values = new long[count];
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, PostingIndexUtils.ENCODING_EF)) {
+                    writer.of(path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(0);
+                    long rowId = 0;
+                    for (int i = 0; i < count; i++) {
+                        rowId += i == count - 1 ? 1_000_000 : 1;
+                        values[i] = rowId;
+                        writer.add(0, rowId);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, 0, 0, null, null, 0)) {
+                    try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                        int previousHighWord = (int) fieldValue(cursor, "efHighWordIdx");
+                        boolean hasSkippedHighWord = false;
+                        for (int i = count - 1; i >= 0; i--) {
+                            assertTrue(cursor.hasNext());
+                            assertEquals(values[i], cursor.next());
+                            final int currentHighWord = (int) fieldValue(cursor, "efHighWordIdx");
+                            hasSkippedHighWord |= currentHighWord < previousHighWord - 1;
+                            previousHighWord = currentHighWord;
+                        }
+                        assertFalse(cursor.hasNext());
+                        assertTrue("fixture must exercise empty high words", hasSkippedHighWord);
+                    }
+
+                    try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                        assertEquals("pooled cursor must reset ranked checkpoint state",
+                                -1, fieldValue(cursor, "efRankedCheckpoint"));
+                        for (int i = count - 1; i >= 0; i--) {
+                            assertTrue(cursor.hasNext());
+                            assertEquals(values[i], cursor.next());
+                        }
+                        assertFalse(cursor.hasNext());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRankedEfBackwardReaderRejectsPairedCheckpointCorruption() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "ranked_ef_corrupt_bwd";
+                final int pathLen = path.size();
+                final int count = 1_000;
+                final long[] values = new long[count];
+                long rowId = 0;
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, PostingIndexUtils.ENCODING_EF)) {
+                    writer.of(path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(0);
+                    for (int i = 0; i < count; i++) {
+                        rowId += 11 + (i & 15);
+                        values[i] = rowId;
+                        writer.add(0, rowId);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                final long blobOffset;
+                final int legacySize;
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, 0, 0, null, null, 0);
+                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                    blobOffset = fieldValue(cursor, "efBlobOffset");
+                    legacySize = PostingIndexUtils.efPrefixSize(reader.getValueBaseAddress() + blobOffset);
+                }
+
+                path.trimTo(pathLen);
+                final long fileSize = configuration.getFilesFacade().length(
+                        PostingIndexUtils.valueFileName(path, name, COLUMN_NAME_TXN_NONE, 0));
+                path.trimTo(pathLen);
+                try (MemoryCMARWImpl valueMem = new MemoryCMARWImpl(
+                        configuration.getFilesFacade(),
+                        PostingIndexUtils.valueFileName(path, name, COLUMN_NAME_TXN_NONE, 0),
+                        configuration.getFilesFacade().getPageSize(),
+                        fileSize,
+                        MemoryTag.MMAP_DEFAULT,
+                        0)) {
+                    final long trailerOffset = blobOffset + legacySize;
+                    final int checkpointCount = valueMem.getInt(trailerOffset + 12);
+                    final int laterCheckpoint = checkpointCount - 2;
+                    final int firstCheckpoint = laterCheckpoint - 1;
+                    final int checkpointEntrySize = 2 * Integer.BYTES;
+                    final long firstCheckpointOffset = trailerOffset + 16 + (long) firstCheckpoint * checkpointEntrySize;
+                    final long laterCheckpointOffset = trailerOffset + 16 + (long) laterCheckpoint * checkpointEntrySize;
+                    final int firstRank = valueMem.getInt(firstCheckpointOffset);
+                    final int laterRank = valueMem.getInt(laterCheckpointOffset);
+                    assertTrue("fixture must have adjacent interior checkpoints",
+                            firstCheckpoint > 0 && firstRank > 0 && laterRank > firstRank && laterRank < count);
+                    valueMem.putInt(firstCheckpointOffset, firstRank + 1);
+                    valueMem.putInt(laterCheckpointOffset, laterRank + 1);
+                }
+
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, 0, 0, null, null, 0);
+                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                    try {
+                        for (int i = count - 1; i >= 0; i--) {
+                            assertTrue(cursor.hasNext());
+                            assertEquals("backward reader returned a row from a corrupt absolute ordinal",
+                                    values[i], cursor.next());
+                        }
+                        fail("backward reader accepted paired checkpoint corruption");
+                    } catch (CairoException e) {
+                        assertTrue(e.getFlyweightMessage().toString().contains("corrupt ranked EF trailer"));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRankedEfForwardAndBackwardReaders() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "ranked_ef_readers";
+                final int pathLen = path.size();
+                final int count = 1_000;
+                final long[] values = new long[count];
+                long rowId = 0;
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, PostingIndexUtils.ENCODING_EF)) {
+                    writer.of(path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(0);
+                    for (int i = 0; i < count; i++) {
+                        rowId += 11 + (i & 15);
+                        values[i] = rowId;
+                        writer.add(0, rowId);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
+                    reader.reloadConditionally();
+                    final LongList actual = drain(reader, 0, 0, Long.MAX_VALUE);
+                    assertEquals(count, actual.size());
+                    for (int i = 0; i < count; i++) {
+                        assertEquals(values[i], actual.getQuick(i));
+                    }
+                    final long rangeLo = values[300];
+                    final long rangeHi = values[700];
+                    assertEquals(401, reader.estimateMatchesClamped(0, rangeLo, rangeHi, rangeHi));
+                    assertEquals(401, reader.countMatchesClamped(0, rangeLo, rangeHi, rangeHi));
+                    assertEquals(rangeLo, reader.selectKthMatch(0, rangeLo, rangeHi, rangeHi, 0));
+                    assertEquals(rangeHi, reader.selectKthMatch(0, rangeLo, rangeHi, rangeHi, 400));
+                    assertEquals(Numbers.LONG_NULL,
+                            reader.selectKthMatch(0, rangeLo, rangeHi, rangeHi, 401));
+                }
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, 0, 0, null, null, 0);
+                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                    for (int i = count - 1; i >= 0; i--) {
+                        assertTrue(cursor.hasNext());
+                        assertEquals(values[i], cursor.next());
+                    }
+                    assertFalse(cursor.hasNext());
+                    assertEquals("ranked EF must not build the legacy lazy rank directory",
+                            0, fieldValue(cursor, "efRankDirAddr"));
+                }
+            }
+        });
+    }
+
     /**
      * Dirty rows past the chain entry's MAX_VALUE. Key 0 is encoded for rowids
      * 0,5,...,95 in a single dense gen, but {@code setMaxValue(49)} lowers the
-     * entry's coverage to 49, marking 50..95 dirty. A cursor clamps to 49 and
-     * emits 0,5,...,45. selectKthMatch over the lowered clamp (49) sees the gen's
-     * real max (95) straddle the clamp — a MIXED gen — and returns the documented
-     * sentinel for every k (never a wrong row id), so the caller falls back. With a
-     * non-trimming clamp (95), the same select arithmetic returns the exact values.
+     * entry's coverage to 49, marking 50..95 dirty. The shared clipped-ordinal
+     * contract must count and select exactly the cursor's 0,5,...,45 prefix.
      */
     @Test
-    public void testDirtyRowsPastEntryMaxValueReturnsSentinel() throws Exception {
+    public void testDirtyRowsPastEntryMaxValueUsesClippedOrdinals() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 final String name = "skm_dirty";
@@ -97,19 +433,13 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                     long clamp = entryMaxValue(reader);
                     assertEquals(49L, clamp);
 
-                    // MIXED gen (real max 95 > clamp 49): sentinel for every k. columnTop is 0
-                    // here, so the null bound is inert; pass the unclamped caller max for form.
                     for (int k = 0; k < gt.size(); k++) {
-                        assertEquals("dirty/MIXED gen must yield the fallback sentinel at k=" + k,
-                                Numbers.LONG_NULL, reader.selectKthMatch(0, 0, Long.MAX_VALUE, clamp, k));
+                        assertEquals("dirty clip must select exactly at k=" + k,
+                                gt.getQuick(k), reader.selectKthMatch(0, 0, Long.MAX_VALUE, clamp, k));
                     }
-                    // And past the (true) end too.
                     assertEquals(Numbers.LONG_NULL, reader.selectKthMatch(0, 0, Long.MAX_VALUE, clamp, 10));
-                    // countMatchesClamped must agree on the MIXED classification: a
-                    // gen the slack bound straddles is genuinely clipped here (real max
-                    // 95 > clamp 49), so the exact coverage check bails to the sentinel.
-                    assertEquals("dirty/MIXED gen must make countMatchesClamped sentinel",
-                            Numbers.LONG_NULL, reader.countMatchesClamped(0, 0, Long.MAX_VALUE, clamp));
+                    assertEquals("dirty clip must count exactly",
+                            gt.size(), reader.countMatchesClamped(0, 0, Long.MAX_VALUE, clamp));
 
                     // Non-trimming clamp (>= gen max): the select arithmetic is exact for
                     // all 20 encoded rows 0,5,...,95. This isolates the select logic from
@@ -204,6 +534,24 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                     assertEquals("k == N must be the sentinel",
                             Numbers.LONG_NULL,
                             reader.selectKthMatch(0, 0, nullMaxValue, clampedMax, gt.size()));
+
+                    // The posting clamp is empty, but the independently bounded NULL prefix is not:
+                    // entryMaxValue=10 < minValue=15 < columnTop=20 <= nullMaxValue+1=50.
+                    // All three metadata primitives must report the cursor's rows 15..19 without
+                    // attempting a generation walk.
+                    final long nullOnlyMin = 15;
+                    final LongList nullOnly = drain(reader, 0, nullOnlyMin, callerHiInclusive);
+                    assertEquals(5, nullOnly.size());
+                    assertEquals(5, reader.estimateMatchesClamped(
+                            0, nullOnlyMin, nullMaxValue, clampedMax));
+                    assertEquals(5, reader.countMatchesClamped(
+                            0, nullOnlyMin, nullMaxValue, clampedMax));
+                    for (int k = 0; k < nullOnly.size(); k++) {
+                        assertEquals(nullOnly.getQuick(k), reader.selectKthMatch(
+                                0, nullOnlyMin, nullMaxValue, clampedMax, k));
+                    }
+                    assertEquals(Numbers.LONG_NULL, reader.selectKthMatch(
+                            0, nullOnlyMin, nullMaxValue, clampedMax, nullOnly.size()));
                 }
             }
         });
@@ -254,6 +602,47 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testEstimateMatchesClampedExactForLargeDeltaRange() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "estimate_delta";
+                final int pathLen = path.size();
+                final int count = 4_000;
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 0; i < count; i++) {
+                        writer.add(0, 2L * i);
+                    }
+                    writer.setMaxValue(2L * (count - 1));
+                    writer.commit();
+                    writer.seal();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
+                    reader.reloadConditionally();
+                    final long[][] ranges = {
+                            {0, Long.MAX_VALUE},
+                            {1, 1},
+                            {1, 2},
+                            {125, 4_995},
+                            {4_995, 5_005},
+                            {7_998, 9_000}
+                    };
+                    for (long[] range : ranges) {
+                        final long expected = drain(reader, 0, range[0], range[1]).size();
+                        assertEquals(
+                                "range [" + range[0] + ',' + range[1] + ']',
+                                expected,
+                                reader.estimateMatchesClamped(0, range[0], range[1], range[1])
+                        );
+                    }
+                }
+            }
+        });
+    }
+
     /**
      * Single-gen dense FLAT layout: many keys, few rows per key (stride-wide FoR after seal).
      * Asserts selectKthMatch == cursor ground truth for several keys across strides.
@@ -283,6 +672,8 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                     // Probe keys in the first stride, the stride boundary, and the last stride.
                     for (int key : new int[]{0, 1, 7, 255, 256, 257, 299}) {
                         assertSelectMatchesCursor(reader, key, 0, Long.MAX_VALUE);
+                        final long expected = drain(reader, key, 100, 700).size();
+                        assertEquals(expected, reader.estimateMatchesClamped(key, 100, 700, 700));
                     }
                 }
             }
@@ -294,6 +685,84 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
      * BLOCK_CAPACITY=64). Exercises the delta-blob select's block locate + in-block accumulate,
      * including indices past a block boundary.
      */
+    @Test
+    public void testDeltaTailSelectDoesNotReadPrecedingBlockCounts() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 4_096;
+            final long srcSize = (long) count * Long.BYTES;
+            final long maxEncodedSize = PostingIndexUtils.computeMaxEncodedSize(count);
+            final long src = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
+            final long encoded = Unsafe.malloc(maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
+            try (PostingIndexUtils.EncodeContext context = new PostingIndexUtils.EncodeContext()) {
+                long value = 0;
+                for (int i = 0; i < count; i++) {
+                    value += 3 + (i & 7);
+                    Unsafe.putLong(src + (long) i * Long.BYTES, value);
+                }
+                context.ensureCapacity(count);
+                PostingIndexUtils.encodeKeyNative(
+                        src,
+                        count,
+                        encoded,
+                        context,
+                        PostingIndexUtils.ENCODING_DELTA
+                );
+                final int blockCount = Unsafe.getInt(encoded);
+                assertTrue(blockCount > 2);
+
+                final long expected = Unsafe.getLong(src + (long) (count - 1) * Long.BYTES);
+                assertEquals(expected, AbstractPostingIndexReader.selectFromDeltaBlobForTesting(0L, encoded, blockCount, count - 1));
+
+                // Every non-final block has fixed capacity. Poisoning an early count byte exposes an
+                // ordinal selector that linearly accumulates preceding counts; a bounded selector derives
+                // the tail block directly and therefore never consumes this byte.
+                final long firstBlockCountAddress = encoded + Integer.BYTES;
+                final byte firstBlockCount = Unsafe.getByte(firstBlockCountAddress);
+                Unsafe.putByte(firstBlockCountAddress, (byte) (PostingIndexUtils.BLOCK_CAPACITY - 1));
+                assertEquals(expected, AbstractPostingIndexReader.selectFromDeltaBlobForTesting(0L, encoded, blockCount, count - 1));
+                Unsafe.putByte(firstBlockCountAddress, firstBlockCount);
+            } finally {
+                Unsafe.free(encoded, maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(src, srcSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testDeltaLowerBoundWithVariableDeltas() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "delta_lower_bound";
+                final int pathLen = path.size();
+                final int count = 2 * PostingIndexUtils.BLOCK_CAPACITY;
+                final long[] values = new long[count];
+                long value = 0;
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, PostingIndexUtils.ENCODING_DELTA)) {
+                    writer.of(path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, true);
+                    for (int i = 0; i < count; i++) {
+                        value += 3 + (i & 7);
+                        values[i] = value;
+                        writer.add(0, value);
+                    }
+                    writer.setMaxValue(value);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
+                    reader.reloadConditionally();
+                    for (int i = 0; i < count; i++) {
+                        assertEquals(count - i,
+                                reader.countMatchesClamped(0, values[i], values[count - 1], values[count - 1]));
+                        assertEquals(count - i - 1,
+                                reader.countMatchesClamped(0, values[i] + 1, values[count - 1], values[count - 1]));
+                    }
+                }
+            }
+        });
+    }
+
     @Test
     public void testSingleGenDeltaMatchesCursor() throws Exception {
         assertMemoryLeak(() -> {
@@ -783,13 +1252,10 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
     }
 
     /**
-     * A gen that STRADDLES minValue (some postings below, some at/above) must still bail to
-     * the sentinel — the full per-gen count would over-count the below-minValue postings the
-     * cursor filters out. This guards the precision of the fully-below optimization: only a
-     * gen entirely below minValue may be skipped, never a straddling one.
+     * A gen that straddles minValue uses the same lower ordinal for count and k-th selection.
      */
     @Test
-    public void testGenStraddlingMinValueStillBailsToSentinel() throws Exception {
+    public void testGenStraddlingMinValueUsesClippedOrdinals() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 final String name = "skm_straddle";
@@ -810,15 +1276,13 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                     reader.reloadConditionally();
                     final long clamp = entryMaxValue(reader);
 
-                    // minValue=50 lands inside the gen (postings 0..48 below, 50..98 at/above):
-                    // a genuine straddle -> the metadata count diverges from the cursor, so the
-                    // cheap path MUST return the sentinel and let the caller traverse.
-                    assertEquals("a gen straddling minValue must still yield the fallback sentinel",
-                            Numbers.LONG_NULL, reader.countMatchesClamped(0, 50, Long.MAX_VALUE, clamp));
+                    assertEquals(25, reader.countMatchesClamped(0, 50, Long.MAX_VALUE, clamp));
                     for (int k = 0; k < 25; k++) {
-                        assertEquals("straddling gen must yield the sentinel for every k (k=" + k + ")",
-                                Numbers.LONG_NULL, reader.selectKthMatch(0, 50, Long.MAX_VALUE, clamp, k));
+                        assertEquals("straddling gen must select exactly at k=" + k,
+                                50 + 2L * k, reader.selectKthMatch(0, 50, Long.MAX_VALUE, clamp, k));
                     }
+                    assertEquals(Numbers.LONG_NULL,
+                            reader.selectKthMatch(0, 50, Long.MAX_VALUE, clamp, 25));
                 }
             }
         });
@@ -885,6 +1349,20 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
         Field f = base.getDeclaredField("genLookup");
         f.setAccessible(true);
         return (PostingGenLookup) f.get(reader);
+    }
+
+    private static long fieldValue(Object instance, String fieldName) throws Exception {
+        Class<?> type = instance.getClass();
+        while (type != null) {
+            try {
+                Field field = type.getDeclaredField(fieldName);
+                field.setAccessible(true);
+                return field.getLong(instance);
+            } catch (NoSuchFieldException ignored) {
+                type = type.getSuperclass();
+            }
+        }
+        throw new NoSuchFieldException(fieldName);
     }
 
     private static int[] interiorProbes(int n) {

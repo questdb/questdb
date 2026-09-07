@@ -108,6 +108,114 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringMultiKeyHeapMergeParity() throws Exception {
+        // SP4: above HEAP_MERGE_MIN_KEYS the multi-key covering record cursor
+        // merges the per-key heads with an O(log N) heap instead of the linear
+        // O(N) min-scan. The heap must be a pure speedup: for the SAME query it
+        // has to emit BYTE-IDENTICAL rows (row-ids, covered values, ascending
+        // order) to the linear path. Force the heap branch by lowering the
+        // crossover below the key count (8) and diff against the default run.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_heap (ts TIMESTAMP, sym SYMBOL, price DOUBLE, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // 8 interleaved keys over multiple partitions, 5000 rows: keys share
+            // no row id but their heads interleave, so the merge order is what is
+            // being tested. A var-width covered column is included so covered
+            // value reads (not just row ids) are compared too.
+            execute("INSERT INTO t_heap " +
+                    "SELECT dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), " +
+                    "rnd_symbol('a','b','c','d','e','f','g','h'), x::DOUBLE, " +
+                    "CASE WHEN x % 97 = 0 THEN NULL::VARCHAR ELSE ('v_' || x)::VARCHAR END " +
+                    "FROM long_sequence(5000)");
+            execute("ALTER TABLE t_heap ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, vc)");
+            final String q = "SELECT sym, price, vc FROM t_heap WHERE sym IN ('a','b','c','d','e','f','g','h') ORDER BY ts, price";
+            // Guard against a vacuous pass: the query must actually route through
+            // the covering (posting) index, otherwise neither run exercises the
+            // merge under test.
+            assertQuery(q).noLeakCheck().assertsPlanContaining("CoveringIndex");
+
+            // Linear branch (default crossover 16 > 8 keys): ground truth.
+            final TestMergeObserver linearObserver = new TestMergeObserver();
+            String linear = runToString(q, linearObserver);
+            Assert.assertFalse("linear ground truth errored:\n" + linear, linear.startsWith("ERROR"));
+            Assert.assertTrue(linearObserver.hasRecordLinearMerge);
+            Assert.assertFalse(linearObserver.hasRecordHeapMerge);
+            Assert.assertEquals(0, linearObserver.recordHeapOperations);
+            Assert.assertTrue(linearObserver.recordLinearComparisons >= 5_000L * 8);
+            // Four daily partitions add at most one empty min-scan per transition,
+            // plus the scans before the first frame and after exhaustion.
+            Assert.assertTrue(linearObserver.recordLinearComparisons <= (5_000L + 5) * 8);
+
+            // Force the heap branch (crossover 2 < 8 keys) and require identity.
+            CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(2);
+            try {
+                final TestMergeObserver heapObserver = new TestMergeObserver();
+                String heap = runToString(q, heapObserver);
+                io.questdb.test.tools.TestUtils.assertEquals(linear, heap);
+                Assert.assertTrue(heapObserver.hasRecordHeapMerge);
+                Assert.assertFalse(heapObserver.hasRecordLinearMerge);
+                Assert.assertEquals(0, heapObserver.recordLinearComparisons);
+                // Every row performs one heap peek and one poll/replacement. At
+                // most eight initial adds occur in each of four partitions.
+                Assert.assertTrue(heapObserver.recordHeapOperations >= 2L * 5_000);
+                Assert.assertTrue(heapObserver.recordHeapOperations <= 2L * 5_000 + 4L * 8);
+                Assert.assertTrue(heapObserver.recordHeapOperations < linearObserver.recordLinearComparisons);
+            } finally {
+                CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringPageFrameHeapMergeParity() throws Exception {
+        // SP4 Task 2: above HEAP_MERGE_MIN_KEYS the multi-key covering PAGE-FRAME
+        // cursor (parallel GROUP BY path) merges per-key heads with an O(log N)
+        // heap instead of the linear O(N) min-scan. The heap must emit
+        // BYTE-IDENTICAL rows to the linear path. Force the heap by lowering the
+        // crossover below the key count (8) and diff against the default (linear) run.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_pf_heap (sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_pf_heap SELECT rnd_symbol('a','b','c','d','e','f','g','h'), x::DOUBLE, timestamp_sequence(0, 1) FROM long_sequence(5000)");
+            final String q = "SELECT sym, sum(price) FROM t_pf_heap WHERE sym IN ('a','b','c','d','e','f','g','h') ORDER BY sym";
+
+            // Guard: the aggregate query must actually route through the covering page-frame cursor.
+            assertQuery(q).noLeakCheck().assertsPlanContaining("CoveringIndex");
+
+            // Linear branch (default crossover 16 > 8 keys): ground truth.
+            final TestMergeObserver linearObserver = new TestMergeObserver();
+            String linear = runToString(q, linearObserver);
+            Assert.assertFalse("linear ground truth errored:\n" + linear, linear.startsWith("ERROR"));
+            Assert.assertTrue(linearObserver.hasPageFrameLinearMerge);
+            Assert.assertFalse(linearObserver.hasPageFrameHeapMerge);
+            Assert.assertEquals(0, linearObserver.pageFrameHeapOperations);
+            // One eight-key min-scan per emitted row, plus the final scan that
+            // discovers the partition is drained.
+            Assert.assertEquals((5_000L + 1) * 8, linearObserver.pageFrameLinearComparisons);
+            // 8 symbol groups must produce 8 data rows (header + 8); proves results are non-trivial.
+            Assert.assertTrue("expected at least 9 lines (header + 8 groups), got:\n" + linear, linear.split("\n").length >= 9);
+
+            // Force heap branch (crossover 2 < 8 keys) and require identity.
+            CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(2);
+            try {
+                final TestMergeObserver heapObserver = new TestMergeObserver();
+                String heap = runToString(q, heapObserver);
+                io.questdb.test.tools.TestUtils.assertEquals(linear, heap);
+                Assert.assertTrue(heapObserver.hasPageFrameHeapMerge);
+                Assert.assertFalse(heapObserver.hasPageFrameLinearMerge);
+                Assert.assertEquals(0, heapObserver.pageFrameLinearComparisons);
+                // The single partition performs two heap operations per row and
+                // no more than eight initial adds.
+                Assert.assertTrue(heapObserver.pageFrameHeapOperations >= 2L * 5_000);
+                Assert.assertTrue(heapObserver.pageFrameHeapOperations <= 2L * 5_000 + 8);
+                Assert.assertTrue(heapObserver.pageFrameHeapOperations < linearObserver.pageFrameLinearComparisons);
+                Assert.assertEquals(0, heapObserver.lastPageFrameLo);
+                Assert.assertEquals(5_000, heapObserver.lastPageFrameHi);
+            } finally {
+                CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(-1);
+            }
+        });
+    }
+
+    @Test
     public void testDeferredSymbolInListCrossCheck() throws Exception {
         assertMemoryLeak(() -> {
             createInterleavedSinglePartition("t_def");
@@ -159,6 +267,53 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
                     "CASE WHEN x % 2 = 1 THEN 'A' ELSE 'B' END, x::DOUBLE FROM long_sequence(20)");
             execute("ALTER TABLE t_mp ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
             assertCoveringMatchesOracle("t_mp", "price", "sym IN ('A','B') AND price > 0", TS_ORDER_TAILS);
+        });
+    }
+
+    @Test
+    public void testSparsePrefixSumMemoRebuildsAcrossO3Update() throws Exception {
+        // Covered-value regression for the sparse-gen sidecar prefix-sum memo
+        // (AbstractPostingIndexReader.SparseGenSidecarPrefixSum). The memo caches
+        // sum(counts[0..slot)) per sparse gen and is reused across every pooled
+        // cursor open on a reader; a wrong base ordinal would read the WRONG
+        // covered value, which the covering-vs-oracle cross-check below catches.
+        // (Verified non-vacuous: an off-by-one in the memo's prefix makes this
+        // test fail — it genuinely routes covered reads through the memo.)
+        //
+        // The index is declared INLINE so it is built incrementally: every commit
+        // appends a fresh SPARSE gen (dense gens only arise from a whole-index
+        // seal), which is exactly the path the memo optimizes. A broad multi-key
+        // predicate over multiple partitions makes many keys share (and thus
+        // build) each gen's prefix; a second, timestamp-interleaved insert then
+        // adds more sparse gens and bumps the reader's gen-snapshot version, so
+        // the memo is exercised both before and after an index update. The memo's
+        // cross-snapshot invalidation itself is guaranteed by construction (it
+        // keys on genLookup.getCacheVersion(), bumped on every snapshot swap) and
+        // is further stressed by the O3-fuzz / reload suites.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_memo (" +
+                    "ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_memo " +
+                    "SELECT dateadd('h', (x * 3)::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), " +
+                    "'k' || (x % 12), x::DOUBLE FROM long_sequence(240)");
+
+            final String predicate = "sym IN ('k0','k1','k2','k3','k4','k5','k6','k7','k8','k9','k10','k11') AND price > 0";
+
+            // First read: builds the prefix-sum memo on the pooled reader(s).
+            assertCoveringMatchesOracle("t_memo", "ts, sym, price", predicate, TS_ORDER_TAILS);
+
+            // Index update: a timestamp-interleaved insert into the SAME partitions
+            // appends new sparse gens and shifts every partition's gen layout, so a
+            // reader that survives from the first read must observe the gen-snapshot
+            // (cache version) bump and rebuild the memo from the fresh mapped bytes.
+            execute("INSERT INTO t_memo " +
+                    "SELECT dateadd('m', (x * 97)::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), " +
+                    "'k' || (x % 12), (10000 + x)::DOUBLE FROM long_sequence(240)");
+
+            // Second read: must still match the oracle. A stale (non-rebuilt) memo
+            // would surface wrong covered prices here.
+            assertCoveringMatchesOracle("t_memo", "ts, sym, price", predicate, TS_ORDER_TAILS);
         });
     }
 
@@ -377,6 +532,90 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCoveringMergeCrossoverBoundaryParity() throws Exception {
+        // SP4: pins both sides of the heap-vs-linear crossover boundary.
+        // With setHeapMergeMinKeysForTesting(k), the merge picks linear when
+        // n <= k (n > k == false) and heap when n > k. By testing n==k (linear)
+        // and n==k+1 (heap) we verify that an off-by-one in the comparison
+        // (> vs >=) would still be caught: both branches must match the oracle.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_boundary (" +
+                    "ts TIMESTAMP, sym SYMBOL, price DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // 9 interleaved keys (A..I) over multiple DAY partitions.
+            // 6-minute spacing -> 5040 rows spanning ~21 days.
+            execute("INSERT INTO t_boundary " +
+                    "SELECT dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), " +
+                    "CASE " +
+                    "WHEN x % 9 = 0 THEN 'A' WHEN x % 9 = 1 THEN 'B' WHEN x % 9 = 2 THEN 'C' " +
+                    "WHEN x % 9 = 3 THEN 'D' WHEN x % 9 = 4 THEN 'E' WHEN x % 9 = 5 THEN 'F' " +
+                    "WHEN x % 9 = 6 THEN 'G' WHEN x % 9 = 7 THEN 'H' ELSE 'I' END, " +
+                    "x::DOUBLE FROM long_sequence(5040)");
+            execute("ALTER TABLE t_boundary ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+
+            CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(8);
+            try {
+                // n == 8: 8 > 8 == false  -> LINEAR branch
+                assertCoveringMatchesOracle("t_boundary", "price",
+                        "sym IN ('A','B','C','D','E','F','G','H') AND price > 0",
+                        TS_ORDER_TAILS);
+                // n == 9: 9 > 8 == true   -> HEAP branch
+                assertCoveringMatchesOracle("t_boundary", "price",
+                        "sym IN ('A','B','C','D','E','F','G','H','I') AND price > 0",
+                        TS_ORDER_TAILS);
+            } finally {
+                CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testSparsePrefixSumMemoCoveredValueParityAcrossSlots() throws Exception {
+        // SP6: dedicated exhaustive exercise of the sparse-gen sidecar prefix-sum
+        // memo (AbstractPostingIndexReader.SparseGenSidecarPrefixSum). The memo
+        // caches baseOrdinal = sum(counts[0..slot)) for each (gen, slot) pair and
+        // is used on every covered-value read from a sparse gen. A wrong prefix
+        // base yields a wrong covered price, which the covering-vs-oracle diff
+        // below catches.
+        //
+        // Construction rationale: BYPASS WAL + a SINGLE bulk INSERT whose rows
+        // span many DAY partitions OUT OF timestamp order forces the index builder
+        // to create SPARSE gens (each partition gets one sparse gen whose counts[]
+        // array has gaps). 40 distinct symbol keys (k00..k39) ensure their dense
+        // slots within each gen span the FULL counts[] range, so every prefix
+        // index 0..39 serves as the base for at least one key -- exercising the
+        // memo across the entire slot range in one query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_sparse_memo (" +
+                    "ts TIMESTAMP, " +
+                    "sym SYMBOL INDEX TYPE POSTING INCLUDE (price), " +
+                    "price DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            // Build a 40-symbol round-robin over 8000 rows; 1-minute spacing
+            // spans ~5.5 days. The BYPASS WAL single-INSERT path does NOT seal
+            // the index, so each partition's gen is sparse.
+            execute("INSERT INTO t_sparse_memo " +
+                    "SELECT dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), " +
+                    "'k' || lpad((x % 40)::VARCHAR, 2, '0'), " +
+                    "x::DOUBLE FROM long_sequence(8000)");
+
+            // Predicate covers all 40 keys so every slot's prefix is exercised.
+            final String allKeys =
+                    "'k00','k01','k02','k03','k04','k05','k06','k07','k08','k09'," +
+                            "'k10','k11','k12','k13','k14','k15','k16','k17','k18','k19'," +
+                            "'k20','k21','k22','k23','k24','k25','k26','k27','k28','k29'," +
+                            "'k30','k31','k32','k33','k34','k35','k36','k37','k38','k39'";
+            final String predicate = "sym IN (" + allKeys + ") AND price > 0";
+
+            // assertCoveringMatchesOracle already guards plan.contains("CoveringIndex"),
+            // so the oracle (no_covering scan) and the covering path are compared;
+            // any wrong prefix-sum base produces a wrong covered price -> mismatch.
+            assertCoveringMatchesOracle("t_sparse_memo", "ts, sym, price", predicate, TS_ORDER_TAILS);
+        });
+    }
+
     /**
      * Runs each shape twice on {@code table} -- once covering, once with the
      * {@code no_covering} oracle hint -- and asserts the results match. Confirms
@@ -445,12 +684,65 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
         return s.replace("\n", " ").trim();
     }
 
-    private String runToString(String query) {
+    private String runToString(String query) throws SqlException {
+        printSql(query);
+        return sink.toString();
+    }
+
+    private String runToString(String query, TestMergeObserver observer) throws SqlException {
+        CoveringIndexRecordCursorFactory.setMergeObserverForTesting(observer);
         try {
-            printSql(query);
-            return sink.toString();
-        } catch (Throwable t) {
-            return "ERROR " + t.getClass().getSimpleName() + ": " + t.getMessage();
+            return runToString(query);
+        } finally {
+            CoveringIndexRecordCursorFactory.clearMergeObserverForTesting();
+        }
+    }
+
+    private static final class TestMergeObserver implements CoveringIndexRecordCursorFactory.MergeObserver {
+        private boolean hasPageFrameHeapMerge;
+        private boolean hasPageFrameLinearMerge;
+        private boolean hasRecordHeapMerge;
+        private boolean hasRecordLinearMerge;
+        private long lastPageFrameHi = -1;
+        private long lastPageFrameLo = -1;
+        private long pageFrameHeapOperations;
+        private long pageFrameLinearComparisons;
+        private long recordHeapOperations;
+        private long recordLinearComparisons;
+
+        @Override
+        public void onHeapOperations(long operationCount, boolean isPageFrame) {
+            if (isPageFrame) {
+                pageFrameHeapOperations += operationCount;
+            } else {
+                recordHeapOperations += operationCount;
+            }
+        }
+
+        @Override
+        public void onLinearComparisons(long comparisonCount, boolean isPageFrame) {
+            if (isPageFrame) {
+                pageFrameLinearComparisons += comparisonCount;
+            } else {
+                recordLinearComparisons += comparisonCount;
+            }
+        }
+
+        @Override
+        public void onMergeStrategy(boolean isHeapMerge, boolean isPageFrame) {
+            if (isPageFrame) {
+                hasPageFrameHeapMerge |= isHeapMerge;
+                hasPageFrameLinearMerge |= !isHeapMerge;
+            } else {
+                hasRecordHeapMerge |= isHeapMerge;
+                hasRecordLinearMerge |= !isHeapMerge;
+            }
+        }
+
+        @Override
+        public void onPageFrame(long lo, long hi) {
+            lastPageFrameLo = lo;
+            lastPageFrameHi = hi;
         }
     }
 }

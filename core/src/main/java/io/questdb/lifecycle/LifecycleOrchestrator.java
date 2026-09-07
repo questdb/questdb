@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongConsumer;
 
 /**
  * Owns the component DAG: validates acyclicity, runs parallel start in
@@ -68,6 +69,9 @@ public class LifecycleOrchestrator implements QuietCloseable {
     // edge to observe the captured (or cleared) reference.
     @Nullable
     private volatile Thread bootThread;
+    private final Object closeLock = new Object();
+    @Nullable
+    private Thread closeOwner;
     // Bound on how long close() waits for the boot thread to observe shutdown and unwind. The boot
     // walk checks closed.get() between components and the in-flight start() (the restore) polls its
     // own cancel flag, so a clean unwind is prompt; the bound only caps a wedged start() so close()
@@ -85,6 +89,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
     private String firstFailedComponentName;
     private Throwable firstFailedComponentThrowable;
     private final Log injectedLog;
+    private boolean isCloseComplete;
     // latestProgress and lastTransitionMicros are read by the /lifecycle HTTP handler
     // thread via snapshot() while concurrently written by the lifecycle/main thread (publishInternal
     // and ContextImpl.progress). Use ConcurrentHashMap so reads see a consistent point-in-time view
@@ -107,6 +112,8 @@ public class LifecycleOrchestrator implements QuietCloseable {
     // running at that point -- they must stop touching those resources before the loop frees them.
     @Nullable
     private volatile Runnable preStopHook;
+    @Nullable
+    private volatile LongConsumer preStopHookWithDeadline;
     private final AtomicBoolean ran = new AtomicBoolean();
     private final ObjList<Component> registry = new ObjList<>();
     private final CharSequenceObjHashMap<Component> registryByName = new CharSequenceObjHashMap<>();
@@ -147,15 +154,17 @@ public class LifecycleOrchestrator implements QuietCloseable {
 
     @Override
     public void close() {
+        if (!acquireCloseOwnership(false, 0)) {
+            return;
+        }
         // Capture the entry interrupt and accumulate interrupts consumed by the bounded
         // executor and boot waits, so neither rendezvous loses its safety budget. Restore
         // the consumed status after the stop attempts. The base executor wait and boot join
         // each have an independent 30-second budget; component stops can add their own.
+        boolean isComplete = false;
         boolean isInterrupted = Thread.interrupted();
         try {
-            if (!closed.compareAndSet(false, true)) {
-                return;
-            }
+            closed.set(true);
             // Shut down + await the executor BEFORE the reverse-topo stop loop. Previously the
             // stop loop ran first and executor.shutdown ran after -- which left a window where an
             // in-flight switchRole on the lifecycle executor thread could touch a component that
@@ -254,8 +263,10 @@ public class LifecycleOrchestrator implements QuietCloseable {
                     // component. Stopping a SWITCHING component routes it through stop() like any other
                     // started component; the transition table permits SWITCHING -> STOPPING.
                     if (current == State.READY || current == State.DEGRADED || current == State.STARTING
-                            || current == State.SWITCHING) {
-                        publishInternal(c.name(), State.STOPPING, null);
+                            || current == State.SWITCHING || current == State.STOPPING) {
+                        if (current != State.STOPPING) {
+                            publishInternal(c.name(), State.STOPPING, null);
+                        }
                         try {
                             c.stop();
                             publishInternal(c.name(), State.STOPPED, null);
@@ -265,10 +276,82 @@ public class LifecycleOrchestrator implements QuietCloseable {
                     }
                 }
             }
+            isComplete = true;
         } finally {
+            releaseCloseOwnership(isComplete);
             if (isInterrupted) {
                 Thread.currentThread().interrupt();
             }
+        }
+    }
+
+    /**
+     * Stops the component graph using one absolute {@link System#nanoTime()} deadline. A timed-out
+     * attempt retains the live graph so a later call can resume the same shutdown safely.
+     */
+    public void closeBy(long deadlineNanos) {
+        final Thread currentThread = Thread.currentThread();
+        if (!acquireCloseOwnership(true, deadlineNanos)) {
+            return;
+        }
+        boolean isInterrupted = Thread.interrupted();
+        boolean isComplete = false;
+        try {
+            closed.set(true);
+            requestComponentStops();
+            executor.shutdown();
+            if (!awaitInFlightWork(deadlineNanos)) {
+                return;
+            }
+
+            final Runnable cancelHook = preJoinCancelHook;
+            if (cancelHook != null) {
+                cancelHook.run();
+            }
+
+            final Thread boot = bootThread;
+            if (boot != null && boot != currentThread && !joinThread(boot, deadlineNanos)) {
+                return;
+            }
+
+            if (reverseTopoOrder != null) {
+                final LongConsumer hook = preStopHookWithDeadline;
+                if (hook != null) {
+                    try {
+                        hook.accept(deadlineNanos);
+                    } catch (Component.ShutdownIncompleteException ignored) {
+                        return;
+                    }
+                }
+                for (int i = 0, n = reverseTopoOrder.size(); i < n; i++) {
+                    final Component component = reverseTopoOrder.getQuick(i);
+                    final State current = stateOf(component.name());
+                    if (current == State.READY || current == State.DEGRADED || current == State.STARTING
+                            || current == State.SWITCHING || current == State.STOPPING) {
+                        if (current != State.STOPPING) {
+                            publishInternal(component.name(), State.STOPPING, null);
+                        }
+                        try {
+                            component.stop(deadlineNanos);
+                        } catch (Component.ShutdownIncompleteException ignored) {
+                            return;
+                        }
+                        publishInternal(component.name(), State.STOPPED, null);
+                    }
+                }
+            }
+            isComplete = true;
+        } finally {
+            releaseCloseOwnership(isComplete);
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    public boolean isCloseComplete() {
+        synchronized (closeLock) {
+            return isCloseComplete;
         }
     }
 
@@ -376,6 +459,13 @@ public class LifecycleOrchestrator implements QuietCloseable {
         this.preStopHook = hook;
     }
 
+    /**
+     * Installs the bounded counterpart to {@link #setPreStopHook(Runnable)}.
+     */
+    public void setPreStopHookWithDeadline(@Nullable LongConsumer hook) {
+        this.preStopHookWithDeadline = hook;
+    }
+
     public LifecycleSnapshot snapshot() {
         long capturedAt = MicrosecondClockImpl.INSTANCE.getTicks();
         ObjList<LifecycleSnapshot.ComponentSnapshot> snaps = new ObjList<>();
@@ -430,6 +520,30 @@ public class LifecycleOrchestrator implements QuietCloseable {
                 } catch (InterruptedException e) {
                     // Preserve the close budget, but do not let an interrupt move teardown
                     // ahead of work that may still access component-owned resources.
+                    isInterrupted = true;
+                }
+            }
+            return true;
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    protected boolean awaitInFlightWork(long deadlineNanos) {
+        boolean isInterrupted = false;
+        try {
+            while (!executor.isTerminated()) {
+                final long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    return false;
+                }
+                try {
+                    if (executor.awaitTermination(remainingNanos, TimeUnit.NANOSECONDS)) {
+                        return true;
+                    }
+                } catch (InterruptedException e) {
                     isInterrupted = true;
                 }
             }
@@ -598,6 +712,84 @@ public class LifecycleOrchestrator implements QuietCloseable {
                 throw new LifecycleStartupException(
                         "component name must match [a-z0-9-]+ for JSON-safe serialization (LifecycleProcessor); got: " + name);
             }
+        }
+    }
+
+    private boolean joinThread(Thread thread, long deadlineNanos) {
+        boolean isInterrupted = false;
+        try {
+            while (thread.isAlive()) {
+                final long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    return false;
+                }
+                try {
+                    TimeUnit.NANOSECONDS.timedJoin(thread, remainingNanos);
+                } catch (InterruptedException e) {
+                    isInterrupted = true;
+                }
+            }
+            return true;
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private void requestComponentStops() {
+        for (int i = 0, n = registry.size(); i < n; i++) {
+            try {
+                registry.getQuick(i).requestStop();
+            } catch (Throwable t) {
+                injectedLog.error().$("component stop request failed [error=").$(t).I$();
+            }
+        }
+    }
+
+    private boolean acquireCloseOwnership(boolean isBounded, long deadlineNanos) {
+        final Thread currentThread = Thread.currentThread();
+        boolean isInterrupted = Thread.interrupted();
+        try {
+            synchronized (closeLock) {
+                while (closeOwner != null && !isCloseComplete) {
+                    if (closeOwner == currentThread) {
+                        return false;
+                    }
+                    try {
+                        if (isBounded) {
+                            final long remainingNanos = deadlineNanos - System.nanoTime();
+                            if (remainingNanos <= 0) {
+                                return false;
+                            }
+                            TimeUnit.NANOSECONDS.timedWait(closeLock, remainingNanos);
+                        } else {
+                            closeLock.wait();
+                        }
+                    } catch (InterruptedException e) {
+                        isInterrupted = true;
+                    }
+                }
+                if (isCloseComplete) {
+                    return false;
+                }
+                closeOwner = currentThread;
+                return true;
+            }
+        } finally {
+            if (isInterrupted) {
+                currentThread.interrupt();
+            }
+        }
+    }
+
+    private void releaseCloseOwnership(boolean isComplete) {
+        synchronized (closeLock) {
+            if (isComplete) {
+                isCloseComplete = true;
+            }
+            closeOwner = null;
+            closeLock.notifyAll();
         }
     }
 

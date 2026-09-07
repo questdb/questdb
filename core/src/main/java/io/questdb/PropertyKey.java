@@ -179,6 +179,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE("cairo.sql.groupby.allocator.default.chunk.size"),
     CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE("cairo.sql.groupby.allocator.max.chunk.size"),
     CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT("cairo.sql.max.symbol.not.equals.count"),
+    CAIRO_SQL_SYMBOL_PATTERN_INDEX_ENABLED("cairo.sql.symbol.pattern.index.enabled"),
+    CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD("cairo.sql.symbol.pattern.index.threshold"),
     CAIRO_SQL_BIND_VARIABLE_POOL_SIZE("cairo.sql.bind.variable.pool.size"),
     CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE("cairo.sql.query.registry.pool.size"),
     CAIRO_SQL_COUNT_DISTINCT_CAPACITY("cairo.sql.count.distinct.capacity"),

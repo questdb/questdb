@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.engine.table.GroupByShardingContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -55,7 +54,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             long cursor,
             GroupByShardingContext stealingCtx
     ) {
-        final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+        final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
         final AtomicInteger startedCounter = task.getStartedCounter();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
         final GroupByShardingContext ctx = task.getShardingContext();
@@ -79,7 +78,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             }
         } catch (Throwable th) {
             LOG.error().$("merge shard failed [error=").$(th).I$();
-            circuitBreaker.cancel();
+            circuitBreaker.cancel(th);
         } finally {
             doneLatch.countDown();
         }
