@@ -1458,138 +1458,138 @@ public class CairoEngine implements Closeable, WriterSource {
             dependencyColumnTypes.clear();
             outputSymbolCacheFlags.clear();
             try (SqlCompiler compiler = getSqlCompiler()) {
-            // Arm the shared non-determinism guard for the LV body, mirroring the
-            // mat-view compile (SqlCompilerImpl.compileCreateMatView). With it armed,
-            // FunctionParser rejects now()/sysdate()/systimestamp()/rnd_*/etc. anywhere
-            // in the SELECT - projection, WHERE filter, and window-function arguments -
-            // so the view can never produce non-reproducible results that diverge on a
-            // re-refresh, O3 replay, or checkpoint restore. The ANCHOR EXPRESSION is
-            // covered separately by validateAnchorPurity below.
-            final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
-            final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
-            final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
-            executionContext.setLiveViewCompile(true);
-            executionContext.setAllowNonDeterministicFunction(false);
-            executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, op.getViewName());
-            CompiledQuery cq;
-            try {
-                cq = compiler.compile(op.getSelectSql(), executionContext);
-            } finally {
-                executionContext.setLiveViewCompile(false);
-                executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
-                executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
-            }
-            try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
-                final LiveViewCompiledPlan plan = validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
-                metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
-                validateLiveViewTimestamp(metadata, baseTimestampName, op.getViewNamePosition());
+                // Arm the shared non-determinism guard for the LV body, mirroring the
+                // mat-view compile (SqlCompilerImpl.compileCreateMatView). With it armed,
+                // FunctionParser rejects now()/sysdate()/systimestamp()/rnd_*/etc. anywhere
+                // in the SELECT - projection, WHERE filter, and window-function arguments -
+                // so the view can never produce non-reproducible results that diverge on a
+                // re-refresh, O3 replay, or checkpoint restore. The ANCHOR EXPRESSION is
+                // covered separately by validateAnchorPurity below.
+                final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
+                final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+                final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+                executionContext.setLiveViewCompile(true);
+                executionContext.setAllowNonDeterministicFunction(false);
+                executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, op.getViewName());
+                CompiledQuery cq;
+                try {
+                    cq = compiler.compile(op.getSelectSql(), executionContext);
+                } finally {
+                    executionContext.setLiveViewCompile(false);
+                    executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
+                    executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+                }
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                    final LiveViewCompiledPlan plan = validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
+                    metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
+                    validateLiveViewTimestamp(metadata, baseTimestampName, op.getViewNamePosition());
 
-                // Capture each base-column name the SELECT projects. Resolving
-                // against the base table here also catches the rare case of an LV
-                // SELECT that names a column the base no longer has — better to fail
-                // CREATE early than to land an LV that's invalid on first refresh.
-                final RecordMetadata baseProjMeta = plan.getBaseScanMetadata();
-                try (MetadataCacheReader metaRO = getMetadataCache().readLock()) {
-                    final CairoTable baseTable = metaRO.getTable(baseTableToken);
-                    if (baseTable == null) {
-                        throw CairoException.tableDoesNotExist(baseTableToken.getTableName());
-                    }
-                    for (int i = 0, n = baseProjMeta.getColumnCount(); i < n; i++) {
-                        CharSequence colName = baseProjMeta.getColumnName(i);
-                        final CairoColumn baseColumn = baseTable.getColumnQuiet(colName);
-                        if (baseColumn == null) {
-                            throw CairoException.critical(0)
-                                    .put("live view base column not found [view=").put(op.getViewName())
-                                    .put(", column=").put(colName).put(']');
+                    // Capture each base-column name the SELECT projects. Resolving
+                    // against the base table here also catches the rare case of an LV
+                    // SELECT that names a column the base no longer has — better to fail
+                    // CREATE early than to land an LV that's invalid on first refresh.
+                    final RecordMetadata baseProjMeta = plan.getBaseScanMetadata();
+                    try (MetadataCacheReader metaRO = getMetadataCache().readLock()) {
+                        final CairoTable baseTable = metaRO.getTable(baseTableToken);
+                        if (baseTable == null) {
+                            throw CairoException.tableDoesNotExist(baseTableToken.getTableName());
                         }
-                        dependencyColumnNames.add(Chars.toString(colName));
-                        dependencyColumnTypes.add(baseColumn.getType());
-                    }
-
-                    // A SYMBOL column the view projects straight out of the base
-                    // inherits the base column's cache flag, so a base that asked
-                    // for NOCACHE does not get writer and reader caching turned
-                    // back on through its view. The projection does not carry
-                    // the flag
-                    // (SqlCodeGenerator mints a fresh TableColumnMetadata for a
-                    // SYMBOL output column), so resolve it here.
-                    //
-                    // Traced through the plan's nodes rather than matched by name:
-                    // a live view now admits an alias and a projection on either
-                    // side of the window, and `sym AS s` leaves an output column
-                    // whose name no base column carries. A name match answers "not
-                    // found" there and falls back to the server default, which is
-                    // the direction that turns caching back on for a base that
-                    // asked for NOCACHE. The trace follows the column functions and
-                    // the mapping's cross index instead, so it survives the rename.
-                    for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                        boolean isCached = configuration.getDefaultSymbolCacheFlag();
-                        if (ColumnType.isSymbol(metadata.getColumnType(i))) {
-                            final int scanIndex = plan.traceOutputColumnToBaseScan(i);
-                            final CairoColumn baseColumn = scanIndex < 0
-                                    ? null
-                                    : baseTable.getColumnQuiet(baseProjMeta.getColumnName(scanIndex));
-                            if (baseColumn != null && ColumnType.isSymbol(baseColumn.getType())) {
-                                isCached = baseColumn.isSymbolCached();
+                        for (int i = 0, n = baseProjMeta.getColumnCount(); i < n; i++) {
+                            CharSequence colName = baseProjMeta.getColumnName(i);
+                            final CairoColumn baseColumn = baseTable.getColumnQuiet(colName);
+                            if (baseColumn == null) {
+                                throw CairoException.critical(0)
+                                        .put("live view base column not found [view=").put(op.getViewName())
+                                        .put(", column=").put(colName).put(']');
                             }
+                            dependencyColumnNames.add(Chars.toString(colName));
+                            dependencyColumnTypes.add(baseColumn.getType());
                         }
-                        outputSymbolCacheFlags.add(isCached);
-                    }
-                }
 
-                // Authorize reading the base columns the view projects. CREATE LIVE VIEW
-                // never opens a cursor over the compiled factory - unlike CREATE
-                // MATERIALIZED VIEW, which does and thereby triggers the cursor-open
-                // authorizeSelect in AbstractPartitionFrameCursorFactory - so the write-side
-                // authorizeLiveViewCreate would otherwise be the only check. A principal
-                // holding live-view-create but no SELECT on the base could then read the
-                // base's columns through the view it creates. dependencyColumnNames is the
-                // base-scan read set (projection + filter columns), so this grants exactly
-                // the per-column precision the cursor-open path applies to a plain SELECT.
-                // Runs before the table is created, so a denial leaves nothing behind.
-                final SecurityContext securityContext = executionContext.getSecurityContext();
-                if (dependencyColumnNames.size() > 0) {
-                    // Widen to the authorizeSelect signature; CREATE is not a hot path.
-                    final ObjList<CharSequence> authorizeColumnNames = new ObjList<>(dependencyColumnNames.size());
-                    for (int i = 0, n = dependencyColumnNames.size(); i < n; i++) {
-                        authorizeColumnNames.add(dependencyColumnNames.getQuick(i));
+                        // A SYMBOL column the view projects straight out of the base
+                        // inherits the base column's cache flag, so a base that asked
+                        // for NOCACHE does not get writer and reader caching turned
+                        // back on through its view. The projection does not carry
+                        // the flag
+                        // (SqlCodeGenerator mints a fresh TableColumnMetadata for a
+                        // SYMBOL output column), so resolve it here.
+                        //
+                        // Traced through the plan's nodes rather than matched by name:
+                        // a live view now admits an alias and a projection on either
+                        // side of the window, and `sym AS s` leaves an output column
+                        // whose name no base column carries. A name match answers "not
+                        // found" there and falls back to the server default, which is
+                        // the direction that turns caching back on for a base that
+                        // asked for NOCACHE. The trace follows the column functions and
+                        // the mapping's cross index instead, so it survives the rename.
+                        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                            boolean isCached = configuration.getDefaultSymbolCacheFlag();
+                            if (ColumnType.isSymbol(metadata.getColumnType(i))) {
+                                final int scanIndex = plan.traceOutputColumnToBaseScan(i);
+                                final CairoColumn baseColumn = scanIndex < 0
+                                        ? null
+                                        : baseTable.getColumnQuiet(baseProjMeta.getColumnName(scanIndex));
+                                if (baseColumn != null && ColumnType.isSymbol(baseColumn.getType())) {
+                                    isCached = baseColumn.isSymbolCached();
+                                }
+                            }
+                            outputSymbolCacheFlags.add(isCached);
+                        }
                     }
-                    securityContext.authorizeSelect(baseTableToken, authorizeColumnNames);
-                } else {
-                    securityContext.authorizeSelectOnAnyColumn(baseTableToken);
-                }
 
-                // Pass 2 of the ANCHOR EXPRESSION validator. Pass 1 (AST-level rejects of subqueries,
-                // bind variables, rnd_*/now()/etc.) ran in the parser; this is the
-                // function-property half that needs the compiled tree so it can see
-                // post-constant-fold flags and runtime-state predicates per-fn.
-                // Runs at CREATE only, never at restart.
-                final LiveViewDefinition.LvAnchorSpec anchor = op.getAnchorSpec();
-                if (anchor != null && anchor.anchorExpressionSql != null) {
-                    final ExpressionNode anchorNode = compiler.parseExpression(anchor.anchorExpressionSql);
-                    if (anchorNode != null) {
-                        Function anchorFn = null;
-                        try {
-                            FunctionParser fp = new FunctionParser(configuration, getFunctionFactoryCache());
-                            executionContext.setLiveViewCompile(true);
+                    // Authorize reading the base columns the view projects. CREATE LIVE VIEW
+                    // never opens a cursor over the compiled factory - unlike CREATE
+                    // MATERIALIZED VIEW, which does and thereby triggers the cursor-open
+                    // authorizeSelect in AbstractPartitionFrameCursorFactory - so the write-side
+                    // authorizeLiveViewCreate would otherwise be the only check. A principal
+                    // holding live-view-create but no SELECT on the base could then read the
+                    // base's columns through the view it creates. dependencyColumnNames is the
+                    // base-scan read set (projection + filter columns), so this grants exactly
+                    // the per-column precision the cursor-open path applies to a plain SELECT.
+                    // Runs before the table is created, so a denial leaves nothing behind.
+                    final SecurityContext securityContext = executionContext.getSecurityContext();
+                    if (dependencyColumnNames.size() > 0) {
+                        // Widen to the authorizeSelect signature; CREATE is not a hot path.
+                        final ObjList<CharSequence> authorizeColumnNames = new ObjList<>(dependencyColumnNames.size());
+                        for (int i = 0, n = dependencyColumnNames.size(); i < n; i++) {
+                            authorizeColumnNames.add(dependencyColumnNames.getQuick(i));
+                        }
+                        securityContext.authorizeSelect(baseTableToken, authorizeColumnNames);
+                    } else {
+                        securityContext.authorizeSelectOnAnyColumn(baseTableToken);
+                    }
+
+                    // Pass 2 of the ANCHOR EXPRESSION validator. Pass 1 (AST-level rejects of subqueries,
+                    // bind variables, rnd_*/now()/etc.) ran in the parser; this is the
+                    // function-property half that needs the compiled tree so it can see
+                    // post-constant-fold flags and runtime-state predicates per-fn.
+                    // Runs at CREATE only, never at restart.
+                    final LiveViewDefinition.LvAnchorSpec anchor = op.getAnchorSpec();
+                    if (anchor != null && anchor.anchorExpressionSql != null) {
+                        final ExpressionNode anchorNode = compiler.parseExpression(anchor.anchorExpressionSql);
+                        if (anchorNode != null) {
+                            Function anchorFn = null;
                             try {
-                                anchorFn = fp.parseFunction(anchorNode, baseProjMeta, executionContext);
+                                FunctionParser fp = new FunctionParser(configuration, getFunctionFactoryCache());
+                                executionContext.setLiveViewCompile(true);
+                                try {
+                                    anchorFn = fp.parseFunction(anchorNode, baseProjMeta, executionContext);
+                                } finally {
+                                    executionContext.setLiveViewCompile(false);
+                                }
+                                // Anchor the reject position in the user's CREATE SQL (the
+                                // ANCHOR keyword) rather than in the re-parsed desugared
+                                // expression. anchorNode.position is an offset into the
+                                // synthesized timestamp_floor* text for DAILY, and into a
+                                // toSink-roundtripped expression for ANCHOR EXPRESSION; in
+                                // both cases it diverges from what the user typed.
+                                validateAnchorPurity(anchorFn, anchor.anchorPosition, true);
                             } finally {
-                                executionContext.setLiveViewCompile(false);
+                                Misc.free(anchorFn);
                             }
-                            // Anchor the reject position in the user's CREATE SQL (the
-                            // ANCHOR keyword) rather than in the re-parsed desugared
-                            // expression. anchorNode.position is an offset into the
-                            // synthesized timestamp_floor* text for DAILY, and into a
-                            // toSink-roundtripped expression for ANCHOR EXPRESSION; in
-                            // both cases it diverges from what the user typed.
-                            validateAnchorPurity(anchorFn, anchor.anchorPosition, true);
-                        } finally {
-                            Misc.free(anchorFn);
                         }
                     }
                 }
-            }
             } catch (TableReferenceOutOfDateException e) {
                 if (e instanceof ExpiryPolicyVersionChangedException) {
                     if (retryCount == configuration.getMaxSqlRecompileAttempts()) {
