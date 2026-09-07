@@ -5191,8 +5191,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         sqlExecutionContext.getSecurityContext().authorizeViewDrop(tableToken);
         if (isAuditedView(tableToken)) {
-            // Dropping is the only route by which an audited view loses its auditing - CREATE OR
-            // REPLACE and ALTER VIEW both carry the flag forward - so it is gated like setting it.
+            // Gated like setting the marking, because dropping the view removes it. ALTER VIEW does
+            // not: it rewrites the definition through ViewGraph.updateView, which carries the
+            // existing flag forward. Note for whoever adds a statement that REPLACES a view rather
+            // than altering it - the create path builds a fresh ViewDefinition and takes the flag
+            // from the statement, not from what is already on disk, so such a statement would clear
+            // the marking without ever reaching this check.
             sqlExecutionContext.getSecurityContext().authorizeAuditView();
         }
 
@@ -5949,6 +5953,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * {@code isProtected()}, which denies every kind of access: a table can be readable, writable
      * and truncatable by anyone holding the permission, yet still be one the database refuses to
      * let go of. Overridden by Enterprise for the view audit table.
+     * <p>
+     * Consulted on the two routes that drop a <b>table</b> - {@code DROP TABLE} and
+     * {@code DROP ALL TABLES} - and on neither of the view, materialized view or live view drops,
+     * which have their own statements. A view cannot be made undroppable this way.
      */
     protected void checkTableDroppable(TableToken tableToken) {
     }

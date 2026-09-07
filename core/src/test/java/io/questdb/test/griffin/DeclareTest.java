@@ -980,6 +980,40 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testLiteralListCannotNestInAnotherList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG)");
+            execute("INSERT INTO k VALUES ('a',1),('b',2)");
+            drainWalQueue();
+            // The same mistake written out rather than through a variable. It has to be refused for
+            // the same reason, and more sharply: the expression parser reads `('b','c')` as a
+            // parenthesised scalar and evaluates it to its last member, so this silently meant
+            // `('a','c')` and dropped 'b'. Losing members without saying so is the behaviour a
+            // declared list exists to replace, so it cannot be the behaviour a declared list has.
+            assertQuery("DECLARE @x := ('a', ('b','c')) SELECT s FROM k WHERE s IN @x")
+                    .fails(20, "nested lists are not supported");
+            // ...and in first position, where the element start is found differently.
+            assertQuery("DECLARE @x := (('x','y'), 'z') SELECT s FROM k WHERE s IN @x")
+                    .fails(15, "nested lists are not supported");
+            // A bracketed element with no separator is not a nested list. It is a parenthesised
+            // scalar, and it keeps working exactly as it does anywhere else.
+            assertQuery("DECLARE @x := ((1+1), 3) SELECT l FROM k WHERE l IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            2
+                            """);
+            // Nor is a function call, whose commas belong to the call.
+            assertQuery("DECLARE @x := (greatest(1, 2), 9) SELECT l FROM k WHERE l IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            2
+                            """);
+        });
+    }
+
+    @Test
     public void testDeclaredListLookaheadSkipsCommentsAndQuotes() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE k (s SYMBOL)");

@@ -3874,7 +3874,29 @@ public class SqlParser {
         // place. A shared scratch list could not be used here: an element may hold a subquery
         // carrying its own DECLARE, which re-enters this method while this list is still open.
         final ExpressionNode list = expressionNodePool.next().of(ExpressionNode.VALUE_LIST, "()", 0, listPos);
+        boolean firstElement = true;
         while (true) {
+            // A bracketed element that holds its own separator is a nested list, and refusing it is
+            // the point: the expression parser reads `('b','c')` as a parenthesised scalar and
+            // evaluates it to its last member, so `('a', ('b','c'))` would quietly become
+            // `('a','c')`. Discarding members without saying so is what a declared list exists to
+            // stop doing, and the variable spelling of the same mistake - `@b := (@a, 'z')` - is
+            // already refused. The same lookahead that decided this was a list decides it for the
+            // element, so the two agree by construction. `(1+2)` has no separator and stays a
+            // parenthesised scalar, as it does anywhere else.
+            //
+            // Where the element starts differs between the first member and the rest: nothing is
+            // unparsed after the opening bracket, so getPosition() is the read offset there, while
+            // every later member has had its first token read and pushed back, which leaves
+            // getPosition() past it and lastTokenPosition() on it.
+            final CharSequence content = lexer.getContent();
+            final int elementStart = firstElement
+                    ? skipIgnorable(content, lexer.getPosition(), content.length())
+                    : lexer.lastTokenPosition();
+            if (isValueListAhead(content, elementStart)) {
+                throw SqlException.$(elementStart, "nested lists are not supported, list members have to be values");
+            }
+            firstElement = false;
             final ExpressionNode element = expr(lexer, model, sqlParserCallback, model.getDecls(), null);
             if (element == null) {
                 throw SqlException.$(lexer.lastTokenPosition(), "value expected in list");
