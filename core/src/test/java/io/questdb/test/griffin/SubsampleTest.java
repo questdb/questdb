@@ -5921,6 +5921,30 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSdtCancellationKeepsMidSeriesPoint() throws Exception {
+        // F1-SDT-CANCEL red test (SUBSAMPLE form): with anchor -1e20, the middle point's
+        // tolerance numerators (value +/- compdev) - anchorValue BOTH flush to exactly 1e20
+        // (half-ULP at 1e20 is 8192, absorbing deviation 1000 and compdev 1.0 alike), the
+        // pre-fix equal-numerator exemption skipped the corridor restart, and the fused
+        // keep-set dropped the middle row: reconstruction read 0.0 where the stored value is 1000.0, 500x the
+        // 2 * compdev bound. All three doubles are exactly representable and not collinear,
+        // so all three rows must survive.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO x VALUES " +
+                    "(-1e20, 1::timestamp),(1000.0, 2::timestamp),(1e20, 3::timestamp)");
+            assertQuery("SELECT ts, price FROM x SUBSAMPLE sdt(price, 1.0)")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tprice
+                            1970-01-01T00:00:00.000001Z\t-1.0E20
+                            1970-01-01T00:00:00.000002Z\t1000.0
+                            1970-01-01T00:00:00.000003Z\t1.0E20
+                            """);
+        });
+    }
+
+    @Test
     public void testSdtMatchesCapturedGolden() throws Exception {
         // A monotonic ramp stays inside the swinging door and keeps only its endpoints.
         assertMemoryLeak(() -> {

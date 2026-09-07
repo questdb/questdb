@@ -381,6 +381,14 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public boolean pass2NeedsBaseRecord() {
+            // pass2 drives entirely off the pass1-derived `selected` ordinal list and the running
+            // pass2Ordinal counter; it never reads the base Record. Lets the cached executor skip
+            // the per-row random-access base re-read in its pass2 loop.
+            return false;
+        }
+
+        @Override
         public void preparePass2() {
             long totalRows = count;
             selected.clear();

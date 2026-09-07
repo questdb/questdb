@@ -113,17 +113,22 @@ public class SwingingDoor {
             sink.mark(index, true);
             return;
         }
-        // The mirror hazard at the small end: distinct tolerance numerators whose quotients
-        // round to the same double mean the DIVISION destroyed the corridor's width - subnormal
-        // flush, e.g. a 1e-320 peak over a 1e6-tick span, where the slope-domain ULP dwarfs
-        // 2 * compdev / dt. Deviations still representable in the value domain become invisible
-        // to the doors-crossed test, and points get dropped at many times the stated
-        // 2 * compdev reconstruction bound; keeping the point and restarting is the only
-        // decision that provably honors it. Equal numerators (nU == nL) are exempt: there the
-        // compdev fell below the VALUE domain's resolution, the corridor legitimately degrades
-        // to exact-collinearity of the stored doubles, and drops stay bound-honoring - the
-        // 2^53 long-cast test pins that contract. compdev == 0 is exempt for the same reason.
-        if (compdev > 0 && sU == sL && nU != nL) {
+        // The mirror hazard at the small end: the doors-crossed test cannot see a cross once
+        // the two tolerance slopes round to the same double. Either stage of the slope
+        // computation can cause the collapse: the DIVISION (subnormal flush, e.g. a 1e-320
+        // peak over a 1e6-tick span, where the slope-domain ULP dwarfs 2 * compdev / dt), or
+        // the SUBTRACTION producing the numerators (cancellation against a large anchor gap,
+        // e.g. anchor -1e20 vs value 1000 at compdev 1: (value +/- compdev) - anchorValue
+        // absorbs the deviation and the tolerance alike, so nU == nL even though the stored
+        // doubles are exactly representable and NOT collinear - equal numerators only prove
+        // 2 * compdev fell below the ULP of the anchor-gap-dominated difference, not below
+        // the data's own resolution). In both cases the arithmetic cannot certify the stated
+        // 2 * compdev reconstruction bound, and a surviving zero-width corridor drops points
+        // at unbounded multiples of it; keeping the point and restarting is the only decision
+        // that provably honors the bound. compdev == 0 is exempt: a zero-width corridor is
+        // then the requested semantics - sdt(ts, v, 0) drops points collinear in double
+        // arithmetic (pinned by the compdev == 0 tests).
+        if (compdev > 0 && sU == sL) {
             anchor(index, ts, value);
             sink.mark(index, true);
             return;
@@ -157,12 +162,13 @@ public class SwingingDoor {
                 sink.mark(index, true);
                 return;
             }
-            if (compdev > 0 && slopeHi == slopeLo && nU2 != nL2) {
-                // same division-collapse hazard against the just-promoted anchor: the
-                // numerators are re-derived from its value and divided by dt2, so they can
-                // flush equal even though the pre-cross pair over dt stayed distinct (e.g. a
-                // flat step whose +/-compdev numerators flush to +/-0.0). Restart rather than
-                // keep a zero-width corridor alive.
+            if (compdev > 0 && slopeHi == slopeLo) {
+                // same collapse hazard against the just-promoted anchor: the numerators are
+                // re-derived from its value and divided by dt2, so they can collapse even
+                // though the pre-cross pair over dt stayed distinct - by division (e.g. a
+                // flat step whose +/-compdev numerators flush to +/-0.0) or by cancellation
+                // (the promoted anchor's gap absorbs 2 * compdev in the subtraction).
+                // Restart rather than keep a zero-width corridor alive.
                 anchor(index, ts, value);
                 sink.mark(index, true);
                 return;

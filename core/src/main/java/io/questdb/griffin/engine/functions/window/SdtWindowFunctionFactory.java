@@ -77,6 +77,14 @@ import org.jetbrains.annotations.Nullable;
  * {@code SubsampleFuzzTest.testSdtCompressionBandInvariants}, whose fuzzing drives the observed
  * worst-case ratio to ~1.9x {@code compdev}.
  * <p>
+ * {@code compdev == 0} drops points that are collinear in double arithmetic. For
+ * {@code compdev > 0}, whenever the two tolerance slopes collapse to the same double - because
+ * {@code compdev} sits below the ULP of the working magnitudes (the values themselves, the gap
+ * to the last kept point, or the slope after division) - the arithmetic cannot certify the
+ * {@code 2 * compdev} bound, so {@link SwingingDoor} keeps the point and restarts the corridor
+ * instead of dropping at uncertifiable error. Such sub-ULP configurations therefore compress
+ * nothing; choose {@code compdev} at or above the data's representable resolution.
+ * <p>
  * ORDER BY is required and custom framing is not allowed. PARTITION BY is supported via a
  * map-backed per-partition {@link SwingingDoor} state (see {@link SdtOverPartitionFunction}).
  */
@@ -334,6 +342,14 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public boolean pass2NeedsBaseRecord() {
+            // pass2 reads only the function's own keep-byte buffer that pass1 filled in the same
+            // traversal order; it never reads the base Record. Lets the cached executor skip the
+            // per-row random-access base re-read in its pass2 loop.
+            return false;
+        }
+
+        @Override
         public void preparePass2() {
             readOffset = 0;
         }
@@ -537,6 +553,15 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
             byte keep = mem.getByte(readOffset);
             readOffset += RECORD_SIZE;
             Unsafe.getUnsafe().putByte(spi.getAddress(recordOffset, columnIndex), keep);
+        }
+
+        @Override
+        public boolean pass2NeedsBaseRecord() {
+            // pass2 reads only the function's own keep-byte buffer, replayed in the same retained
+            // traversal order pass1 appended it (recordAt positioning never affects that order);
+            // it never reads the base Record or the partition map. Lets the cached executor skip
+            // the per-row random-access base re-read in its pass2 loop.
+            return false;
         }
 
         @Override

@@ -398,14 +398,17 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testLongValueGoesThroughImplicitDoubleCast() throws Exception {
-        // F2-M4-LONG preservation control (green pre-fix, must stay green): sdt does NOT share
-        // BucketSelectWindowFunction's buffer. Its signature is sdt(NDd) - the value slot is
-        // DOUBLE - so a LONG column reaches the function through the parser's implicit
-        // LONG -> DOUBLE cast, the same SQL-level semantics as writing v::double. Its compdev
-        // tolerance is itself a double, so sdt's compression contract is double-domain by
-        // construction: 2^53 and 2^53 + 1 are the same double, the series is a flat line within
-        // any band, and only the endpoints are kept. This pins that contract; the
-        // integral-exactness repair to minmax/m4 must not alter sdt.
+        // F2-M4-LONG cast pin: sdt does NOT share BucketSelectWindowFunction's buffer. Its
+        // signature is sdt(NDd) - the value slot is DOUBLE - so a LONG column reaches the
+        // function through the parser's implicit LONG -> DOUBLE cast, the same SQL-level
+        // semantics as writing v::double: 2^53 and 2^53 + 1 are the same double, so the
+        // corridor sees a flat series. With compdev 0.5 below the ULP at 2^53 (which is 2.0),
+        // both tolerance numerators collapse (nU == nL == 0) and the arithmetic cannot certify
+        // the 2 * compdev bound, so sdt keeps every row (F1-SDT-CANCEL: a collapsed corridor
+        // with positive compdev always restarts; the earlier middle-row drop was an artifact
+        // of the deleted nU != nL exemption, not of the cast). Exact-collinearity dropping
+        // remains available via compdev == 0. The integral-exactness repair to minmax/m4 must
+        // not alter sdt.
         assertQuery("select ts, v, sdt(ts, v, 0.5) over (order by ts) keep from t")
                 .ddl("create table t (ts timestamp, v long) timestamp(ts)",
                         """
@@ -419,8 +422,109 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
                 .returns("""
                         ts\tv\tkeep
                         1970-01-01T00:00:00.000001Z\t9007199254740992\ttrue
-                        1970-01-01T00:00:00.000002Z\t9007199254740993\tfalse
+                        1970-01-01T00:00:00.000002Z\t9007199254740993\ttrue
                         1970-01-01T00:00:00.000003Z\t9007199254740992\ttrue
                         """);
+    }
+
+    @Test
+    public void testCancellationCollapseKeepsMidSeriesPoint() throws Exception {
+        // F1-SDT-CANCEL red test: with anchor -1e20, BOTH tolerance numerators of the middle
+        // point flush to exactly 1e20 - the half-ULP at 1e20 is 8192, so the SUBTRACTION
+        // (value +/- compdev) - anchorValue absorbs deviation 1000 and compdev 1.0 alike.
+        // Pre-fix, nU == nL exempted the division-collapse restart in SwingingDoor, the
+        // zero-width corridor swallowed the middle row, and reconstruction between the kept
+        // endpoints read 0.0 where the stored value is 1000.0: 500x the documented
+        // 2 * compdev bound.
+        // All three stored doubles are exactly representable (1e20 = 2^20 * 5^20, 5^20 < 2^53)
+        // and NOT collinear, so all three rows must be kept.
+        assertQuery("select ts, val, sdt(ts, val, 1.0) over (order by ts) keep from tab")
+                .ddl(DDL, "insert into tab values " +
+                        "(1::timestamp,-1e20),(2::timestamp,1000.0),(3::timestamp,1e20)")
+                .timestamp("ts")
+                .expectSize()
+                .returns(
+                        "ts\tval\tkeep\n" +
+                                "1970-01-01T00:00:00.000001Z\t-1.0E20\ttrue\n" +
+                                "1970-01-01T00:00:00.000002Z\t1000.0\ttrue\n" +
+                                "1970-01-01T00:00:00.000003Z\t1.0E20\ttrue\n"
+                );
+    }
+
+    @Test
+    public void testCancellationCollapsePartitionedKeepsMidSeriesPoint() throws Exception {
+        // F1-SDT-CANCEL red test, partitioned form: the same cancellation collapse through the
+        // map-backed per-partition SwingingDoor state (SdtOverPartitionFunction saves and
+        // reloads the corridor between interleaved rows). Each symbol carries the
+        // (-1e20, 1000, 1e20) series; every row must be kept in both partitions.
+        assertQuery("select ts, sym, val, sdt(ts, val, 1.0) over (partition by sym order by ts) keep from tab")
+                .ddl("create table tab (ts timestamp, sym symbol, val double) timestamp(ts)",
+                        "insert into tab values " +
+                                "(1::timestamp,'a',-1e20),(2::timestamp,'b',-1e20)," +
+                                "(3::timestamp,'a',1000.0),(4::timestamp,'b',1000.0)," +
+                                "(5::timestamp,'a',1e20),(6::timestamp,'b',1e20)")
+                .timestamp("ts")
+                .expectSize()
+                .returns(
+                        "ts\tsym\tval\tkeep\n" +
+                                "1970-01-01T00:00:00.000001Z\ta\t-1.0E20\ttrue\n" +
+                                "1970-01-01T00:00:00.000002Z\tb\t-1.0E20\ttrue\n" +
+                                "1970-01-01T00:00:00.000003Z\ta\t1000.0\ttrue\n" +
+                                "1970-01-01T00:00:00.000004Z\tb\t1000.0\ttrue\n" +
+                                "1970-01-01T00:00:00.000005Z\ta\t1.0E20\ttrue\n" +
+                                "1970-01-01T00:00:00.000006Z\tb\t1.0E20\ttrue\n"
+                );
+    }
+
+    @Test
+    public void testCancellationCollapseAfterDoorsCrossKeepsPendingPoint() throws Exception {
+        // F1-SDT-CANCEL red test for the post-cross site: values 0, -2^80, 2^80, 3*2^80 + 2^29
+        // with compdev 2e8. Against the first anchor compdev survives (half-ULP at 2^80 is
+        // 2^27 ~ 1.34e8 < 2e8), so the pre-cross numerators stay distinct and the doors cross
+        // at the third point. The promoted anchor is -2^80, and there the re-derived numerators
+        // 2^81 +/- 2e8 BOTH flush to the same double (half-ULP at 2^81 is 2^28 ~ 2.68e8 > 2e8):
+        // pre-fix, nU2 == nL2 exempted the post-cross restart, the zero-width corridor
+        // survived, and the fourth point slid along it, dropping the third row. A restart on the collapsed
+        // corridor keeps all four rows. (A shape whose outcome hinges on the post-cross
+        // exemption ALONE cannot exist: any later no-cross point against a
+        // cancellation-collapsed corridor has itself-collapsed numerators, so this red flips
+        // under either site's fix - it pins that the post-cross path restarts too.)
+        assertQuery("select ts, sdt(ts, val, 2e8) over (order by ts) keep from tab")
+                .ddl(DDL, "insert into tab values " +
+                        "(1::timestamp,0.0)," +
+                        "(2::timestamp,-1.2089258196146292e24)," + // -2^80
+                        "(3::timestamp,1.2089258196146292e24)," + // 2^80
+                        "(4::timestamp,3.626777458843888e24)") // 3*2^80 + 2^29
+                .timestamp("ts")
+                .expectSize()
+                .returns(
+                        "ts\tkeep\n" +
+                                "1970-01-01T00:00:00.000001Z\ttrue\n" +
+                                "1970-01-01T00:00:00.000002Z\ttrue\n" +
+                                "1970-01-01T00:00:00.000003Z\ttrue\n" +
+                                "1970-01-01T00:00:00.000004Z\ttrue\n"
+                );
+    }
+
+    @Test
+    public void testCompdevZeroDropsDoubleArithmeticCollinearPoints() throws Exception {
+        // F1-SDT-CANCEL contract pin (green pre-fix, must stay green post-fix): compdev == 0
+        // asks for exact-collinearity filtering, and "exact" means double arithmetic. Here
+        // 1000.0 - (-1e20) and 1e20 - (-1e20) evaluate to slopes 1e20 and 1e20 in doubles, so
+        // the middle row reads as exactly on the line even though the real values are not
+        // collinear. The cancellation-collapse restart applies only to compdev > 0 (that
+        // conjunct guards it); sdt(ts, val, 0) keeps dropping double-collinear points rather
+        // than degrading to keep-everything whenever a subtraction is inexact.
+        assertQuery("select ts, val, sdt(ts, val, 0.0) over (order by ts) keep from tab")
+                .ddl(DDL, "insert into tab values " +
+                        "(1::timestamp,-1e20),(2::timestamp,1000.0),(3::timestamp,1e20)")
+                .timestamp("ts")
+                .expectSize()
+                .returns(
+                        "ts\tval\tkeep\n" +
+                                "1970-01-01T00:00:00.000001Z\t-1.0E20\ttrue\n" +
+                                "1970-01-01T00:00:00.000002Z\t1000.0\tfalse\n" +
+                                "1970-01-01T00:00:00.000003Z\t1.0E20\ttrue\n"
+                );
     }
 }

@@ -333,13 +333,51 @@ public class SwingingDoorTest {
     }
 
     @Test
-    public void testSubUlpCompdevCompressesInValueDomain() {
-        // the benign twin of the collapse cases above: compdev = 1e-20 sits below the ULP of
-        // values ~O(1), so BOTH tolerance numerators collapse to the same double (nU == nL).
-        // That is value-domain quantization, not division underflow: the corridor degrades to
-        // exact-collinearity of the stored doubles and drops stay bound-honoring, so the
-        // guard must stay out of the way (same contract the 2^53 long-cast SQL test pins).
+    public void testSubUlpCompdevKeepsAllPoints() {
+        // compdev = 1e-20 sits below the ULP of values ~O(1), so BOTH tolerance numerators
+        // collapse to the same double (nU == nL == 0.0). A sub-ULP positive compdev means
+        // the arithmetic cannot certify the 2 * compdev reconstruction bound, so sdt keeps
+        // every point instead of dropping at uncertifiable error (F1-SDT-CANCEL: nU == nL no
+        // longer exempts the collapse restart, because equal numerators can equally come
+        // from cancellation against a large anchor gap where the stored doubles are exact
+        // and NOT collinear - see testCancellationCollapsedNumeratorsKeepMidSeriesPoint).
+        // Exact-collinearity dropping remains available via compdev == 0, pinned by
+        // testCompdevZeroKeepsNonCollinear and the compdev == 0 SQL pins.
         boolean[] k = run(new long[]{1, 2, 3, 4}, new double[]{1, 1, 1, 1}, 1e-20);
-        Assert.assertArrayEquals(new boolean[]{true, false, false, true}, k);
+        Assert.assertArrayEquals(new boolean[]{true, true, true, true}, k);
+    }
+
+    // ---- tolerance-numerator cancellation: corridor width erased by the SUBTRACTION ----
+
+    @Test
+    public void testCancellationCollapsedNumeratorsKeepMidSeriesPoint() {
+        // F1-SDT-CANCEL red test: against anchor -1e20, BOTH tolerance numerators of the middle
+        // point - (1000 +/- 1.0) - (-1e20) - round to exactly 1e20: the half-ULP at 1e20 is
+        // 8192, so the subtraction absorbs deviation 1000 and compdev 1.0 alike. Equal
+        // numerators must not exempt the collapse restart: the corridor did NOT degrade to
+        // exact-collinearity of the stored doubles (all three are exactly representable and
+        // not collinear); compdev merely fell below the ULP of the ANCHOR GAP. Dropping the
+        // middle point puts the reconstruction at 0.0 vs the stored 1000.0 - 500x the
+        // 2 * compdev bound, and the ratio is unbounded in the anchor gap.
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{-1e20, 1000.0, 1e20}, 1.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testCancellationCollapseInDoorsCrossedRecompute() {
+        // F1-SDT-CANCEL red test for the post-cross recompute site: compdev 2e8 survives the
+        // pre-cross numerators at magnitude 2^80 (half-ULP 2^27 ~ 1.34e8), the doors cross at
+        // idx2, but against the promoted anchor -2^80 the re-derived numerators 2^81 +/- 2e8
+        // BOTH round to the same double (half-ULP at 2^81 is 2^28 ~ 2.68e8 > 2e8). The
+        // zero-width corridor must restart rather than survive; pre-fix idx3 slides along it
+        // and drops idx2. (No shape can hinge on the post-cross exemption ALONE: any later
+        // no-cross point against a cancellation-collapsed corridor has itself-collapsed
+        // numerators, so this pins the post-cross restart jointly with the main site.)
+        boolean[] k = run(
+                new long[]{0, 1, 2, 3},
+                new double[]{0, -1.2089258196146292e24, 1.2089258196146292e24, 3.626777458843888e24}, // 0, -2^80, 2^80, 3*2^80 + 2^29
+                2e8
+        );
+        Assert.assertArrayEquals(new boolean[]{true, true, true, true}, k);
     }
 }
