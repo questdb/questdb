@@ -4946,11 +4946,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             newFactory = compiledQuery.getRecordCursorFactory();
                             // This cursor exists to report column types, not to hand anyone rows.
                             // Flag it so that an audited view in the SELECT does not record a read.
+                            // The flag covers the cursor open only: the compile above runs with it
+                            // clear, so whatever consumes it has to emit at open, not at generate.
+                            // Restored rather than cleared - any execution context may set this, so
+                            // an outer probe has to survive an inner one.
+                            final boolean wasMetadataProbe = executionContext.isMetadataProbe();
                             executionContext.setMetadataProbe(true);
                             try {
                                 newCursor = newFactory.getCursor(executionContext);
                             } finally {
-                                executionContext.setMetadataProbe(false);
+                                executionContext.setMetadataProbe(wasMetadataProbe);
                             }
                             break;
                         } catch (TableReferenceOutOfDateException e) {

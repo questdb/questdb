@@ -132,6 +132,83 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateViewOverAuditedViewRecordsTheRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            markViewAudited("v");
+            // Defining a second view over an audited one is a read of it: rows leave the audited
+            // view either way, and the statement that copies them out is the one that has to say
+            // so. The column-type probe CREATE VIEW runs over its own body is a different thing
+            // and is suppressed separately - see isMetadataProbe.
+            assertRecordsOneAuditOf("v", "CREATE VIEW v2 AS (SELECT s FROM v)");
+        });
+    }
+
+    @Test
+    public void testDefinitionBlockOrderDoesNotDecideTheFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            final TableToken viewToken = engine.getTableTokenIfExists("v");
+
+            // append() writes the definition block first, so this order is not one the current
+            // writer produces. It is asserted because readFrom() walks blocks in whatever order it
+            // finds them, and reading the definition block resets the flag: with the extra block
+            // read first, the flag was silently dropped. A compliance marking has to survive a
+            // reader that claims not to care about order, or the loop should not claim it.
+            final ViewDefinition audited = new ViewDefinition();
+            audited.init(viewToken, "SELECT s FROM t", 5L, true);
+            try (
+                    BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+                    Path path = new Path()
+            ) {
+                path.of(configuration.getDbRoot()).concat(viewToken.getDirName()).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
+                writer.of(path.$());
+                final AppendableBlock extra = writer.append();
+                ViewDefinition.appendExtra(audited, extra);
+                extra.commit(ViewDefinition.VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE);
+                final AppendableBlock block = writer.append();
+                ViewDefinition.append(audited, block);
+                block.commit(ViewDefinition.VIEW_DEFINITION_FORMAT_MSG_TYPE);
+                writer.commit();
+            }
+
+            final ViewDefinition readBack = readDefinitionFile(viewToken);
+            assertTrue("the audited flag must not depend on block order", readBack.isAudited());
+            assertEquals("SELECT s FROM t", readBack.getViewSql());
+            assertEquals(5L, readBack.getSeqTxn());
+        });
+    }
+
+    @Test
+    public void testShowCreateViewReportsTheAuditedFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            final TableToken viewToken = engine.getTableTokenIfExists("v");
+
+            // SHOW CREATE VIEW reads the _view file rather than the graph, so marking the view
+            // through ViewGraph - what every other test here does - would not reach it.
+            // noRandomAccess: SHOW CREATE VIEW builds its one row on the fly, so the cursor cannot
+            // be re-positioned the way a table scan can.
+            assertQuery("SHOW CREATE VIEW v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("ddl\nCREATE VIEW 'v' AS ( \nSELECT s FROM t\n);\n");
+
+            final ViewDefinition audited = new ViewDefinition();
+            audited.init(viewToken, "SELECT s FROM t", 0L, true);
+            writeDefinitionFile(viewToken, audited);
+
+            // The flag's only user-visible surface in OSS. WITH AUDIT is an Enterprise clause, so
+            // what this round-trips into is an Enterprise statement - which is the point: the
+            // definition has to report the marking it is actually carrying.
+            assertQuery("SHOW CREATE VIEW v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("ddl\nCREATE VIEW 'v' AS ( \nSELECT s FROM t\n) WITH AUDIT;\n");
+        });
+    }
+
+    @Test
     public void testDefinitionFileWithoutADefinitionBlockIsRejected() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTableAndView();

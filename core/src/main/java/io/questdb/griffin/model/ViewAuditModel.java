@@ -48,6 +48,12 @@ import io.questdb.std.ObjectFactory;
  * <p>
  * Parameters are sorted by name at capture, so that the JSON rendered from them is canonical and
  * two reads with the same arguments produce byte-identical audit rows.
+ * <p>
+ * <b>Lifetime.</b> Instances come from the parser's own pool and are recycled by
+ * {@code SqlParser.clear()}, which the compiler runs at the start of every compile. They are
+ * therefore valid only for the compilation that produced them - unlike the {@code ViewDefinition}s
+ * {@link IQueryModel#getReferencedViews()} hands back, which {@code ViewGraph} owns and which
+ * outlive it. Anything needing an audit beyond compile time has to copy out what it needs.
  */
 public class ViewAuditModel implements Mutable {
     public static final ObjectFactory<ViewAuditModel> FACTORY = ViewAuditModel::new;

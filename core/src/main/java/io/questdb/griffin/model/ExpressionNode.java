@@ -790,7 +790,11 @@ public class ExpressionNode implements Mutable, Sinkable {
             return false;
         }
 
-        if (groupByArgsSize < 3) {
+        // Same VALUE_LIST carve-out as compareArgsExact and deepHashCode: it keeps its members in
+        // args at any size and has no lhs/rhs, so the short-node path would compare two different
+        // lists as equal. Guarded here too so the three agree - a marker is not meant to reach any
+        // of them, and if one ever does, it should not be this one that quietly says "same".
+        if (groupByArgsSize < 3 && groupByExpr.type != VALUE_LIST && columnExpr.type != VALUE_LIST) {
             return compareNodesGroupBy(groupByExpr.lhs, columnExpr.lhs, translatingModel)
                     && compareNodesGroupBy(groupByExpr.rhs, columnExpr.rhs, translatingModel);
         }

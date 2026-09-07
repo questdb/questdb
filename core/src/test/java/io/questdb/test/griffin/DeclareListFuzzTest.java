@@ -85,6 +85,23 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
                             + "\n  expected: " + expected.replace('\n', '/')
                             + "\n  detail  : " + e.getMessage(), e);
                 }
+
+                // Matching rows is the weaker half of the property. The splice also has to produce
+                // the same NODE as the written-out list, and only the plan shows that: a one-member
+                // list that kept the operator node type returned exactly these rows while quietly
+                // dropping off the JIT filter path. Comparing plans is what catches that class of
+                // divergence - anything that routes on node shape shows up here first.
+                printSql("EXPLAIN " + written);
+                final String writtenPlan = sink.toString();
+                printSql("EXPLAIN " + declared);
+                final String declaredPlan = sink.toString();
+                if (!writtenPlan.equals(declaredPlan)) {
+                    throw new AssertionError("spliced list plans differently from the written-out list"
+                            + "\n  written : " + written
+                            + "\n  declared: " + declared
+                            + "\n  plan(written) : " + writtenPlan.replace('\n', '/')
+                            + "\n  plan(declared): " + declaredPlan.replace('\n', '/'));
+                }
             }
             // A fuzz run that never reached these shapes would prove nothing about them.
             assertTrue("no one-member lists generated", oneMemberLists > 0);

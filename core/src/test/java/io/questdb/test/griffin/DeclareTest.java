@@ -851,10 +851,11 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             // A list is the set of values IN tests against, so it cannot also be the value under
-            // test. The position is the declaration's, as it is for any substituted variable.
+            // test. The position is the declaration's opening bracket, as it is for any substituted
+            // variable - the misuse site is not where the list was written.
             assertQuery("DECLARE @symbols := ('ETH-USD', 'BTC-USD') " +
                     "SELECT * FROM trades WHERE @symbols IN @symbols")
-                    .fails(19, "declared list can only be used on the right-hand side of IN");
+                    .fails(20, "declared list can only be used on the right-hand side of IN");
         });
     }
 
@@ -962,9 +963,9 @@ public class DeclareTest extends AbstractSqlParserTest {
             // A bare list is no more usable here than anywhere else, and has to say so rather than
             // leak the marker downstream.
             assertQuery("DECLARE @x := ('a','b') SELECT row_number() OVER (PARTITION BY @x) FROM k")
-                    .fails(13, "declared list can only be used on the right-hand side of IN");
+                    .fails(14, "declared list can only be used on the right-hand side of IN");
             assertQuery("DECLARE @x := ('a','b') SELECT count() OVER (ORDER BY @x) FROM k")
-                    .fails(13, "declared list can only be used on the right-hand side of IN");
+                    .fails(14, "declared list can only be used on the right-hand side of IN");
         });
     }
 
@@ -974,7 +975,7 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute("CREATE TABLE k (s SYMBOL)");
             // Flattening one list into another is not supported; `IN (@a, 'z')` already covers it.
             assertQuery("DECLARE @a := ('x','y'), @b := (@a, 'z') SELECT s FROM k WHERE s IN @b")
-                    .fails(13, "declared list can only be used on the right-hand side of IN");
+                    .fails(14, "declared list can only be used on the right-hand side of IN");
         });
     }
 
@@ -1041,9 +1042,21 @@ public class DeclareTest extends AbstractSqlParserTest {
             // A list has no value of its own, so anything other than IN is a mistake worth naming
             // at parse time rather than leaving to fail obscurely further down.
             assertQuery("DECLARE @s := ('ETH-USD', 'BTC-USD') SELECT @s FROM trades")
-                    .fails(13, "declared list can only be used on the right-hand side of IN");
+                    .fails(14, "declared list can only be used on the right-hand side of IN");
             assertQuery("DECLARE @s := ('ETH-USD', 'BTC-USD') SELECT * FROM trades WHERE symbol = @s")
-                    .fails(13, "declared list can only be used on the right-hand side of IN");
+                    .fails(14, "declared list can only be used on the right-hand side of IN");
+        });
+    }
+
+    @Test
+    public void testDeclaredEmptyListNamesTheMistake() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(TRADES_DDL);
+            // An empty bracket pair is a list with nothing in it, never a scalar, so the lookahead
+            // claims it. Left to the scalar parse it complained about ':=' having one argument,
+            // which describes the parser's predicament rather than the user's mistake.
+            assertQuery("DECLARE @s := () SELECT * FROM trades WHERE symbol IN @s")
+                    .fails(15, "value expected in list");
         });
     }
 
@@ -1135,6 +1148,39 @@ public class DeclareTest extends AbstractSqlParserTest {
                             a
                             c
                             """);
+        });
+    }
+
+    @Test
+    public void testDeclaredListOfOnePlansLikeTheWrittenOutList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG)");
+            execute("INSERT INTO k VALUES ('a',1),('b',2),('c',3)");
+            drainWalQueue();
+            // A one-member list is the case where the splice can produce the right rows through the
+            // wrong node: `IN @x` parses as an operator, `IN (2)` as a function, and only the
+            // second reaches the JIT filter. Rows cannot tell the two apart, so assert the plan -
+            // this is the shape that regressed while every row-level test stayed green.
+            final String longPlan = """
+                    Async JIT Filter workers: 1
+                      filter: l in [2]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: k
+                    """;
+            assertQuery("SELECT l FROM k WHERE l IN (2)").noLeakCheck().assertsPlan(longPlan);
+            assertQuery("DECLARE @x := (2,) SELECT l FROM k WHERE l IN @x").noLeakCheck().assertsPlan(longPlan);
+            assertQuery("DECLARE @x := (2,) SELECT l FROM k WHERE l IN (@x)").noLeakCheck().assertsPlan(longPlan);
+
+            final String symbolPlan = """
+                    Async JIT Filter workers: 1
+                      filter: s in [a]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: k
+                    """;
+            assertQuery("SELECT s FROM k WHERE s IN ('a')").noLeakCheck().assertsPlan(symbolPlan);
+            assertQuery("DECLARE @x := ('a',) SELECT s FROM k WHERE s IN @x").noLeakCheck().assertsPlan(symbolPlan);
         });
     }
 

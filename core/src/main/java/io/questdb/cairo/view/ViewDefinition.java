@@ -128,6 +128,12 @@ public class ViewDefinition implements Mutable {
         path.trimTo(rootLen).concat(viewToken.getDirName()).concat(VIEW_DEFINITION_FILE_NAME);
         reader.of(path.$());
         boolean definitionBlockFound = false;
+        // Collected rather than applied as it is read: readDefinitionBlock() ends in init(), which
+        // resets the flag, so an extra block read before the definition block would be silently
+        // undone by it. The loop is written to walk blocks in any order, and the flag has to
+        // survive that - a compliance marking that fails open on a reordered file is worse than
+        // one that fails loudly.
+        boolean audited = false;
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
@@ -138,7 +144,7 @@ public class ViewDefinition implements Mutable {
                 continue;
             }
             if (block.type() == VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE) {
-                readExtraBlock(destDefinition, block);
+                audited = readExtraBlock(block);
                 // Keep going rather than return: a file carrying the extra block but no definition
                 // block has no view SQL to build from, and returning here would hand back an empty
                 // definition instead of reaching the check below.
@@ -152,9 +158,9 @@ public class ViewDefinition implements Mutable {
                     .put(']');
         }
         // A file with no extra block is either a view created before auditing existed or one
-        // that never opted in - append() writes the block only when the flag is set.
-        // readDefinitionBlock() has already defaulted the flag to false, which reads correctly
-        // for both.
+        // that never opted in - append() writes the block only when the flag is set. Both read
+        // back as not audited, which is the local's initial value.
+        destDefinition.audited = audited;
     }
 
     @Override
@@ -264,8 +270,12 @@ public class ViewDefinition implements Mutable {
         destDefinition.init(viewToken, viewSqlStr, seqTxn, false);
     }
 
-    private static void readExtraBlock(ViewDefinition destDefinition, ReadableBlock block) {
+    /**
+     * Returns the flag rather than writing it, so that {@link #readFrom} owns when it is applied -
+     * see the comment there on block order.
+     */
+    private static boolean readExtraBlock(ReadableBlock block) {
         assert block.type() == VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE;
-        destDefinition.audited = block.getBool(0);
+        return block.getBool(0);
     }
 }

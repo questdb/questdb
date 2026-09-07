@@ -3752,6 +3752,12 @@ public class SqlParser {
         if (isWordAt(content, firstWord, len, "select") || isWordAt(content, firstWord, len, "with")) {
             return false;
         }
+        // An empty bracket pair is a list with nothing in it, never a scalar. Claiming it here
+        // costs nothing - it is invalid either way - and buys an error that names the mistake
+        // instead of the arity complaint the scalar parse produces for the same text.
+        if (firstWord < len && content.charAt(firstWord) == ')') {
+            return true;
+        }
         int depth = 0;
         while (i < len) {
             final char c = content.charAt(i);
@@ -3859,8 +3865,11 @@ public class SqlParser {
             IQueryModel model,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final int listPos = lexer.getPosition();
         expectTok(lexer, '(');
+        // Taken after the bracket is read, so that a misused list is reported at the bracket
+        // rather than at the whitespace in front of it - getPosition() before the read is the
+        // raw offset the last token left behind, which is wherever `:=` ended.
+        final int listPos = lexer.lastTokenPosition();
         // Members are appended in source order and reversed at the end, so the list is built in
         // place. A shared scratch list could not be used here: an element may hold a subquery
         // carrying its own DECLARE, which re-enters this method while this list is still open.
@@ -6650,24 +6659,26 @@ public class SqlParser {
             }
         }
         node.args.clear();
+        // Without brackets the parser builds IN as a binary operator - SET_OPERATION carrying
+        // lhs/rhs - while a written-out `IN (...)` is a FUNCTION. Expanding one into the other
+        // means adopting that type as well, whatever the member count: downstream, the JIT filter
+        // compiler routes on it, so a node left as SET_OPERATION silently drops off the JIT path
+        // while still returning the right rows. That is why the type is set on both branches, and
+        // why the equivalence is asserted on the plan and not only on the rows.
+        node.type = ExpressionNode.FUNCTION;
         if (spliced.size() == 2) {
             // A one-member list leaves IN with a single value to test against, which is the binary
-            // shape it was already parsed as: lhs and rhs, no args, and whichever type it came in
-            // with. Handing it the multi-argument shape instead leaves lhs null for everything
-            // downstream that reads it.
+            // shape `IN (a)` is parsed as: lhs and rhs, no args. Handing it the multi-argument
+            // shape instead leaves lhs null for everything downstream that reads it.
             node.rhs = spliced.getQuick(0);
             node.lhs = spliced.getQuick(1);
             node.paramCount = 2;
         } else {
-            // Without brackets the parser builds IN as a binary operator - SET_OPERATION carrying
-            // lhs/rhs - while a written-out `IN (a, b, c)` is a FUNCTION carrying args. Expanding
-            // one into the other means adopting that type as well: downstream, the JIT filter
-            // compiler routes on it, and reads lhs/rhs for an operator, which expansion emptied.
+            // The operator shape reads lhs/rhs, which expansion past two arguments empties.
             node.args.addAll(spliced);
             node.paramCount = spliced.size();
             node.lhs = null;
             node.rhs = null;
-            node.type = ExpressionNode.FUNCTION;
         }
     }
 
