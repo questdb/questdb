@@ -242,8 +242,24 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEgressTlsTerminatedProxyRejectsPlaintextOrigin() throws Exception {
+        // Fourth cell of the scheme matrix. With the proxy flag on, the
+        // connection counts as secure, so an http:// Origin is cross-scheme and
+        // must be rejected -- otherwise the flag would widen the gate to accept
+        // either scheme and re-open plaintext-origin CSWSH.
+        runWithFragmentedSendEgress(true, port -> assertCrossSchemeUpgradeRejected(port, "/read/v1", "http"));
+    }
+
+    @Test
     public void testIngressSameAuthorityCrossSchemeBrowserUpgradeIsRejected() throws Exception {
         runWithFragmentedSend(port -> assertCrossSchemeUpgradeRejected(port, "/write/v4"));
+    }
+
+    @Test
+    public void testIngressTlsTerminatedProxyRejectsPlaintextOrigin() throws Exception {
+        // Ingress counterpart of the egress case: the proxy flag must not make
+        // the gate scheme-agnostic.
+        runWithFragmentedSend(true, port -> assertCrossSchemeUpgradeRejected(port, "/write/v4", "http"));
     }
 
     @Test
@@ -257,9 +273,13 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     private static void assertCrossSchemeUpgradeRejected(int port, String path) throws Exception {
+        assertCrossSchemeUpgradeRejected(port, path, "https");
+    }
+
+    private static void assertCrossSchemeUpgradeRejected(int port, String path, String scheme) throws Exception {
         String request = "GET " + path + " HTTP/1.1\r\n"
                 + "Host: localhost:" + port + "\r\n"
-                + "Origin: https://localhost:" + port + "\r\n"
+                + "Origin: " + scheme + "://localhost:" + port + "\r\n"
                 + "Upgrade: websocket\r\n"
                 + "Connection: Upgrade\r\n"
                 + "Sec-WebSocket-Key: AQIDBAUGBwgJCgsMDQ4PEA==\r\n"
