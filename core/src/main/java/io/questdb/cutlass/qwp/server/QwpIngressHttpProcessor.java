@@ -255,6 +255,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         }
         return false;
     }
+
     /**
      * Returns an ASCII copy of a newly-created or rotated HTTP session cookie
      * for inclusion in a raw WebSocket 101 response, or {@code null} when the
@@ -271,6 +272,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         }
         return cookieValue.toString().getBytes(StandardCharsets.US_ASCII);
     }
+
     /**
      * Gets the WebSocket key from the request header.
      *
@@ -280,7 +282,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     public static Utf8Sequence getWebSocketKey(HttpRequestHeader header) {
         return header.getHeader(HEADER_SEC_WEBSOCKET_KEY);
     }
-
 
     /**
      * Checks if the Connection header contains "upgrade".
@@ -296,7 +297,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         // Perform case-insensitive token match for "upgrade"
         return containsUpgrade(connectionHeader);
     }
-
 
     /**
      * Returns {@code true} when a browser WebSocket Origin belongs to the HTTP
@@ -547,8 +547,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         }
         return offset;
     }
-
-
 
     /**
      * Writes the WebSocket handshake response to the given buffer.
