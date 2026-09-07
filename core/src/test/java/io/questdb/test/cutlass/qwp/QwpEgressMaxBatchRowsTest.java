@@ -40,12 +40,41 @@ public class QwpEgressMaxBatchRowsTest {
     }
 
     @Test
-    public void testHeaderTakesPrecedence() {
+    public void testLowerHeaderLimitWins() {
         Assert.assertEquals(
                 256,
                 QwpEgressUpgradeProcessor.negotiateMaxBatchRows(
                         new Utf8String("256"),
                         new Utf8String("512")
+                )
+        );
+    }
+
+    @Test
+    public void testLowerBrowserUrlLimitWinsOverProxyHeader() {
+        Assert.assertEquals(
+                512,
+                QwpEgressUpgradeProcessor.negotiateMaxBatchRows(
+                        new Utf8String("16384"),
+                        new Utf8String("512")
+                )
+        );
+    }
+
+    @Test
+    public void testMalformedCarrierDoesNotMaskValidLimit() {
+        Assert.assertEquals(
+                512,
+                QwpEgressUpgradeProcessor.negotiateMaxBatchRows(
+                        new Utf8String("invalid"),
+                        new Utf8String("512")
+                )
+        );
+        Assert.assertEquals(
+                256,
+                QwpEgressUpgradeProcessor.negotiateMaxBatchRows(
+                        new Utf8String("256"),
+                        new Utf8String("invalid")
                 )
         );
     }

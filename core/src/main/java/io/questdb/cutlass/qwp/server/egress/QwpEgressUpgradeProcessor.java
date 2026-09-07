@@ -283,13 +283,18 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     /**
      * Resolves the optional client batch-row preference. Native clients use
      * the upgrade header; browsers use the URL parameter because the browser
-     * WebSocket API cannot set custom headers. Header precedence preserves the
-     * existing behavior for reverse proxies that supply both.
+     * WebSocket API cannot set custom headers. When both are present, both
+     * limits apply and the lower valid value wins. This prevents a reverse
+     * proxy from widening the browser client's URL-bound limit by injecting a
+     * header.
      */
     public static int negotiateMaxBatchRows(Utf8Sequence headerValue, Utf8Sequence urlParamValue) {
-        Utf8Sequence requestedValue = headerValue != null ? headerValue : urlParamValue;
-        if (requestedValue != null) {
-            int clientRequested = Numbers.parseNonNegativeIntQuiet(requestedValue);
+        return Math.min(parseMaxBatchRows(headerValue), parseMaxBatchRows(urlParamValue));
+    }
+
+    private static int parseMaxBatchRows(Utf8Sequence value) {
+        if (value != null) {
+            int clientRequested = Numbers.parseNonNegativeIntQuiet(value);
             if (clientRequested > 0) {
                 return Math.min(clientRequested, MAX_ROWS_PER_BATCH);
             }
@@ -414,14 +419,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         state.setNegotiatedVersion((byte) negotiatedVersion);
         state.setCompression(negotiatedCodec, effectiveLevel);
         // Optional client preference for per-batch row cap. Browsers cannot
-        // set the header, so they carry the same preference in the URL. Absent
-        // or malformed values fall back to the server's hard cap. Values above
-        // the cap are clamped rather than rejecting the whole handshake.
+        // set the header, so they carry the same preference in the URL. Read
+        // both carriers because a proxy may add the header; the stricter valid
+        // value wins. Absent or malformed values fall back to the hard cap.
         Utf8Sequence maxBatchRowsHeader = requestHeader.getHeader(
                 QwpIngressHttpProcessor.HEADER_X_QWP_MAX_BATCH_ROWS);
-        Utf8Sequence maxBatchRowsUrlParam = maxBatchRowsHeader == null
-                ? requestHeader.getUrlParam(QwpIngressHttpProcessor.URL_PARAM_QWP_MAX_BATCH_ROWS)
-                : null;
+        Utf8Sequence maxBatchRowsUrlParam = requestHeader.getUrlParam(
+                QwpIngressHttpProcessor.URL_PARAM_QWP_MAX_BATCH_ROWS);
         int effectiveMaxBatchRows = negotiateMaxBatchRows(maxBatchRowsHeader, maxBatchRowsUrlParam);
         state.setMaxBatchRows(effectiveMaxBatchRows);
 
