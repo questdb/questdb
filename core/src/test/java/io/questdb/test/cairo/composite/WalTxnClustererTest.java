@@ -44,20 +44,53 @@ public class WalTxnClustererTest {
         clusterer.clear();
         clusterer.addTxnRange(0, 9_999);
         clusterer.addTxnRange(500_000, 509_999);
-        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 100, 10_000, 1_000_000, 7);
+        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 100, 10_000, 1_000_000);
         // cold runs: interior [1,49] (490k rows), trailing [51,99] (490k rows)
         assertCuts(cuts, 10_000, 500_000, 510_000);
     }
 
     @Test
-    public void testBudgetPrefersLargestGaps() {
+    public void testCutIsDroppedWhenItWouldLeaveAThinPiece() {
+        // Both cold gaps either side of a 10k-row hot stride qualify on their own, so the cold-run walk
+        // proposes cuts at both its edges. Taking both would leave the stride as a piece of 10k rows, under
+        // the 50k floor, so the second cut goes and the stride stays with the gap above it.
         clusterer.clear();
-        clusterer.addTxnRange(100_000, 199_999);
-        clusterer.addTxnRange(700_000, 799_999);
-        // budget 3: interior gap (500k rows, 2 cuts) wins, then trailing (200k rows, 1 cut);
-        // leading (100k rows) is dropped
-        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000, 3);
-        assertCuts(cuts, 200_000, 700_000, 800_000);
+        clusterer.addTxnRange(400_000, 409_999);
+        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 50_000, 1_000_000);
+        assertCuts(cuts, 400_000);
+
+        // A floor no piece of this partition can clear leaves it uncut.
+        clusterer.clear();
+        clusterer.addTxnRange(400_000, 409_999);
+        cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 700_000, 1_000_000);
+        assertCuts(cuts);
+    }
+
+    @Test
+    public void testEveryPieceClearsTheFloor() {
+        // Four hot strides, so the cold-run walk alone would propose eight cuts. Each piece the surviving
+        // cuts leave behind must still hold at least minPieceRows estimated rows.
+        clusterer.clear();
+        clusterer.addTxnRange(100_000, 109_999);
+        clusterer.addTxnRange(300_000, 309_999);
+        clusterer.addTxnRange(500_000, 509_999);
+        clusterer.addTxnRange(700_000, 709_999);
+        final long minPieceRows = 150_000;
+        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, minPieceRows, 1_000_000);
+        Assert.assertTrue("no cuts computed, the fixture proves nothing", cuts.size() > 0);
+        long pieceStart = 0;
+        for (int i = 0, n = cuts.size(); i < n; i++) {
+            final long cut = cuts.getQuick(i);
+            Assert.assertTrue(
+                    "piece [" + pieceStart + ", " + cut + ") is under the floor",
+                    cut - pieceStart >= minPieceRows
+            );
+            pieceStart = cut;
+        }
+        Assert.assertTrue(
+                "trailing piece [" + pieceStart + ", 1000000) is under the floor",
+                1_000_000 - pieceStart >= minPieceRows
+        );
     }
 
     @Test
@@ -66,7 +99,7 @@ public class WalTxnClustererTest {
         clusterer.addTxnRange(100_000, 199_999);
         clusterer.addTxnRange(700_000, 799_999);
         // leading [0,99] -> cut at hot edge; interior [200,699] -> two cuts; trailing [800,999] -> one
-        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000, 7);
+        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000);
         assertCuts(cuts, 100_000, 200_000, 700_000, 800_000);
     }
 
@@ -74,26 +107,22 @@ public class WalTxnClustererTest {
     public void testDegenerateInputs() {
         // no ranges
         clusterer.clear();
-        Assert.assertEquals(0, clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000, 7).size());
+        Assert.assertEquals(0, clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000).size());
         // t1 == t0
         clusterer.clear();
         clusterer.addTxnRange(0, 0);
-        Assert.assertEquals(0, clusterer.computeCuts(0, 0, 1000, 1000, 10_000, 1_000_000, 7).size());
-        // zero budget
-        clusterer.clear();
-        clusterer.addTxnRange(500_000, 500_999);
-        Assert.assertEquals(0, clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000, 0).size());
+        Assert.assertEquals(0, clusterer.computeCuts(0, 0, 1000, 1000, 10_000, 1_000_000).size());
         // empty partition
         clusterer.clear();
         clusterer.addTxnRange(500_000, 500_999);
-        Assert.assertEquals(0, clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 0, 7).size());
+        Assert.assertEquals(0, clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 0).size());
     }
 
     @Test
     public void testFullCoverageIsSingleMerge() {
         clusterer.clear();
         clusterer.addTxnRange(0, 999_999);
-        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000, 7);
+        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000);
         Assert.assertEquals(0, cuts.size());
     }
 
@@ -108,7 +137,7 @@ public class WalTxnClustererTest {
         // deliberately off the bin grid on both edges
         clusterer.addTxnRange(450_555, 460_111);
         clusterer.addTxnRange(700_000, 799_999);
-        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000, 7);
+        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000);
         Assert.assertTrue("no cuts computed, the fixture proves nothing", cuts.size() > 0);
         assertNoCutInside(cuts, 100_000, 199_999);
         assertNoCutInside(cuts, 450_555, 460_111);
@@ -122,7 +151,7 @@ public class WalTxnClustererTest {
         clusterer.addTxnRange(300_000, 500_000);
         clusterer.addTxnRange(400_000, 600_000);
         clusterer.addTxnRange(600_000, 649_999);
-        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000, 7);
+        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000);
         assertCuts(cuts, 300_000, 650_000);
     }
 
@@ -133,10 +162,10 @@ public class WalTxnClustererTest {
         clusterer.clear();
         clusterer.addTxnRange(100_000, 199_999);
         clusterer.addTxnRange(700_000, 799_999);
-        Assert.assertEquals(4, clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000, 7).size());
+        Assert.assertEquals(4, clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000).size());
         clusterer.clear();
         clusterer.addTxnRange(0, 999_999);
-        Assert.assertEquals(0, clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000, 7).size());
+        Assert.assertEquals(0, clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000).size());
     }
 
     @Test
@@ -146,7 +175,7 @@ public class WalTxnClustererTest {
         // blockTxnCount < 2 gate, so a single-transaction apply clusters too.
         clusterer.clear();
         clusterer.addTxnRange(500_000, 509_999);
-        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000, 7);
+        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000);
         // leading cold run [0,499] -> one cut at its hot edge; trailing [510,999] -> one cut at its
         assertCuts(cuts, 500_000, 510_000);
     }
@@ -157,7 +186,7 @@ public class WalTxnClustererTest {
         clusterer.addTxnRange(0, 199_999);
         clusterer.addTxnRange(205_000, 999_999);
         // interior gap [200,204] estimates 5000 rows < G=10000 -> folded, single merge
-        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000, 7);
+        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 1_000_000);
         Assert.assertEquals(0, cuts.size());
     }
 
@@ -167,7 +196,7 @@ public class WalTxnClustererTest {
         clusterer.clear();
         clusterer.addTxnRange(0, 199_999);
         clusterer.addTxnRange(205_000, 999_999);
-        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 10_000_000, 7);
+        LongList cuts = clusterer.computeCuts(0, 999_999, 1000, 1000, 10_000, 10_000_000);
         assertCuts(cuts, 200_000, 205_000);
     }
 

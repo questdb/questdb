@@ -131,6 +131,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             enableCompaction();
 
             createDayTable("x", "2024-01-01", 20_000);
+            // A piece floor above the partition's own row count, so the pre-split never cuts it.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 20_000);
             // Three rewrites: each merge-append here rewrites the WHOLE partition (no pre-split cuts
             // it), so two rounds leave dead just under the live count - three pushes past the ratio.
             // The tight ratio is set only now, after the buildup: with it in effect throughout,

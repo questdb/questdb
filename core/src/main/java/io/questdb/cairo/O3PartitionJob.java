@@ -139,7 +139,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final TxReader txReader = tableWriter.getTxReader();
         final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
         final long srcNameTxn = txReader.getPartitionNameTxn(partitionIndex);
-        final long minPieceRows = tableWriter.getPartitionO3SplitThreshold();
+        // Twice the piece-count rule's target average piece size, so a pre-split cannot on its own drive the
+        // partition past the piece cap effectiveMaxPieces() derives from that same number.
+        final long minPieceRows = 2 * tableWriter.getConfiguration().getPartitionCompactionAvgRowsPieceLim();
         final FilesFacade ff = tableWriter.getFilesFacade();
 
         // Steps 1 and 2 both read the designated-timestamp column, so it is mapped ONCE over the whole physical extent.
@@ -1194,8 +1196,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 ColumnType.getTimestampDriver(tableWriter.getMetadata().getTimestampType()).fromMinutes(1),
                 O3_CLUSTER_MAX_BINS,
                 minPieceRows,
-                rowCount,
-                tableWriter.getConfiguration().getO3PartitionPreSplitMaxCuts()
+                rowCount
         );
     }
 

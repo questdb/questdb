@@ -134,6 +134,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             // would rewrite the whole day.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 64);
             // One day at 15s, so the partition holds 5760 rows.
             final String base = "SELECT x::INT i, -x j, " + WIDE_COLUMNS + "," +
                     " timestamp_sequence('2020-02-03', 15*1000000L) ts" +
@@ -210,6 +211,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             // would rewrite the whole day.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 64);
             // 10s apart, so 5760 rows reach 15:59:50 and leave the rest of the day empty for the tail.
             final String base = "SELECT x::INT i, -x j, " + WIDE_COLUMNS + "," +
                     " timestamp_sequence('2020-02-03', 10*1000000L) ts" +
@@ -268,6 +270,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
             execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // A later day, so 2020-02-03 is never the active partition and every insert into it - even the
             // very first one - goes through the composite dispatch, exactly like the rows chronologically
@@ -324,6 +327,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
             execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // A later day, so 2020-02-03 is never the active partition and every insert into it goes
             // through the composite dispatch.
@@ -425,6 +429,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
             execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // A later day, so 2020-02-03 is never the active partition and every insert into it goes
             // through the composite dispatch.
@@ -513,6 +518,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             // setting before a cut is worth proposing at all.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
             final String base = "SELECT x::INT i, " + STRING_EXPR + " s, " + VARCHAR_SHORT_EXPR + " vs," +
                     " timestamp_sequence('2020-02-03', 15*1000000L) ts FROM long_sequence(5760)";
             // A later day, so 2020-02-03 is never the active partition and the backdated batches go
@@ -613,6 +619,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             // setting before a cut is worth proposing at all.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
             // One day, three columns present from row 0: a FIXED one (i), a STRING one (s), a VARCHAR one
             // (vs) - one of each shape the conversion has to handle.
             final String base = "SELECT x::INT i, " + STRING_EXPR + " s, " + VARCHAR_SHORT_EXPR + " vs," +
@@ -701,6 +708,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
             // cLong's values are all the same digit width (15, comfortably over VARCHAR's 9-byte inline
             // ceiling), so a correct conversion's .d size is a plain multiplication rather than a sum over
             // per-row lengths - and a naive one that converts dead rows too is off by a whole multiple of
@@ -816,6 +824,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 64);
             // This test wants a many-piece directory to scan across - the pre-split above doubles each
             // backdated batch into 2 pieces, so the eleven batches below comfortably clear the piece-count
             // rule's default floor (20) well before they clear the "at least 8" this test actually needs.
@@ -918,6 +927,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 64);
             // The day's FIRST half, written before the mid_* columns exist.
             final String lower = "SELECT x::INT i, -x j, " + WIDE_COLUMNS + "," +
                     " timestamp_sequence('2020-02-03', 15*1000000L) ts FROM long_sequence(2880)";
@@ -1099,6 +1109,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "0.01");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1K");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "0");
@@ -1171,6 +1182,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             // setting before a cut is worth proposing at all.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
             // 2020-02-03 alone, in order - the table's only partition, so it is still the writer's active
             // last partition when the next commit lands.
             final String base = "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
@@ -1241,6 +1253,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             // in rows derived from an average record size - needs a proportionally smaller setting.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
             // Dropped once 2020-02-03 is composite, promoting 2020-02-03 to the table's first partition.
             final String day1 = "SELECT x::INT i, timestamp_sequence('2020-02-01', 15*1000000L) ts" +
                     " FROM long_sequence(5760)";
@@ -1307,6 +1320,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
             // Promoted to last once 2020-02-06 is dropped below it, so its own max - 23:59:45, the last
             // row of a day filled end to end - has to survive the promotion.
             final String day1 = "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
@@ -1371,6 +1385,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             // in rows derived from an average record size - needs a proportionally smaller setting.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
             // Starts at noon, so the morning is free for a later backdated batch to relocate into, and
             // its own min - midday - is what sits at file row 0 until then.
             final String day1 = "SELECT x::INT i, timestamp_sequence('2020-02-03T12:00:00', 15*1000000L) ts" +
@@ -1432,6 +1447,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             // in rows derived from an average record size - needs a proportionally smaller setting.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
             final String base = "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
                     " FROM long_sequence(5760)";
             // Keeps 2020-02-03 from being the writer's active last partition when the backdated batch
@@ -1474,6 +1490,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
             final String base = "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
                     " FROM long_sequence(5760)";
             // Keeps 2020-02-03 from being the writer's active last partition when the backdated batch

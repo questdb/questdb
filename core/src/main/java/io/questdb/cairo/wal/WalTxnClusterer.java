@@ -36,7 +36,7 @@ import java.util.Arrays;
  */
 public class WalTxnClusterer implements Mutable {
     private final LongList cutTimestamps = new LongList();
-    // Flat triples per qualifying cold gap: [estimated rows, first cut ts, second cut ts or Long.MIN_VALUE].
+    // Flat pairs per qualifying cold gap: [first cut ts, second cut ts or Long.MIN_VALUE].
     private final LongList gapScratch = new LongList();
     // Flat pairs: incoming txn [minTs, maxTs], clipped by the caller to the partition's data range.
     private final LongList txnRanges = new LongList();
@@ -52,14 +52,15 @@ public class WalTxnClusterer implements Mutable {
     }
 
     /**
-     * Computes cut timestamps for one partition against the buffered transaction ranges.
+     * Computes cut timestamps for one partition against the buffered transaction ranges. Cuts are bounded by the size
+     * of the pieces they produce, not by a cut count: every piece the returned cuts carve out holds at least
+     * {@code minPieceRows} estimated rows.
      * @param t0 first existing row timestamp of the partition (piece)
      * @param t1 last existing row timestamp, inclusive; {@code t1 >= t0}
      * @param minBinDuration finest bin duration (e.g.
      * @param maxBins bin-count cap, bounding work and cut precision
-     * @param minGapRows minimum estimated existing rows for a cold gap to be worth a cut
+     * @param minPieceRows minimum estimated existing rows in any piece a cut produces
      * @param partitionRowCount existing rows in [t0, t1], for the uniform-density estimate
-     * @param maxCuts cut budget; when exceeded, the largest gaps win
      * @return ascending, de-duplicated cut timestamps; a cut at ts {@code X} puts rows {@code < X} left of the cut and
      * rows {@code >= X} right of it.
      */
@@ -68,12 +69,11 @@ public class WalTxnClusterer implements Mutable {
             long t1,
             long minBinDuration,
             int maxBins,
-            long minGapRows,
-            long partitionRowCount,
-            int maxCuts
+            long minPieceRows,
+            long partitionRowCount
     ) {
         cutTimestamps.clear();
-        if (t1 <= t0 || txnRanges.size() == 0 || maxCuts <= 0 || partitionRowCount <= 0) {
+        if (t1 <= t0 || txnRanges.size() == 0 || partitionRowCount <= 0) {
             return cutTimestamps;
         }
         final long span = t1 - t0 + 1;
@@ -113,21 +113,18 @@ public class WalTxnClusterer implements Mutable {
             }
             if (coldRunStart >= 0) {
                 final int runBins = b - coldRunStart;
-                final long estRows = (long) ((double) runBins * binDuration * partitionRowCount / span);
-                if (estRows >= minGapRows) {
+                final long estRows = estimateRows((long) runBins * binDuration, partitionRowCount, span);
+                if (estRows >= minPieceRows) {
                     final boolean leading = !seenHot;
                     final boolean trailing = b == binCount;
                     final long gapStartTs = t0 + coldRunStart * binDuration;
                     final long gapEndTs = t0 + (long) b * binDuration;
                     if (leading && !trailing) {
-                        gapScratch.add(estRows, gapEndTs);
-                        gapScratch.add(Long.MIN_VALUE);
+                        gapScratch.add(gapEndTs, Long.MIN_VALUE);
                     } else if (trailing && !leading) {
-                        gapScratch.add(estRows, gapStartTs);
-                        gapScratch.add(Long.MIN_VALUE);
+                        gapScratch.add(gapStartTs, Long.MIN_VALUE);
                     } else if (!leading) {
-                        gapScratch.add(estRows, gapStartTs);
-                        gapScratch.add(gapEndTs);
+                        gapScratch.add(gapStartTs, gapEndTs);
                     }
                     // leading && trailing: the whole range is cold (no hot bin at all) - no cuts;
                     // the caller only invokes this with at least one intersecting txn, but a txn
@@ -140,30 +137,48 @@ public class WalTxnClusterer implements Mutable {
             }
         }
 
-        // Spend the cut budget on the largest gaps first (selection over a handful of triples).
-        int budget = maxCuts;
-        while (budget > 0 && gapScratch.size() > 0) {
-            int best = 0;
-            for (int i = 3, n = gapScratch.size(); i < n; i += 3) {
-                if (gapScratch.getQuick(i) > gapScratch.getQuick(best)) {
-                    best = i;
-                }
+        for (int i = 0, n = gapScratch.size(); i < n; i += 2) {
+            cutTimestamps.add(gapScratch.getQuick(i));
+            final long cutB = gapScratch.getQuick(i + 1);
+            if (cutB != Long.MIN_VALUE) {
+                cutTimestamps.add(cutB);
             }
-            final long cutA = gapScratch.getQuick(best + 1);
-            final long cutB = gapScratch.getQuick(best + 2);
-            final int cost = cutB == Long.MIN_VALUE ? 1 : 2;
-            if (cost <= budget) {
-                cutTimestamps.add(cutA);
-                if (cutB != Long.MIN_VALUE) {
-                    cutTimestamps.add(cutB);
-                }
-                budget -= cost;
-            }
-            // A 2-cut interior gap that does not fit the remaining budget is dropped; a smaller
-            // 1-cut edge gap later in the list may still fit.
-            gapScratch.removeIndexBlock(best, 3);
         }
         cutTimestamps.sort();
+        keepCutsLeavingWholePieces(t0, t1, minPieceRows, partitionRowCount, span);
         return cutTimestamps;
+    }
+
+    /**
+     * Rows a timestamp window of {@code duration} holds, assuming the partition's rows spread evenly over
+     * {@code span}.
+     */
+    private static long estimateRows(long duration, long partitionRowCount, long span) {
+        return (long) ((double) duration * partitionRowCount / span);
+    }
+
+    /**
+     * Drops cuts that would carve out a piece smaller than {@code minPieceRows}. A cold gap earns its own cut only
+     * against the neighbouring gap it is measured from, so the gate has to run over the cuts in order rather than per
+     * gap: two qualifying gaps either side of a narrow hot stride would otherwise leave that stride as a piece too
+     * small to be worth the record and the page frame it costs.
+     */
+    private void keepCutsLeavingWholePieces(long t0, long t1, long minPieceRows, long partitionRowCount, long span) {
+        int keep = 0;
+        long pieceStart = t0;
+        for (int i = 0, n = cutTimestamps.size(); i < n; i++) {
+            final long cut = cutTimestamps.getQuick(i);
+            if (estimateRows(cut - pieceStart, partitionRowCount, span) < minPieceRows) {
+                continue;
+            }
+            cutTimestamps.setQuick(keep++, cut);
+            pieceStart = cut;
+        }
+        // The rows past the last cut are a piece as well, so a cut that leaves too few of them goes too.
+        while (keep > 0 && estimateRows(t1 + 1 - pieceStart, partitionRowCount, span) < minPieceRows) {
+            keep--;
+            pieceStart = keep > 0 ? cutTimestamps.getQuick(keep - 1) : t0;
+        }
+        cutTimestamps.setPos(keep);
     }
 }

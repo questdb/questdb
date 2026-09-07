@@ -6056,6 +6056,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
         // prices, and only the row from the later (higher-cumulative) piece is the true latest.
         assertMemoryLeak(() -> {
             node1.setProperty(io.questdb.PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+            node1.setProperty(io.questdb.PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 4);
             execute("""
                     CREATE TABLE t_latest_multipiece (
                         ts TIMESTAMP,
