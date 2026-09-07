@@ -27,11 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.Vect;
 
 /**
- * A {@code ColumnVersionReader} that can also be upserted into, entirely in memory - no file, no
- * {@code commit()}. Seed it with {@link #readFrom(ColumnVersionReader)}, then upsert into it instead of
- * the table's live {@code ColumnVersionWriter}, which worker threads must not touch directly (see
- * {@link io.questdb.cairo.frm.ColumnTopSink}) and which a caller that reads its own earlier writes back
- * within one call - unlike a plain frozen snapshot - needs a private, mutable copy for anyway.
+ * A {@code ColumnVersionReader} that can also be upserted into, entirely in memory - no file, no {@code commit()}.
  */
 public class TransientColumnVersions extends ColumnVersionReader {
 

@@ -357,6 +357,7 @@ public class CoveringIndexMergeAppendTest extends AbstractCairoTest {
         // A production-sized partition pre-splits on its own at the 50MB default; shrink the threshold so
         // a fixture small enough to read still ends up several pieces, one of them relocated.
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+        setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 4);
         setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE v (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (txt, value), txt VARCHAR, value DOUBLE)"

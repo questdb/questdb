@@ -940,14 +940,12 @@ public final class TestUtils {
         }
     }
 
+    // When the runnable throws, LeakCheck.close() still runs and try-with-resources
+    // attaches any leak assertion to the original exception as suppressed (JLS 14.20.3),
+    // so a failing test surfaces failure-path leaks without masking the original error.
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
-        try (LeakCheck ignore = new LeakCheck()) {
-            try {
-                runnable.run();
-            } catch (Throwable e) {
-                ignore.skipChecks();
-                throw e;
-            }
+        try (LeakCheck check = new LeakCheck()) {
+            runnable.run();
         }
     }
 
@@ -3309,7 +3307,6 @@ public final class TestUtils {
         private final long mem;
         private final long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         private final int sockAddrCount;
-        private boolean skipChecksOnClose;
 
         public LeakCheck() {
             Files.getMmapCache().asyncMunmap();
@@ -3336,10 +3333,6 @@ public final class TestUtils {
 
         @Override
         public void close() {
-            if (skipChecksOnClose) {
-                return;
-            }
-
             Path.clearThreadLocals();
             Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
             CLOSEABLE.forEach(Misc::free);
@@ -3405,10 +3398,6 @@ public final class TestUtils {
                 Assert.fail("SockAddr allocation count before the test: " + sockAddrCount
                         + ", after the test: " + sockAddrCountAfter);
             }
-        }
-
-        public void skipChecks() {
-            skipChecksOnClose = true;
         }
     }
 

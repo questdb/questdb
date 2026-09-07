@@ -575,11 +575,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         frameMemory = frameMemoryPool.navigateTo(frameCount++);
                         record.switchFrame();
 
-                        // Switch to new page frame. The bounds below are INDEX rows, not partition rows: they
-                        // bound the index cursor, and every row id it hands back - which the native search
-                        // then dereferences through the timestamp page rebased by frameLo - is a row the
-                        // index stored. On a composite partition those are file rows, offset from the
-                        // partition rows by the piece's shift; see PageFrame#getIndexRowLo().
+                        // Switch to new page frame.
                         frameNextRowId = frameLo = frame.getIndexRowLo();
                         frameHi = frame.getIndexRowHi();
 

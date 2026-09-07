@@ -29,20 +29,8 @@ import io.questdb.cairo.wal.MetadataService;
 import io.questdb.tasks.TableWriterTask;
 
 /**
- * Swaps in a Parquet partition compacted off a {@link TableReader} snapshot - see
- * {@code PartitionCompactionScanJob} and {@link O3PartitionJob#compactParquetPartition} - without ever
- * holding the writer for the copy itself. The parquet twin of {@link CompositePartitionSwapCommand}.
- * <p>
- * Published via {@link CairoEngine#getWriterOrPublishCommand}: an idle writer applies it directly, a busy
- * writer serializes it onto its own {@link TableWriterTask} command queue and applies it later on the
- * writer's own thread via {@link TableWriter#tick()} - cheap either way, since the swap is metadata-only.
- * Like the composite command, this one does not override {@link #newInstance()}: the producer's own
- * instance is what the writer applies, so {@link #deserialize} has nothing to reconstruct.
- * <p>
- * {@link #apply} throws {@link io.questdb.cairo.sql.TableReferenceOutOfDateException} when the source
- * partition's generation - its {@code nameTxn}, its parquet file size or the table's metadata version - no
- * longer matches what the build saw: the writer discards the staged directory and the caller's next sweep
- * starts over from a fresh snapshot. Non-structural, so it is safe to queue for a WAL table too.
+ * Swaps in a Parquet partition compacted off a {@link TableReader} snapshot - see {@code PartitionCompactionScanJob}
+ * and {@link O3PartitionJob#compactParquetPartition} - without ever holding the writer for the copy itself.
  */
 public class ParquetPartitionSwapCommand implements AsyncWriterCommand {
     private long correlationId = -1L;

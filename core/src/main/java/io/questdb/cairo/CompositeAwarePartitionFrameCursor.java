@@ -34,23 +34,8 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
- * Wraps a {@link PartitionFrameCursor}, translating each delegate frame's directory-cumulative
- * {@code [rowLo, rowHi)} into one or more physical, file-row-space sub-frames.
- * <p>
- * A consumer that reads an index reader directly (a posting/BITMAP index scan bypassing
- * {@link io.questdb.cairo.sql.PageFrame}) needs {@link PartitionFrame#getRowLo()}/{@link PartitionFrame#getRowHi()}
- * to already be physical, because the index stores and compares physical file row ids -- see
- * {@code FwdTableReaderPageFrameCursor.computeNativeFrame}, which applies the identical translation
- * for the {@code PageFrame} path via {@link PartitionGeometry#findPieceByRow}/{@link PartitionGeometry#getPieceShift}.
- * For an ordinary (non-composite) partition the two spaces coincide, so the delegate's frame is
- * returned untouched -- zero extra cost, the common case.
- * <p>
- * For a composite partition -- one whose column files hold several physical pieces, see
- * {@link PartitionGeometry} -- the delegate's logical range is split into one sub-frame per piece
- * it overlaps, each carrying that piece's own physical row range. {@code descending} controls the
- * order pieces are emitted within a partition: forward cursors (ascending row id) walk pieces low to
- * high, {@code LATEST BY} and negative-limit cursors need the highest (most recent) piece first, to
- * match the frame order their delegate already advertises.
+ * Wraps a {@link PartitionFrameCursor}, translating each delegate frame's directory-cumulative {@code [rowLo, rowHi)}
+ * into one or more physical, file-row-space sub-frames.
  */
 public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor {
     private final CompositePartitionFrame frame = new CompositePartitionFrame();
@@ -127,10 +112,7 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
     }
 
     /**
-     * Binds this cursor to {@code delegate}, whose {@link #next(long)} results this cursor will
-     * piece-split as needed. {@code descending} must match the piece order the delegate's own frames
-     * are consumed in -- {@code true} for a backward ({@code LATEST BY}, negative-limit) scan, {@code false}
-     * for an ordinary forward scan.
+     * Binds this cursor to {@code delegate}, whose {@link #next(long)} results this cursor will piece-split as needed.
      */
     public PartitionFrameCursor of(PartitionFrameCursor delegate, boolean descending) {
         this.delegate = delegate;
@@ -173,9 +155,8 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
     }
 
     /**
-     * Emits the next physical sub-frame from the pending composite range, advancing
-     * {@link #pendingCumLo}/{@link #pendingCumHi} and {@link #pendingPieceOrdinal} past it. Returns
-     * {@code null}, and clears the pending state, once the range is fully covered.
+     * Emits the next physical sub-frame from the pending composite range, advancing {@link #pendingCumLo}/{@link
+     * #pendingCumHi} and {@link #pendingPieceOrdinal} past it.
      */
     private @Nullable PartitionFrame nextPiece() {
         final TableReader reader = getTableReader();

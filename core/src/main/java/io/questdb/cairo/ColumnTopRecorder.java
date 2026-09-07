@@ -28,18 +28,8 @@ import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.std.LongList;
 
 /**
- * A {@link ColumnTopSink} that records every {@code (columnIndex, columnTop)} report into a plain
- * {@link LongList} instead of forwarding to a live {@link ColumnVersionWriter}. Lets a reader-based
- * partition build - see {@code PartitionCompactionScanJob} - capture a {@link io.questdb.cairo.frm.Frame}'s
- * self-tracked tops off the writer thread, the same way {@code ColumnVersionWriter} itself does when armed
- * (see {@link ColumnVersionWriter#asColumnTopSink}), then have the values pushed into the
- * real writer only once a later swap actually holds it. One long per column, no boxing.
- * <p>
- * The list is INDEXED BY COLUMN, sized once by {@link #ofColumnCount} and never grown after: a report
- * writes its own column's slot and touches nothing else, which is what makes this sink safe to drive
- * from one thread per column. A column reported many times - once per piece, in the compaction build -
- * keeps the last value, and the frame only ever raises a column's top (see {@code FrameImpl#saveChanges}),
- * so that is also the largest one.
+ * A {@link ColumnTopSink} that records every {@code (columnIndex, columnTop)} report into a plain {@link LongList}
+ * instead of forwarding to a live {@link ColumnVersionWriter}.
  */
 public class ColumnTopRecorder implements ColumnTopSink {
     private static final long NOT_REPORTED = -1L;
@@ -71,9 +61,7 @@ public class ColumnTopRecorder implements ColumnTopSink {
     }
 
     /**
-     * Pushes every recorded top into {@code sink}, in column order. The caller arms the target
-     * partition first - e.g. {@link ColumnVersionWriter#asColumnTopSink} - the same
-     * contract {@link io.questdb.cairo.frm.Frame#publishColumnTops} relies on for any sink.
+     * Pushes every recorded top into {@code sink}, in column order.
      */
     public void pushInto(ColumnTopSink sink) {
         for (int i = 0, n = tops.size(); i < n; i++) {

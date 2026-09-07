@@ -1888,7 +1888,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3CallbackQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_CALLBACK_QUEUE_CAPACITY, 128);
             this.o3PartitionQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_PARTITION_QUEUE_CAPACITY, 128);
             this.o3OpenColumnQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY, 128);
-            this.o3PartitionPreSplitMaxCuts = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 7));
+            this.o3PartitionPreSplitMaxCuts = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 10_000));
             this.o3PartitionMergeAppendEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
             this.partitionCompactionDeadRowsRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1.0");
             this.partitionCompactionDeadMinSize = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, 50 * Numbers.SIZE_1MB);

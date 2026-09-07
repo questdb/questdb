@@ -103,6 +103,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             // One cut, largest gap wins: the cut lands in the day's afternoon, so the HOT piece the
             // rewrite relocates is the PREFIX - the one that is not last.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
@@ -182,6 +183,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
 
             execute(
@@ -263,6 +265,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
 
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             execute(
                     "CREATE TABLE x AS (" +
                             "SELECT x::INT i, -x j," +
@@ -312,6 +315,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             execute(
@@ -383,6 +387,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             // ~50-row min cold-gap / cut floor for this schema, so the 4h gaps between the clusters
             // qualify easily while minute-scale jitter does not.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             // Day 2020-02-03: 5760 rows (one per 15s). Day 2020-02-04: a small tail, so the dense day is
@@ -471,6 +476,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             execute(
@@ -527,6 +533,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 4);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             // A dense day plus a later one, so ADD COLUMN records the top on the LAST partition and
@@ -599,6 +606,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             // Doubles as the cold-gap admission floor and as the "worth avoiding" floor: the receiving
             // piece holds 4800 rows, an order of magnitude above it.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 4);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             // 00:00:00 - 19:59:45, then a two-hour hole, then 22:00:00 - 23:59:45.
@@ -681,9 +689,10 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
     public void testClusterInADataGapMergesWhenTheReceivingPieceIsSmall() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
-            // Two fixed-size columns, so the split threshold is 512 / 12 = 42 rows: the 40-row upper
-            // piece falls under it and the 4800-row lower one is nowhere near.
+            // The piece floor is twice the average-piece-size limit, so 42 rows: the 40-row upper piece
+            // falls under it and the 4800-row lower one is nowhere near.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 21);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             // 00:00:00 - 19:59:45, then a two-hour hole, then a 40-row tail at 22:00.
@@ -750,6 +759,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
 
             execute(
@@ -806,6 +816,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             // One cut, largest gap wins: the cut lands above the backdated stride, so the HOT piece is the
             // day's prefix and the rewrite parks it above the cold tail piece.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
@@ -978,6 +989,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             execute(
@@ -1057,6 +1069,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 4);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             // 00:00:00 - 19:59:45, a cold gap, then a dense tail at 23:00:00. The varchar covers the
@@ -1129,6 +1142,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             execute(
@@ -1189,6 +1203,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             final String binExpr = "from_base64(lpad(x::string, (4 * ((x % 3) + 1))::INT, '0'))";
@@ -1255,6 +1270,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
 
             execute(
@@ -1324,6 +1340,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
 
             execute(
@@ -1438,6 +1455,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             execute(
@@ -1511,6 +1529,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2048);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             // One cut, largest gap wins: the day is cut at the four-hour hole and nowhere else, so the
             // piece the relocating batch lands in is the whole of the day's morning.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
@@ -1607,6 +1626,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             execute(
@@ -1683,6 +1703,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, "POSTING");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             execute(
@@ -1773,6 +1794,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             // One cut, largest gap wins: the gap ABOVE the backdated stride is the day's whole afternoon,
             // so the cut lands there and the HOT piece is the prefix - not the last one.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
@@ -1917,6 +1939,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             // 5760 rows * 8 bytes is not a whole number of pages, so closing the day leaves ts rounded up -
@@ -1969,6 +1992,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             execute(
@@ -2039,6 +2063,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 10);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 1);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             final String middle = "SELECT x::INT i," +
@@ -2192,6 +2217,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             execute(
@@ -2246,6 +2272,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             execute(
@@ -2379,6 +2406,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 8 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 64);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             execute(
@@ -2446,6 +2474,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 4);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             // 2000 rows, 15s apart (00:00:00 - 08:19:45), plus a later day so ADD COLUMN records the
@@ -2506,6 +2535,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             // The shape testSingleTxnApplyPreSplitsClusteredMidPartition cuts: a dense mid partition and
@@ -2547,6 +2577,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             // One day only, so the dense day IS the active partition.
@@ -2612,6 +2643,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             execute(
@@ -2673,6 +2705,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
 
             // One day only, so the day's last piece is also the table's last piece.
@@ -2795,6 +2828,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
 
             // One day only, so the composite partition is the ACTIVE one a writer open maps.
@@ -2839,6 +2873,84 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * range sits below the partition's shared column top, so the reader takes the "column absent" path
      * for it.
      */
+    /**
+     * A wide, sparse commit into a big partition must be cut around, not merged through.
+     * <p>
+     * 500k rows on the day and ONE commit of 500 rows scattered evenly across all of it. The commit's own span
+     * is the whole partition, so there is no slack at its edges to spare, and its transaction range covers
+     * every bin, so the clusterer finds no cold gap either - yet between any two incoming rows sit ~1000
+     * untouched existing rows, well over the 64 a cut has to spare here. Each row is carved out on its own and
+     * the commit copies nothing, and the piece budget has room for it:
+     * {@code liveRows / cairo.partition.compaction.avg.rows.piece.lim} is ~31k against 500 rows.
+     * <p>
+     * Merging instead rewrites the partition: 500k rows moved to place 500, which is the write amplification
+     * merge-append exists to remove.
+     */
+    @Test
+    public void testScatteredCommitIsCutAroundRatherThanMergedThrough() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // ~32-row piece floor, so a cut needs 64 existing rows to spare and the ~1000 between two
+            // incoming rows clear it easily.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
+
+            final int partitionRows = 500_000;
+            final int incomingRows = 500;
+            final long incomingStep = 86_400_000_000L / incomingRows;
+
+            // 500k rows over 2020-02-03, one every 172.8ms.
+            final String lower = "SELECT x::INT i, timestamp_sequence('2020-02-03', 172800) ts" +
+                    " FROM long_sequence(" + partitionRows + ')';
+            // A later day, so 2020-02-03 is never the active partition and the commit below is O3.
+            final String nextDay = "SELECT x::INT + 900000000 i," +
+                    " timestamp_sequence('2020-02-05', 60000000L) ts FROM long_sequence(50)";
+            // One commit, 500 rows, each landing between two existing rows.
+            final String scattered = "SELECT x::INT + 100000000 i," +
+                    " (" + (DAY_03 + incomingStep + 86_400) + " + (x - 1) * " + incomingStep + ")::TIMESTAMP ts" +
+                    " FROM long_sequence(" + incomingRows + ')';
+
+            execute("CREATE TABLE x AS (" + lower + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE x0 AS (" + lower + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x " + nextDay);
+            execute("CREATE TABLE w AS (" + nextDay + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            drainWalQueue();
+
+            final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+            execute("INSERT INTO x " + scattered);
+            execute("CREATE TABLE z AS (" + scattered + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            drainWalQueue();
+
+            final long written = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore;
+            final int pieces = piecesOfDay("x");
+
+            // The whole point: the commit costs its own rows, not the partition's.
+            Assert.assertTrue(
+                    "the commit rewrote the partition instead of cutting around it"
+                            + " [physicallyWritten=" + written + ", incomingRows=" + incomingRows
+                            + ", partitionRows=" + partitionRows + ']',
+                    written < 10L * incomingRows
+            );
+            // And it paid for that with pieces, which the budget has room for.
+            final long pieceBudget = (partitionRows + incomingRows)
+                    / configuration.getPartitionCompactionAvgRowsPieceLim();
+            Assert.assertTrue(
+                    "the cuts were not made: " + describePieces("x"),
+                    pieces > incomingRows / 2
+            );
+            Assert.assertTrue(
+                    "the cuts blew the piece budget [pieces=" + pieces + ", budget=" + pieceBudget + ']',
+                    pieces <= pieceBudget
+            );
+
+            assertNoOverlappingPieces("x");
+            assertRowsInTimestampOrder("x");
+
+            final String expected = "(SELECT * FROM x0 UNION ALL SELECT * FROM w UNION ALL SELECT * FROM z)" +
+                    " ORDER BY ts";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+        });
+    }
+
     private static void assertHasPieceBelowColumnTop(String tableName, String columnName) {
         try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
             final int columnIndex = reader.getMetadata().getColumnIndex(columnName);

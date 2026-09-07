@@ -97,9 +97,8 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     }
 
     /**
-     * Same as {@link #createRW(Path, long, RecordMetadata, ColumnVersionWriter, long)}, but column-top
-     * updates go to {@code columnTopSink} instead of a {@code ColumnVersionWriter} - see {@link ColumnTopSink}.
-     * This method is thread safe.
+     * Same as {@link #createRW(Path, long, RecordMetadata, ColumnVersionWriter, long)}, but column-top updates go to
+     * {@code columnTopSink} instead of a {@code ColumnVersionWriter} - see {@link ColumnTopSink}.
      */
     public Frame createRW(
             Path partitionPath,
@@ -166,11 +165,9 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     }
 
     /**
-     * Opens a frame over the O3 buffers whose designated timestamp comes from the SORTED TIMESTAMP INDEX.
-     * The O3 buffers hold no timestamp column of their own - depending on how the commit arrived, that slot
-     * is either the index itself or a WAL segment's own encoding - so the index is the one source that
-     * always answers, which is why the per-column O3 path reads it too.
-     *
+     * Opens a frame over the O3 buffers whose designated timestamp comes from the SORTED TIMESTAMP INDEX. The O3
+     * buffers hold no timestamp column of their own - depending on how the commit arrived, that slot is either the
+     * index itself or a WAL segment's own encoding - so the index is the one source that always answers, which is why
      * @param timestampIndexAddr native address of the sorted timestamp index, 16 bytes per row
      */
     public Frame openROFromMemoryColumns(
@@ -255,16 +252,14 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     }
 
     /**
-     * Opens a frame for reading and writing whose column-top updates go to {@code columnTopSink}
-     * rather than straight into a {@code ColumnVersionWriter}. For a caller reachable from an O3
-     * worker thread - see {@link ColumnTopSink}. This method is thread safe.
-     *
-     * @param partitionPath      the path to the partition directory
+     * Opens a frame for reading and writing whose column-top updates go to {@code columnTopSink} rather than straight
+     * into a {@code ColumnVersionWriter}.
+     * @param partitionPath the path to the partition directory
      * @param partitionTimestamp the timestamp of the partition
-     * @param metadata           the metadata for the frame
-     * @param cvr                the column version reader, for column name txns and pre-existing tops
-     * @param columnTopSink      where this frame's column-top updates are reported instead
-     * @param size               the size of the frame, in row count
+     * @param metadata the metadata for the frame
+     * @param cvr the column version reader, for column name txns and pre-existing tops
+     * @param columnTopSink where this frame's column-top updates are reported instead
+     * @param size the size of the frame, in row count
      * @return a new frame ready for reading and writing
      */
     public Frame openRW(

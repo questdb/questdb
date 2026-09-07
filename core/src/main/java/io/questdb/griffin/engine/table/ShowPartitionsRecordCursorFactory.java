@@ -138,8 +138,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         // Wall clock, always microseconds whatever the table's designated timestamp resolution is: it
         // comes from the writer's clock, not from the data.
         LAST_WRITE_TIMESTAMP(19, "lastWriteTimestamp", ColumnType.TIMESTAMP_MICRO),
-        // Pieces the partition's column files are made of: 1 for a plain partition, more for a
-        // COMPOSITE one. Null for a detached or attachable partition, which has no live geometry.
+        // Pieces the partition's column files are made of: 1 for a plain partition, more for a COMPOSITE one.
         PIECE_COUNT(20, "pieceCount", ColumnType.INT);
 
         private final int idx;
@@ -427,11 +426,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     }
                     closeParquetMeta();
                 } else if (isComposite) {
-                    // A COMPOSITE partition's file rows are not in timestamp order - a merge-append
-                    // parks a rewritten piece at the tail and leaves the rows it superseded behind
-                    // as dead space - so file row 0 and file row numRows-1 name neither bound. The
-                    // geometry lists the pieces in timestamp order and carries each one's bounds,
-                    // so the directory's own bounds are the first piece's low and the last's high.
+                    // A COMPOSITE partition's file rows are not in timestamp order - a merge-append parks a rewritten
+                    // piece at the tail and leaves the rows it superseded behind as dead space - so file row 0 and
                     final PartitionGeometry geometry = tableReader.getGeometry();
                     minTimestamp = geometry.getPieceTimestampLo(partitionIndex, 0);
                     maxTimestamp = geometry.getPieceTimestampHi(partitionIndex, geometry.getPieceCount(partitionIndex) - 1);

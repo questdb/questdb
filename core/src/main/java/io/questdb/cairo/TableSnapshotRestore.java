@@ -1295,13 +1295,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         // Index-aligned with nativeIndexWork: entry j holds the columnTop for work
         // item j, so the worker reads it back instead of re-running getColumnTop.
         final LongList nativeIndexColumnTops = new LongList();
-        // Indexed by partitionIndex: the file rows the rebuild has to cover. A COMPOSITE
-        // partition's column files reach E, and a merge relocates a live piece into
-        // [liveRows, E), so sizing the rebuild by live rows alone leaves every row of
-        // that piece out of the index. Same unit, and the same max(), as
-        // RebuildColumnBase.reindexPartition. The geometry resolver is not thread-safe,
-        // so the extents resolve here, on the list-building thread, and the workers only
-        // read the resulting array back.
+        // Indexed by partitionIndex: the file rows the rebuild has to cover.
         final LongList partitionFileRows = new LongList(partitionCount);
         try (PartitionGeometry geometry = isPartitioned
                 ? new PartitionGeometry().of(ff, txWriter, tablePathStr, timestampType, partitionBy, MemoryTag.NATIVE_TABLE_WRITER)

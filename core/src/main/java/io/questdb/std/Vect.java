@@ -236,12 +236,7 @@ public final class Vect {
     public static native void mergeShuffle128Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     /**
-     * Column-top aware merge: a data-side row below {@code srcDataTop} has no entry in the column
-     * file and is written as {@code pNullValue} instead. {@code pSrc1} is UNBIASED - it points at
-     * the column file's first stored row, which is logical row {@code srcDataTop}. Lets a merge
-     * consume a column top directly rather than first materializing a nulls+data image of the
-     * source column into scratch space.
-     *
+     * Column-top aware merge: a data-side row below {@code srcDataTop} is written as {@code pNullValue}.
      * @param pNullValue address of a single element of the column's width holding its NULL pattern
      */
     public static native void mergeShuffle128BitWithTop(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long srcDataTop, long pNullValue);
@@ -249,12 +244,7 @@ public final class Vect {
     public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     /**
-     * Column-top aware merge: a data-side row below {@code srcDataTop} has no entry in the column
-     * file and is written as {@code pNullValue} instead. {@code pSrc1} is UNBIASED - it points at
-     * the column file's first stored row, which is logical row {@code srcDataTop}. Lets a merge
-     * consume a column top directly rather than first materializing a nulls+data image of the
-     * source column into scratch space.
-     *
+     * Column-top aware merge: a data-side row below {@code srcDataTop} is written as {@code pNullValue}.
      * @param pNullValue address of a single element of the column's width holding its NULL pattern
      */
     public static native void mergeShuffle16BitWithTop(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long srcDataTop, long pNullValue);
@@ -262,12 +252,7 @@ public final class Vect {
     public static native void mergeShuffle256Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     /**
-     * Column-top aware merge: a data-side row below {@code srcDataTop} has no entry in the column
-     * file and is written as {@code pNullValue} instead. {@code pSrc1} is UNBIASED - it points at
-     * the column file's first stored row, which is logical row {@code srcDataTop}. Lets a merge
-     * consume a column top directly rather than first materializing a nulls+data image of the
-     * source column into scratch space.
-     *
+     * Column-top aware merge: a data-side row below {@code srcDataTop} is written as {@code pNullValue}.
      * @param pNullValue address of a single element of the column's width holding its NULL pattern
      */
     public static native void mergeShuffle256BitWithTop(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long srcDataTop, long pNullValue);
@@ -275,12 +260,7 @@ public final class Vect {
     public static native void mergeShuffle32Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     /**
-     * Column-top aware merge: a data-side row below {@code srcDataTop} has no entry in the column
-     * file and is written as {@code pNullValue} instead. {@code pSrc1} is UNBIASED - it points at
-     * the column file's first stored row, which is logical row {@code srcDataTop}. Lets a merge
-     * consume a column top directly rather than first materializing a nulls+data image of the
-     * source column into scratch space.
-     *
+     * Column-top aware merge: a data-side row below {@code srcDataTop} is written as {@code pNullValue}.
      * @param pNullValue address of a single element of the column's width holding its NULL pattern
      */
     public static native void mergeShuffle32BitWithTop(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long srcDataTop, long pNullValue);
@@ -288,12 +268,7 @@ public final class Vect {
     public static native void mergeShuffle64Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     /**
-     * Column-top aware merge: a data-side row below {@code srcDataTop} has no entry in the column
-     * file and is written as {@code pNullValue} instead. {@code pSrc1} is UNBIASED - it points at
-     * the column file's first stored row, which is logical row {@code srcDataTop}. Lets a merge
-     * consume a column top directly rather than first materializing a nulls+data image of the
-     * source column into scratch space.
-     *
+     * Column-top aware merge: a data-side row below {@code srcDataTop} is written as {@code pNullValue}.
      * @param pNullValue address of a single element of the column's width holding its NULL pattern
      */
     public static native void mergeShuffle64BitWithTop(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long srcDataTop, long pNullValue);
@@ -301,12 +276,7 @@ public final class Vect {
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     /**
-     * Column-top aware merge: a data-side row below {@code srcDataTop} has no entry in the column
-     * file and is written as {@code pNullValue} instead. {@code pSrc1} is UNBIASED - it points at
-     * the column file's first stored row, which is logical row {@code srcDataTop}. Lets a merge
-     * consume a column top directly rather than first materializing a nulls+data image of the
-     * source column into scratch space.
-     *
+     * Column-top aware merge: a data-side row below {@code srcDataTop} is written as {@code pNullValue}.
      * @param pNullValue address of a single element of the column's width holding its NULL pattern
      */
     public static native void mergeShuffle8BitWithTop(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long srcDataTop, long pNullValue);
@@ -354,11 +324,9 @@ public final class Vect {
     );
 
     /**
-     * Column-top aware variant of {@link #oooMergeCopyArrayColumn}: a data-side row below
-     * {@code srcDataTop} has no entry in the column file and is written as this type's NULL.
-     * {@code srcDataFixAddr} / {@code srcDataVarAddr} are UNBIASED - the file's first stored row is
-     * logical row {@code srcDataTop}. Callers must size the destination data vector to include
-     * {@code getDataVectorMinEntrySize()} bytes per null, exactly as the scratch path reserved.
+     * Column-top aware variant of {@link #oooMergeCopyArrayColumn}: a data-side row below {@code srcDataTop} is written
+     * as this type's NULL. The source addresses are UNBIASED - the file's first stored row is logical row {@code
+     * srcDataTop} - and the destination data vector must include {@code getDataVectorMinEntrySize()} bytes per null.
      */
     public static native void oooMergeCopyArrayColumnWithTop(
             long mergeIndexAddr,
@@ -386,11 +354,9 @@ public final class Vect {
     );
 
     /**
-     * Column-top aware variant of {@link #oooMergeCopyBinColumn}: a data-side row below
-     * {@code srcDataTop} has no entry in the column file and is written as this type's NULL.
-     * {@code srcDataFixAddr} / {@code srcDataVarAddr} are UNBIASED - the file's first stored row is
-     * logical row {@code srcDataTop}. Callers must size the destination data vector to include
-     * {@code getDataVectorMinEntrySize()} bytes per null, exactly as the scratch path reserved.
+     * Column-top aware variant of {@link #oooMergeCopyBinColumn}: a data-side row below {@code srcDataTop} is written
+     * as this type's NULL. The source addresses are UNBIASED - the file's first stored row is logical row {@code
+     * srcDataTop} - and the destination data vector must include {@code getDataVectorMinEntrySize()} bytes per null.
      */
     public static native void oooMergeCopyBinColumnWithTop(
             long mergeIndexAddr,
@@ -418,11 +384,9 @@ public final class Vect {
     );
 
     /**
-     * Column-top aware variant of {@link #oooMergeCopyStrColumn}: a data-side row below
-     * {@code srcDataTop} has no entry in the column file and is written as this type's NULL.
-     * {@code srcDataFixAddr} / {@code srcDataVarAddr} are UNBIASED - the file's first stored row is
-     * logical row {@code srcDataTop}. Callers must size the destination data vector to include
-     * {@code getDataVectorMinEntrySize()} bytes per null, exactly as the scratch path reserved.
+     * Column-top aware variant of {@link #oooMergeCopyStrColumn}: a data-side row below {@code srcDataTop} is written
+     * as this type's NULL. The source addresses are UNBIASED - the file's first stored row is logical row {@code
+     * srcDataTop} - and the destination data vector must include {@code getDataVectorMinEntrySize()} bytes per null.
      */
     public static native void oooMergeCopyStrColumnWithTop(
             long mergeIndexAddr,
@@ -450,11 +414,9 @@ public final class Vect {
     );
 
     /**
-     * Column-top aware variant of {@link #oooMergeCopyVarcharColumn}: a data-side row below
-     * {@code srcDataTop} has no entry in the column file and is written as this type's NULL.
-     * {@code srcDataFixAddr} / {@code srcDataVarAddr} are UNBIASED - the file's first stored row is
-     * logical row {@code srcDataTop}. Callers must size the destination data vector to include
-     * {@code getDataVectorMinEntrySize()} bytes per null, exactly as the scratch path reserved.
+     * Column-top aware variant of {@link #oooMergeCopyVarcharColumn}: a data-side row below {@code srcDataTop} is
+     * written as this type's NULL. The source addresses are UNBIASED - the file's first stored row is logical row
+     * {@code srcDataTop} - and the destination data vector must include {@code getDataVectorMinEntrySize()} bytes per
      */
     public static native void oooMergeCopyVarcharColumnWithTop(
             long mergeIndexAddr,

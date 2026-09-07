@@ -170,6 +170,7 @@ public class CompositeAwarePartitionFrameCursorTest extends AbstractCairoTest {
      */
     private TableToken createMultiPieceTable(String tableName) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
         execute("CREATE TABLE " + tableName + " (" +
                 "ts TIMESTAMP, sym SYMBOL, price DOUBLE" +
                 ") TIMESTAMP(ts) PARTITION BY DAY WAL");

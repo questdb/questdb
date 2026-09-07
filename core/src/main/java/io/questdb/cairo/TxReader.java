@@ -64,28 +64,8 @@ public class TxReader implements Closeable, Mutable {
     public static final long PARTITION_VERSION_FLAGS_MASK = 0xFFL << 56;
     public static final long PARTITION_VERSION_VALUE_MASK = ~PARTITION_VERSION_FLAGS_MASK;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
-    // COMPOSITE re-reads the offset-3 word's VALUE field (the 56 bits under
-    // PARTITION_VERSION_VALUE_MASK) as a pointer into the partition's own _geometry.<generation> file.
-    // The flag itself lives in the reserved half of the flag byte, so REMOTE (63) and SEQ_TXN_VALID (62)
-    // keep their meaning untouched:
-    //
-    // | remote | valid | composite | reserved | ... reserved ... | generation | offset, 8-byte units |
-    // +--------+-------+-----------+----------+------------------+------------+----------------------+
-    // | bit 63 | bit 62|   bit 61  |  58-60   |      28-55       |   24-27    |         0-23         |
-    //
-    // Native-only, and mutually exclusive with a seqTxn stamp: a composite partition spends the value
-    // field on its geometry pointer, so it carries no slot-3 stamp and SEQ_TXN_VALID stays 0 for it.
-    // getNativePartitionSeqTxn reads a composite partition's seqTxn out of the _geometry record instead.
-    // The whole word is the parquet FILE SIZE when either parquet bit of slot 1 is set - a parquet
-    // partition is materialized whole and is never composite.
-    //
-    // The offset counts 8-byte units, not bytes: every record is 8-byte aligned (PartitionGeometryFile's
-    // HEADER_SIZE and PIECE_SIZE both are), so the low 3 bits of any real byte offset are always zero and
-    // free to drop. 24 such units address up to 128MB - comfortably past PartitionGeometryFile's own
-    // 100MB rotation threshold - and generation selects which of a partition's own _geometry.<N> files
-    // that offset is read against: PartitionGeometry.publish rotates to a fresh file, offset 0, rather
-    // than let one file grow without bound. 4 generation bits cap a partition's own geometry history at
-    // 16 generations; the bits between them and the flag byte are reserved.
+    // COMPOSITE re-reads the offset-3 word's VALUE field (the 56 bits under PARTITION_VERSION_VALUE_MASK) as a pointer
+    // into the partition's own _geometry.<generation> file.
     protected static final long PARTITION_COMPOSITE_FLAG = 1L << 61;
     protected static final int PARTITION_GEOMETRY_GENERATION_BIT_OFFSET = 24;
     protected static final long PARTITION_GEOMETRY_GENERATION_MASK = 0x0F000000L; // bits 24-27 (4 bits)
@@ -370,9 +350,7 @@ public class TxReader implements Closeable, Mutable {
         assert !isPartitionParquet(partitionIndex);
         final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
         if (isPartitionCompositeByRawIndex(rawIndex)) {
-            // The value field is this partition's geometry pointer, not a stamp. Its seqTxn is in the
-            // _geometry record; only a caller holding a resolver can read it, so report "unknown" here
-            // and let TableWriter.nativePartitionSeqTxn() answer it.
+            // The value field is this partition's geometry pointer, not a stamp.
             return -1L;
         }
         // getPartitionOffset3 folds the cleared 0L/-1L sentinels to 0 before the bit test;
@@ -608,22 +586,12 @@ public class TxReader implements Closeable, Mutable {
         return (int) ((geometryRef & PARTITION_GEOMETRY_GENERATION_MASK) >>> PARTITION_GEOMETRY_GENERATION_BIT_OFFSET);
     }
 
-    /**
-     * The byte offset inside that file at which the partition's committed geometry record starts. The
-     * packed word holds this in 8-byte units (see the slot-3 layout comment above); every caller works in
-     * bytes, so the unshift happens here, once.
-     */
     public static long geometryOffset(long geometryRef) {
         return (geometryRef & PARTITION_GEOMETRY_OFFSET_MASK) << PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT;
     }
 
     /**
-     * Packs a slot-3 geometry pointer from its components. Production code never calls this -
-     * {@link PartitionGeometry#publish} packs its own ref inline, next to the overflow check that decides
-     * generation and offset in the first place - but a test that wants to fabricate a ref directly (e.g.
-     * simulating a {@code _geometry} file close to {@link PartitionGeometryFile#MAX_FILE_SIZE} without
-     * actually writing that much data through ordinary commits) has no other way to reach the format.
-     *
+     * Packs a slot-3 geometry pointer from its components.
      * @param byteOffset must be 8-byte aligned, as every real geometry record start is
      */
     @TestOnly
@@ -637,19 +605,10 @@ public class TxReader implements Closeable, Mutable {
                 | packedOffset;
     }
 
-    /**
-     * Slot 3 of the partition's record, verbatim, when it is a geometry pointer. Meaningless - and never
-     * to be read - for a parquet partition, where the same word is the file size.
-     */
     public long getGeometryRef(int partitionIndex) {
         final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
         if (!isPartitionCompositeByRawIndex(rawIndex)) {
-            // -1 is the "no committed geometry record yet" sentinel PartitionGeometry.publish reads to
-            // start a partition's chain at generation 0, offset 0. It must NOT be confused with a real
-            // ref, which is why this cannot just hand back the raw word: since master took the offset-3
-            // value field for the native seqTxn stamp, a NON-composite partition's word is routinely
-            // non-zero, and returning it would read as a ref pointing into a _geometry file that was
-            // never written.
+            // -1 is the "no committed geometry record yet" sentinel that starts a chain at generation 0, offset 0.
             return -1L;
         }
         // Strip the flags that are not ours - REMOTE and SEQ_TXN_VALID share this word - so a ref only
@@ -659,14 +618,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     /**
-     * Whether the partition is composite - has a {@code _geometry} record to resolve. Resident, ZERO I/O -
-     * it reads one long of the record that is already in memory, exactly as {@link #isPartitionParquet(int)}
-     * does. This is what keeps a table with no composite partition off {@code _geometry} entirely, and what
-     * makes the resolve lazy: nothing opens the file until a query or a commit lands on that partition.
-     * <p>
-     * Deliberately an over-approximation in one direction: a partition stays composite after folding back
-     * to a single piece, so this can be true for a partition whose geometry says one piece at file row 0.
-     * That costs one read, never a wrong answer.
+     * Whether the partition is composite - has a {@code _geometry} record to resolve.
      */
     public boolean isPartitionComposite(int partitionIndex) {
         return isPartitionCompositeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);

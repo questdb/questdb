@@ -169,16 +169,9 @@ public interface ColumnTypeDriver {
     );
 
     /**
-     * Column-top aware {@link #o3ColumnMerge}: any row of source 1 (the on-disk column) below
-     * {@code srcDataTop} has no entry in the column file and is merged in as this type's NULL.
-     * {@code srcAuxAddr1} / {@code srcDataAddr1} are UNBIASED - the file's first stored row is
-     * logical row {@code srcDataTop}. This lets a merge consume a column top directly instead of
-     * first materializing a nulls+data image of the source column into scratch space past the
-     * source file's end.
-     * <p>
-     * The destination data vector must be sized to include {@link #getDataVectorMinEntrySize()}
-     * bytes for every null the merge may emit, exactly as the scratch path reserved.
-     *
+     * Column-top aware {@link #o3ColumnMerge}: any row of source 1 (the on-disk column) below {@code srcDataTop} has no
+     * entry in the column file and is merged in as this type's NULL. {@code srcAuxAddr1} / {@code srcDataAddr1} are
+     * UNBIASED - the file's first stored row is logical row {@code srcDataTop}.
      * @param srcDataTop the column top of source 1, in rows
      */
     void o3ColumnMergeWithTop(

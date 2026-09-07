@@ -34,23 +34,12 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * Where a native partition's page frames begin and end.
- * <p>
- * A frame is cut at three places: the page frame row limit, a composite partition's piece
- * boundaries, and a column top. {@link FwdTableReaderPageFrameCursor#computeNativeFrame} applies
- * the same three, in the same order, while walking an open partition; {@link #of} applies them to
- * a partition that is NOT open, from column version metadata alone. The two must agree on the
- * frame count, because a cursor that pre-computes frames and later opens the partition to fill in
- * their addresses asserts exactly that - so the rule lives here rather than in either caller.
  */
 final class NativeFrameBoundaries {
     private final LongList columnTops = new LongList();
     // Exclusive high row of each frame, in order. A frame's low row is the previous entry, or 0.
     private final LongList frameHis = new LongList();
 
-    /**
-     * Rows per page frame, before any cut at a piece boundary or a column top. Sized so the
-     * partition splits across the shared query workers without leaving a tiny trailing frame.
-     */
     static long calculatePageFrameRowLimit(
             long partitionLo,
             long partitionHi,
@@ -73,10 +62,6 @@ final class NativeFrameBoundaries {
         return frameHis.getQuick(index);
     }
 
-    /**
-     * Computes the boundaries for one partition, replacing whatever the previous call left. Read
-     * them back with {@link #size()} and {@link #getQuick(int)}.
-     */
     public void of(
             TableReader tableReader,
             ColumnVersionReader columnVersionReader,
@@ -98,9 +83,7 @@ final class NativeFrameBoundaries {
                 pageFrameMaxRows,
                 workerCount
         );
-        // Resolving the geometry costs a read, so only a composite partition pays for it. Every
-        // piece shift is 0 for a partition that is not composite, which is every partition of an
-        // unsplit table.
+        // Resolving the geometry costs a read, so only a composite partition pays for it.
         final PartitionGeometry geometry = tableReader.getTxFile().isPartitionComposite(partitionIndex)
                 ? tableReader.getGeometry()
                 : null;
@@ -137,10 +120,8 @@ final class NativeFrameBoundaries {
     ) {
         long adjustedHi = hiLimit;
         long pieceShift = 0;
-        // A COMPOSITE partition is several PIECES over one set of column files, and each piece sits at
-        // its own place in those files. A frame spanning two pieces would address the dead space
-        // between them, so it is cut at the piece boundary and carries that piece's SHIFT, which turns
-        // a partition row into a file row.
+        // A COMPOSITE partition is several PIECES over one set of column files, and each piece sits at its own place in
+        // those files.
         if (geometry != null) {
             final int piece = geometry.findPieceByRow(partitionIndex, lo);
             pieceShift = geometry.getPieceShift(partitionIndex, piece);
@@ -150,10 +131,8 @@ final class NativeFrameBoundaries {
                 adjustedHi = pieceHi;
             }
         }
-        // The column top cut has to come AFTER the piece is known: a top is a FILE row while lo and
-        // adjustedHi are PARTITION rows, and the two are only comparable once the shift is in hand.
-        // They coincide for a partition with no geometry. A frame straddling a top would address the
-        // column below its first stored row.
+        // The column top cut has to come AFTER the piece is known: a top is a FILE row while lo and adjustedHi are
+        // PARTITION rows, and the two are only comparable once the shift is in hand.
         for (int i = 0; i < columnCount; i++) {
             final long top = columnTops.getQuick(i) - pieceShift;
             if (top > lo && top < adjustedHi) {
@@ -164,9 +143,8 @@ final class NativeFrameBoundaries {
     }
 
     /**
-     * Reads each column's top - the first row where it has data, with the rows before it NULL - from
-     * column version metadata. A column absent from this partition gets a top of the partition's row
-     * count, making it all-null.
+     * Reads each column's top - the first row where it has data, with the rows before it NULL - from column version
+     * metadata.
      */
     private void populateColumnTops(
             TableReader tableReader,

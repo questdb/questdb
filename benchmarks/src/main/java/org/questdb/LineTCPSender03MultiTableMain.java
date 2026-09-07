@@ -48,12 +48,6 @@ public class LineTCPSender03MultiTableMain {
         haltLatch.await();
     }
 
-    /**
-     * One stream into the shared table. Its own timestamps only ever move forward - unlike the old
-     * per-row jitter, which could land anywhere within a window and so was out of order even within
-     * one stream - so the out-of-order shape merge-append exists for comes only from interleaving
-     * the three streams' otherwise-ordered data against each other, staggered by up to a minute.
-     */
     private static void doSend(long streamOffsetMicros, SOCountDownLatch haltLatch) {
         String hostIPv4 = "127.0.0.1";
         int port = 9009; // 8089 influx
