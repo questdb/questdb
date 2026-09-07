@@ -76,9 +76,9 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     public static final Utf8String URL_PARAM_QWP_ACCEPT_ENCODING = new Utf8String("qwp_accept_encoding");
     public static final Utf8String URL_PARAM_QWP_BROWSER_HANDSHAKE = new Utf8String("qwp_browser_handshake");
     public static final Utf8String URL_PARAM_QWP_MAX_BATCH_ROWS = new Utf8String("qwp_max_batch_rows");
-    public static final Utf8String WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK = new Utf8String("questdb.qwp.durable-ack.v1");
     // Header values
     public static final Utf8String VALUE_WEBSOCKET = new Utf8String("websocket");
+    public static final Utf8String WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK = new Utf8String("questdb.qwp.durable-ack.v1");
     /**
      * The WebSocket magic GUID used in the Sec-WebSocket-Accept calculation.
      */
@@ -218,48 +218,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     /**
-     * Gets the WebSocket key from the request header.
-     *
-     * @param header the HTTP request header
-     * @return the WebSocket key, or null if not present
-     */
-    public static Utf8Sequence getWebSocketKey(HttpRequestHeader header) {
-        return header.getHeader(HEADER_SEC_WEBSOCKET_KEY);
-    }
-
-    /**
-     * Returns an ASCII copy of a newly-created or rotated HTTP session cookie
-     * for inclusion in a raw WebSocket 101 response, or {@code null} when the
-     * handshake did not change the session id.
-     */
-    public static byte[] getSessionCookieValueBytes(HttpConnectionContext context) {
-        CharSequence sessionId = context.getSessionIdSink();
-        if (sessionId.isEmpty()) {
-            return null;
-        }
-        CharSequence cookieValue = context.getCookieHandler().getSessionCookieValue(sessionId);
-        if (cookieValue == null || cookieValue.isEmpty()) {
-            return null;
-        }
-        return cookieValue.toString().getBytes(StandardCharsets.US_ASCII);
-    }
-
-    /**
-     * Checks if the Connection header contains "upgrade".
-     *
-     * @param connectionHeader the value of the Connection header
-     * @return true if the connection should be upgraded
-     */
-    public static boolean isConnectionUpgrade(Utf8Sequence connectionHeader) {
-        if (connectionHeader == null) {
-            return false;
-        }
-        // Connection header may contain multiple values, e.g., "keep-alive, Upgrade"
-        // Perform case-insensitive token match for "upgrade"
-        return containsUpgrade(connectionHeader);
-    }
-
-    /**
      * Matches one case-sensitive token in a comma-separated WebSocket
      * subprotocol offer, ignoring optional spaces and tabs around each token.
      */
@@ -297,6 +255,48 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         }
         return false;
     }
+    /**
+     * Returns an ASCII copy of a newly-created or rotated HTTP session cookie
+     * for inclusion in a raw WebSocket 101 response, or {@code null} when the
+     * handshake did not change the session id.
+     */
+    public static byte[] getSessionCookieValueBytes(HttpConnectionContext context) {
+        CharSequence sessionId = context.getSessionIdSink();
+        if (sessionId.isEmpty()) {
+            return null;
+        }
+        CharSequence cookieValue = context.getCookieHandler().getSessionCookieValue(sessionId);
+        if (cookieValue == null || cookieValue.isEmpty()) {
+            return null;
+        }
+        return cookieValue.toString().getBytes(StandardCharsets.US_ASCII);
+    }
+    /**
+     * Gets the WebSocket key from the request header.
+     *
+     * @param header the HTTP request header
+     * @return the WebSocket key, or null if not present
+     */
+    public static Utf8Sequence getWebSocketKey(HttpRequestHeader header) {
+        return header.getHeader(HEADER_SEC_WEBSOCKET_KEY);
+    }
+
+
+    /**
+     * Checks if the Connection header contains "upgrade".
+     *
+     * @param connectionHeader the value of the Connection header
+     * @return true if the connection should be upgraded
+     */
+    public static boolean isConnectionUpgrade(Utf8Sequence connectionHeader) {
+        if (connectionHeader == null) {
+            return false;
+        }
+        // Connection header may contain multiple values, e.g., "keep-alive, Upgrade"
+        // Perform case-insensitive token match for "upgrade"
+        return containsUpgrade(connectionHeader);
+    }
+
 
     /**
      * Returns {@code true} when a browser WebSocket Origin belongs to the HTTP
@@ -388,10 +388,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      */
     public static boolean isWebSocketUpgrade(Utf8Sequence upgradeHeader) {
         return upgradeHeader != null && Utf8s.equalsIgnoreCaseAscii(upgradeHeader, VALUE_WEBSOCKET);
-    }
-
-    public static int misdirectedRequestWithRoleSize(byte[] roleBytes) {
-        return misdirectedRequestWithRoleSize(roleBytes, null);
     }
 
     public static int misdirectedRequestWithRoleSize(byte[] roleBytes, byte[] sessionCookieValueBytes) {
@@ -521,10 +517,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         return null;
     }
 
-    public static int writeMisdirectedRequestWithRole(long buf, int bufferSize, byte[] roleBytes) {
-        return writeMisdirectedRequestWithRole(buf, bufferSize, roleBytes, null);
-    }
-
     public static int writeMisdirectedRequestWithRole(
             long buf,
             int bufferSize,
@@ -556,21 +548,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         return offset;
     }
 
-    private static boolean startsWithIgnoreCaseAscii(Utf8Sequence value, String prefix) {
-        if (value.size() < prefix.length()) {
-            return false;
-        }
-        for (int i = 0; i < prefix.length(); i++) {
-            if (toLowerAscii(value.byteAt(i)) != prefix.charAt(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
 
-    private static byte toLowerAscii(byte value) {
-        return value >= 'A' && value <= 'Z' ? (byte) (value + ('a' - 'A')) : value;
-    }
 
     /**
      * Writes the WebSocket handshake response to the given buffer.
@@ -726,5 +704,21 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
             }
         }
         return false;
+    }
+
+    private static boolean startsWithIgnoreCaseAscii(Utf8Sequence value, String prefix) {
+        if (value.size() < prefix.length()) {
+            return false;
+        }
+        for (int i = 0; i < prefix.length(); i++) {
+            if (toLowerAscii(value.byteAt(i)) != prefix.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static byte toLowerAscii(byte value) {
+        return value >= 'A' && value <= 'Z' ? (byte) (value + ('a' - 'A')) : value;
     }
 }

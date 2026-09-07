@@ -92,112 +92,6 @@ public class QwpBrowserSessionAuthTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testSessionCookieAuthenticatesIngressAndEgress() throws Exception {
-        assertMemoryLeak(() -> {
-            try (ServerMain questdb = new ServerMain(getServerMainArgs())) {
-                questdb.start();
-                String sessionId = createSession();
-
-                Assert.assertTrue(webSocketUpgrade("/write/v4", sessionId)
-                        .startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
-                Assert.assertTrue(webSocketUpgrade("/read/v1", sessionId)
-                        .startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
-            }
-        });
-    }
-
-    @Test
-    public void testServiceAccountCookieHookRunsForIngressAndEgress() throws Exception {
-        AtomicInteger serviceAccountCookieCalls = new AtomicInteger();
-        Bootstrap bootstrap = new Bootstrap(
-                new PropBootstrapConfiguration() {
-                    @Override
-                    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
-                        return new PropServerConfiguration(
-                                bootstrap.getRootDirectory(),
-                                bootstrap.loadProperties(),
-                                getEnv(),
-                                bootstrap.getLog(),
-                                bootstrap.getBuildInformation(),
-                                FilesFacadeImpl.INSTANCE,
-                                bootstrap.getMicrosecondClock(),
-                                (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
-                                    private final HttpCookieHandler cookieHandler = new HttpCookieHandlerImpl() {
-                                        @Override
-                                        public boolean processServiceAccountCookie(
-                                                HttpConnectionContext context,
-                                                SecurityContext securityContext
-                                        ) {
-                                            serviceAccountCookieCalls.incrementAndGet();
-                                            return true;
-                                        }
-                                    };
-
-                                    @Override
-                                    public @NotNull HttpCookieHandler getHttpCookieHandler() {
-                                        return cookieHandler;
-                                    }
-                                }
-                        );
-                    }
-                },
-                getServerMainArgs()
-        );
-
-        assertMemoryLeak(() -> {
-            try (ServerMain questdb = new ServerMain(bootstrap)) {
-                questdb.start();
-                String sessionId = createSession();
-                serviceAccountCookieCalls.set(0);
-
-                Assert.assertTrue(webSocketUpgrade("/write/v4", sessionId)
-                        .startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
-                Assert.assertEquals(1, serviceAccountCookieCalls.get());
-
-                Assert.assertTrue(webSocketUpgrade("/read/v1", sessionId)
-                        .startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
-                Assert.assertEquals(2, serviceAccountCookieCalls.get());
-            }
-        });
-    }
-
-    @Test
-    public void testUpgradeReturnsRotatedSessionCookie() throws Exception {
-        AtomicLong currentMicros = new AtomicLong(1_760_743_438_000_000L);
-        MicrosecondClock testClock = currentMicros::get;
-        Bootstrap bootstrap = new Bootstrap(
-                new PropBootstrapConfiguration() {
-                    @Override
-                    public MicrosecondClock getMicrosecondClock() {
-                        return testClock;
-                    }
-                },
-                getServerMainArgs()
-        );
-
-        assertMemoryLeak(() -> {
-            try (ServerMain questdb = new ServerMain(bootstrap)) {
-                questdb.start();
-                String oldSessionId = createSession();
-                HttpSessionStore sessionStore = questdb.getConfiguration().getFactoryProvider().getHttpSessionStore();
-                HttpSessionStore.SessionInfo session = sessionStore.getSession(oldSessionId);
-                Assert.assertNotNull(session);
-
-                currentMicros.set(session.getRotateAt() + 1);
-                String response = webSocketUpgrade("/write/v4", oldSessionId);
-                String newSessionId = session.getSessionId().toString();
-
-                Assert.assertNotEquals(oldSessionId, newSessionId);
-                Assert.assertTrue(response.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
-                Assert.assertTrue(response.contains(
-                        "Set-Cookie: " + SESSION_COOKIE_NAME + "=" + newSessionId
-                                + "; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000\r\n"
-                ));
-            }
-        });
-    }
-
-    @Test
     public void testRoleRejectReturnsRotatedSessionCookie() throws Exception {
         AtomicLong currentMicros = new AtomicLong(1_760_743_438_000_000L);
         MicrosecondClock testClock = currentMicros::get;
@@ -278,6 +172,112 @@ public class QwpBrowserSessionAuthTest extends AbstractBootstrapTest {
 
                 Assert.assertNotEquals(oldSessionId, newSessionId);
                 Assert.assertTrue(response.startsWith("HTTP/1.1 421 Misdirected Request\r\n"));
+                Assert.assertTrue(response.contains(
+                        "Set-Cookie: " + SESSION_COOKIE_NAME + "=" + newSessionId
+                                + "; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000\r\n"
+                ));
+            }
+        });
+    }
+
+    @Test
+    public void testServiceAccountCookieHookRunsForIngressAndEgress() throws Exception {
+        AtomicInteger serviceAccountCookieCalls = new AtomicInteger();
+        Bootstrap bootstrap = new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
+                        return new PropServerConfiguration(
+                                bootstrap.getRootDirectory(),
+                                bootstrap.loadProperties(),
+                                getEnv(),
+                                bootstrap.getLog(),
+                                bootstrap.getBuildInformation(),
+                                FilesFacadeImpl.INSTANCE,
+                                bootstrap.getMicrosecondClock(),
+                                (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
+                                    private final HttpCookieHandler cookieHandler = new HttpCookieHandlerImpl() {
+                                        @Override
+                                        public boolean processServiceAccountCookie(
+                                                HttpConnectionContext context,
+                                                SecurityContext securityContext
+                                        ) {
+                                            serviceAccountCookieCalls.incrementAndGet();
+                                            return true;
+                                        }
+                                    };
+
+                                    @Override
+                                    public @NotNull HttpCookieHandler getHttpCookieHandler() {
+                                        return cookieHandler;
+                                    }
+                                }
+                        );
+                    }
+                },
+                getServerMainArgs()
+        );
+
+        assertMemoryLeak(() -> {
+            try (ServerMain questdb = new ServerMain(bootstrap)) {
+                questdb.start();
+                String sessionId = createSession();
+                serviceAccountCookieCalls.set(0);
+
+                Assert.assertTrue(webSocketUpgrade("/write/v4", sessionId)
+                        .startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+                Assert.assertEquals(1, serviceAccountCookieCalls.get());
+
+                Assert.assertTrue(webSocketUpgrade("/read/v1", sessionId)
+                        .startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+                Assert.assertEquals(2, serviceAccountCookieCalls.get());
+            }
+        });
+    }
+
+    @Test
+    public void testSessionCookieAuthenticatesIngressAndEgress() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain questdb = new ServerMain(getServerMainArgs())) {
+                questdb.start();
+                String sessionId = createSession();
+
+                Assert.assertTrue(webSocketUpgrade("/write/v4", sessionId)
+                        .startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+                Assert.assertTrue(webSocketUpgrade("/read/v1", sessionId)
+                        .startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+            }
+        });
+    }
+
+    @Test
+    public void testUpgradeReturnsRotatedSessionCookie() throws Exception {
+        AtomicLong currentMicros = new AtomicLong(1_760_743_438_000_000L);
+        MicrosecondClock testClock = currentMicros::get;
+        Bootstrap bootstrap = new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return testClock;
+                    }
+                },
+                getServerMainArgs()
+        );
+
+        assertMemoryLeak(() -> {
+            try (ServerMain questdb = new ServerMain(bootstrap)) {
+                questdb.start();
+                String oldSessionId = createSession();
+                HttpSessionStore sessionStore = questdb.getConfiguration().getFactoryProvider().getHttpSessionStore();
+                HttpSessionStore.SessionInfo session = sessionStore.getSession(oldSessionId);
+                Assert.assertNotNull(session);
+
+                currentMicros.set(session.getRotateAt() + 1);
+                String response = webSocketUpgrade("/write/v4", oldSessionId);
+                String newSessionId = session.getSessionId().toString();
+
+                Assert.assertNotEquals(oldSessionId, newSessionId);
+                Assert.assertTrue(response.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
                 Assert.assertTrue(response.contains(
                         "Set-Cookie: " + SESSION_COOKIE_NAME + "=" + newSessionId
                                 + "; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000\r\n"

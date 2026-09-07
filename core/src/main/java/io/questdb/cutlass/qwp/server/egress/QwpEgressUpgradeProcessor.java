@@ -156,9 +156,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     // flags instead and never touch this LocalValue.
     private static final LocalValue<RejectFlushTracker> REJECT_FLUSH = new LocalValue<>();
     /**
-     * Upper bound for the SERVER_INFO body: 26 bytes fixed fields plus 65535
-     * bytes for each of cluster_id and node_id. The frame writer truncates each
-     * id at the u16 wire cap, so the bound is tight rather than defensive.
+     * Upper bound for the SERVER_INFO body: 28 bytes covering the fixed fields,
+     * the CAP_ZONE length prefix and the browser compression trailer, plus
+     * 65535 bytes for each of cluster_id and node_id. The frame writer
+     * truncates each id at the u16 wire cap, so the bound is tight rather than
+     * defensive.
      */
     private static final int SERVER_INFO_BODY_MAX_BYTES = 28 + 0xFFFF + 0xFFFF;
     /**

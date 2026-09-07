@@ -73,6 +73,11 @@ public final class QwpConstants {
      */
     public static final byte FLAG_DEFER_COMMIT = 0x01;
     /**
+     * Flag bit: Delta symbol dictionary encoding enabled.
+     * When set, symbol columns use global IDs and send only new dictionary entries.
+     */
+    public static final byte FLAG_DELTA_SYMBOL_DICT = 0x08;
+    /**
      * Flag bit: side-effect-free durable-ack progress poll. This control frame
      * has zero tables and zero payload and is accepted only on a connection
      * that negotiated durable acknowledgements.
@@ -89,11 +94,6 @@ public final class QwpConstants {
      * no sequence and are unaffected.
      */
     public static final byte FLAG_DURABLE_ACK_POLL = 0x02;
-    /**
-     * Flag bit: Delta symbol dictionary encoding enabled.
-     * When set, symbol columns use global IDs and send only new dictionary entries.
-     */
-    public static final byte FLAG_DELTA_SYMBOL_DICT = 0x08;
     /**
      * Flag bit: Gorilla timestamp encoding enabled.
      */
@@ -200,10 +200,6 @@ public final class QwpConstants {
      */
     public static final byte STATUS_OK = 0x00;
     /**
-     * Browser-requested ingress handshake carrying the server batch cap.
-     */
-    public static final byte STATUS_SERVER_INFO = 0x01;
-    /**
      * Status: Malformed message.
      */
     public static final byte STATUS_PARSE_ERROR = 0x05;
@@ -215,6 +211,10 @@ public final class QwpConstants {
      * Status: Authorization failure.
      */
     public static final byte STATUS_SECURITY_ERROR = 0x08;
+    /**
+     * Browser-requested ingress handshake carrying the server batch cap.
+     */
+    public static final byte STATUS_SERVER_INFO = 0x01;
     /**
      * Status: Write failure (e.g., table not accepting writes).
      */

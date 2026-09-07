@@ -40,13 +40,22 @@ public class QwpEgressMaxBatchRowsTest {
     }
 
     @Test
-    public void testLowerHeaderLimitWins() {
+    public void testInvalidAndOversizedValuesUseServerBounds() {
         Assert.assertEquals(
-                256,
-                QwpEgressUpgradeProcessor.negotiateMaxBatchRows(
-                        new Utf8String("256"),
-                        new Utf8String("512")
-                )
+                QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH,
+                QwpEgressUpgradeProcessor.negotiateMaxBatchRows(null, null)
+        );
+        Assert.assertEquals(
+                QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH,
+                QwpEgressUpgradeProcessor.negotiateMaxBatchRows(null, new Utf8String("invalid"))
+        );
+        Assert.assertEquals(
+                QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH,
+                QwpEgressUpgradeProcessor.negotiateMaxBatchRows(null, new Utf8String("0"))
+        );
+        Assert.assertEquals(
+                QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH,
+                QwpEgressUpgradeProcessor.negotiateMaxBatchRows(null, new Utf8String("1048576"))
         );
     }
 
@@ -56,6 +65,17 @@ public class QwpEgressMaxBatchRowsTest {
                 512,
                 QwpEgressUpgradeProcessor.negotiateMaxBatchRows(
                         new Utf8String("16384"),
+                        new Utf8String("512")
+                )
+        );
+    }
+
+    @Test
+    public void testLowerHeaderLimitWins() {
+        Assert.assertEquals(
+                256,
+                QwpEgressUpgradeProcessor.negotiateMaxBatchRows(
+                        new Utf8String("256"),
                         new Utf8String("512")
                 )
         );
@@ -76,26 +96,6 @@ public class QwpEgressMaxBatchRowsTest {
                         new Utf8String("256"),
                         new Utf8String("invalid")
                 )
-        );
-    }
-
-    @Test
-    public void testInvalidAndOversizedValuesUseServerBounds() {
-        Assert.assertEquals(
-                QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH,
-                QwpEgressUpgradeProcessor.negotiateMaxBatchRows(null, null)
-        );
-        Assert.assertEquals(
-                QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH,
-                QwpEgressUpgradeProcessor.negotiateMaxBatchRows(null, new Utf8String("invalid"))
-        );
-        Assert.assertEquals(
-                QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH,
-                QwpEgressUpgradeProcessor.negotiateMaxBatchRows(null, new Utf8String("0"))
-        );
-        Assert.assertEquals(
-                QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH,
-                QwpEgressUpgradeProcessor.negotiateMaxBatchRows(null, new Utf8String("1048576"))
         );
     }
 }
