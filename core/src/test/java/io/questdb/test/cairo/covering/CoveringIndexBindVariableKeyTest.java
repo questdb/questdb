@@ -70,17 +70,7 @@ public class CoveringIndexBindVariableKeyTest extends AbstractCairoTest {
         // (Integer.MIN_VALUE) to an index key nothing matches -- so the query returned
         // nothing while the literal "sym = null" returned the row.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_bv_top (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("""
-                    INSERT INTO t_bv_top VALUES
-                    ('2024-01-01T00:00:00', 10.0),
-                    ('2024-01-01T01:00:00', 20.0)
-                    """);
-            execute("ALTER TABLE t_bv_top ADD COLUMN sym SYMBOL");
-            execute("INSERT INTO t_bv_top VALUES ('2024-01-01T02:00:00', 30.0, 'A')");
-            execute("ALTER TABLE t_bv_top ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
+            createTopTable("t_bv_top");
 
             bindVariableService.setStr(0, null);
             final String sql = "SELECT sym, val FROM t_bv_top WHERE sym = $1 LATEST ON ts PARTITION BY sym";
@@ -181,6 +171,128 @@ public class CoveringIndexBindVariableKeyTest extends AbstractCairoTest {
                     .withPlanContaining("CoveringIndex")
                     .returns("ts\tsym\tval\n");
         });
+    }
+
+    @Test
+    public void testBoundNullKeyLatestOnInListOverColumnTop() throws Exception {
+        // The multi-key LATEST ON backup. Codegen builds it whenever an IN list can carry a
+        // NULL key, and it hands the shared filter and the key functions over to it; nothing
+        // else drives that construction end to end.
+        assertMemoryLeak(() -> {
+            createTopTable("t_bv_latest_in_top");
+            bindVariableService.setStr(0, null);
+            final String sql = "SELECT sym, val FROM t_bv_latest_in_top WHERE sym IN ($1, 'A') LATEST ON ts PARTITION BY sym";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .skipRandomAccessProbe()
+                    .sizeMayVary()
+                    .withPlanContaining("backup: true")
+                    .returns("""
+                            sym\tval
+                            \t20.0
+                            A\t30.0
+                            """);
+            assertSqlCursors(sql, sql.replace("SELECT ", "SELECT /*+ no_covering */ "));
+        });
+    }
+
+    @Test
+    public void testBoundNullKeyLatestOnPlainBitmapIndex() throws Exception {
+        // The toIndexKey fix lives in LatestByValueDeferredIndexedRowCursorFactory, which is the
+        // general deferred LATEST ON path -- no covering index involved. A bound NULL key has to
+        // reach the same row the literal spelling reaches.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_bv_bitmap (ts TIMESTAMP, val DOUBLE,"
+                    + " sym SYMBOL INDEX TYPE BITMAP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t_bv_bitmap VALUES
+                    ('2024-01-01T00:00:00', 10.0, 'A'),
+                    ('2024-01-01T01:00:00', 20.0, NULL),
+                    ('2024-01-02T00:00:00', 30.0, 'A'),
+                    ('2024-01-02T01:00:00', 50.0, NULL)
+                    """);
+            bindVariableService.setStr(0, null);
+            final String sql = "SELECT sym, val FROM t_bv_bitmap WHERE sym = $1 LATEST ON ts PARTITION BY sym";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("""
+                            sym\tval
+                            \t50.0
+                            """);
+            assertSqlCursors(sql, "SELECT sym, val FROM t_bv_bitmap WHERE sym = null LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testBoundNullKeyWhereInListOverColumnTop() throws Exception {
+        // The IN-list WHERE site: an element that may bind to NULL builds a backup there too,
+        // and the column top is what makes the open actually run it.
+        assertMemoryLeak(() -> {
+            createTopTable("t_bv_in_top");
+            bindVariableService.setStr(0, null);
+            final String sql = "SELECT ts, sym, val FROM t_bv_in_top WHERE sym IN ($1, 'A')";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .skipRandomAccessProbe()
+                    .sizeMayVary()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex backup: true")
+                    .returns("""
+                            ts\tsym\tval
+                            2024-01-01T00:00:00.000000Z\t\t10.0
+                            2024-01-01T01:00:00.000000Z\t\t20.0
+                            2024-01-01T02:00:00.000000Z\tA\t30.0
+                            """);
+            assertSqlCursors(sql, sql.replace("SELECT ", "SELECT /*+ no_covering */ "));
+        });
+    }
+
+    @Test
+    public void testBoundNullKeyWhereOverColumnTop() throws Exception {
+        // The single-key WHERE site. Its sibling test drives LATEST ON; this one drives the
+        // plain scan, where the backup has to answer the rows below the top from their own
+        // columns rather than from a sidecar that holds nothing for them.
+        assertMemoryLeak(() -> {
+            createTopTable("t_bv_where_top");
+            bindVariableService.setStr(0, null);
+            final String sql = "SELECT ts, sym, val FROM t_bv_where_top WHERE sym = $1";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .skipRandomAccessProbe()
+                    .sizeMayVary()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex backup: true")
+                    .returns("""
+                            ts\tsym\tval
+                            2024-01-01T00:00:00.000000Z\t\t10.0
+                            2024-01-01T01:00:00.000000Z\t\t20.0
+                            """);
+            assertSqlCursors(sql, sql.replace("SELECT ", "SELECT /*+ no_covering */ "));
+            assertSqlCursors(sql, "SELECT ts, sym, val FROM t_bv_where_top WHERE sym = null");
+        });
+    }
+
+    /**
+     * Two rows written before {@code sym} exists -- they carry a column top and match the NULL
+     * key implicitly -- then one row with a real key above it. Every NULL-key open over this
+     * table has to run the backup plan.
+     */
+    private static void createTopTable(String name) throws Exception {
+        execute("CREATE TABLE " + name + " (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("""
+                INSERT INTO %s VALUES
+                ('2024-01-01T00:00:00', 10.0),
+                ('2024-01-01T01:00:00', 20.0)
+                """.formatted(name));
+        execute("ALTER TABLE " + name + " ADD COLUMN sym SYMBOL");
+        execute("INSERT INTO " + name + " VALUES ('2024-01-01T02:00:00', 30.0, 'A')");
+        execute("ALTER TABLE " + name + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
     }
 
     private static void createTable(String name) throws Exception {

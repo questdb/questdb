@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.covering;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
@@ -164,6 +166,21 @@ public class CoveringIndexForceHintTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testHintThrowsFromPageFrameCursorWhenBoundKeyIsNull() throws Exception {
+        // The promise is enforced on both openings, and getPageFrameCursor() is the one the
+        // hint exists to keep reachable -- parallel filter and vectorized GROUP BY come in
+        // through it, never through getCursor(). Same tables and same shape as
+        // testHintKeepsPageFramesForBoundKey; only the bound value changes.
+        assertMemoryLeak(() -> {
+            createTopTable("t_fc_pf_throw");
+            bindVariableService.setStr(0, null);
+            assertThrowsForcedNullKeyOnPageFrames("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_pf_throw WHERE sym = $1");
+            // The IN-list cursor has its own branch and its own check.
+            assertThrowsForcedNullKeyOnPageFrames("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_pf_throw WHERE sym IN ($1, 'B')");
+        });
+    }
+
     private static void assertThrowsForcedNullKey(String sql) throws Exception {
         try (
                 RecordCursorFactory factory = select(sql);
@@ -176,6 +193,20 @@ public class CoveringIndexForceHintTest extends AbstractCairoTest {
             Assert.fail("expected a CairoException naming the force_use_covering hint");
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "force_use_covering");
+        }
+    }
+
+    private static void assertThrowsForcedNullKeyOnPageFrames(String sql) throws Exception {
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertTrue(
+                    "the hint has to leave the page-frame cursor reachable, or this asserts nothing",
+                    factory.supportsPageFrameCursor()
+            );
+            try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                Assert.fail("expected a CairoException naming the force_use_covering hint, got " + cursor);
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "force_use_covering");
+            }
         }
     }
 

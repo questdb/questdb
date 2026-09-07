@@ -1881,11 +1881,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
         // Regression test: the INDEXED (key) column itself can have a column
         // top -- added via ALTER TABLE ADD COLUMN after rows already exist --
         // while an INCLUDEd column predates it with real data. Rows below the
-        // key's column top match a NULL-key scan via the reader's synthetic
-        // null-prefix (NullCursor), which never touches the sidecar decode
-        // state (cachedSidecarIdx / keyBlockAddrs). The covering read must
-        // still surface the real INCLUDE column value for those rows, not
-        // whatever stale/default state the cursor is sitting on.
+        // key's column top hold no posting, so the sidecar holds no value for
+        // them and the NULL-key scan has to run its backup. The read must
+        // surface the real INCLUDE column value for those rows, which only
+        // the INCLUDE column's own file holds.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_key_top (
@@ -2042,10 +2041,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
     public void testAlterTableAddIndexIncludesFixedWidthColumnsPredatingKeyColumnTop() throws Exception {
         // Same null-prefix shape as
         // testAlterTableAddIndexIncludesColumnPredatingKeyColumnTop, but for the
-        // whole fixed-width INCLUDE family. Every one of these types reaches the raw
-        // .d file through the same primitive, NullCursor.resolveRawFixedAddr(), so a
-        // single table pins them all: row 0 holds each type's own NULL sentinel and
-        // row 1 holds a real value, both below the indexed column's top.
+        // whole fixed-width INCLUDE family, so a single table pins them all: row 0
+        // holds each type's own NULL and row 1 holds a real value, both below the
+        // indexed column's top.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_np_fixed (
@@ -2208,9 +2206,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
         // column with one that arrived after it, interleaved so that INCLUDE slot
         // order differs from table column order. For a null-prefix row the two early
         // columns must read their own .d files while the late column must stay NULL:
-        // NullCursor honours each INCLUDE column's OWN column top, not the indexed
-        // column's. Confusing a slot for a table index, or dropping the per-column
-        // top, surfaces the late column's later rows on the null-prefix rows.
+        // each INCLUDE column's OWN column top decides, not the indexed column's.
+        // Confusing a slot for a table index, or dropping the per-column top,
+        // surfaces the late column's later rows on the null-prefix rows.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_np_mixed (
@@ -2278,12 +2276,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
     public void testAlterTableAddIndexIncludesStringAndBinaryColumnsPredatingKeyColumnTop() throws Exception {
         // Same null-prefix shape as
         // testAlterTableAddIndexIncludesColumnPredatingKeyColumnTop, but for STRING
-        // and BINARY. Both have their own hand-written raw decoders in NullCursor
-        // (readRawCoveredStr / readRawCoveredBin) that share nothing with VARCHAR's:
-        // STRING's aux entry is a bare 8-byte offset into a 4-byte length followed by
-        // UTF-16 code units, BINARY's is a bare 8-byte offset into an 8-byte length
-        // followed by raw bytes. Row 0 is NULL for both, row 1 carries a multi-byte
-        // STRING and an 8-byte BINARY.
+        // and BINARY, whose aux layouts share nothing with VARCHAR's: STRING's entry
+        // is a bare 8-byte offset into a 4-byte length followed by UTF-16 code units,
+        // BINARY's is a bare 8-byte offset into an 8-byte length followed by raw
+        // bytes. Row 0 is NULL for both, row 1 carries a multi-byte STRING and an
+        // 8-byte BINARY.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_np_strbin (
@@ -15370,12 +15367,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullPrefixIncludeColumnOwnTopEveryDecoderBwd() throws Exception {
-        // LATEST ON takes the DIR_BACKWARD reader, whose NullCursor carries its own
-        // copy of every raw decoder. It answers with row 2 alone: each INCLUDE column
-        // has a column top of 1 there, so the value has to come from file row 1.
-        // Reading file row 2 -- the indexed column's row number, unadjusted -- finds
-        // nothing under the two-row mapping and renders NULL instead.
+    public void testNullPrefixIncludeColumnOwnTopBackupServesEveryTypeBwd() throws Exception {
+        // A NULL key over a column top runs the backup, so the covered decoders are not
+        // what answers here -- the backup reads each INCLUDE column's own file. The test
+        // is that it lands on the right row of that file: every INCLUDE column carries a
+        // top of 1, so row 2's value sits at file row 1. An unadjusted row number reads
+        // past the two-row mapping and renders NULL instead.
         assertMemoryLeak(() -> {
             createNullPrefixOwnTopTable();
             final String sql = """
@@ -15398,7 +15395,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullPrefixIncludeColumnOwnTopEveryDecoderFwd() throws Exception {
+    public void testNullPrefixIncludeColumnOwnTopBackupServesEveryTypeFwd() throws Exception {
         // Forward twin of the test above. Rows 0..2 match sym = null: row 0 predates
         // every INCLUDE column and must render NULL in all five, rows 1..2 hold each
         // column's file rows 0..1. An unadjusted row number shifts every value up by
@@ -15451,12 +15448,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testNullPrefixTypedNullSentinelsBackwardScan() throws Exception {
-        // Same contract on the backward reader, whose NullCursor carries its own copy
-        // of the forward getters. LATEST ON is the one SQL shape that takes the
-        // DIR_BACKWARD reader (ORDER BY ts DESC sorts the forward reader's output),
+        // Same contract on the backward plan. LATEST ON is the one SQL shape that takes
+        // the DIR_BACKWARD reader (ORDER BY ts DESC sorts the forward reader's output),
         // and it returns a single row per key, so each null-prefix shape gets its own
         // time-filtered query: 2024-01-01 has no files at all for the INCLUDE columns,
-        // 2024-01-02 has 0-byte .d files under a full column top.
+        // 2024-01-02 has 0-byte .d files under a full column top. Both shapes take the
+        // backup, and it has to render the same per-type NULL the plain plan does.
         assertMemoryLeak(() -> {
             createNullPrefixTypedColumnTable();
             final String columns = "sym, v_gb, v_gs, v_gi, v_gl, v_ip, v_d8, v_d16, v_d128, v_d256";
@@ -15489,10 +15486,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testNullPrefixTypedNullSentinelsIntAndLongWidth() throws Exception {
-        // getCoveredInt / getCoveredLong serve five INT-width and five LONG-width types.
+        // Five INT-width and five LONG-width types whose NULL is not the width's default:
         // Numbers.INT_NULL is right for INT/SYMBOL/DECIMAL32 but is neither
         // GeoHashes.INT_NULL (-1) nor Numbers.IPv4_NULL (0); Numbers.LONG_NULL is right
-        // for LONG/TIMESTAMP/DATE/DECIMAL64 but not for GEOLONG (-1).
+        // for LONG/TIMESTAMP/DATE/DECIMAL64 but not for GEOLONG (-1). A NULL key over a
+        // column top runs the backup, so what is under test is the backup rendering each
+        // of them, cross-checked against the plain plan.
         assertMemoryLeak(() -> {
             createNullPrefixTypedColumnTable();
             final String sql = """
@@ -15541,9 +15540,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testNullPrefixTypedNullSentinelsNarrowWidth() throws Exception {
-        // getCoveredByte / getCoveredShort serve four types each. Zero is the right
-        // NULL for BYTE/BOOLEAN and SHORT/CHAR, but GEOBYTE/GEOSHORT are -1 and
-        // DECIMAL8/DECIMAL16 are Byte.MIN_VALUE / Short.MIN_VALUE.
+        // Four BYTE-width and four SHORT-width types. Zero is the right NULL for
+        // BYTE/BOOLEAN and SHORT/CHAR, but GEOBYTE/GEOSHORT are -1 and DECIMAL8/DECIMAL16
+        // are Byte.MIN_VALUE / Short.MIN_VALUE. As above, the backup is what renders them.
         assertMemoryLeak(() -> {
             createNullPrefixTypedColumnTable();
             final String sql = """
@@ -15589,10 +15588,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testNullPrefixTypedNullSentinelsWideWidth() throws Exception {
-        // The 16- and 32-byte getters write Numbers.LONG_NULL into every word. That is
-        // right for UUID and LONG256, but DECIMAL128's NULL is (Long.MIN_VALUE, 0) and
+        // The 16- and 32-byte types. Writing Numbers.LONG_NULL into every word is right
+        // for UUID and LONG256, but DECIMAL128's NULL is (Long.MIN_VALUE, 0) and
         // DECIMAL256's is (Long.MIN_VALUE, 0, 0, 0), so all-MIN_VALUE reads back as a
-        // real number rather than NULL.
+        // real number rather than NULL. As above, the backup is what renders them.
         assertMemoryLeak(() -> {
             createNullPrefixTypedColumnTable();
             final String sql = """
@@ -15639,12 +15638,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testNullPrefixTypedNullSentinelsWithSidecarPresent() throws Exception {
-        // The other typed-sentinel tests build partitions with no .pci at all, so their
-        // covered-column types come from initCoversFromMetadata. Here ONE partition holds
-        // both halves: rows 0-1 predate sym (the null prefix) and row 2 carries sym, so
-        // openSidecarFilesIfPresent fills sidecarColumnTypes from the .pci instead. The
-        // per-type NULL sentinels must be the same either way, and the sidecar-served row
-        // must still return its real values.
+        // The other typed-NULL tests build partitions with no .pci at all. Here ONE
+        // partition holds both halves: rows 0-1 predate sym (the null prefix) and row 2
+        // carries sym, so the partition does have a sidecar. The NULL key still takes the
+        // backup, and the rendered NULLs must be the same either way while the row that
+        // carries a real key still returns its real values.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_np_typed_sc (
@@ -19786,7 +19784,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
     private static void assertNoIndexReaderColumnMappings(CoveredColumnMapCounter counter) {
         for (String name : new String[]{"tag.d", "tag.i", "price.d", "qty.d"}) {
             assertEquals(
-                    "the fall-back reads the table reader's own mapping of " + name
+                    "the backup reads the table reader's own mapping of " + name
                             + ", so the index reader must map nothing",
                     0,
                     counter.countOf(name)
@@ -19856,10 +19854,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
     /**
      * Table whose INCLUDE columns each carry their own column top below the indexed
      * column's: row 0 predates v_vc, v_str, v_bin, v_arr and v_long (top 1 each), rows
-     * 1..2 hold their first two file rows, and sym arrives after that (top 3). Every
-     * raw decoder in NullCursor -- VARCHAR, STRING, BINARY, ARRAY and the fixed-width
-     * primitive -- has to subtract the INCLUDE column's own top from the row number
-     * before it reads.
+     * 1..2 hold their first two file rows, and sym arrives after that (top 3). A NULL key
+     * over that shape runs the backup, and every type it reads -- VARCHAR, STRING, BINARY,
+     * ARRAY and a fixed-width primitive -- has to subtract the INCLUDE column's own top
+     * from the row number before it reads its file.
      */
     private static void createNullPrefixOwnTopTable() throws Exception {
         execute("""
@@ -19894,14 +19892,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     /**
      * Table whose first two partitions predate every INCLUDE column as well as the
-     * indexed SYMBOL, so the null-prefix getters cannot resolve a raw address for any
-     * of them and must fall back to a per-type NULL sentinel.
+     * indexed SYMBOL, so no row in them holds a value for any of those columns and each
+     * has to render its own per-type NULL.
      * <p>
      * 2024-01-01 is already historic when {@code ADD COLUMN} runs, so it gets no files
      * at all for the new columns; 2024-01-02 is the active partition, so it gets a
-     * 0-byte {@code .d} plus a full column top. Both shapes drive
-     * {@code resolveRawFixedAddr} to return 0 -- the first because the file is absent,
-     * the second because {@code fileRow < 0}.
+     * 0-byte {@code .d} plus a full column top. Both shapes have to render each column's
+     * own NULL -- the first because the file is absent, the second because every row sits
+     * below the top.
      * <p>
      * 2024-01-03 carries one real row whose {@code sym} is an explicit NULL. That row
      * lives above every column top, so the ordinary sidecar path serves it. It is the
@@ -20016,12 +20014,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     /**
-     * Runs {@code query} over a partition whose indexed column carries a column top,
-     * and asserts the covered scan opened no column mapping of its own. That is the
-     * point of falling back per partition rather than decoding the prefix inside the
-     * index reader: every value comes from a file the table reader already mapped to
-     * serve the partition, so the fall-back costs no extra mmap. Counts mmap calls
-     * rather than wall-clock time, so the assertion is deterministic.
+     * Runs {@code query} over a table whose indexed column carries a column top, and
+     * asserts that nothing mapped the INCLUDE columns through an index reader. A NULL key
+     * over a top runs the backup, which is a plain index scan: every value comes from a
+     * file the table reader already mapped to serve the partition, and the covering reader
+     * is never opened at all. A change that routed this query back through the covering
+     * reader -- which holds no value for a row below the top -- would show up here as a
+     * non-zero count. Counts mmap calls rather than wall-clock time, so the assertion is
+     * deterministic.
      */
     private void assertNullPrefixQueryOpensNoColumnMappings(String query, String expected) throws Exception {
         final CoveredColumnMapCounter counter = new CoveredColumnMapCounter("tag.d", "tag.i", "price.d", "qty.d");

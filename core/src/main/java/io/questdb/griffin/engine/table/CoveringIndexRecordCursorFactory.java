@@ -380,19 +380,25 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * to the partition's row count.
      * <p>
      * Reads {@code _cv} only, which {@link ColumnVersionReader} holds in memory, so no partition
-     * is opened. The first test answers the whole table at once: a column that has existed since
-     * the table's first partition can carry no top anywhere, because the O3 overwrite that
-     * creates one applies only to partitions the column was missing from. Otherwise the walk
-     * mirrors {@code TableReader.reloadColumnAt}'s own present/absent decision, so a table whose
-     * column was added long ago and has since been rewritten into every partition still takes
-     * the covering path.
+     * is opened. The walk mirrors {@code TableReader.reloadColumnAt}'s own present/absent
+     * decision, so a table whose column was added long ago and has since been rewritten into
+     * every partition still takes the covering path.
+     * <p>
+     * The walk runs even when the column carries no {@code COL_TOP_DEFAULT_PARTITION} record.
+     * That record says when {@code ALTER TABLE ADD COLUMN} introduced the column, and its
+     * absence does not mean the column has a value in every partition: ATTACH PARTITION of a
+     * directory that holds no file for the column upserts a per-partition top and never writes
+     * the default record ({@code TableWriter.attachPrepare()},
+     * {@code ColumnVersionWriter.overrideColumnVersions()}). Skipping the walk on
+     * {@code Long.MIN_VALUE} would answer false for exactly that table and drop the attached
+     * partition's rows from a NULL-key scan. With no default record {@code addedAtPartition}
+     * is {@code Long.MIN_VALUE}, which no partition timestamp is below, so the predates-the-
+     * column branch simply never fires -- correct, because a column with no default record
+     * predates nothing.
      */
     private static boolean hasAnyColumnTop(TableReader reader, int writerIndex) {
         final ColumnVersionReader cv = reader.getColumnVersionReader();
         final long addedAtPartition = cv.getColumnTopPartitionTimestamp(writerIndex);
-        if (addedAtPartition == Long.MIN_VALUE) {
-            return false;
-        }
         for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
             final long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
             final int recordIndex = cv.getRecordIndex(partitionTimestamp, writerIndex);
@@ -616,9 +622,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * timestamp-ordered ascending, but has no backward scan -- so codegen routes
      * its negative limits to the serial path, where LimitRecordCursorFactory
      * computes last-N via size + skip over the ascending merge.
+     * <p>
+     * Delegates the backup test to {@link #supportsPageFrameCursor()} rather than repeating
+     * it. The one caller consults this only after that method has already answered true, so a
+     * separate {@code backup == null} term here could never decide anything on its own.
      */
     public boolean supportsNegativeLimitPageFrame() {
-        return backup == null && singleKeyPageFrameCursor != null;
+        return supportsPageFrameCursor() && singleKeyPageFrameCursor != null;
     }
 
     @Override

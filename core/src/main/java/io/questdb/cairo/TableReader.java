@@ -381,11 +381,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         IndexReader indexReader = getIndexReaderIfExists(partitionIndex, columnIndex, direction);
         if (indexReader != null && isStandInNullReader(indexReader) != (columns.getQuick(index) instanceof NullMemoryCMR)) {
             // The partition gained the column since this reader was cached (an O3 insert
-            // or an ATTACH rewrites a partition that predated it), or lost it again. The
-            // two reader kinds are not interchangeable and of() cannot turn one into the
-            // other: a stand-in null reader would keep answering the NULL key with EVERY
-            // row of a partition that now holds real values, and a real reader would open
-            // an index file the writer never created. Drop it and build the right one.
+            // rewrites a partition that predated it), or lost it again. The two reader
+            // kinds are not interchangeable and of() cannot turn one into the other: a
+            // stand-in null reader would keep answering the NULL key with EVERY row of a
+            // partition that now holds real values, and a real reader would open an index
+            // file the writer never created. Drop it and build the right one.
+            // Only the gaining direction has a known producer -- an in-place O3 grow keeps
+            // the partition open across the reload. Every operation that takes the column
+            // away from a partition (DETACH plus ATTACH of a directory without it, a
+            // partition rewrite) changes the partition name txn, and the reload closes the
+            // partition, which drops this cache with it. The losing half is kept for
+            // symmetry: it costs one comparison and the wrong reader here is silent.
             final int indexSlot = direction == IndexReader.DIR_BACKWARD ? index : index + 1;
             Misc.free(indexes.getAndSetQuick(indexSlot, null));
             indexReader = null;
