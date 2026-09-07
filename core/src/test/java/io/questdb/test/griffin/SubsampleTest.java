@@ -5901,6 +5901,26 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSdtSubnormalPeakKept() throws Exception {
+        // slope-underflow guard (SUBSAMPLE form): (1e-320 +/- 1e-322) / 1e6 flush to the same
+        // 0.0 slope - finite but equal, so the corridor lost its width and the fused keep-set
+        // would silently drop the middle row at ~50x the 2 * compdev reconstruction bound.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO x VALUES " +
+                    "(0.0, 0::timestamp),(1e-320, 1000000::timestamp),(0.0, 2000000::timestamp)");
+            assertQuery("SELECT ts, price FROM x SUBSAMPLE sdt(price, 1e-322)")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tprice
+                            1970-01-01T00:00:00.000000Z\t0.0
+                            1970-01-01T00:00:01.000000Z\t1.0E-320
+                            1970-01-01T00:00:02.000000Z\t0.0
+                            """);
+        });
+    }
+
+    @Test
     public void testSdtMatchesCapturedGolden() throws Exception {
         // A monotonic ramp stays inside the swinging door and keeps only its endpoints.
         assertMemoryLeak(() -> {

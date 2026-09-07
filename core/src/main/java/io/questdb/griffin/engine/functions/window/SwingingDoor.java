@@ -100,13 +100,30 @@ public class SwingingDoor {
             return;
         }
 
-        double sU = (value + compdev - anchorValue) / dt;
-        double sL = (value - compdev - anchorValue) / dt;
+        double nU = value + compdev - anchorValue;
+        double nL = value - compdev - anchorValue;
+        double sU = nU / dt;
+        double sL = nL / dt;
         // A non-finite slope term (IEEE-754 overflow of value +/- compdev - anchorValue, or a
         // non-finite stored value) collapses distinct slopes into the same +/-Inf, making the
         // doors-crossed test unable to see a cross. Keeping the point and restarting the series
         // here is the only decision that provably honors the 2 * compdev reconstruction bound.
         if (!(Double.isFinite(sU) && Double.isFinite(sL))) {
+            anchor(index, ts, value);
+            sink.mark(index, true);
+            return;
+        }
+        // The mirror hazard at the small end: distinct tolerance numerators whose quotients
+        // round to the same double mean the DIVISION destroyed the corridor's width - subnormal
+        // flush, e.g. a 1e-320 peak over a 1e6-tick span, where the slope-domain ULP dwarfs
+        // 2 * compdev / dt. Deviations still representable in the value domain become invisible
+        // to the doors-crossed test, and points get dropped at many times the stated
+        // 2 * compdev reconstruction bound; keeping the point and restarting is the only
+        // decision that provably honors it. Equal numerators (nU == nL) are exempt: there the
+        // compdev fell below the VALUE domain's resolution, the corridor legitimately degrades
+        // to exact-collinearity of the stored doubles, and drops stay bound-honoring - the
+        // 2^53 long-cast test pins that contract. compdev == 0 is exempt for the same reason.
+        if (compdev > 0 && sU == sL && nU != nL) {
             anchor(index, ts, value);
             sink.mark(index, true);
             return;
@@ -130,10 +147,22 @@ public class SwingingDoor {
                 sink.mark(index, true);
                 return;
             }
-            slopeHi = (value + compdev - anchorValue) / dt2;
-            slopeLo = (value - compdev - anchorValue) / dt2;
+            double nU2 = value + compdev - anchorValue;
+            double nL2 = value - compdev - anchorValue;
+            slopeHi = nU2 / dt2;
+            slopeLo = nL2 / dt2;
             if (!(Double.isFinite(slopeHi) && Double.isFinite(slopeLo))) {
                 // same non-finite hazard against the just-promoted anchor; restart, keeping the point
+                anchor(index, ts, value);
+                sink.mark(index, true);
+                return;
+            }
+            if (compdev > 0 && slopeHi == slopeLo && nU2 != nL2) {
+                // same division-collapse hazard against the just-promoted anchor: the
+                // numerators are re-derived from its value and divided by dt2, so they can
+                // flush equal even though the pre-cross pair over dt stayed distinct (e.g. a
+                // flat step whose +/-compdev numerators flush to +/-0.0). Restart rather than
+                // keep a zero-width corridor alive.
                 anchor(index, ts, value);
                 sink.mark(index, true);
                 return;

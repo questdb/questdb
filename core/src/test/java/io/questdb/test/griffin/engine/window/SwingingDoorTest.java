@@ -301,4 +301,45 @@ public class SwingingDoorTest {
         boolean[] k = run(new long[]{0, 1, 2, 3}, new double[]{0, 2.5, 2.5, 2.5}, 1.0);
         Assert.assertArrayEquals(new boolean[]{true, false, true, true}, k);
     }
+
+    // ---- slope underflow: corridor width flushed away on finite input ----
+
+    @Test
+    public void testUnderflowCollapsedSlopesKeepSubnormalPeak() {
+        // (1e-320 +/- 1e-322) / 1e6 both flush to 0.0: finite, but the corridor width
+        // 2 * compdev / dt fell below the subnormal ULP, so the doors could never cross and
+        // the peak would be dropped at ~50x the 2 * compdev reconstruction bound. The
+        // collapse guard keeps the point and restarts instead.
+        boolean[] k = run(new long[]{0, 1_000_000, 2_000_000}, new double[]{0, 1e-320, 0}, 1e-322);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testUnderflowShorterSpacingStillResolvesCorridor() {
+        // control: at dt=1 the same peak's slopes are representable and distinct subnormals,
+        // the doors genuinely cross, and all points survive without the collapse guard firing
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{0, 1e-320, 0}, 1e-322);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testUnderflowCollapseInDoorsCrossedRecompute() {
+        // engineered for the post-cross recompute site: the pre-cross slope pairs stay
+        // distinct (2044u/2004u at dt=1, then 40u/39u at dt=51, u = min subnormal), the doors
+        // cross, but the flat step's +/-compdev numerators flush to +/-0.0 over dt2=50
+        // against the promoted anchor. Pins the conservative restart on that branch.
+        boolean[] k = run(new long[]{0, 1, 51}, new double[]{0, 1e-320, 1e-320}, 1e-322);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testSubUlpCompdevCompressesInValueDomain() {
+        // the benign twin of the collapse cases above: compdev = 1e-20 sits below the ULP of
+        // values ~O(1), so BOTH tolerance numerators collapse to the same double (nU == nL).
+        // That is value-domain quantization, not division underflow: the corridor degrades to
+        // exact-collinearity of the stored doubles and drops stay bound-honoring, so the
+        // guard must stay out of the way (same contract the 2^53 long-cast SQL test pins).
+        boolean[] k = run(new long[]{1, 2, 3, 4}, new double[]{1, 1, 1, 1}, 1e-20);
+        Assert.assertArrayEquals(new boolean[]{true, false, false, true}, k);
+    }
 }

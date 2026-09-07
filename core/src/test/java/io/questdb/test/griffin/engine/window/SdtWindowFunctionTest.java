@@ -176,6 +176,24 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubnormalPeakKeptWhenSlopesUnderflow() throws Exception {
+        // (1e-320 +/- 1e-322) / 1e6 flush to the same 0.0 slope: finite, but the corridor
+        // width vanished and the doors-crossed test could never fire, silently dropping the
+        // stored peak at ~50x the stated 2 * compdev reconstruction bound.
+        assertQuery("select ts, val, sdt(ts, val, 1e-322) over (order by ts) keep from tab")
+                .ddl(DDL, "insert into tab values " +
+                        "(0::timestamp,0.0),(1000000::timestamp,1e-320),(2000000::timestamp,0.0)")
+                .timestamp("ts")
+                .expectSize()
+                .returns(
+                        "ts\tval\tkeep\n" +
+                                "1970-01-01T00:00:00.000000Z\t0.0\ttrue\n" +
+                                "1970-01-01T00:00:01.000000Z\t1.0E-320\ttrue\n" +
+                                "1970-01-01T00:00:02.000000Z\t0.0\ttrue\n"
+                );
+    }
+
+    @Test
     public void testExplainPlanShowsSdt() throws Exception {
         assertQuery("select ts, sym, sdt(ts, val, 0.5) over (partition by sym order by ts) from tab")
                 .ddl("create table tab (ts timestamp, sym symbol, val double) timestamp(ts)")
