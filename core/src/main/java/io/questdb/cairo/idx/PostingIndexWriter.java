@@ -7829,12 +7829,14 @@ public class PostingIndexWriter implements IndexWriter {
                     }
                 }
             } finally {
-                // unmapCoveredColumn only zeroes one slot; the read-map arrays stay
-                // allocated. ensureCoveredColumnReadMaps treats a non-null array as
-                // "already mapped", so leaving them behind makes a LATER incremental
-                // seal on this same writer read address 0 for every cover column and
-                // write a NULL sentinel for every covered value. Drop the arrays so
-                // the lazy mapper re-arms.
+                // The per-column map/unmap loop above leaves the covered
+                // read-map arrays allocated with every entry unmapped (0).
+                // ensureCoveredColumnReadMaps() early-returns on non-null
+                // arrays, so keeping them would make every later covered
+                // read -- post-seal gen flushes (writeSidecarGenData) and
+                // incremental seals (writeSidecarStrideData) -- resolve to
+                // addr 0 and silently write NULL covered values. Null the
+                // arrays so the next covered read lazily re-maps.
                 unmapCoveredColumnReads();
             }
         } else if (coveredColumnAddrs.size() > 0) {
@@ -7882,8 +7884,9 @@ public class PostingIndexWriter implements IndexWriter {
                     }
                 }
             } finally {
-                // See writeSidecarsPerColumn: drop the read-map arrays so a later
-                // incremental seal re-maps the cover columns instead of reading 0.
+                // See writeSidecarsPerColumn: reset the lazy-mapping state so
+                // ensureCoveredColumnReadMaps() re-maps on the next covered
+                // read instead of early-returning on stale all-zero arrays.
                 unmapCoveredColumnReads();
             }
         } else if (coveredColumnAddrs.size() > 0) {
