@@ -236,6 +236,7 @@ public class MetadataCache implements QuietCloseable {
     /**
      * Resolves the currently authoritative EXPIRE ROWS policy for one materialized view. A stable cache
      * hit avoids I/O; a cache miss or pending publication reads the backing table metadata directly.
+     * Metadata read failures propagate because an unknown policy must not permit an unfiltered read.
      */
     public ExpiryPolicyInfo lookupExpiryPolicy(TableToken tableToken) {
         if (tableToken == null || !tableToken.isMatView()) {
@@ -273,11 +274,6 @@ public class MetadataCache implements QuietCloseable {
                     metadata.getMetadataVersion(),
                     pending
             );
-        } catch (CairoException e) {
-            if (isExpiryPolicyUpdatePending(tableToken)) {
-                throw e;
-            }
-            return ExpiryPolicyInfo.EMPTY;
         }
     }
 

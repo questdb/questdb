@@ -26,6 +26,7 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.RowExpiryUtil;
@@ -37,6 +38,8 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
+import io.questdb.cairo.pool.AbstractMultiTenantPool;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
@@ -53,6 +56,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -63,6 +67,7 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -200,6 +205,60 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
             // The read filter still hides the expired row (v = 1 < 2 -> A gone; B kept).
             assertQuery("SELECT sym, v FROM mv ORDER BY sym").noLeakCheck().returns("sym\tv\nB\t2.0\n");
+        });
+    }
+
+    @Test
+    public void testClearCacheMetadataPoolExhaustionFailsExpiryRead() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("mv");
+            try (MetadataCacheWriter writer = engine.getMetadataCache().writeLock()) {
+                writer.clearCache();
+            }
+            Assert.assertTrue(engine.getMetadataCache().mayTableHaveExpiryPolicy(token));
+            Assert.assertFalse(engine.getMetadataCache().isExpiryPolicyUpdatePending(token));
+
+            final ObjList<TableMetadata> heldMetadata = new ObjList<>();
+            final PoolListener previousListener = engine.getPoolListener();
+            final AtomicInteger exhaustionCount = new AtomicInteger();
+            try {
+                final int capacity = engine.getConfiguration().getMetadataPoolCapacity()
+                        * engine.getConfiguration().getPoolSegmentSize();
+                for (int i = 0; i < capacity; i++) {
+                    heldMetadata.add(engine.getTableMetadata(token));
+                }
+                engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                    if (factoryType == PoolListener.SRC_TABLE_METADATA
+                            && token.equals(tableToken)
+                            && event == PoolListener.EV_FULL) {
+                        exhaustionCount.incrementAndGet();
+                        // The current borrow still throws; subsequent compilation steps can borrow again.
+                        Misc.freeObjList(heldMetadata);
+                    }
+                });
+
+                final EntryUnavailableException error = Assert.assertThrows(EntryUnavailableException.class, () -> {
+                    try (RecordCursorFactory ignored = select("SELECT sym, v FROM mv ORDER BY sym")) {
+                        Assert.fail("query compiled despite an unreadable expiry policy");
+                    }
+                });
+                Assert.assertEquals(AbstractMultiTenantPool.POOL_SIZE, error.getReason());
+                Assert.assertEquals(1, exhaustionCount.get());
+                assertQuery("SELECT sym, v FROM mv ORDER BY sym").noLeakCheck().returns("sym\tv\nB\t2.0\n");
+                Assert.assertEquals(1, exhaustionCount.get());
+            } finally {
+                engine.setPoolListener(previousListener);
+                Misc.freeObjList(heldMetadata);
+            }
         });
     }
 
