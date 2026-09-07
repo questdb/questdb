@@ -255,11 +255,20 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         int reclaimed = 0;
         int total = 0;
         int processedCount = 0; // used for work stealing decisions
+        final boolean isFiberOwner = dispatcher != null
+                && !publicationPermit
+                && QueryParallelFiberDispatcher.isFiberOwner();
+        long lastOwnerYieldNanos = QueryParallelFiberDispatcher.OWNER_YIELD_UNSET;
 
         try {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
                 if (dispatcher != null && !publicationPermit) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                    if (isFiberOwner) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                        lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
+                    } else {
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                    }
                     final Map shard = atom.getDestShards().getQuick(shardIndex);
                     final DirectLongLongSortedList ownerList = atom.getLongTopKList(
                             -1,
@@ -277,9 +286,13 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-
-                        if (!isOwnerParkable && workStealingStrategy.shouldSteal(processedCount)) {
+                        if (workStealingStrategy.shouldSteal(processedCount)) {
+                            if (isOwnerParkable) {
+                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                                lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
+                            } else {
+                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                            }
                             final Map shard = atom.getDestShards().getQuick(shardIndex);
                             final DirectLongLongSortedList ownerList = atom.getLongTopKList(-1, destList.getOrder(), destList.getCapacity());
                             shard.getCursor().longTopK(ownerList, longFunc);
@@ -288,6 +301,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             processedCount = postAggregationDoneLatch.getCount();
                             break;
                         }
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                         if (isOwnerParkable) {
                             if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
                                 Os.pause();
@@ -330,7 +344,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     if (postAggregationDoneLatch.done(queuedCount)) {
                         break;
                     }
-                    if (circuitBreaker.checkIfTrippedOrYield()) {
+                    final boolean isOwnerTripped = circuitBreaker.checkIfTrippedOrYield();
+                    if (isOwnerTripped) {
                         postAggregationCircuitBreaker.cancel();
                     }
 
@@ -349,7 +364,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             Os.pause();
                         }
                     } else if (isOwnerParkable) {
-                        if (!dispatcher.awaitProgressWhileDraining(progressState, observedProgress, observedGlobalProgress)) {
+                        if (!dispatcher.awaitProgressWhileDraining(
+                                progressState,
+                                observedProgress,
+                                observedGlobalProgress,
+                                isOwnerTripped ? null : circuitBreaker
+                        )) {
                             Os.pause();
                         }
                     } else {

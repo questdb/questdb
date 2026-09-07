@@ -224,6 +224,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         final Sequence pubSeq = bus.getLatestByPubSeq();
         final Sequence subSeq = bus.getLatestBySubSeq();
         final QueryParallelFiberDispatcher dispatcher = bus.getQueryParallelFiberDispatcher();
+        final boolean isFiberOwner = dispatcher != null && QueryParallelFiberDispatcher.isFiberOwner();
+        long lastOwnerYieldNanos = QueryParallelFiberDispatcher.OWNER_YIELD_UNSET;
 
         int queuedCount = 0;
         long foundRowCount = 0;
@@ -266,62 +268,56 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                             continue;
                         }
 
-                        while (true) {
-                            final long observedProgress = progressState.getVersion();
-                            final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
-                            final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
-                            final long seq = dispatcher != null && !publicationPermit ? -1 : pubSeq.next();
-                            if (seq < 0) {
-                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
-                                if (publicationPermit && isOwnerParkable) {
-                                    if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
-                                        Os.pause();
-                                    }
-                                    continue;
-                                }
-                                GeoHashNative.latestByAndFilterPrefix(
-                                        frameMemoryPool,
-                                        keyBaseAddress,
-                                        keysMemorySize,
-                                        valueBaseAddress,
-                                        valuesMemorySize,
-                                        argsAddress,
-                                        unIndexedNullCount,
-                                        partitionHi,
-                                        partitionLo,
-                                        frameIndex,
-                                        valueBlockCapacity,
-                                        geoHashColumnIndex,
-                                        geoHashColumnType,
-                                        prefixesAddress,
-                                        prefixesCount
-                                );
+                        final long seq = dispatcher != null && !publicationPermit ? -1 : pubSeq.next();
+                        if (seq < 0) {
+                            if (isFiberOwner) {
+                                assert dispatcher != null;
+                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                                lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
                             } else {
-                                queue.get(seq).of(
-                                        frameAddressCache,
-                                        keyBaseAddress,
-                                        keysMemorySize,
-                                        valueBaseAddress,
-                                        valuesMemorySize,
-                                        argsAddress,
-                                        unIndexedNullCount,
-                                        partitionHi,
-                                        partitionLo,
-                                        frameIndex,
-                                        valueBlockCapacity,
-                                        geoHashColumnIndex,
-                                        geoHashColumnType,
-                                        prefixesAddress,
-                                        prefixesCount,
-                                        doneLatch,
-                                        sharedCircuitBreaker,
-                                        progressState,
-                                        scanError
-                                );
-                                pubSeq.done(seq);
-                                queuedCount++;
+                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                             }
-                            break;
+                            GeoHashNative.latestByAndFilterPrefix(
+                                    frameMemoryPool,
+                                    keyBaseAddress,
+                                    keysMemorySize,
+                                    valueBaseAddress,
+                                    valuesMemorySize,
+                                    argsAddress,
+                                    unIndexedNullCount,
+                                    partitionHi,
+                                    partitionLo,
+                                    frameIndex,
+                                    valueBlockCapacity,
+                                    geoHashColumnIndex,
+                                    geoHashColumnType,
+                                    prefixesAddress,
+                                    prefixesCount
+                            );
+                        } else {
+                            queue.get(seq).of(
+                                    frameAddressCache,
+                                    keyBaseAddress,
+                                    keysMemorySize,
+                                    valueBaseAddress,
+                                    valuesMemorySize,
+                                    argsAddress,
+                                    unIndexedNullCount,
+                                    partitionHi,
+                                    partitionLo,
+                                    frameIndex,
+                                    valueBlockCapacity,
+                                    geoHashColumnIndex,
+                                    geoHashColumnType,
+                                    prefixesAddress,
+                                    prefixesCount,
+                                    doneLatch,
+                                    sharedCircuitBreaker,
+                                    progressState,
+                                    scanError
+                            );
+                            pubSeq.done(seq);
+                            queuedCount++;
                         }
                     }
                 } finally {
@@ -443,11 +439,17 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             if (doneLatch.done(queuedCount)) {
                 break;
             }
-            if (circuitBreaker.checkIfTrippedOrYield()) {
+            final boolean isOwnerTripped = circuitBreaker.checkIfTrippedOrYield();
+            if (isOwnerTripped) {
                 sharedCircuitBreaker.cancel();
             }
             if (isOwnerParkable) {
-                if (!dispatcher.awaitProgressWhileDraining(progressState, observedProgress, observedGlobalProgress)) {
+                if (!dispatcher.awaitProgressWhileDraining(
+                        progressState,
+                        observedProgress,
+                        observedGlobalProgress,
+                        isOwnerTripped ? null : circuitBreaker
+                )) {
                     Os.pause();
                 }
             } else {

@@ -28,7 +28,10 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.ExecutionCircuitBreaker;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateEntry;
@@ -38,6 +41,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.DelayedFireable;
+import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
@@ -50,6 +54,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestMillisecondClock;
+import io.questdb.test.tools.TestNetworkSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -62,6 +68,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.ToIntFunction;
 
 public class PerWorkerLocksFiberTest extends AbstractCairoTest {
 
@@ -135,6 +142,61 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
         } finally {
             close(runtime);
         }
+    }
+
+    @Test
+    public void testGenericCancellationAfterSlotGrantDoesNotLeakSlot() throws Exception {
+        assertGenericCancellation(false);
+    }
+
+    @Test
+    public void testGenericCancellationWakesSlotWaiterDoesNotLeakSlot() throws Exception {
+        assertGenericCancellation(true);
+    }
+
+    @Test
+    public void testGenericSqlCancellationAfterSlotGrantPreservesReason() throws Exception {
+        assertSqlCancellation(false, false);
+    }
+
+    @Test
+    public void testGenericSqlCancellationWakesSlotWaiterPreservesReason() throws Exception {
+        assertSqlCancellation(true, false);
+    }
+
+    @Test
+    public void testGrantedSlotPreservesConnectionCheckThrottle() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TestNetworkSqlExecutionCircuitBreaker circuitBreaker = TestNetworkSqlExecutionCircuitBreaker.create(
+                    engine, new TestMillisecondClock(1_000), 100, Long.MAX_VALUE
+            )) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                Assert.assertEquals(1, circuitBreaker.probeCount);
+                final PerWorkerLocks locks = new PerWorkerLocks(configuration, 1);
+                final int heldSlot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final SlotTask task = new SlotTask(locks, null, circuitBreaker, null);
+                boolean isHeldSlotReleased = false;
+                try {
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertEquals(1, runtime.getParkedFiberCount());
+                    isHeldSlotReleased = true;
+                    locks.releaseSlot(heldSlot);
+                    Assert.assertEquals(1, runtime.drain(1));
+
+                    Assert.assertNull(task.error);
+                    Assert.assertTrue(task.hasRun);
+                    Assert.assertEquals(1, circuitBreaker.probeCount);
+                    Assert.assertEquals(0, locks.getAcquiredSlotCount());
+                } finally {
+                    if (!isHeldSlotReleased) {
+                        locks.releaseSlot(heldSlot);
+                    }
+                    close(runtime);
+                }
+            }
+        });
     }
 
     @Test
@@ -257,6 +319,16 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
             }
         }
         Assert.assertEquals(0, locks.getAcquiredSlotCount());
+    }
+
+    @Test
+    public void testSqlCancellationAfterSlotGrantPreservesReason() throws Exception {
+        assertSqlCancellation(false, true);
+    }
+
+    @Test
+    public void testSqlCancellationWakesSlotWaiterPreservesReason() throws Exception {
+        assertSqlCancellation(true, true);
     }
 
     @Test
@@ -445,6 +517,122 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
         } finally {
             SuspensionScope.restore(previousMode);
         }
+    }
+
+    private void assertGenericCancellation(boolean isCancellationFirst) throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberCancellationSignal signal = new FiberCancellationSignal();
+            final ExecutionCircuitBreaker circuitBreaker = signal::get;
+            final CairoException error = assertSlotWaitCancelled(
+                    signal, signal, locks -> locks.acquireSlot(0, circuitBreaker), isCancellationFirst
+            );
+            Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_TIMEOUT, error.getInterruptionReason());
+            TestUtils.assertEquals("query aborted", error.getFlyweightMessage());
+        });
+    }
+
+    private CairoException assertSlotWaitCancelled(
+            FiberCancellationSignal signal,
+            @Nullable FiberCancellationSignal taskSignal,
+            ToIntFunction<PerWorkerLocks> acquireSlot,
+            boolean isCancellationFirst
+    ) {
+        final AtomicInteger releaseCount = new AtomicInteger();
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, 1) {
+            @Override
+            public void releaseSlot(int slot) {
+                releaseCount.incrementAndGet();
+                super.releaseSlot(slot);
+            }
+        };
+        final int heldSlot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        final FiberRuntime runtime = new FiberRuntime(1);
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final AtomicReference<Fiber> fiber = new AtomicReference<>();
+        final AtomicBoolean hasRun = new AtomicBoolean();
+        final FiberTask task = new FiberTask() {
+            @Override
+            public @Nullable FiberCancellationSignal getCancellationSignal() {
+                return taskSignal;
+            }
+
+            @Override
+            protected void onError(Throwable th) {
+                failure.set(th);
+            }
+
+            @Override
+            protected boolean runStep() {
+                fiber.set(Fiber.current());
+                final int slot = acquireSlot.applyAsInt(locks);
+                try {
+                    hasRun.set(true);
+                } finally {
+                    locks.releaseSlot(slot);
+                }
+                return true;
+            }
+        };
+        boolean isHeldSlotReleased = false;
+        try {
+            Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertEquals(1, runtime.getParkedFiberCount());
+            Assert.assertTrue(fiber.get().getWaitCoordinator().hasInFlightRegistrations());
+
+            if (!isCancellationFirst) {
+                // Grant the slot while the continuation is parked, then cancel before it resumes.
+                isHeldSlotReleased = true;
+                locks.releaseSlot(heldSlot);
+                Assert.assertEquals(1, releaseCount.get());
+                Assert.assertEquals(1, locks.getAcquiredSlotCount());
+            }
+            signal.cancel();
+            Assert.assertEquals(1, runtime.drain(1));
+
+            Assert.assertFalse(hasRun.get());
+            Assert.assertTrue(failure.get() instanceof CairoException);
+            Assert.assertTrue(((CairoException) failure.get()).isInterruption());
+            Assert.assertEquals(isCancellationFirst ? 1 : 0, locks.getAcquiredSlotCount());
+            Assert.assertEquals(isCancellationFirst ? 0 : 2, releaseCount.get());
+            Assert.assertFalse(fiber.get().getWaitCoordinator().hasInFlightRegistrations());
+            Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+            Assert.assertEquals(0, runtime.getMountedCount());
+            Assert.assertEquals(0, runtime.getParkedFiberCount());
+            Assert.assertEquals(0, runtime.getQueuedCount());
+            signal.reset();
+        } finally {
+            if (!isHeldSlotReleased) {
+                locks.releaseSlot(heldSlot);
+            }
+            close(runtime);
+        }
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+        Assert.assertEquals(isCancellationFirst ? 1 : 2, releaseCount.get());
+        return (CairoException) failure.get();
+    }
+
+    private void assertSqlCancellation(boolean isCancellationFirst, boolean isSqlOverload) throws Exception {
+        assertMemoryLeak(() -> {
+            try (NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                    engine, new DefaultSqlExecutionCircuitBreakerConfiguration()
+            )) {
+                final FiberCancellationSignal signal = new FiberCancellationSignal();
+                circuitBreaker.setCancelledFlag(signal);
+                // Leave the next call inside the count throttle window before the wait starts.
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                final CairoException error = assertSlotWaitCancelled(
+                        signal,
+                        null,
+                        locks -> isSqlOverload
+                                ? locks.acquireSlot(0, circuitBreaker)
+                                : locks.acquireSlot(0, (ExecutionCircuitBreaker) circuitBreaker),
+                        isCancellationFirst
+                );
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, error.getInterruptionReason());
+                TestUtils.assertEquals("cancelled by user", error.getFlyweightMessage());
+            }
+        });
     }
 
     private static void awaitThreadWaiting(Thread thread) {

@@ -554,13 +554,21 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     private void rollbackDispatchYield(@Nullable FiberDispatchContext previousDispatchContext) {
-        if (!Unsafe.cas(
-                this,
-                EXECUTION_STATE_OFFSET,
-                packExecutionState(0, EXECUTION_PARKING),
-                packExecutionState(0, EXECUTION_MOUNTED)
-        ) && executionState != packExecutionState(0, EXECUTION_MOUNTED)) {
-            throw new IllegalStateException("fiber dispatch yield failure could not restore mounted execution");
+        while (true) {
+            final long current = executionState;
+            if (executionToken(current) != 0) {
+                throw new IllegalStateException("Fiber dispatch yield changed the execution token");
+            }
+            final int state = executionState(current);
+            if (state == EXECUTION_MOUNTED) {
+                break;
+            }
+            if (state != EXECUTION_PARKING && state != EXECUTION_RESUME_PENDING) {
+                throw new IllegalStateException("Fiber dispatch yield cannot restore execution [state=" + state + ']');
+            }
+            if (Unsafe.cas(this, EXECUTION_STATE_OFFSET, current, packExecutionState(0, EXECUTION_MOUNTED))) {
+                break;
+            }
         }
         dispatchContext = previousDispatchContext;
     }

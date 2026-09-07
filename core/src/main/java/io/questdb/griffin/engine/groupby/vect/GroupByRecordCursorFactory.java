@@ -334,7 +334,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (doneLatch.done(queuedCount)) {
                 break;
             }
-            if (circuitBreaker.checkIfTrippedOrYield()) {
+            final boolean isOwnerTripped = circuitBreaker.checkIfTrippedOrYield();
+            if (isOwnerTripped) {
                 sharedCB.cancel();
             }
 
@@ -362,7 +363,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     Os.pause();
                 }
             } else if (isOwnerParkable) {
-                if (!dispatcher.awaitProgressWhileDraining(progressState, observedProgress, observedGlobalProgress)) {
+                if (!dispatcher.awaitProgressWhileDraining(
+                        progressState,
+                        observedProgress,
+                        observedGlobalProgress,
+                        isOwnerTripped ? null : circuitBreaker
+                )) {
                     Os.pause();
                 }
             } else {
@@ -597,6 +603,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             final Worker worker = Worker.current();
             final int workerId = worker != null ? worker.getWorkerId() % workerCount : -1;
+            final boolean isFiberOwner = dispatcher != null
+                    && !publicationPermit
+                    && QueryParallelFiberDispatcher.isFiberOwner();
+            long lastOwnerYieldNanos = QueryParallelFiberDispatcher.OWNER_YIELD_UNSET;
 
             try {
                 PageFrame frame;
@@ -623,7 +633,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         final int valueColumnIndex = vaf.getColumnIndex();
 
                         if (dispatcher != null && !publicationPermit) {
-                            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                            if (isFiberOwner) {
+                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                                lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
+                            } else {
+                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                            }
                             VectorAggregateEntry.aggregateUnsafe(
                                     workerId,
                                     oomCounter,
@@ -652,9 +667,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                             long cursor = pubSeq.next();
                             if (cursor < 0) {
-                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-
-                                if (!isOwnerParkable && workStealingStrategy.shouldSteal(mergedCount)) {
+                                if (workStealingStrategy.shouldSteal(mergedCount)) {
+                                    if (isOwnerParkable) {
+                                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                                        lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
+                                    } else {
+                                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                                    }
                                     VectorAggregateEntry.aggregateUnsafe(
                                             workerId,
                                             oomCounter,
@@ -674,6 +693,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     mergedCount = doneLatch.getCount();
                                     break;
                                 }
+                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                                 if (isOwnerParkable) {
                                     if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
                                         Os.pause();
