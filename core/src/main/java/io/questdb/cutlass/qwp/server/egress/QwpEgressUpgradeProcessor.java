@@ -208,6 +208,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
     private final int maxSqlRecompileAttempts;
     private final QwpEgressMetrics metrics;
+    private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
     /**
      * Per-worker cache of compiled {@link RecordCursorFactory} keyed by SQL text.
@@ -229,6 +230,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
                 .getForceRecvFragmentationChunkSize();
         this.metrics = engine.getMetrics().qwpEgressMetrics();
+        this.qwpBrowserTlsTerminationEnabled = httpConfiguration.isQwpBrowserTlsTerminationEnabled();
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.sharedWorkerCount = sharedWorkerCount;
@@ -331,7 +333,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         String validationError = QwpIngressHttpProcessor.validateHandshake(
                 context.getRequestHeader(),
-                context.getSocket().isTlsSessionStarted()
+                context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled
         );
         if (validationError != null) {
             LOG.error().$("Egress WebSocket handshake validation failed [fd=").$(context.getFd())

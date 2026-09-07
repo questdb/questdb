@@ -198,6 +198,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
     private final HttpFullFatServerConfiguration httpConfiguration;
     private final int maxResponseContentLength;
+    private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
 
     public QwpIngressUpgradeProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
@@ -205,6 +206,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
                 .getForceRecvFragmentationChunkSize();
         this.httpConfiguration = httpConfiguration;
+        this.qwpBrowserTlsTerminationEnabled = httpConfiguration.isQwpBrowserTlsTerminationEnabled();
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         // Advertise the effective batch cap, not the QWP protocol ceiling. The
         // HTTP recv buffer is the actual binding constraint on inbound
@@ -356,7 +358,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         String validationError = QwpIngressHttpProcessor.validateHandshake(
                 context.getRequestHeader(),
-                context.getSocket().isTlsSessionStarted()
+                context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled
         );
         if (validationError != null) {
             LOG.error().$("WebSocket handshake validation failed [fd=").$(context.getFd())

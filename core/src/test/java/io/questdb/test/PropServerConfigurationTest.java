@@ -1924,6 +1924,17 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testQwpBrowserTlsTerminationEnabled() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled());
+
+        properties.setProperty(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertTrue(configuration.getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled());
+    }
+
+    @Test
     public void testQwpMaxRowsPerTable() throws Exception {
         Properties properties = new Properties();
         PropServerConfiguration configuration = newPropServerConfiguration(properties);

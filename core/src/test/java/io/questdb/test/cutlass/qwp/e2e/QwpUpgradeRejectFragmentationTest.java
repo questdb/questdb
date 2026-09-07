@@ -232,6 +232,11 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEgressTlsTerminatedProxySameOriginBrowserUpgradeIsAccepted() throws Exception {
+        runWithFragmentedSendEgress(true, port -> assertSameOriginUpgradeAccepted(port, "/read/v1", "https"));
+    }
+
+    @Test
     public void testEgressSameAuthorityCrossSchemeBrowserUpgradeIsRejected() throws Exception {
         runWithFragmentedSendEgress(port -> assertCrossSchemeUpgradeRejected(port, "/read/v1"));
     }
@@ -244,6 +249,11 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     @Test
     public void testIngressSameOriginBrowserUpgradeIsAccepted() throws Exception {
         runWithFragmentedSend(port -> assertSameOriginUpgradeAccepted(port, "/write/v4"));
+    }
+
+    @Test
+    public void testIngressTlsTerminatedProxySameOriginBrowserUpgradeIsAccepted() throws Exception {
+        runWithFragmentedSend(true, port -> assertSameOriginUpgradeAccepted(port, "/write/v4", "https"));
     }
 
     private static void assertCrossSchemeUpgradeRejected(int port, String path) throws Exception {
@@ -259,11 +269,15 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     private static void assertSameOriginUpgradeAccepted(int port, String path) throws Exception {
+        assertSameOriginUpgradeAccepted(port, path, "http");
+    }
+
+    private static void assertSameOriginUpgradeAccepted(int port, String path, String scheme) throws Exception {
         try (Socket socket = new Socket("localhost", port)) {
             socket.setSoTimeout(5_000);
             String request = "GET " + path + " HTTP/1.1\r\n"
                     + "Host: localhost:" + port + "\r\n"
-                    + "Origin: http://localhost:" + port + "\r\n"
+                    + "Origin: " + scheme + "://localhost:" + port + "\r\n"
                     + "Upgrade: websocket\r\n"
                     + "Connection: Upgrade\r\n"
                     + "Sec-WebSocket-Key: AQIDBAUGBwgJCgsMDQ4PEA==\r\n"
@@ -346,6 +360,10 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     private void runWithFragmentedSend(PortTest test) throws Exception {
+        runWithFragmentedSend(false, test);
+    }
+
+    private void runWithFragmentedSend(boolean tlsTerminationEnabled, PortTest test) throws Exception {
         final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
                 configuration,
                 new DefaultHttpContextConfiguration() {
@@ -363,6 +381,11 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
             @Override
             public int getBindPort() {
                 return 0;
+            }
+
+            @Override
+            public boolean isQwpBrowserTlsTerminationEnabled() {
+                return tlsTerminationEnabled;
             }
         };
 
@@ -395,6 +418,10 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     private void runWithFragmentedSendEgress(PortTest test) throws Exception {
+        runWithFragmentedSendEgress(false, test);
+    }
+
+    private void runWithFragmentedSendEgress(boolean tlsTerminationEnabled, PortTest test) throws Exception {
         final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
                 configuration,
                 new DefaultHttpContextConfiguration() {
@@ -417,6 +444,11 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
             @Override
             public int getSendBufferSize() {
                 return EGRESS_SEND_BUFFER_SIZE;
+            }
+
+            @Override
+            public boolean isQwpBrowserTlsTerminationEnabled() {
+                return tlsTerminationEnabled;
             }
         };
 
