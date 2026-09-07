@@ -479,8 +479,8 @@ public class MinMaxWindowFunctionTest extends AbstractCairoTest {
             execute("""
                     insert into t values
                     (1::timestamp, 100),
-                    (2::timestamp, -32768),
-                    (3::timestamp, 32767),
+                    (2::timestamp, -32_768),
+                    (3::timestamp, 32_767),
                     (4::timestamp, 0)
                     """);
             assertQuery("select ts, v, minmax(ts, v, 2) over (order by ts) keep from t")

@@ -4731,10 +4731,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (where.type != ExpressionNode.LITERAL) {
             return false;
         }
-        if (!(factory instanceof CachedWindowLightRecordCursorFactory)) {
+        if (!(factory instanceof CachedWindowLightRecordCursorFactory windowFactory)) {
             return false;
         }
-        final CachedWindowLightRecordCursorFactory windowFactory = (CachedWindowLightRecordCursorFactory) factory;
         final WindowFunction fn = windowFactory.getSingleRowSelectingFunction();
         if (fn == null) {
             return false;

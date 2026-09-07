@@ -504,8 +504,8 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
 
     private static void createTables() throws Exception {
         execute("CREATE TABLE t AS (" +
-                "SELECT x::double v, timestamp_sequence(0, 1000000) ts FROM long_sequence(10)) TIMESTAMP(ts)");
+                "SELECT x::double v, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(10)) TIMESTAMP(ts)");
         execute("CREATE TABLE u2 AS (" +
-                "SELECT x::double w, timestamp_sequence(500000, 1000000) ts FROM long_sequence(10)) TIMESTAMP(ts)");
+                "SELECT x::double w, timestamp_sequence(500_000, 1_000_000) ts FROM long_sequence(10)) TIMESTAMP(ts)");
     }
 }

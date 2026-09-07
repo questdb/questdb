@@ -127,7 +127,7 @@ public class CadenceWindowFunctionTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "stride must be at least 1");
                 Assert.assertEquals(19, e.getPosition());
             }
-            assertQuery("select ts, cadence(2147483648) over (order by ts) from t")
+            assertQuery("select ts, cadence(2_147_483_648) over (order by ts) from t")
                     .noLeakCheck()
                     .fails(19, "stride exceeds maximum of 2147483647");
             assertQuery("select ts, cadence(null::long) over (order by ts) from t")

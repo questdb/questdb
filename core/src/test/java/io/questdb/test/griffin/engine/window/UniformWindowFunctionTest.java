@@ -197,7 +197,7 @@ public class UniformWindowFunctionTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "target points must be at least 2");
                 Assert.assertEquals(19, e.getPosition());
             }
-            assertQuery("select ts, uniform(2147483648) over (order by ts) from t")
+            assertQuery("select ts, uniform(2_147_483_648) over (order by ts) from t")
                     .noLeakCheck()
                     .fails(19, "target points exceeds maximum of 2147483647");
             assertQuery("select ts, uniform(null::long) over (order by ts) from t")

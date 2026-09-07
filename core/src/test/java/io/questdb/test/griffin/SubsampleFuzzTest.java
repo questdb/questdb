@@ -65,13 +65,13 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
     /**
      * Permanent regression seeds; the per-run random seed is added on top of these.
      */
-    private static final long[] FIXED_SEEDS = {0xDEADBEEFL, 42L, 20240101L};
+    private static final long[] FIXED_SEEDS = {0xDEADBEEFL, 42L, 20_240_101L};
     private static final String TS_NS = "TIMESTAMP_NS";
     private static final String TS_US = "TIMESTAMP";
     /**
      * 2024-01-01T00:00:00Z in micros.
      */
-    private static final long EPOCH_US = 1704067200000000L;
+    private static final long EPOCH_US = 1_704_067_200_000_000L;
 
     /**
      * cadence(stride) differential against an independent reference, swept across the
@@ -165,12 +165,6 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * m4(v, target) differential against an independent reference. m4 buckets by TIME (equal
-     * intervals over [firstTs, lastTs]), emitting first/min/max/last per bucket, deduplicated,
-     * ascending, then capping the whole output at target. NULL and NaN values are dropped before
-     * bucketing - the reference compacts them out the same way.
-     */
-    /**
      * m4 / minmax bucket-boundary arithmetic at UNIT timestamp resolution.
      * <p>
      * The exact-integer boundary helper is
@@ -262,6 +256,12 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * m4(v, target) differential against an independent reference. m4 buckets by TIME (equal
+     * intervals over [firstTs, lastTs]), emitting first/min/max/last per bucket, deduplicated,
+     * ascending, then capping the whole output at target. NULL and NaN values are dropped before
+     * bucketing - the reference compacts them out the same way.
+     */
     @Test
     public void testM4DifferentialAgainstReference() throws Exception {
         assertMemoryLeak(() -> {

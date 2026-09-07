@@ -4502,7 +4502,7 @@ public class SqlParser {
             );
 
             int argCount = 0;
-            int savedSubQueryMode = subQueryMode ? 1 : 0;
+            final boolean isSubQueryMode = subQueryMode;
             subQueryMode = false; // Prevent expr() from consuming ')' as subquery close
             try {
                 while (true) {
@@ -4526,7 +4526,7 @@ public class SqlParser {
                     }
                 }
             } finally {
-                subQueryMode = savedSubQueryMode != 0;
+                subQueryMode = isSubQueryMode;
             }
             methodNode.paramCount = argCount;
             model.setSubsample(methodNode, subsamplePos);

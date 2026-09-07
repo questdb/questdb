@@ -54,37 +54,6 @@ public class SubsampleSdtDiagnosticTest extends AbstractCairoTest {
             """;
     private static final String SHAPE = "SUBSAMPLE sdt requires a constant, non-negative finite compdev";
 
-    private static void assertError(String suffixWithCaret, String message) throws Exception {
-        int caret = suffixWithCaret.indexOf('^');
-        Assert.assertTrue(caret >= 0);
-        String sql = PREFIX + suffixWithCaret.replace("^", "");
-        try (RecordCursorFactory ignored = select(sql)) {
-            Assert.fail("expected failure: " + sql);
-        } catch (SqlException e) {
-            Assert.assertEquals(sql, message, e.getFlyweightMessage().toString());
-            Assert.assertEquals(sql, PREFIX.length() + caret, e.getPosition());
-        }
-    }
-
-    private static void assertMatchesUniformError(String expression) throws Exception {
-        String uniform = PREFIX + "uniform(" + expression + ")";
-        String message;
-        int expressionPosition;
-        try (RecordCursorFactory ignored = select(uniform)) {
-            throw new AssertionError("expected parser error: " + uniform);
-        } catch (SqlException e) {
-            message = e.getFlyweightMessage().toString();
-            expressionPosition = e.getPosition() - (PREFIX.length() + "uniform(".length());
-        }
-        Assert.assertTrue(expressionPosition >= 0 && expressionPosition < expression.length());
-        assertError("sdt(v, " + expression.substring(0, expressionPosition) + "^" + expression.substring(expressionPosition) + ")", message);
-    }
-
-    private static void createTable() throws SqlException {
-        execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-        execute("INSERT INTO t VALUES ('2024-01-01T00:00:00Z', 1.0), ('2024-01-01T00:00:01Z', 2.0)");
-    }
-
     @Test
     public void testUnknownFunction() throws Exception {
         assertMemoryLeak(() -> {
@@ -403,6 +372,47 @@ public class SubsampleSdtDiagnosticTest extends AbstractCairoTest {
         assertLegacyPrecedenceFailureRestoration(SqlException.$(0, "legacy precedence SQL probe"));
     }
 
+    @Test
+    public void testControlLegacyPrecedenceFoldedBinds() throws Exception {
+        withLegacyPrecedence(this::testControlConstantFoldedBinds);
+    }
+
+    @Test
+    public void testLegacyPrecedenceNestedError() throws Exception {
+        withLegacyPrecedence(this::testNestedUnknownFunction);
+    }
+
+    private static void assertError(String suffixWithCaret, String message) throws Exception {
+        int caret = suffixWithCaret.indexOf('^');
+        Assert.assertTrue(caret >= 0);
+        String sql = PREFIX + suffixWithCaret.replace("^", "");
+        try (RecordCursorFactory ignored = select(sql)) {
+            Assert.fail("expected failure: " + sql);
+        } catch (SqlException e) {
+            Assert.assertEquals(sql, message, e.getFlyweightMessage().toString());
+            Assert.assertEquals(sql, PREFIX.length() + caret, e.getPosition());
+        }
+    }
+
+    private static void assertMatchesUniformError(String expression) throws Exception {
+        String uniform = PREFIX + "uniform(" + expression + ")";
+        String message;
+        int expressionPosition;
+        try (RecordCursorFactory ignored = select(uniform)) {
+            throw new AssertionError("expected parser error: " + uniform);
+        } catch (SqlException e) {
+            message = e.getFlyweightMessage().toString();
+            expressionPosition = e.getPosition() - (PREFIX.length() + "uniform(".length());
+        }
+        Assert.assertTrue(expressionPosition >= 0 && expressionPosition < expression.length());
+        assertError("sdt(v, " + expression.substring(0, expressionPosition) + "^" + expression.substring(expressionPosition) + ")", message);
+    }
+
+    private static void createTable() throws SqlException {
+        execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO t VALUES ('2024-01-01T00:00:00Z', 1.0), ('2024-01-01T00:00:01Z', 2.0)");
+    }
+
     private void assertLegacyPrecedenceFailureRestoration(Throwable failure) throws Exception {
         // Drain before the outer baseline: the scoped helper also disposes cached compilers.
         engine.getSqlCompilerPool().releaseAll();
@@ -431,16 +441,6 @@ public class SubsampleSdtDiagnosticTest extends AbstractCairoTest {
             }
             assertQuery("SELECT true OR false AND false AS value").expectSize().returns("value\ntrue\n");
         });
-    }
-
-    @Test
-    public void testControlLegacyPrecedenceFoldedBinds() throws Exception {
-        withLegacyPrecedence(this::testControlConstantFoldedBinds);
-    }
-
-    @Test
-    public void testLegacyPrecedenceNestedError() throws Exception {
-        withLegacyPrecedence(this::testNestedUnknownFunction);
     }
 
     private void assertUnexpectedFailure(boolean isError, boolean isSdt) throws Exception {

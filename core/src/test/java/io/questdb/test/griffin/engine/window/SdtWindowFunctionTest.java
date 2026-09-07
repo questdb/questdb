@@ -182,7 +182,7 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
         // stored peak at ~50x the stated 2 * compdev reconstruction bound.
         assertQuery("select ts, val, sdt(ts, val, 1e-322) over (order by ts) keep from tab")
                 .ddl(DDL, "insert into tab values " +
-                        "(0::timestamp,0.0),(1000000::timestamp,1e-320),(2000000::timestamp,0.0)")
+                        "(0::timestamp,0.0),(1_000_000::timestamp,1e-320),(2_000_000::timestamp,0.0)")
                 .timestamp("ts")
                 .expectSize()
                 .returns(

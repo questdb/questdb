@@ -413,16 +413,16 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("CREATE TABLE t (id INT, value DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
-                    (0, 10.0, 253402300799999990::timestamp),
-                    (1, -100.0, 253402300799999991::timestamp),
-                    (2, 100.0, 253402300799999992::timestamp),
-                    (3, 10.0, 253402300799999993::timestamp),
-                    (4, 10.0, 253402300799999994::timestamp),
-                    (5, 20.0, 253402300799999995::timestamp),
-                    (6, -50.0, 253402300799999996::timestamp),
-                    (7, 50.0, 253402300799999997::timestamp),
-                    (8, 20.0, 253402300799999998::timestamp),
-                    (9, 20.0, 253402300799999999::timestamp)
+                    (0, 10.0, 253_402_300_799_999_990::timestamp),
+                    (1, -100.0, 253_402_300_799_999_991::timestamp),
+                    (2, 100.0, 253_402_300_799_999_992::timestamp),
+                    (3, 10.0, 253_402_300_799_999_993::timestamp),
+                    (4, 10.0, 253_402_300_799_999_994::timestamp),
+                    (5, 20.0, 253_402_300_799_999_995::timestamp),
+                    (6, -50.0, 253_402_300_799_999_996::timestamp),
+                    (7, 50.0, 253_402_300_799_999_997::timestamp),
+                    (8, 20.0, 253_402_300_799_999_998::timestamp),
+                    (9, 20.0, 253_402_300_799_999_999::timestamp)
                     """);
             assertQuery("SELECT id, value, ts FROM t SUBSAMPLE minmax(value, 4)")
                     .timestamp("ts")
@@ -844,7 +844,7 @@ public class SubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             // Insert 10K rows using a subquery to avoid SUBSAMPLE parser issues
-            execute("INSERT INTO t SELECT rnd_double() * 100, timestamp_sequence('2024-01-01', 1000000) FROM long_sequence(10000)");
+            execute("INSERT INTO t SELECT rnd_double() * 100, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(10_000)");
             // Downsample to 100 points - verify via cursor count
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 try (RecordCursorFactory fact = compiler.compile(
@@ -870,7 +870,7 @@ public class SubsampleTest extends AbstractCairoTest {
         // so the exact output row count is preserved.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("INSERT INTO t SELECT 42.0, timestamp_sequence('2024-01-01', 1000000) FROM long_sequence(5000)");
+            execute("INSERT INTO t SELECT 42.0, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(5000)");
             assertQuery("SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 25))")
                     .expectSize()
                     .noRandomAccess()
@@ -886,8 +886,8 @@ public class SubsampleTest extends AbstractCairoTest {
         // first/last rows stay pinned through preselection.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("INSERT INTO t SELECT rnd_double() * 100, timestamp_sequence('2024-01-01', 1000000) FROM long_sequence(3000)");
-            execute("INSERT INTO t SELECT rnd_double() * 100, timestamp_sequence('2024-02-01', 1000000) FROM long_sequence(3000)");
+            execute("INSERT INTO t SELECT rnd_double() * 100, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(3000)");
+            execute("INSERT INTO t SELECT rnd_double() * 100, timestamp_sequence('2024-02-01', 1_000_000) FROM long_sequence(3000)");
             assertQuery("SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 40, '1h'))")
                     .expectSize()
                     .noRandomAccess()
@@ -913,7 +913,7 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO t SELECT " +
                     "case when x = 2500 then 100000.0 when x = 3500 then -100000.0 else (x % 97)::double end, " +
-                    "timestamp_sequence('2024-01-01', 1000000) FROM long_sequence(5000)");
+                    "timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(5000)");
             assertQuery("SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 10))")
                     .expectSize()
                     .noRandomAccess()
@@ -935,7 +935,7 @@ public class SubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             // Insert 10K rows
-            execute("INSERT INTO t SELECT rnd_double() * 100, timestamp_sequence('2024-01-01', 1000000) FROM long_sequence(10000)");
+            execute("INSERT INTO t SELECT rnd_double() * 100, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(10_000)");
             // M4 with 100 target = 25 time buckets * up to 4 points = up to 100
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 try (RecordCursorFactory fact = compiler.compile(
@@ -1213,10 +1213,10 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("CREATE TABLE t_ns (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts)");
             // 40 rows, 30s apart, with a 12h hole punched in the middle.
             execute("INSERT INTO t_us SELECT x::double, " +
-                    "CASE WHEN x <= 20 THEN (x * 30000000L)::timestamp ELSE (x * 30000000L + 43200000000L)::timestamp END " +
+                    "CASE WHEN x <= 20 THEN (x * 30_000_000L)::timestamp ELSE (x * 30_000_000L + 43_200_000_000L)::timestamp END " +
                     "FROM long_sequence(40)");
             execute("INSERT INTO t_ns SELECT x::double, " +
-                    "CASE WHEN x <= 20 THEN (x * 30000000000L)::timestamp_ns ELSE (x * 30000000000L + 43200000000000L)::timestamp_ns END " +
+                    "CASE WHEN x <= 20 THEN (x * 30_000_000_000L)::timestamp_ns ELSE (x * 30_000_000_000L + 43_200_000_000_000L)::timestamp_ns END " +
                     "FROM long_sequence(40)");
 
             final String[] thresholds = {"90s", "5m", "1h", "2h", "1d"};
@@ -1229,23 +1229,6 @@ public class SubsampleTest extends AbstractCairoTest {
                 Assert.assertTrue(ctx + " produced no rows", us.length() > 0);
             }
         });
-    }
-
-    // Renders just the price column of a subsample query, so results from a TIMESTAMP and a
-    // TIMESTAMP_NS table can be compared directly (their timestamp renderings differ by design).
-    private String selectPrices(String sql) throws Exception {
-        final StringBuilder sink = new StringBuilder();
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    final Record record = cursor.getRecord();
-                    while (cursor.hasNext()) {
-                        sink.append(record.getDouble(0)).append('\n');
-                    }
-                }
-            }
-        }
-        return sink.toString();
     }
 
     @Test
@@ -1446,9 +1429,9 @@ public class SubsampleTest extends AbstractCairoTest {
             for (String method : new String[]{"uniform(2)", "cadence(2)", "m4(av, 2)", "lttb(av, 2)"}) {
                 assertQuery(prefix + method).timestamp("bucket").returns(expected);
             }
-            final String plan = planOf(prefix + "lttb(av, 2)");
-            Assert.assertTrue("aliased SAMPLE BY must order the window by its output alias: " + plan, plan.contains("order by [bucket]"));
-            Assert.assertFalse("aliased SAMPLE BY must not leave a legacy node: " + plan, plan.contains("Subsample"));
+            // aliased SAMPLE BY must order the window by its output alias and must not leave a legacy node
+            assertQuery(prefix + "lttb(av, 2)").assertsPlanContaining("order by [bucket]");
+            assertQuery(prefix + "lttb(av, 2)").assertsPlanNotContaining("Subsample");
         });
     }
 
@@ -1461,11 +1444,12 @@ public class SubsampleTest extends AbstractCairoTest {
             final String subquery = "SELECT x, t FROM (SELECT price x, ts t FROM rt) SUBSAMPLE lttb(x, 2)";
             final String cte = "WITH q AS (SELECT price x, ts t FROM rt) SELECT x, t FROM q SUBSAMPLE lttb(x, 2)";
             assertQuery(subquery).timestamp("t").returns(expected);
-            assertQuery(cte).timestamp("t").returns(expected);
-            final String plan = planOf(cte);
-            Assert.assertTrue("renamed CTE must use a window node: " + plan, plan.contains("CachedWindow"));
-            Assert.assertTrue("renamed CTE must order by visible t: " + plan, plan.contains("order by [t]"));
-            Assert.assertFalse("renamed CTE must not leave a legacy node: " + plan, plan.contains("Subsample"));
+            // renamed CTE must use a window node ordered by the visible t and must not leave a legacy node
+            assertQuery(cte)
+                    .timestamp("t")
+                    .withPlanContaining("CachedWindow", "order by [t]")
+                    .withPlanNotContaining("Subsample")
+                    .returns(expected);
             try (RecordCursorFactory factory = select(subquery)) {
                 final RecordMetadata metadata = factory.getMetadata();
                 Assert.assertEquals(1, metadata.getTimestampIndex());
@@ -1746,15 +1730,16 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("INSERT INTO jq VALUES (0.0, 'X', '2024-01-01'), (0.0, 'X', '2024-01-02'), (0.0, 'X', '2024-01-03'), (1000.0, 'X', '2024-01-04'), (0.0, 'X', '2024-01-05')");
 
             final String sql = "SELECT p.price, p.ts FROM jp p ASOF JOIN jq q ON (symbol) SUBSAMPLE lttb(price, 3)";
+            // duplicate join inputs must resolve through the completed projection's window node;
+            // no legacy SUBSAMPLE node may survive
             assertQuery(sql)
                     .timestamp("ts")
+                    .withPlanContaining("CachedWindow")
+                    .withPlanNotContaining("Subsample")
                     .returns("price\tts\n" +
                             "0.0\t2024-01-01T00:00:00.000000Z\n" +
                             "100.0\t2024-01-02T00:00:00.000000Z\n" +
                             "0.0\t2024-01-05T00:00:00.000000Z\n");
-            final String plan = planOf(sql);
-            Assert.assertTrue("duplicate join inputs must resolve through the completed projection: " + plan, plan.contains("CachedWindow"));
-            Assert.assertFalse("no legacy SUBSAMPLE node may survive: " + plan, plan.contains("Subsample"));
         });
     }
 
@@ -2152,8 +2137,8 @@ public class SubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE wm4a (ts TIMESTAMP, x INT) TIMESTAMP(ts)");
             execute("CREATE TABLE wm4b (ts TIMESTAMP, x INT) TIMESTAMP(ts)");
-            execute("INSERT INTO wm4a VALUES (1000000,1), (2000000,2), (3000000,3), (4000000,4), (5000000,5)");
-            execute("INSERT INTO wm4b VALUES (100000,3), (200000,5), (300000,1), (400000,4), (500000,2)");
+            execute("INSERT INTO wm4a VALUES (1_000_000,1), (2_000_000,2), (3_000_000,3), (4_000_000,4), (5_000_000,5)");
+            execute("INSERT INTO wm4b VALUES (100_000,3), (200_000,5), (300_000,1), (400_000,4), (500_000,2)");
 
             assertQuery("""
                     SELECT b.ts, a.*
@@ -2229,10 +2214,13 @@ public class SubsampleTest extends AbstractCairoTest {
 
             final String right = "(SELECT p.price x, p.ts FROM jip p ASOF JOIN jiq q SUBSAMPLE lttb(x, 2)) z";
             final String asof = "SELECT o.price, o.ts, z.x FROM jo o ASOF JOIN " + right;
+            // nested join operand must retain the window plan; no legacy SUBSAMPLE node may survive
             assertQuery(asof)
                     .timestamp("ts")
                     .expectSize()
                     .noRandomAccess()
+                    .withPlanContaining("CachedWindow")
+                    .withPlanNotContaining("Subsample")
                     .returns("price\tts\tx\n" +
                             "100.0\t2024-01-01T00:00:00.000000Z\t10.0\n" +
                             "200.0\t2024-01-02T00:00:00.000000Z\t10.0\n" +
@@ -2251,9 +2239,6 @@ public class SubsampleTest extends AbstractCairoTest {
                             "300.0\t2024-01-03T00:00:00.000000Z\t10.0\n" +
                             "400.0\t2024-01-04T00:00:00.000000Z\t10.0\n" +
                             "500.0\t2024-01-05T00:00:00.000000Z\t40.0\n");
-            final String plan = planOf(asof);
-            Assert.assertTrue("nested join operand must retain the window plan: " + plan, plan.contains("CachedWindow"));
-            Assert.assertFalse("no legacy SUBSAMPLE node may survive: " + plan, plan.contains("Subsample"));
         });
     }
 
@@ -2760,8 +2745,8 @@ public class SubsampleTest extends AbstractCairoTest {
         // pinned endpoints. Exact selections are deliberately not pinned here: the n=19
         // side would freeze the preselection ratio, which is an internal tuning constant.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t18 AS (SELECT (x % 7)::double price, timestamp_sequence('2024-01-01', 1000000) ts FROM long_sequence(18)) TIMESTAMP(ts)");
-            execute("CREATE TABLE t19 AS (SELECT (x % 7)::double price, timestamp_sequence('2024-01-01', 1000000) ts FROM long_sequence(19)) TIMESTAMP(ts)");
+            execute("CREATE TABLE t18 AS (SELECT (x % 7)::double price, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(18)) TIMESTAMP(ts)");
+            execute("CREATE TABLE t19 AS (SELECT (x % 7)::double price, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(19)) TIMESTAMP(ts)");
             assertQuery("SELECT count() FROM (SELECT price, ts FROM t18 SUBSAMPLE lttb(price, 4))")
                     .expectSize()
                     .noRandomAccess()
@@ -2790,7 +2775,7 @@ public class SubsampleTest extends AbstractCairoTest {
         // min(n, m) rows with the first and last input rows pinned. Deterministic
         // (x-derived) values, no rnd dependence.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT (x % 89)::double + x / 100.0 price, timestamp_sequence('2024-01-01', 1000000) ts FROM long_sequence(1000)) TIMESTAMP(ts)");
+            execute("CREATE TABLE t AS (SELECT (x % 89)::double + x / 100.0 price, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(1000)) TIMESTAMP(ts)");
             final int[] targets = {2, 3, 7, 50, 200, 999, 1000};
             for (int target : targets) {
                 assertQuery("SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, " + target + "))")
@@ -2827,7 +2812,7 @@ public class SubsampleTest extends AbstractCairoTest {
                 execute("CREATE TABLE " + table + " (price " + type + ", ts TIMESTAMP) TIMESTAMP(ts)");
                 execute("INSERT INTO " + table + " SELECT " +
                         "case when x = 4 then 100 else x - 1 end, " +
-                        "timestamp_sequence('2024-01-01', 1000000) FROM long_sequence(10)");
+                        "timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(10)");
                 // SUBSAMPLE requires the value column in the projection; the outer
                 // ts-only projection keeps the assertion type-agnostic (no per-type
                 // value formatting).
@@ -2863,7 +2848,7 @@ public class SubsampleTest extends AbstractCairoTest {
                 execute("CREATE TABLE " + table + " (price " + type + ", ts TIMESTAMP) TIMESTAMP(ts)");
                 execute("INSERT INTO " + table + " SELECT " +
                         "case when x = 3 then null when x = 4 then 100 else x - 1 end, " +
-                        "timestamp_sequence('2024-01-01', 1000000) FROM long_sequence(10)");
+                        "timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(10)");
                 assertQuery("SELECT ts FROM (SELECT price, ts FROM " + table + " SUBSAMPLE lttb(price, 5))")
                         .timestamp("ts")
                         .returns(expected);
@@ -2929,7 +2914,7 @@ public class SubsampleTest extends AbstractCairoTest {
         // buffering, null bitset, ordinal mapping, keep-flag fusion, or an activation
         // threshold creeping over the documented boundary. Fixed seeds: reproducible.
         assertMemoryLeak(() -> {
-            final long[] seeds = {0xDEADBEEFL, 42L, 20240101L};
+            final long[] seeds = {0xDEADBEEFL, 42L, 20_240_101L};
             final int[][] combos = {{300, 2}, {50, 8}, {120, 17}, {200, 27}, {400, 52}};
             int tableId = 0;
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -3049,11 +3034,11 @@ public class SubsampleTest extends AbstractCairoTest {
                     generateRandomSeries(new Rnd(seed, seed ^ 0x5DEECE66DL), n, tss, vals, nulls, false);
                     // Inject 2h+ gaps at ~5% of the steps (regenerate timestamps)
                     final Rnd gapRnd = new Rnd(seed + 1, seed + 2);
-                    long ts = 1704067200000000L;
+                    long ts = 1_704_067_200_000_000L;
                     for (int i = 0; i < n; i++) {
                         tss[i] = ts;
                         ts += gapRnd.nextInt(20) == 0
-                                ? (7200 + gapRnd.nextInt(10000)) * 1_000_000L
+                                ? (7200 + gapRnd.nextInt(10_000)) * 1_000_000L
                                 : (1 + gapRnd.nextInt(4)) * 1_000_000L;
                     }
                     createAndInsert(table, n, tss, vals, nulls);
@@ -3096,144 +3081,6 @@ public class SubsampleTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    /**
-     * Reference implementation of canonical single-stage LTTB (Steinarsson 2013) over
-     * the same exact-integer timestamp-delta math production uses: equal row-count
-     * buckets of size (n-2)/(m-2), point C = mean of the NEXT bucket with x measured
-     * relative to point A via long subtraction, largest doubled-triangle area wins with
-     * a strict comparison, first and last points pinned. Serves as the differential
-     * oracle for inputs under the MinMaxLTTB activation threshold. Requires
-     * n &gt; m &gt;= 2 (the keepAll short-circuit is the caller's business).
-     */
-    private static int[] referenceLttb(long[] tss, double[] vals, int n, int m) {
-        final int[] out = new int[m];
-        int outIdx = 0;
-        out[outIdx++] = 0;
-        final double bucketSize = (double) (n - 2) / (m - 2);
-        int prev = 0;
-        for (int bucket = 0; bucket < m - 2; bucket++) {
-            final int bucketStart = (int) (bucket * bucketSize) + 1;
-            int bucketEnd = (int) ((bucket + 1) * bucketSize) + 1;
-            if (bucketEnd > n - 1) {
-                bucketEnd = n - 1;
-            }
-            final int nextStart = bucketEnd;
-            int nextEnd = (int) ((bucket + 2) * bucketSize) + 1;
-            if (nextEnd > n - 1 || bucket == m - 3) {
-                nextEnd = n;
-            }
-            final long axTs = tss[prev];
-            final double ay = vals[prev];
-            double avgDx = 0;
-            double avgY = 0;
-            final int len = nextEnd - nextStart;
-            for (int j = nextStart; j < nextEnd; j++) {
-                avgDx += (double) (tss[j] - axTs);
-                avgY += vals[j];
-            }
-            if (len > 0) {
-                avgDx /= len;
-                avgY /= len;
-            }
-            double maxArea = -1;
-            int maxIdx = bucketStart;
-            for (int j = bucketStart; j < bucketEnd; j++) {
-                final double dbx = (double) (tss[j] - axTs);
-                final double area = Math.abs(dbx * (avgY - ay) - avgDx * (vals[j] - ay));
-                if (area > maxArea) {
-                    maxArea = area;
-                    maxIdx = j;
-                }
-            }
-            out[outIdx++] = maxIdx;
-            prev = maxIdx;
-        }
-        out[outIdx] = n - 1;
-        return out;
-    }
-
-    /**
-     * Random walk with occasional +/-1000 spikes, ~1/4 duplicate timestamps and,
-     * when {@code withNulls}, ~10%% NULL values capped at n/6 so fixtures always
-     * keep enough rows to exercise the algorithm path.
-     */
-    private static void generateRandomSeries(Rnd rnd, int n, long[] tss, double[] vals, boolean[] nulls, boolean withNulls) {
-        long ts = 1704067200000000L; // 2024-01-01T00:00:00Z in micros
-        double base = 0;
-        int nullCount = 0;
-        for (int i = 0; i < n; i++) {
-            tss[i] = ts;
-            ts += rnd.nextInt(4) == 0 ? 0 : (1 + rnd.nextInt(5)) * 1_000_000L;
-            base += rnd.nextDouble() - 0.5;
-            double v = base;
-            if (rnd.nextInt(25) == 0) {
-                v += rnd.nextBoolean() ? 1000 : -1000;
-            }
-            vals[i] = v;
-            if (withNulls && nullCount < n / 6 && rnd.nextInt(10) == 0) {
-                nulls[i] = true;
-                nullCount++;
-            } else {
-                nulls[i] = false;
-            }
-        }
-    }
-
-    private static void createAndInsert(String table, int n, long[] tss, double[] vals, boolean[] nulls) throws Exception {
-        execute("CREATE TABLE " + table + " (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-        final StringBuilder sb = new StringBuilder("INSERT INTO ").append(table).append(" VALUES ");
-        for (int i = 0; i < n; i++) {
-            if (i > 0) {
-                sb.append(',');
-            }
-            sb.append('(');
-            if (nulls[i]) {
-                sb.append("null");
-            } else {
-                // Double.toString round-trips exactly through the SQL double literal parser
-                sb.append(vals[i]);
-            }
-            sb.append(",cast(").append(tss[i]).append(" as timestamp))");
-        }
-        execute(sb.toString());
-    }
-
-    private static int runLttbAndCollect(SqlCompiler compiler, String sql, long[] outTs, double[] outVal) throws Exception {
-        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            final Record record = cursor.getRecord();
-            int count = 0;
-            while (cursor.hasNext()) {
-                outVal[count] = record.getDouble(0);
-                outTs[count] = record.getTimestamp(1);
-                count++;
-            }
-            return count;
-        }
-    }
-
-    /**
-     * Forward matching walk: proves the output is an order-preserving subset of the
-     * input rows (by exact (ts, value) pairs). When {@code kept} is non-null, marks
-     * the matched input positions for segment-boundary assertions.
-     */
-    private static void matchOutputAgainstInput(
-            String ctx, long[] outTs, double[] outVal, int outCount,
-            long[] inTs, double[] inVal, int inCount, boolean[] kept
-    ) {
-        int in = 0;
-        for (int i = 0; i < outCount; i++) {
-            while (in < inCount && (inTs[in] != outTs[i] || inVal[in] != outVal[i])) {
-                in++;
-            }
-            Assert.assertTrue(ctx + ": output row " + i + " (ts=" + outTs[i] + ") not an order-preserving input row", in < inCount);
-            if (kept != null) {
-                kept[in] = true;
-            }
-            in++;
-        }
     }
 
     @Test
@@ -3982,9 +3829,9 @@ public class SubsampleTest extends AbstractCairoTest {
 
             final String[] fusedQueries = {uniform, cadence, m4, minmax, lttb, sdt};
             for (String query : fusedQueries) {
-                final String plan = planOf(query);
-                Assert.assertTrue("expected fused row-selecting plan: " + plan, plan.contains("CachedWindowLightSelect"));
-                Assert.assertFalse("fused plan must not contain a separate keep filter: " + plan, plan.contains("Filter filter: __keep_subsample"));
+                // expected a fused row-selecting plan without a separate keep filter
+                assertQuery(query).assertsPlanContaining("CachedWindowLightSelect");
+                assertQuery(query).assertsPlanNotContaining("Filter filter: __keep_subsample");
             }
         });
     }
@@ -5007,9 +4854,9 @@ public class SubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP, flag BOOLEAN) TIMESTAMP(ts)");
             final String sql = "SELECT ts, price FROM (SELECT ts, price, flag, m4(ts, price, 8) OVER (ORDER BY ts) keep FROM t) WHERE flag";
-            final String plan = planOf(sql);
-            Assert.assertTrue("expected a separate Filter on the base boolean: " + plan, plan.contains("Filter filter: flag"));
-            Assert.assertFalse("must not fuse a base-boolean filter: " + plan, plan.contains("CachedWindowLightSelect"));
+            // expected a separate Filter on the base boolean; must not fuse a base-boolean filter
+            assertQuery(sql).assertsPlanContaining("Filter filter: flag");
+            assertQuery(sql).assertsPlanNotContaining("CachedWindowLightSelect");
         });
     }
 
@@ -5020,9 +4867,9 @@ public class SubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP, id LONG) TIMESTAMP(ts)");
             final String sql = "SELECT ts, price FROM (SELECT ts, price, id, m4(ts, price, 8) OVER (ORDER BY ts) keep FROM t) WHERE keep AND id >= 0";
-            final String plan = planOf(sql);
-            Assert.assertTrue("expected a separate Filter node: " + plan, plan.contains("Filter"));
-            Assert.assertFalse("must not fuse when extra filter terms are present: " + plan, plan.contains("CachedWindowLightSelect"));
+            // expected a separate Filter node; must not fuse when extra filter terms are present
+            assertQuery(sql).assertsPlanContaining("Filter");
+            assertQuery(sql).assertsPlanNotContaining("CachedWindowLightSelect");
         });
     }
 
@@ -5046,67 +4893,23 @@ public class SubsampleTest extends AbstractCairoTest {
             final String sql = "SELECT ts, price, id, keep FROM (SELECT ts, price, id, m4(ts, price, 8) OVER (ORDER BY ts) keep FROM t) WHERE keep";
 
             // Must fall back: no fused row-selecting node, and a separate Filter on the keep boolean.
-            final String plan = planOf(sql);
-            Assert.assertFalse("must not fuse when the keep boolean is projected: " + plan, plan.contains("CachedWindowLightSelect"));
-            Assert.assertTrue("expected a separate Filter node + CachedWindowLight: " + plan,
-                    plan.contains("Filter") && plan.contains("CachedWindowLight"));
-
             // target 8 >= 5 rows -> all rows kept -> the projected keep must be true for EVERY row
             // (the bug returned false for every row).
-            assertQuery(sql).timestamp("ts").returns("ts\tprice\tid\tkeep\n" +
-                    "2024-01-01T00:00:00.000000Z\t10.0\t1\ttrue\n" +
-                    "2024-01-01T01:00:00.000000Z\t20.0\t2\ttrue\n" +
-                    "2024-01-01T02:00:00.000000Z\t30.0\t3\ttrue\n" +
-                    "2024-01-01T03:00:00.000000Z\t40.0\t4\ttrue\n" +
-                    "2024-01-01T04:00:00.000000Z\t50.0\t5\ttrue\n");
+            assertQuery(sql)
+                    .timestamp("ts")
+                    .withPlanContaining("Filter", "CachedWindowLight")
+                    .withPlanNotContaining("CachedWindowLightSelect")
+                    .returns("ts\tprice\tid\tkeep\n" +
+                            "2024-01-01T00:00:00.000000Z\t10.0\t1\ttrue\n" +
+                            "2024-01-01T01:00:00.000000Z\t20.0\t2\ttrue\n" +
+                            "2024-01-01T02:00:00.000000Z\t30.0\t3\ttrue\n" +
+                            "2024-01-01T03:00:00.000000Z\t40.0\t4\ttrue\n" +
+                            "2024-01-01T04:00:00.000000Z\t50.0\t5\ttrue\n");
 
             // The real SUBSAMPLE feature must STILL fuse: same m4/target over the same table desugars
             // to the internal marked keep flag and takes the fused row-selecting path.
-            final String subsamplePlan = planOf("SELECT ts, price FROM t SUBSAMPLE m4(price, 8)");
-            Assert.assertTrue("SUBSAMPLE m4 must still fuse into the row-selecting node: " + subsamplePlan,
-                    subsamplePlan.contains("CachedWindowLightSelect"));
+            assertQuery("SELECT ts, price FROM t SUBSAMPLE m4(price, 8)").assertsPlanContaining("CachedWindowLightSelect");
         });
-    }
-
-    private void assertSubsampleCompletes(SqlCompiler compiler, String query) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            Assert.assertTrue("expected rows for " + query, cursor.hasNext());
-            while (cursor.hasNext()) {
-                // drain
-            }
-        }
-    }
-
-    private void assertSubsampleRowCapBreach(SqlCompiler compiler, String queryPrefix, String method) throws SqlException {
-        final String query = queryPrefix + method;
-        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                while (cursor.hasNext()) {
-                    // drain until cap breach
-                }
-                Assert.fail("expected row-cap breach for " + query);
-            } catch (CairoException e) {
-                TestUtils.assertContains(
-                        e.getFlyweightMessage(),
-                        "SUBSAMPLE input exceeds maximum of 5 rows (raise cairo.sql.subsample.max.rows)"
-                );
-                Assert.assertEquals(query.indexOf(method.substring(0, method.indexOf('('))), e.getPosition());
-            }
-        }
-    }
-
-    private void assertFusedMatchesNonFused(String subsampleCall, String windowCall) throws SqlException {
-        printSql("SELECT ts, price FROM t SUBSAMPLE " + subsampleCall);
-        final String fused = sink.toString();
-        printSql("SELECT ts, price FROM (SELECT ts, price, id, " + windowCall
-                + " OVER (ORDER BY ts) keep FROM t) WHERE keep AND id >= 0");
-        Assert.assertEquals("fused vs non-fused mismatch for " + subsampleCall, fused, sink.toString());
-    }
-
-    private String planOf(String sql) throws SqlException {
-        printSql("EXPLAIN " + sql);
-        return sink.toString();
     }
 
     @Test
@@ -5569,7 +5372,6 @@ public class SubsampleTest extends AbstractCairoTest {
         });
     }
 
-
     @Test
     public void testUniformAfterSampleByUsesWindowPlan() throws Exception {
         // Proves the aggregation-context SUBSAMPLE now takes the desugared keep-flag WINDOW path
@@ -5908,7 +5710,7 @@ public class SubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO x VALUES " +
-                    "(0.0, 0::timestamp),(1e-320, 1000000::timestamp),(0.0, 2000000::timestamp)");
+                    "(0.0, 0::timestamp),(1e-320, 1_000_000::timestamp),(0.0, 2_000_000::timestamp)");
             assertQuery("SELECT ts, price FROM x SUBSAMPLE sdt(price, 1e-322)")
                     .timestamp("ts")
                     .returns("""
@@ -7120,5 +6922,196 @@ public class SubsampleTest extends AbstractCairoTest {
                                         Frame forward scan on: tsm
                             """);
         });
+    }
+
+    private static void createAndInsert(String table, int n, long[] tss, double[] vals, boolean[] nulls) throws Exception {
+        execute("CREATE TABLE " + table + " (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+        final StringBuilder sb = new StringBuilder("INSERT INTO ").append(table).append(" VALUES ");
+        for (int i = 0; i < n; i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append('(');
+            if (nulls[i]) {
+                sb.append("null");
+            } else {
+                // Double.toString round-trips exactly through the SQL double literal parser
+                sb.append(vals[i]);
+            }
+            sb.append(",cast(").append(tss[i]).append(" as timestamp))");
+        }
+        execute(sb.toString());
+    }
+
+    /**
+     * Random walk with occasional +/-1000 spikes, ~1/4 duplicate timestamps and,
+     * when {@code withNulls}, ~10%% NULL values capped at n/6 so fixtures always
+     * keep enough rows to exercise the algorithm path.
+     */
+    private static void generateRandomSeries(Rnd rnd, int n, long[] tss, double[] vals, boolean[] nulls, boolean withNulls) {
+        long ts = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z in micros
+        double base = 0;
+        int nullCount = 0;
+        for (int i = 0; i < n; i++) {
+            tss[i] = ts;
+            ts += rnd.nextInt(4) == 0 ? 0 : (1 + rnd.nextInt(5)) * 1_000_000L;
+            base += rnd.nextDouble() - 0.5;
+            double v = base;
+            if (rnd.nextInt(25) == 0) {
+                v += rnd.nextBoolean() ? 1000 : -1000;
+            }
+            vals[i] = v;
+            if (withNulls && nullCount < n / 6 && rnd.nextInt(10) == 0) {
+                nulls[i] = true;
+                nullCount++;
+            } else {
+                nulls[i] = false;
+            }
+        }
+    }
+
+    /**
+     * Forward matching walk: proves the output is an order-preserving subset of the
+     * input rows (by exact (ts, value) pairs). When {@code kept} is non-null, marks
+     * the matched input positions for segment-boundary assertions.
+     */
+    private static void matchOutputAgainstInput(
+            String ctx, long[] outTs, double[] outVal, int outCount,
+            long[] inTs, double[] inVal, int inCount, boolean[] kept
+    ) {
+        int in = 0;
+        for (int i = 0; i < outCount; i++) {
+            while (in < inCount && (inTs[in] != outTs[i] || inVal[in] != outVal[i])) {
+                in++;
+            }
+            Assert.assertTrue(ctx + ": output row " + i + " (ts=" + outTs[i] + ") not an order-preserving input row", in < inCount);
+            if (kept != null) {
+                kept[in] = true;
+            }
+            in++;
+        }
+    }
+
+    /**
+     * Reference implementation of canonical single-stage LTTB (Steinarsson 2013) over
+     * the same exact-integer timestamp-delta math production uses: equal row-count
+     * buckets of size (n-2)/(m-2), point C = mean of the NEXT bucket with x measured
+     * relative to point A via long subtraction, largest doubled-triangle area wins with
+     * a strict comparison, first and last points pinned. Serves as the differential
+     * oracle for inputs under the MinMaxLTTB activation threshold. Requires
+     * n &gt; m &gt;= 2 (the keepAll short-circuit is the caller's business).
+     */
+    private static int[] referenceLttb(long[] tss, double[] vals, int n, int m) {
+        final int[] out = new int[m];
+        int outIdx = 0;
+        out[outIdx++] = 0;
+        final double bucketSize = (double) (n - 2) / (m - 2);
+        int prev = 0;
+        for (int bucket = 0; bucket < m - 2; bucket++) {
+            final int bucketStart = (int) (bucket * bucketSize) + 1;
+            int bucketEnd = (int) ((bucket + 1) * bucketSize) + 1;
+            if (bucketEnd > n - 1) {
+                bucketEnd = n - 1;
+            }
+            final int nextStart = bucketEnd;
+            int nextEnd = (int) ((bucket + 2) * bucketSize) + 1;
+            if (nextEnd > n - 1 || bucket == m - 3) {
+                nextEnd = n;
+            }
+            final long axTs = tss[prev];
+            final double ay = vals[prev];
+            double avgDx = 0;
+            double avgY = 0;
+            final int len = nextEnd - nextStart;
+            for (int j = nextStart; j < nextEnd; j++) {
+                avgDx += (double) (tss[j] - axTs);
+                avgY += vals[j];
+            }
+            if (len > 0) {
+                avgDx /= len;
+                avgY /= len;
+            }
+            double maxArea = -1;
+            int maxIdx = bucketStart;
+            for (int j = bucketStart; j < bucketEnd; j++) {
+                final double dbx = (double) (tss[j] - axTs);
+                final double area = Math.abs(dbx * (avgY - ay) - avgDx * (vals[j] - ay));
+                if (area > maxArea) {
+                    maxArea = area;
+                    maxIdx = j;
+                }
+            }
+            out[outIdx++] = maxIdx;
+            prev = maxIdx;
+        }
+        out[outIdx] = n - 1;
+        return out;
+    }
+
+    private static int runLttbAndCollect(SqlCompiler compiler, String sql, long[] outTs, double[] outVal) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final Record record = cursor.getRecord();
+            int count = 0;
+            while (cursor.hasNext()) {
+                outVal[count] = record.getDouble(0);
+                outTs[count] = record.getTimestamp(1);
+                count++;
+            }
+            return count;
+        }
+    }
+
+    private void assertFusedMatchesNonFused(String subsampleCall, String windowCall) throws SqlException {
+        printSql("SELECT ts, price FROM t SUBSAMPLE " + subsampleCall);
+        final String fused = sink.toString();
+        printSql("SELECT ts, price FROM (SELECT ts, price, id, " + windowCall
+                + " OVER (ORDER BY ts) keep FROM t) WHERE keep AND id >= 0");
+        Assert.assertEquals("fused vs non-fused mismatch for " + subsampleCall, fused, sink.toString());
+    }
+
+    private void assertSubsampleCompletes(SqlCompiler compiler, String query) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue("expected rows for " + query, cursor.hasNext());
+            while (cursor.hasNext()) {
+                // drain
+            }
+        }
+    }
+
+    private void assertSubsampleRowCapBreach(SqlCompiler compiler, String queryPrefix, String method) throws SqlException {
+        final String query = queryPrefix + method;
+        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                while (cursor.hasNext()) {
+                    // drain until cap breach
+                }
+                Assert.fail("expected row-cap breach for " + query);
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "SUBSAMPLE input exceeds maximum of 5 rows (raise cairo.sql.subsample.max.rows)"
+                );
+                Assert.assertEquals(query.indexOf(method.substring(0, method.indexOf('('))), e.getPosition());
+            }
+        }
+    }
+
+    // Renders just the price column of a subsample query, so results from a TIMESTAMP and a
+    // TIMESTAMP_NS table can be compared directly (their timestamp renderings differ by design).
+    private String selectPrices(String sql) throws Exception {
+        final StringBuilder sink = new StringBuilder();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        sink.append(record.getDouble(0)).append('\n');
+                    }
+                }
+            }
+        }
+        return sink.toString();
     }
 }

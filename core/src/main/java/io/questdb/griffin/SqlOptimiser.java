@@ -2320,9 +2320,6 @@ public class SqlOptimiser implements Mutable {
         return model;
     }
 
-    // pushing predicates to sample by model is only allowed for sample by fill none align to calendar and expressions on non-timestamp columns
-    // pushing for other fill options or sample by first observation could alter a result
-    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     private static boolean hasSubsampleInChain(IQueryModel model) {
         IQueryModel m = model;
         while (m != null) {
@@ -2334,6 +2331,9 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    // pushing predicates to sample by model is only allowed for sample by fill none align to calendar and expressions on non-timestamp columns
+    // pushing for other fill options or sample by first observation could alter a result
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     private boolean canPushToSampleBy(final IQueryModel model, ObjList<CharSequence> expressionColumns) {
         ObjList<ExpressionNode> fill = model.getSampleByFill();
         int fillCount = fill.size();
@@ -11292,12 +11292,9 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Reserves the output names of one projection: explicit column aliases directly, wildcard columns
-     * via the models the expansion will pull from ({@code fromModel} is the projection's FROM target).
-     */
-    /**
      * Walks a projection in declared order, reserving every output name exactly as the expansion's
-     * dedup will assign them. When {@code designatedName} is non-null, returns the reserved alias
+     * dedup will assign them. {@code fromModel} is the projection's FROM target.
+     * When {@code designatedName} is non-null, returns the reserved alias
      * assigned to the column of that name imported from the primary FROM model (capture mode, used
      * by {@link #resolveWildcardSubsampleTimestampAlias}); with a null {@code designatedName} it
      * only reserves and returns null (keep-alias mode, byte-identical to the historical behavior).

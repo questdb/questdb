@@ -54,15 +54,15 @@ public class WindowDownsampleOrderDirectionTest extends AbstractCairoTest {
 
     // 100-row ascending ramp: ts = epoch + x seconds, v = x
     private static final String RAMP_DDL =
-            "create table t as (select (x * 1000000)::timestamp ts, x::double v from long_sequence(100)) timestamp(ts) partition by day";
+            "create table t as (select (x * 1_000_000)::timestamp ts, x::double v from long_sequence(100)) timestamp(ts) partition by day";
 
     // ascending ts, but v deliberately NOT aligned with ts: ORDER BY v shuffles the timestamps
     private static final String SHUFFLED_DDL =
-            "create table s as (select (x * 1000000)::timestamp ts, ((x * 37) % 100)::double v from long_sequence(100)) timestamp(ts) partition by day";
+            "create table s as (select (x * 1_000_000)::timestamp ts, ((x * 37) % 100)::double v from long_sequence(100)) timestamp(ts) partition by day";
 
     // two 50-row clusters, 1s apart inside a cluster, 1 day between clusters
     private static final String CLUSTER_DDL =
-            "create table g as (select case when x <= 50 then (x * 1000000)::timestamp else (86400000000L + x * 1000000)::timestamp end ts, x::double v from long_sequence(100)) timestamp(ts) partition by day";
+            "create table g as (select case when x <= 50 then (x * 1_000_000)::timestamp else (86_400_000_000L + x * 1_000_000)::timestamp end ts, x::double v from long_sequence(100)) timestamp(ts) partition by day";
 
     @Test
     public void testLttbGapRejectsDescendingOrder() throws Exception {

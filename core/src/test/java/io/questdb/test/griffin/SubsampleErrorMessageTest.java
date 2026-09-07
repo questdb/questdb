@@ -175,7 +175,7 @@ public class SubsampleErrorMessageTest extends AbstractCairoTest {
             assertError("SELECT ts, v FROM t SUBSAMPLE lttb(v, ^'abc')", "integer expected for target point count");
             assertError("SELECT ts, v FROM t SUBSAMPLE lttb(v, ^true)", "integer expected for target point count");
             assertError("SELECT ts, v FROM t SUBSAMPLE lttb(v, ^null)", "target point count must be set");
-            assertError("SELECT ts, v FROM t SUBSAMPLE lttb(v, ^3000000000)", "target points exceeds maximum of 2147483647");
+            assertError("SELECT ts, v FROM t SUBSAMPLE lttb(v, ^3_000_000_000)", "target points exceeds maximum of 2147483647");
             assertError("SELECT ts, v FROM t SUBSAMPLE lttb(v, ^v)", "target point count must be a constant or bind variable");
             assertError("SELECT ts, v FROM t SUBSAMPLE lttb(v, ^rnd_int())", "target point count must be a constant or bind variable");
             assertError("SELECT ts, v FROM t SUBSAMPLE m4(v, ^0)", "target points must be at least 2");
@@ -188,7 +188,7 @@ public class SubsampleErrorMessageTest extends AbstractCairoTest {
             assertError("SELECT ts, v FROM t SUBSAMPLE cadence(^0)", "stride must be at least 1");
             assertError("SELECT ts, v FROM t SUBSAMPLE cadence(^'x')", "integer expected for stride");
             assertError("SELECT ts, v FROM t SUBSAMPLE cadence(^null)", "stride must be set");
-            assertError("SELECT ts, v FROM t SUBSAMPLE cadence(^3000000000)", "stride exceeds maximum of 2147483647");
+            assertError("SELECT ts, v FROM t SUBSAMPLE cadence(^3_000_000_000)", "stride exceeds maximum of 2147483647");
             assertError("SELECT ts, v FROM t SUBSAMPLE cadence(^v)", "stride must be a constant or bind variable");
             assertError("SELECT ts, v FROM t SUBSAMPLE cadence(2, ^'x')", "integer or NULL expected for seed");
             assertError("SELECT ts, v FROM t SUBSAMPLE cadence(2, ^v)", "seed must be a constant, bind variable, or NULL");

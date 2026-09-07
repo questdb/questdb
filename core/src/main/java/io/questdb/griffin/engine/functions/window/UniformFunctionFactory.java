@@ -134,9 +134,9 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
 
         private final DirectLongList selected = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
         private final int functionPosition;
+        private final long maxRows;
         // May be a bind variable / runtime constant, so its value is resolved every execution in
         // init() (before pass1/preparePass2 need it) rather than frozen at newInstance.
-        private final long maxRows;
         private final Function targetArg;
         private final int targetPosition;
         private long count;          // running row counter during pass1; becomes totalRows
