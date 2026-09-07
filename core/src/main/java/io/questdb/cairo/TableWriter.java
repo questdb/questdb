@@ -1798,9 +1798,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                            materializing every column from row 0 - see
      *                            {@link ParquetPartitionSwapCommand#isFullyMaterialized()}
      * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the source partition's generation
-     *                                                                moved since the build snapshot was
-     *                                                                taken. The staged directory is
-     *                                                                deleted before this throws.
+     *                                                               moved since the build snapshot was
+     *                                                               taken. The staged directory is
+     *                                                               deleted before this throws.
      */
     public void swapCompactedParquetPartition(
             long partitionTimestamp,
@@ -3393,6 +3393,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return -1L;
         }
 
+        // Same pair, same order, as convertPartitionNativeToParquet: the caller is about to read this
+        // one directory flat, as [0, liveRows) from byte 0 of every column file, and squashPartitionForce
+        // alone never touches a logical partition that has no split siblings. If that single directory is
+        // composite, its live rows do not start at file row 0 and a merge-append may have relocated a
+        // piece to the tail, so it has to be folded to plain first.
+        compactPartitionToPlain(partitionIndex, "parquet conversion");
         squashPartitionForce(partitionIndex);
 
         // Remove any stale parquet file from a prior conversion that may not
@@ -9453,8 +9459,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private boolean isLastPartitionAppendBlocked() {
         return isLastPartitionParquet() || isLastPartitionComposite();
-                // TODO: consider more aggresive removal of active partition dance in wal tables
-                // || (configuration.isO3PartitionMergeAppendEnabled() && tableToken.isWal());
+        // TODO: consider more aggresive removal of active partition dance in wal tables
+        // || (configuration.isO3PartitionMergeAppendEnabled() && tableToken.isWal());
     }
 
     private boolean isLastPartitionClosed() {
