@@ -183,12 +183,8 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
         final long size = rowCount << shl;
         final long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, offset, size, false, MEMORY_TAG);
         try {
-            // Must come BEFORE rollbackConditionally: that call publishes when the index still holds
-            // rowids at or above the append offset (an O3 split shrank the partition without resealing
-            // the parent), and ofRW's of() has just reset pendingTxnAtSeal to -1. Armed after it, the
-            // republished entry would take publishToChain's pendingTxnAtSeal<0 fallback and land tagged
-            // TXN_AT_SEAL=0 -- visible to every pinned reader and undroppable by the writer-open
-            // recovery walk, whose predicate (txnAtSeal > committedTxn) can never fire on 0.
+            // Must come BEFORE rollbackConditionally: that call publishes when the index still holds rowids at or above
+            // the append offset (an O3 split shrank the partition without resealing the parent), and ofRW's of() has.
             if (upcomingTableTxn >= 0) {
                 indexWriter.setNextTxnAtSeal(upcomingTableTxn);
             }

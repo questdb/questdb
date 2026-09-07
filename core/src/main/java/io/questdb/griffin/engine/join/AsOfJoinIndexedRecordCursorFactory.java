@@ -165,11 +165,8 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                         slaveSymbolColumnIndex,
                         IndexReader.DIR_BACKWARD
                 );
-                // indexReader.getCursor() takes the index's own row ids, but TimeFrameCursor numbers rows
-                // relative to the first row of the frame. The frame's index row lo bridges the two. On a
-                // composite partition it is a FILE row, offset from the partition row that
-                // Record.getUpdateRowId() would give by the piece's shift (see PageFrame#getIndexRowLo),
-                // so the record's row id is no substitute for it.
+                // indexReader.getCursor() takes the index's own row ids, but TimeFrameCursor numbers rows relative to
+                // the first row of the frame.
                 final long rowLo = slaveTimeFrameCursor.getIndexRowLoForCurrentFrame();
                 try (RowCursor rowCursor = indexReader.getCursor(symbolKey, rowLo, rowMax + rowLo)) {
                     // Check the first entry only. They are sorted descending by timestamp,

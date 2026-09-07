@@ -29,24 +29,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.datetime.microtime.Micros;
 
 /**
- * Decides WHICH partition a commit should compact, and why. The work itself belongs to
- * {@link TableWriter}; this class only reads {@link TxWriter}/{@link PartitionGeometry} - both already
- * resident, the latter lazily so - and applies the four rules of PARTITION_COMPACTION.md Sec.4.
- * <p>
- * Ported from the enterprise `feat-partition-top-split` branch's design onto this branch's simpler
- * model, where a composite partition is exactly one {@code attachedPartitions} entry: one directory, one
- * {@code (partitionTimestamp, nameTxn)}, one {@code _geometry} chain. There is no separate "folder" unit
- * distinct from "partition" - the reference repo needed one because a hardlink split let several
- * directories share one logical partition; this branch has no hardlink splits, so every accessor below
- * takes a plain partition index. See PARTITION_COMPACTION.md for the rules it applies.
- * <p>
- * It is owned by one writer, allocates nothing per commit, and keeps no durable state: handing the
- * writer to another thread costs at most one wasted attempt, and making the decline backoff timer durable
- * would mean a per-partition {@code _txn} field for an advisory number plus recovery code that could
- * itself be wrong.
- * <p>
- * Every rule is worked out purely from COMMITTED state, so checking them in full on every commit can
- * never produce a different answer from checking them less often.
+ * Decides WHICH partition a commit should compact, and why.
  */
 public class PartitionCompactionPolicy implements Mutable {
     public static final int REASON_AGE = 3;
@@ -78,12 +61,9 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     /**
-     * The piece-count rule's actual cap for a folder holding {@code liveRows} live rows: never below the
-     * flat floor {@link CairoConfiguration#getPartitionCompactionPieceThreshold()}, but scaled up for a
-     * large folder so it is not flagged at the same absolute piece count a small one would be - a piece's
-     * per-frame read cost (see {@code FwdTableReaderPageFrameCursor}) is the same fixed amount regardless
-     * of how many live rows sit around it, so a bigger folder can carry proportionally more pieces before
-     * that cost is worth paying a compaction copy to avoid.
+     * The piece-count rule's actual cap for a folder holding {@code liveRows} live rows: never below the flat floor
+     * {@link CairoConfiguration#getPartitionCompactionPieceThreshold()}, but scaled up for a large folder so it is not
+     * flagged at the same absolute piece count a small one would be.
      */
     public static int effectiveMaxPieces(CairoConfiguration configuration, long liveRows) {
         final long scaled = liveRows / configuration.getPartitionCompactionAvgRowsPieceLim();
@@ -91,12 +71,9 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     /**
-     * True if a piece count of {@code pieceCount}, or a dead-versus-live row split of {@code deadRows}
-     * against {@code liveRows}, already crosses the same waste-ratio or piece-count thresholds
-     * {@link #selectPartition} enforces after the fact. Static and stateless, with none of
-     * {@link #selectPartition}'s backoff bookkeeping - that exists to stop {@code housekeep} from
-     * retrying a partition it just declined, which does not apply to a decision made before the write
-     * that would create the waste has even landed.
+     * True if a piece count of {@code pieceCount}, or a dead-versus-live row split of {@code deadRows} against {@code
+     * liveRows}, already crosses the same waste-ratio or piece-count thresholds {@link #selectPartition} enforces after
+     * the fact.
      */
     public static boolean exceedsThresholds(
             CairoConfiguration configuration, long liveRows, long deadRows, int pieceCount, long avgRecordSize
@@ -122,17 +99,14 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     /**
-     * Records that the partition was compacted, clearing any decline backoff a prior attempt left
-     * behind.
+     * Records that the partition was compacted, clearing any decline backoff a prior attempt left behind.
      */
     public void onCompacted(long partitionTimestamp) {
         clearBackoff(partitionTimestamp);
     }
 
     /**
-     * Records that the partition could not be compacted this time, and doubles how long to wait before
-     * trying again. Being declined is normal - a partition whose pieces are interleaved with an
-     * outsider's has to wait for that to change.
+     * Records that the partition could not be compacted this time, and doubles how long to wait before trying again.
      */
     public void onDeclined(long partitionTimestamp, long nowMicros) {
         final long max = configuration.getPartitionCompactionDeclineBackoffMax();
@@ -152,11 +126,7 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     /**
-     * The partition index to compact next, or -1. Reads every partition, including the last: one pass,
-     * first three rules per partition, totals for the fourth, and the piece array touched only for the
-     * partition that gets picked. A table with no composite partition costs one resident read per
-     * partition and no {@code _geometry} I/O at all. The caller (TableWriter.runCompaction) is
-     * responsible for closing and reopening the active partition around a REWRITE/MOVE-TAIL of it.
+     * The partition index to compact next, or -1.
      */
     public int selectPartition(TxWriter txWriter, PartitionGeometry geometry, long avgRecordSize, long nowMicros) {
         selectedReason = REASON_NONE;
@@ -186,12 +156,8 @@ public class PartitionCompactionPolicy implements Mutable {
             final long live = txWriter.getPartitionSize(i);
             final long e = geometry.getE(i);
             final int pieces = geometry.getPieceCount(i);
-            // The gate is "any composite partition" - pieces>1 or dead space above the live rows - not
-            // "more than one piece starting above row 0" as PARTITION_COMPACTION.md Sec.4 first states.
-            // That exclusion is right for MOVE-TAIL, which compacts in place and would copy rows to
-            // where they already are; REWRITE (this port's only copy step) re-roots the pieces into a
-            // fresh directory and deletes the old one, so it reclaims exactly this shape, and JOIN
-            // manufactures it - excluding it would let JOIN destroy what REWRITE can reclaim.
+            // The gate is "any composite partition" - pieces>1 or dead space above the live rows - not "more than one
+            // piece starting above row 0" as PARTITION_COMPACTION.md Sec.4 first states.
             if (pieces < 2 && e <= live) {
                 continue;
             }
@@ -232,13 +198,8 @@ public class PartitionCompactionPolicy implements Mutable {
             tablePressureOn = !(deadRowsTable * 100 < total * configuration.getPartitionCompactionTableDeadStopPercent()
                     && deadBytes <= configuration.getPartitionCompactionTableDeadTrigger() / 2);
         } else {
-            // total == 0 (no composite partition seen yet) must never turn this on: 0 >= 0 would
-            // otherwise satisfy the percentage check trivially, latching table pressure on from the
-            // very first commit of any table, well before there is any real waste to speak of. The
-            // table.dead.threshold floor guards the same percentage check the same way: a table with
-            // hardly any waste in absolute terms should not be forced through a copy just because it is
-            // nearly empty to begin with. getPartitionCompactionTableDeadTrigger's own trigger is exempt -
-            // it already implies well more waste than the floor, by construction.
+            // total == 0 (no composite partition seen yet) must never turn this on: 0 >= 0 would otherwise satisfy the
+            // percentage check trivially, latching table pressure on from the very first commit of any table, well.
             tablePressureOn = (total > 0 && deadBytes >= configuration.getPartitionCompactionTableDeadThreshold()
                     && deadRowsTable * 100 >= total * configuration.getPartitionCompactionTableDeadThresholdPercent())
                     || deadBytes > configuration.getPartitionCompactionTableDeadTrigger();
@@ -256,10 +217,7 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     /**
-     * The index of the next eligible partition at or after {@code fromIndex} that holds more than one
-     * piece, or -1. A fold moves no bytes, so it is worth doing on any partition that has something to
-     * fold whether or not it crossed one of the four thresholds - waiting for a threshold would leave a
-     * partition cut into many pieces fragmented for as long as it stays cold.
+     * The index of the next eligible partition at or after {@code fromIndex} that holds more than one piece, or -1.
      */
     public int selectFoldablePartition(TxWriter txWriter, PartitionGeometry geometry, long nowMicros, int fromIndex) {
         if (txWriter.getLagRowCount() > 0) {
@@ -278,10 +236,9 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     /**
-     * True when {@code partitionIndex} is a composite partition already reduced to a single piece
-     * sitting at row 0 - MOVE-TAIL's own end state, JOIN folding everything into one, or any commit that
-     * merely happened to leave it that way - with real dead space above it, and none of the ordinary
-     * reasons a partition is off-limits (the last/active one, a table with lag rows still pending).
+     * True when {@code partitionIndex} is a composite partition already reduced to a single piece sitting at row 0 -
+     * MOVE-TAIL's own end state, JOIN folding everything into one, or any commit that merely happened to leave it that
+     * way - with real dead space above it, and none of the ordinary reasons a partition is off-limits (the last/active.
      */
     public static boolean isMakePlainShape(TxWriter txWriter, PartitionGeometry geometry, int partitionIndex) {
         if (partitionIndex >= txWriter.getPartitionCount() - 1 || txWriter.getLagRowCount() > 0) {
@@ -303,13 +260,7 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     /**
-     * The index of the next MAKE-PLAIN candidate at or after {@code fromIndex} - see
-     * {@link #isMakePlainShape} - or -1. Unlike {@link #selectPartition}'s four rules, this never fires
-     * from a byte-count threshold: a MOVE-TAIL'd front usually has too little dead space of its own, and
-     * too few pieces, to cross any of them, so without this independent sweep it would sit in that shape
-     * - composite, wasting the space above its one piece - forever. Checked every housekeeping pass that
-     * {@link #selectPartition} itself found nothing to do on, the same way {@link #selectFoldablePartition}
-     * already is.
+     * The index of the next MAKE-PLAIN candidate at or after {@code fromIndex} - see {@link #isMakePlainShape} - or -1.
      */
     public int selectMakePlainCandidate(TxWriter txWriter, PartitionGeometry geometry, long nowMicros, int fromIndex) {
         final int n = txWriter.getPartitionCount();

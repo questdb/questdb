@@ -97,10 +97,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         PARQUET_MERGE_CONTEXT.removeAndFree();
         COMPOSITE_CONTEXT.removeAndFree();
     };
-    // High bit set on the column type signals the Rust parquet encoder that the
-    // symbol column contains no nulls, so it can emit an all-ones RLE run for
-    // definition levels instead of checking each row.  This is a write-time hint
-    // only — it does NOT change the parquet schema Repetition (always Optional).
+    // High bit set on the column type signals the Rust parquet encoder that the symbol column contains no nulls, so it
+    // can emit an all-ones RLE run for definition levels instead of checking each row.
     private static final int PARQUET_SYMBOL_NOT_NULL_HINT = Integer.MIN_VALUE;
     // Tells the Rust encoder that the designated-timestamp column's
     // primary_data is laid out as 16-byte (ts, rowId) merge-index entries
@@ -119,21 +117,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Plans what this commit does to ONE COMPOSITE partition - the direct analogue of
-     * {@link #processParquetPartition}, with a piece playing the part of a row group.
-     * <ol>
-     *     <li>resolve the partition's pieces - ONE {@code _geometry} read;</li>
-     *     <li>PRE-SPLIT: cut existing pieces so the batch lands on as little data as possible. A native
-     *     partition arrives as ONE piece, and merging a batch into it rewrites everything. Cutting is
-     *     free, so the structure is manufactured lazily, aimed at the cold gaps transaction clustering
-     *     found and at this batch's own edges. This step decides the write amplification;</li>
-     *     <li>assign every O3 row to a piece or to a gap between pieces, as
-     *     {@link O3ParquetMergeStrategy#computeMergeActions} does over row groups;</li>
-     *     <li>execute the action list ({@link #executeCompositePlan}), then publish one {@code _geometry}
-     *     and one {@code _txn} record.</li>
-     * </ol>
-     * Steps 1 to 3 are here.
-     *
+     * Plans what this commit does to ONE COMPOSITE partition - the direct analogue of {@link #processParquetPartition},
+     * with a piece playing the part of a row group.
      * @return {@code plan}, for a fluent call at the use site
      */
     public static O3CompositeMergeStrategy.Plan processCompositePartition(
@@ -182,10 +167,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
                 long tsHi = geometry.getPieceTimestampHi(partitionIndex, p);
                 if (tsHi == Numbers.LONG_NULL && rowCount > 0) {
-                    // A partition never written as a composite records no upper bound, and an unbounded
-                    // piece claims every incoming row, so it can be neither cut nor kept - which would
-                    // make the FIRST write to any partition rewrite the whole of it. Read it from the
-                    // piece's last row.
+                    // A partition never written as a composite records no upper bound, and an unbounded piece claims
+                    // every incoming row, so it can be neither cut nor kept - which would make the FIRST write to any.
                     tsHi = Unsafe.getLong(tsAddr + (rowOffset + rowCount - 1) * Long.BYTES);
                 }
                 O3CompositeMergeStrategy.addPieceBounds(
@@ -197,10 +180,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 );
             }
 
-            // 2. The pre-split, applied in memory - a cut moves no bytes. Cuts come from two places:
-            // TRANSACTION CLUSTERING cuts at the edges of the cold gaps between the strides the incoming
-            // work is dense in, seen across the whole block; the BATCH EDGES below cut around where THIS
-            // batch lands inside a piece. Clustering goes first, being the coarser division.
+            // 2. The pre-split, applied in memory - a cut moves no bytes.
             if (clusterer != null && tableWriter.getO3ClusterTxnRanges().size() > 0) {
                 final LongList clusterCuts = clusterPartition(clusterer, boundsOut, minPieceRows, tableWriter);
                 for (int i = 0, n = clusterCuts.size(); i < n; i++) {
@@ -265,10 +245,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Plans what this commit does to one partition, executes it, and publishes the result: a
-     * {@code _geometry} record describing the pieces that now exist, and the sink block telling
-     * {@code _txn} the partition's new row count and where that record is. The geometry record is made
-     * durable here and the {@code _txn} pointing at it is written by the commit that consumes the sink.
+     * Plans what this commit does to one partition, executes it, and publishes the result: a {@code _geometry} record
+     * describing the pieces that now exist, and the sink block telling {@code _txn} the partition's new row count and
+     * where that record is.
      */
     private static void processCompositePartition(
             Path pathToTable,
@@ -322,14 +301,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 o3TimestampHi
         );
 
-        // Only a REPLACE commit's declared range means "delete everything in here"; for an ordinary
-        // commit [o3TimestampLo, o3TimestampHi] is just the batch's own span, and a piece inside it is not
-        // superseded.
-        //
-        // In replace mode the cuts above made every piece sit fully inside or outside the range, so a
-        // piece inside it carries only rows the commit deletes. A KEEP there downgrades to DROP. A MERGE
-        // there did get O3 rows routed to it, so it becomes a NEW_PIECE over its own o3Lo/o3Hi - writing
-        // only the incoming rows and leaving the piece's bytes as dead space, as a DROP does.
+        // Only a REPLACE commit's declared range means "delete everything in here"; for an ordinary commit
+        // [o3TimestampLo, o3TimestampHi] is just the batch's own span, and a piece inside it is not superseded.
         if (tableWriter.isCommitReplaceMode()) {
             for (int i = 0; i < plan.actions.size(); i++) {
                 final O3CompositeMergeStrategy.Action action = plan.actions.getQuick(i);
@@ -416,14 +389,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // rather than leaving it for a later housekeeping commit.
         foldAdjacentPieces(ctx.pieces);
 
-        // Does this partition END UP composite AT ALL? Pieces that TILE [0, physicalRows) with no holes
-        // are described exactly by the row count, so publishing a geometry for that shape costs a file, a
-        // routing entry and a frame per read to describe the default.
-        //
-        // Pieces only tile when nothing was relocated: a merge writes its image at the tail and leaves a
-        // hole, while a plain append tiles every time - which is what stops an appending table from
-        // turning composite for nothing. An ALREADY composite partition keeps its geometry regardless,
-        // since dropping the pointer would strand the record a pinned reader is still resolving.
+        // Does this partition END UP composite AT ALL? Pieces that TILE [0, physicalRows) with no holes are described
+        // exactly by the row count, so publishing a geometry for that shape costs a file, a routing entry and a frame.
         boolean isComposite = txReader.isPartitionComposite(partitionIndex);
         if (!isComposite) {
             long tiledTo = 0;
@@ -443,10 +410,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             isComposite = false;
         }
 
-        // Every action writes at the TAIL or writes nothing, so this commit put exactly [eBefore, e) on
-        // disk and a covering posting index grows by one generation carrying those rows' covered values.
-        // Retired rows stay in the files as dead space and keep their index entries, which no reader can
-        // reach anyway - an index scan is bounded to the rows of the piece being read.
+        // Every action writes at the TAIL or writes nothing, so this commit put exactly [eBefore, e) on disk and a
+        // covering posting index grows by one generation carrying those rows' covered values.
         boolean coveredIndexesPublished = !fullyReplaced;
         if (!fullyReplaced && e > eBefore) {
             final Path indexDir = ctx.srcPath;
@@ -536,19 +501,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 tableWriter.getConfiguration().getCommitMode()
         );
 
-        // The floor is the partition's OWN first piece, not the incoming o3TimestampMin, which under a
-        // rows-less replace-range commit is the range's lower bound rather than a timestamp this partition
-        // holds. A partition dropped to no pieces reports the range's floor instead, which is safe because
-        // its record is about to be removed from _txn.
+        // The floor is the partition's OWN first piece, not the incoming o3TimestampMin, which under a rows-less
+        // replace-range commit is the range's lower bound rather than a timestamp this partition holds.
         Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
         Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, fullyReplaced ? o3TimestampLo : ctx.pieces.getQuick(0));
         Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, liveRows);
         Unsafe.putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
-        // partitionMutates stays false - the partition keeps its directory and name txn - unless a
-        // replace-range commit dropped every piece, in which case it IS being removed from _txn, which is
-        // what partitionMutates routes o3ConsumePartitionUpdateSink to.
-        // The high int carries what the post-commit seal sweep must do about this partition's covering
-        // indexes - see TableWriter's COVERING_INDEX_* constants.
+        // partitionMutates stays false - the partition keeps its directory and name txn - unless a replace-range commit
+        // dropped every piece, in which case it IS being removed from _txn, which is what partitionMutates routes.
         Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(
                 fullyReplaced ? 1 : 0,
                 coveredIndexesPublished ? COVERING_INDEX_PUBLISHED : COVERING_INDEX_REBUILD
@@ -564,30 +524,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Publishes the rows a write put at {@code [fromRow, toRow)} of a partition into every COVERING
-     * posting index the partition has, as one new generation per index carrying its own covered values.
-     * <p>
-     * The write leaves those columns unindexed because indexing while it is still in flight cannot see the
-     * covered values - the fan-out writes columns in no particular order. Indexed here instead, once every
-     * column is on disk, the rows are recorded ONCE by the generation carrying their values; the
-     * alternative rewrites the partition's whole covered sidecar on every commit.
-     * <p>
-     * Every caller runs on a thread that owns the partition for the duration, so no other thread is
-     * writing the same index. A LEGACY (format-0) covering head is not extended with covered values: its
-     * rows are indexed without them and the caller is told nothing was published, so the seal sweep's
-     * rebuild migrates the head to the current format.
-     *
-     * @param partitionDir  the partition directory; trimmed back to its own length on return
-     * @param versions      the column versions the write left behind: tops and name txns of the
-     *                      indexed and the covered columns
-     * @param coverNames    scratch for the covered-column description, owned by the calling thread
+     * Publishes the rows a write put at {@code [fromRow, toRow)} of a partition into every COVERING posting index the
+     * partition has, as one new generation per index carrying its own covered values.
+     * @param partitionDir the partition directory; trimmed back to its own length on return
+     * @param versions the column versions the write left behind: tops and name txns of the indexed and the covered
+     * columns
+     * @param coverNames scratch for the covered-column description, owned by the calling thread
      * @param coverNameTxns scratch, see {@code coverNames}
-     * @param coverTops     scratch, see {@code coverNames}
-     * @param coverShifts   scratch, see {@code coverNames}
-     * @param coverIndices  scratch, see {@code coverNames}
-     * @param coverTypes    scratch, see {@code coverNames}
-     * @return true when every covering index of the partition is now complete, so the seal sweep can
-     * leave them alone; false when at least one still needs the sweep's rebuild
+     * @param coverTops scratch, see {@code coverNames}
+     * @param coverShifts scratch, see {@code coverNames}
+     * @param coverIndices scratch, see {@code coverNames}
+     * @param coverTypes scratch, see {@code coverNames}
+     * @return true when every covering index of the partition is now complete, so the seal sweep can leave them alone;
+     * false when at least one still needs the sweep's rebuild
      */
     static boolean publishCoveredIndexesForAppend(
             Path partitionDir,
@@ -709,10 +658,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 try {
                     indexWriter.commit();
                 } finally {
-                    // commit() seals inline at the generation cap and records a purge for the value file
-                    // it supersedes. This writer is freed below without a TableWriter draining that
-                    // outbox, so hand the entry over here. In a finally, since a fault inside the seal can
-                    // throw after the purge was recorded; idempotent on an empty outbox.
+                    // commit() seals inline at the generation cap and records a purge for the value file it supersedes.
                     tableWriter.deferParquetPostingSealPurges(indexWriter, tableWriter.getTxn());
                 }
                 if (isCoveredPublishUnsafe) {
@@ -731,22 +677,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Executes a plan against one partition, and returns the {@code E} it left behind - the partition's
-     * new physical extent, which is where the next write to it will append.
-     * <p>
-     * Everything is written at the TAIL, so nothing live is overwritten and a reader pinned on the old
-     * geometry keeps addressing the bytes it always did:
-     * <ul>
-     *     <li>{@code KEEP} writes NOTHING - the piece's bytes stay and only its extent is carried into the
-     *     new geometry. This is the action that pays for the whole design;</li>
-     *     <li>{@code NEW_PIECE} appends the incoming rows as they are;</li>
-     *     <li>{@code MERGE} appends the piece and the incoming rows interleaved, leaving the piece's old
-     *     bytes as dead space;</li>
-     *     <li>{@code APPEND} is {@code NEW_PIECE} recorded as an EXTENSION of the last piece. It is
-     *     written FIRST, before the loop runs in timestamp order, because it needs the tail.</li>
-     * </ul>
-     * The source and the target are the SAME FILES in two frames: one reading below {@code E}, one
-     * writing at {@code E}.
+     * Executes a plan against one partition, and returns the {@code E} it left behind - the partition's new physical
+     * extent, which is where the next write to it will append.
      */
     private static long executeCompositePlan(
             Path pathToTable,
@@ -985,14 +917,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Merges the incoming O3 batch into a partition whose {@code _geometry} chain has no generation left
-     * by folding every existing piece plus this commit's rows into ONE fresh directory in timestamp
-     * order - merging and compacting in the one pass, off the same plan
-     * {@link O3CompositeMergeStrategy} already produced.
-     * <p>
-     * Called in place of {@link #executeCompositePlan} and its geometry publish, never alongside them:
-     * this writes to a brand-new directory at row 0 and sets {@code partitionMutates}, which routes
-     * {@code o3ConsumePartitionUpdateSink} through the same plain-merge branch a classic O3 rewrite uses.
+     * Merges the incoming O3 batch into a partition whose {@code _geometry} chain has no generation left by folding
+     * every existing piece plus this commit's rows into ONE fresh directory in timestamp order - merging and compacting
+     * in the one pass, off the same plan {@link O3CompositeMergeStrategy} already produced.
      */
     private static void assembleFreshPartitionVersion(
             Path pathToTable,
@@ -1041,10 +968,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             );
             createDirsOrFail(tableWriter.getFilesFacade(), dstPath, tableWriter.getConfiguration().getMkDirMode());
 
-            // Neither frame may touch the live tableWriter.getColumnVersionWriter(), which worker threads
-            // share. ctx.srcColumnVersions is a frozen snapshot for the old directory's source opens;
-            // ctx.transientVersions is a separate writable one for the fresh directory, because target's
-            // clamp needs to see an earlier action's write to the same column within this call.
+            // Neither frame may touch the live tableWriter.getColumnVersionWriter(), which worker threads share.
             ctx.srcColumnVersions.readFrom(tableWriter.getColumnVersionWriter());
             ctx.transientVersions.readFrom(tableWriter.getColumnVersionWriter());
             try (
@@ -1213,18 +1137,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Whether this commit should assemble a fresh, non-composite version instead of growing the
-     * partition's {@code _geometry} chain. Two reasons:
-     * <ol>
-     *     <li>the chain has nowhere left to grow, which {@code PartitionGeometry.publish} can only answer
-     *     by throwing - so decide it BEFORE {@link #executeCompositePlan} writes any bytes. The estimate
-     *     uses {@code actionCount} as an upper bound on the pieces the plan could produce, so it errs
-     *     pessimistic;</li>
-     *     <li>the plan would breach {@link PartitionCompactionPolicy}'s thresholds
-     *     ({@link TableWriter#wouldBreachCompactionThresholds}) AND a later MOVE-TAIL could not resolve
-     *     it for less ({@link TableWriter#wouldMoveTailSucceed}) - MOVE-TAIL copies only the tail, so a
-     *     breach it can reach is cheaper left to {@code runCompaction}.</li>
-     * </ol>
+     * Whether this commit should assemble a fresh, non-composite version instead of growing the partition's {@code
+     * _geometry} chain.
      */
     private static boolean shouldAssembleFreshPartitionVersion(
             PartitionGeometry geometry,
@@ -1265,10 +1179,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Clusters the block's transaction ranges against ONE partition and returns the timestamps it is worth
-     * cutting at: over all the transactions being applied together, which stretches of the partition does
-     * the work leave alone? No single batch can see those cold stretches. The data range comes from the
-     * piece bounds, so the histogram is built over the rows that exist rather than over the day.
+     * Clusters the block's transaction ranges against ONE partition and returns the timestamps it is worth cutting at:
+     * over all the transactions being applied together, which stretches of the partition does the work leave alone? No
+     * single batch can see those cold stretches.
      */
     private static LongList clusterPartition(
             WalTxnClusterer clusterer,
@@ -1301,10 +1214,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Resolves {@code cutTs} to a row of the piece by searching its own slice of the designated-timestamp
-     * column, then cuts there. Only that slice may be searched: file order is not timestamp order across
-     * a composite partition, so a whole-column search would cross into another piece's rows.
-     *
+     * Resolves {@code cutTs} to a row of the piece by searching its own slice of the designated-timestamp column, then
+     * cuts there.
      * @return true when the cut was applied
      */
     private static boolean applyCutResolved(LongList bounds, int piece, long cutTs, long tsAddr, long e) {
@@ -1345,8 +1256,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Opens a partition's designated-timestamp column for reading. The caller maps it over the extent it
-     * needs and closes the fd.
+     * Opens a partition's designated-timestamp column for reading.
      */
     private static long openTimestampColumnRO(
             Path pathToTable,
@@ -1380,12 +1290,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * JOIN, inline: folds every run of list-adjacent pieces that are ALSO file-adjacent
-     * ({@code rowOffset == prevOffset + prevCount}) into one, in a single forward pass. Free, like
-     * {@code TableWriter.foldContiguousPieces}, and this commit is already rewriting the piece list.
-     * <p>
-     * Folds forward into the piece already written, so an empty piece never becomes the anchor others
-     * fold onto - unlike the housekeeping version, which must special-case one.
+     * JOIN, inline: folds every run of list-adjacent pieces that are ALSO file-adjacent ({@code rowOffset == prevOffset
+     * + prevCount}) into one, in a single forward pass.
      */
     private static void foldAdjacentPieces(LongList pieces) {
         final int n = pieces.size();
@@ -1417,10 +1323,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * The O3-commit-only wrapper around {@link #processParquetPartition0}: applies it, then finishes the
-     * bookkeeping (error count, done latch, partition-update counter) that coordinates this partition
-     * task with the rest of the parallel commit. Idle-triggered compaction is
-     * {@link #compactParquetPartition} instead.
+     * The O3-commit-only wrapper around {@link #processParquetPartition0}: applies it, then finishes the bookkeeping
+     * (error count, done latch, partition-update counter) that coordinates this partition task with the rest of the
+     * parallel commit.
      */
     public static void processParquetPartition(
             Path pathToTable,
@@ -1472,15 +1377,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Decides update-vs-rewrite for a Parquet partition and applies it: decodes the existing row
-     * groups, computes a merge plan against the O3 range {@code [srcOooLo, srcOooHi]} (which may be
-     * empty), and either updates the existing {@code .parquet} file in place or rewrites it into a
-     * fresh txn-named directory.
-     * <p>
-     * This method does not touch the O3-commit-only bookkeeping ({@code o3ErrorCount}, the done
-     * latch, the partition-update counter) — callers own that. On error it rethrows after
-     * best-effort recovery (truncating a failed in-place update back to its pre-merge size, or
-     * removing a failed rewrite's new directory), so every caller decides for itself how to react.
+     * Decides update-vs-rewrite for a Parquet partition and applies it: decodes the existing row groups, computes a
+     * merge plan against the O3 range {@code [srcOooLo, srcOooHi]} (which may be empty), and either updates the
+     * existing {@code .parquet} file in place or rewrites it into a fresh txn-named directory.
      */
     static void processParquetPartition0(
             Path pathToTable,
@@ -2125,24 +2024,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Copies every live row group of a Parquet partition into a fresh {@code data.parquet} and {@code _pm}
-     * in {@code dstPartitionDir}, dropping the dead bytes in-place O3 updates left behind. Never touches a
-     * {@link TableWriter}: with no O3 rows to merge every action is a whole-row-group copy, so each live
-     * row keeps its row id - which is what lets the caller carry the index files over unchanged and lets
-     * {@link TableWriter#swapCompactedParquetPartition} swap the result in as a metadata-only step.
-     * <p>
-     * Row groups are copied verbatim unless the schema no longer matches the file's or the file carries
-     * legacy Required no-null-sentinel columns; those cases re-encode under the current schema, after
-     * which the swap zeroes the partition's column tops. {@code command} records which happened.
-     * <p>
-     * On failure the half-built {@code dstPartitionDir} is removed and the error rethrown.
-     *
-     * @param srcPartitionDir the live partition directory, {@code <partition>.<nameTxn>}; trimmed back on
-     *                        return
+     * Copies every live row group of a Parquet partition into a fresh {@code data.parquet} and {@code _pm} in {@code
+     * dstPartitionDir}, dropping the dead bytes in-place O3 updates left behind.
+     * @param srcPartitionDir the live partition directory, {@code <partition>.<nameTxn>}; trimmed back on return
      * @param dstPartitionDir the staging directory to build into, created here; trimmed back on return
-     * @param seqTxn          stamped into the new {@code _pm}: the reader snapshot's own
-     * @param command         carries the source generation in ({@link ParquetPartitionSwapCommand#getExpectedParquetFileSize})
-     *                        and the build's result out ({@link ParquetPartitionSwapCommand#setResult})
+     * @param seqTxn stamped into the new {@code _pm}: the reader snapshot's own
+     * @param command carries the source generation in ({@link ParquetPartitionSwapCommand#getExpectedParquetFileSize})
+     * and the build's result out ({@link ParquetPartitionSwapCommand#setResult})
      */
     static void compactParquetPartition(
             CairoConfiguration configuration,
@@ -2372,17 +2260,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int timestampIndex = metadata.getTimestampIndex();
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
 
-        // The partition is handed over WHOLE, exactly as a parquet one is below: one task, one partition,
-        // working out its own internal structure.
-        //
-        // A partition with no geometry is not a special case, it is the one-piece case, so the plan treats
-        // it like any other - and the moment the plan cuts it, it BECOMES composite, which is what makes
-        // the promotion happen in flight. Parquet is excluded: it keeps no piece geometry at all.
+        // The partition is handed over WHOLE, exactly as a parquet one is below: one task, one partition, working out
+        // its own internal structure.
         final int compositeIndex = tableWriter.getTxReader().getPartitionIndex(partitionTimestamp);
-        // A NON-WAL table does not found composite partitions: the pre-split that makes the structure
-        // worth having hangs off the WAL transaction block, so it would take the costs and none of the
-        // benefit. It must still take this path for one that IS already composite, which only this path
-        // can read and rewrite correctly.
+        // A NON-WAL table does not found composite partitions: the pre-split that makes the structure worth having
+        // hangs off the WAL transaction block, so it would take the costs and none of the benefit.
         final boolean isCompositeOrWal = tableWriter.getMetadata().isWalEnabled()
                 || (compositeIndex > -1 && tableWriter.getTxReader().isPartitionComposite(compositeIndex));
         if (!isParquet
@@ -5658,10 +5540,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // thread mid-call - any one of which would rewrite the shared thread-local path.
         private final Path dstPath = new Path();
         private final Path srcPath = new Path();
-        // One instance, reused across every partition and table this worker plans. CarrierLocal keeps it
-        // off other threads, so it needs no lock - only an of() call before each use. Reusing it spares a
-        // merge-append table a _geometry open/close on every composite commit. Freed by close(), which
-        // THREAD_LOCAL_CLEANER runs on worker halt.
+        // One instance, reused across every partition and table this worker plans.
         private final PartitionGeometry geometry = new PartitionGeometry();
         // Flat quads describing what the executor actually wrote: tsLo, tsHi, rowOffset, rowCount.
         private final LongList pieces = new LongList();

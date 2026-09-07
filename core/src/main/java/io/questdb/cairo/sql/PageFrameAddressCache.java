@@ -395,9 +395,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     }
 
     /**
-     * The INDEX row the frame's first row sits at, i.e. the low bound to hand the partition's index reader
-     * for this frame. Not the frame's row-id offset: on a composite partition the index stores FILE rows,
-     * and the piece the frame belongs to may have been moved - see {@link PageFrame#getIndexRowLo()}.
+     * The INDEX row the frame's first row sits at, i.e.
      */
     public long getIndexRowLo(int frameIndex) {
         return indexRowLos.getQuick(frameIndex);

@@ -373,10 +373,9 @@ public class ColumnTypeConverter {
     }
 
     /**
-     * Pads a dead gap in a var-size destination column with proper nulls, at the row's real absolute
-     * position - the aux (index) vector grows by one entry per gap row, like a live write would, but the
-     * data vector grows only by the type's minimum null entry size (zero for VARCHAR), never by
-     * {@code gapRowCount} - the dead rows contribute no bytes to the data file.
+     * Pads a dead gap in a var-size destination column with proper nulls, at the row's real absolute position - the aux
+     * (index) vector grows by one entry per gap row, like a live write would, but the data vector grows only by the
+     * type's minimum null entry size (zero for VARCHAR), never by {@code gapRowCount}.
      */
     public static void padVarGap(long dstRowOffset, long gapRowCount, int dstColumnType, long dstFixFd, long dstVarFd, FilesFacade ff) {
         if (gapRowCount <= 0) {
@@ -407,9 +406,8 @@ public class ColumnTypeConverter {
     }
 
     /**
-     * Seeds a brand-new STRING aux file with its mandatory entry 0 (offset 0) - the N+1-offset scheme
-     * a live write always assumes is already there. Every other var-size destination this converter
-     * piece-walks (VARCHAR) has no such bootstrap entry and needs no seed.
+     * Seeds a brand-new STRING aux file with its mandatory entry 0 (offset 0) - the N+1-offset scheme a live write
+     * always assumes is already there.
      */
     public static void seedStringAuxVector(long dstFixFd, FilesFacade ff) {
         TableUtils.allocateDiskSpaceToPage(ff, dstFixFd, Long.BYTES);
@@ -422,10 +420,8 @@ public class ColumnTypeConverter {
     }
 
     /**
-     * Converts one live FIXED piece to VARCHAR at the same absolute row range - the mixed-direction
-     * counterpart of {@link #convertStringToVarcharPiece}. The per-row conversion loop
-     * ({@link #convertFixedToVarchar0}) is shared with the whole-column path; only the destination's
-     * starting position differs.
+     * Converts one live FIXED piece to VARCHAR at the same absolute row range - the mixed-direction counterpart of
+     * {@link #convertStringToVarcharPiece}.
      */
     public static void convertFixedToVarcharPiece(
             long segmentOffset,
@@ -470,10 +466,8 @@ public class ColumnTypeConverter {
     }
 
     /**
-     * Converts one live FIXED piece to STRING at the same absolute row range - the mixed-direction
-     * counterpart of {@link #convertVarcharToStringPiece}. Callers seed the destination's N+1 entry 0
-     * once per column via {@link #seedStringAuxVector} before walking pieces, exactly as the
-     * STRING/VARCHAR piece walk does.
+     * Converts one live FIXED piece to STRING at the same absolute row range - the mixed-direction counterpart of
+     * {@link #convertVarcharToStringPiece}.
      */
     public static void convertFixedToStringPiece(
             long segmentOffset,
@@ -516,10 +510,8 @@ public class ColumnTypeConverter {
     }
 
     /**
-     * Converts one live STRING piece to a FIXED destination at the same absolute row range - the
-     * mixed-direction counterpart of {@link #convertFixedToVarcharPiece}. STRING's data vector is
-     * self-length-prefixed, so the source is walked directly off the data vector in row order; no aux
-     * vector read is needed on the source side.
+     * Converts one live STRING piece to a FIXED destination at the same absolute row range - the mixed-direction
+     * counterpart of {@link #convertFixedToVarcharPiece}.
      */
     public static void convertStringToFixedPiece(
             long segmentOffset,

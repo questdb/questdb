@@ -63,11 +63,7 @@ import static io.questdb.cairo.frm.FrameColumn.COLUMN_MEMORY;
 
 public class FrameImpl implements Frame {
     /**
-     * How many columns an operation holds open at once. The copy runs while every column of a batch is
-     * open, so this is what bounds the file descriptors and mappings an operation adds - a wide table
-     * would otherwise hold every one of its columns open at the same time. Comfortably wider than any
-     * worker pool, so batching costs parallelism only on tables far wider than this, and it fits the
-     * shared column-task queue (128 slots by default) even with another writer dispatching alongside.
+     * How many columns an operation holds open at once.
      */
     private static final int MAX_OPEN_COLUMNS = 64;
     // A task slot an operation has no use for, matching TableWriter#IGNORE.
@@ -84,23 +80,11 @@ public class FrameImpl implements Frame {
     private ReadOnlyObjList<? extends MemoryCR> columnsMemory;
     private ColumnTopSink columnTopSink;
     /**
-     * Per-column tracked top, index = column index, -1 = untouched this open. Populated by
-     * {@link #saveChanges} whether or not this frame also has an external {@link ColumnTopSink} - see
-     * {@link #publishColumnTops}. Reset (not reallocated) on every open/create, since a pooled
-     * {@code FrameImpl} outlives any one partition and a stale entry from a previous, unrelated use would
-     * otherwise leak through {@link #getContiguousFileFrameColumn}.
-     * <p>
-     * That reset is a {@code setPos(columnCount)}, so every slot a column can ever address exists before
-     * the first one reports and {@link #saveChanges} only ever writes an existing slot. Nothing here has
-     * to grow, and no two column indices share a slot - which is what lets a frame's per-column work fan
-     * out across threads, exactly as {@link ColumnTopSink} describes for an external sink.
+     * Per-column tracked top, index = column index, -1 = untouched this open.
      */
     private final LongList columnTops = new LongList();
     /**
-     * The columns one operation has open, index = column index, empty between operations. This frame's own
-     * are in {@link #targetColumns} - it is the TARGET of every operation it drives - and the one or two
-     * sources' in the other two. A slot is null for a column the operation skips, and for
-     * {@link #source2Columns} throughout an append.
+     * The columns one operation has open, index = column index, empty between operations.
      */
     private final ObjList<FrameColumn> source1Columns = new ObjList<>();
     private final ObjList<FrameColumn> source2Columns = new ObjList<>();
@@ -112,11 +96,8 @@ public class FrameImpl implements Frame {
     private long upcomingTableTxn;
     private boolean create = false;
     private volatile Throwable error;
-    // When set, a COVERING posting-indexed column is opened as a plain column, so the frame writes its
-    // data but adds no index entries. The caller then indexes the rows it appended itself, once every
-    // column is on disk, with the covered columns described - see
-    // O3PartitionJob#publishCoveredIndexesForAppend. Doing it here instead would index without covered
-    // values, and filling those in afterwards costs a rewrite of the partition's whole sidecar.
+    // When set, a COVERING posting-indexed column is opened as a plain column, so the frame writes its data but adds no
+    // index entries.
     private boolean deferCoveredIndexing = false;
     private ColumnVersionReader crv;
     private RecycleBin<FrameImpl> frameRecycleBin;
@@ -352,12 +333,6 @@ public class FrameImpl implements Frame {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             long colTop = columnTops.getQuick(i);
             // -1 (untouched, this frame has no sink and nothing wrote through it): nothing to record.
-            // Anything else, INCLUDING colTop == rowCount ("every row was a free ride, no real byte
-            // anywhere"), still goes through the sink: a brand-new partition timestamp's own
-            // chronological default can resolve to something other than what this frame just
-            // determined (see ColumnVersionWriter#mergeColumnTop, the usual sink behind this call),
-            // and skipping here would leave that wrong default in place instead of the value this
-            // frame actually computed.
             if (colTop > -1) {
                 sink.setColumnTop(i, colTop);
             }
@@ -368,14 +343,8 @@ public class FrameImpl implements Frame {
         if (!canWrite) {
             throw CairoException.critical(0).put("cannot save column top, partition frame is read-only [path=").put(partitionPath).put(']');
         }
-        // Tracked internally whether or not there is an external sink: createColumn reads this list back
-        // for the NEXT piece written to this frame, and only a tracked value stops it re-resolving the
-        // source directory's own - by then stale - top from crv (see createColumn). Never regresses a
-        // column's tracked top - only up or unchanged, matching how a column's top can only ever advance
-        // while this frame is written to (addTop grows it; once real bytes land below it, it is fixed for
-        // good) - so a stale, smaller read can never overwrite a piece that already advanced it further.
-        // The read-modify-write below touches this column's own slot and nothing else, and the list is
-        // already sized for every column, so it stays correct with one thread per column.
+        // Tracked internally whether or not there is an external sink: createColumn reads this list back for the NEXT
+        // piece written to this frame, and only a tracked value stops it re-resolving the source directory's own - by.
         final int columnIndex = frameColumn.getColumnIndex();
         final long columnTop = Math.max(frameColumn.getColumnTop(), columnTops.getQuick(columnIndex));
         columnTops.setQuick(columnIndex, columnTop);
@@ -403,8 +372,7 @@ public class FrameImpl implements Frame {
     }
 
     /**
-     * One column's share of {@link #appendColumns}. Everything it reads the OPEN phase settled, and
-     * everything it writes belongs to this column alone.
+     * One column's share of {@link #appendColumns}.
      */
     private void cthAppendColumn(
             int columnIndex,
@@ -470,11 +438,6 @@ public class FrameImpl implements Frame {
 
     /**
      * Runs one batch's columns and returns once every one of them has finished.
-     * <p>
-     * In parallel the work goes out as {@link ColumnTask}s on {@link MessageBus}'s shared column-task
-     * queue - the same queue and the same work-stealing wait {@code TableWriter#dispatchColumnTasks} uses
-     * for WAL lag merges. Serially there is no queue and no latch: the calling thread runs each column
-     * through the same handler, which is the whole of the difference between the two.
      */
     private void dispatchColumns(
             TableWriter.ColumnTaskHandler taskHandler,
@@ -540,27 +503,7 @@ public class FrameImpl implements Frame {
     }
 
     /**
-     * Drives one operation's per-column work. Every column of a frame writes its own files, at the same
-     * row offset, so the columns of a single append or merge have nothing to say to each other - which is
-     * what lets them run at the same time.
-     * <p>
-     * A batch runs in three phases, and only the middle one is ever parallel:
-     * <ol>
-     *     <li>OPEN, on the calling thread. A frame builds a column's file path by appending the column
-     *     name to the ONE {@code Path} it owns and trimming it back afterwards, so two columns cannot
-     *     open at the same time. This phase also settles every read of this frame's shared,
-     *     non-thread-safe state - its metadata, its column-version view, its tracked tops.</li>
-     *     <li>COPY, one task per column. Each task touches only its own two or three
-     *     {@link FrameColumn}s: its own file descriptors, its own mapping, its own posting-index
-     *     writer.</li>
-     *     <li>REPORT and CLOSE, on the calling thread again. {@link #saveChanges} lands each column's top
-     *     and the columns go back to the pool.</li>
-     * </ol>
-     * Holding a whole batch of columns open across the copy, rather than two or three at a time, is what
-     * the middle phase costs - the same shape the classic per-column O3 rewrite already has, where
-     * {@code O3OpenColumnJob} opens one task per column too. A table wider than {@link #MAX_OPEN_COLUMNS}
-     * runs the three phases once per batch, which is what keeps that cost bounded; with nowhere to fan
-     * out to, the batch is one column and the three phases collapse back into a plain serial loop.
+     * Drives one operation's per-column work.
      */
     private void execute(
             Frame source1,
@@ -573,10 +516,7 @@ public class FrameImpl implements Frame {
             long long4
     ) {
         final int columnCount = source1.columnCount();
-        // A frame with a single column has nothing to spread, and without a bus there is nowhere to
-        // spread it to. There is deliberately no row-count floor: publishing and stealing back one task
-        // costs a couple of hundred nanoseconds per column, against the file open, fstat and mapping
-        // every column of this operation already pays for on the calling thread.
+        // A frame with a single column has nothing to spread, and without a bus there is nowhere to spread it to.
         final boolean isParallel = messageBus != null && columnCount > 1;
         errorCount.set(0);
         error = null;
@@ -628,10 +568,8 @@ public class FrameImpl implements Frame {
                 indexBlockCapacity = 0;
             }
         }
-        // A tracked top (only ever set by this frame's own saveChanges, when it has no external sink)
-        // takes over from crv entirely once present: it already reflects everything crv would resolve to
-        // PLUS every piece this frame has written since, and re-resolving from crv here would throw that
-        // progress away and read the OLD directory's value instead of this frame's own current one.
+        // A tracked top (only ever set by this frame's own saveChanges, when it has no external sink) takes over from
+        // crv entirely once present: it already reflects everything crv would resolve to PLUS every piece this frame.
         long columnTop = columnTops.getQuick(columnIndex);
         if (columnTop < 0) {
             int crvRecIndex = crv.getRecordIndex(partitionTimestamp, columnIndex);
@@ -691,9 +629,8 @@ public class FrameImpl implements Frame {
     }
 
     /**
-     * Opens one batch of columns up front, on the calling thread - see {@link #execute} for why this
-     * cannot overlap with the copy. A throw part-way leaves whatever opened so far in the lists for
-     * {@link #closeColumns} to release.
+     * Opens one batch of columns up front, on the calling thread - see {@link #execute} for why this cannot overlap
+     * with the copy.
      */
     private void openColumns(Frame source1, @Nullable Frame source2, int columnLo, int columnHi) {
         for (int i = columnLo; i < columnHi; i++) {

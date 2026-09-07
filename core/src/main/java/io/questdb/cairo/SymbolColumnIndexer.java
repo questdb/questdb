@@ -199,13 +199,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     @Override
     public void index(FilesFacade ff, long dataColumnFd, long loRow, long hiRow) {
-        // A commit with no net new rows (loRow == hiRow, e.g. updateIndexesSlow after a
-        // housekeeping-only compaction commit) must be a TRUE no-op, including the rollback and
-        // setMaxValue below. A REWRITE compaction reseal can leave this indexer bound to the
-        // freshly rebuilt (non-last) partition, while the caller computes [loRow, hiRow) from the
-        // LAST partition's live row count; letting rollbackConditionally(loRow) run then truncates
-        // the rebuilt chain at the last partition's size, silently dropping every indexed row above
-        // it from index-backed scans.
+        // A commit with no net new rows (loRow == hiRow, e.g.
         if (hiRow <= loRow) {
             return;
         }
@@ -216,9 +210,6 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         long lo = Math.max(loRow, columnTop);
         // An indexer configured with configureWriter (no live follower - see its own javadoc) never gets
         // ff/dataColumnFd wired up, on the assumption that nothing indexes through it before a later
-        // configureFollowerAndWriter call fixes that up. The no-op guard above already returned for a
-        // zero-row range, but a column top above hiRow can still zero this read - skip it rather than
-        // dereference a possibly-null ff for zero bytes.
         if (hiRow > lo) {
             int bufferCount = (int) (((hiRow - lo) * 4 - 1) / bufferSize + 1);
             for (int i = 0; i < bufferCount; i++) {

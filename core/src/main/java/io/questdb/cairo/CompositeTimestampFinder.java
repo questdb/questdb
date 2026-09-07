@@ -32,19 +32,6 @@ import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 
 /**
  * Timestamp finder over a COMPOSITE partition - several pieces sharing one set of column files.
- * <p>
- * Every row index this class takes and returns is a DIRECTORY row, the {@code [0, liveRows)} space the
- * partition frame speaks. Pieces are ordered by timestamp and do not overlap, so that space is ascending
- * end to end and a binary search over it is sound. The FILE rows underneath are not: a merge-append parks
- * a rewritten piece at the tail, above pieces that sort before it. So the search runs inside one piece,
- * over the one range of file rows that is both contiguous and sorted, and shifts the answer back.
- * <p>
- * Two binary searches, never a walk. The first picks the piece out of the geometry's timestamp bounds and
- * touches no column data; the second runs inside that piece. A directory can hold thousands of pieces once
- * a fine cut floor has been applied for a while, so neither step may be linear in the piece count.
- * <p>
- * This is the native analogue of {@link ParquetTimestampFinder}, which searches a row group at a time for
- * the same reason.
  */
 public class CompositeTimestampFinder implements TimestampFinder, Mutable {
     private MemoryR column;

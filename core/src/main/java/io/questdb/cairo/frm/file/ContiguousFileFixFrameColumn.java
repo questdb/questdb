@@ -186,10 +186,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         // addressed from ITS row 0 and the index does the rest. The designated timestamp reads neither
         // source: the merge index was built out of both sides' timestamps and already holds the answer.
         final boolean isTimestamp = sourceColumn2.isTimestampIndex();
-        // Only the DATA side can carry a column top. The O3 side is a batch the commit is writing now, so
-        // every row of it exists; the data side is a partition that may have gained this column part way
-        // through its life. When the slice reaches below that top, the top-aware kernel takes the top
-        // directly and emits NULL for the rows underneath, which is why nothing has to be materialized.
+        // Only the DATA side can carry a column top.
         final long src1Top = isTimestamp ? 0 : sourceColumn1.getColumnTop();
         final boolean readsBelowTop = source1Lo < source1Hi && source1Lo < src1Top;
         final long src1Address = isTimestamp ? 0
@@ -238,11 +235,6 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
 
     /**
      * The address the source's row 0 WOULD be at, which is what the merge index's absolute row ids address.
-     * <p>
-     * A column whose data starts at a top does not hold the rows below it, so its mapping begins that many
-     * rows in and the base steps back by the same amount. That leaves the returned address pointing outside
-     * the mapping, which is safe only because no row below the top is ever read - and that is exactly what
-     * the check below enforces.
      */
     private long rowZeroAddr(FrameColumn column, long lo, long hi) {
         if (lo >= hi) {
@@ -259,9 +251,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     /**
-     * The O3 merge kernels, picked by column width. These are the same routines the per-column O3 copy path
-     * uses; what changes here is only who calls them and with what - two frame columns and an index, rather
-     * than a task carrying two dozen scalars.
+     * The O3 merge kernels, picked by column width.
      */
     private static void mergeShuffle(long src1, long src2, long dst, long mergeIndexAddr, long rows, int shl) {
         switch (shl) {
@@ -277,9 +267,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     /**
-     * The column-top aware counterpart of {@link #mergeShuffle}. {@code src1} is UNBIASED - it points at the
-     * column file's first stored row, which is logical row {@code srcDataTop} - and any data-side row below
-     * that top is written as the pattern at {@code pNullValue}.
+     * The column-top aware counterpart of {@link #mergeShuffle}.
      */
     private static void mergeShuffleWithTop(
             long src1,

@@ -125,12 +125,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 if (tableToken == null) {
                     throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
                 }
-                // A composite partition keeps dead rows between its live pieces, so its live row count is
-                // no longer its file extent. TABLE_READER mode hands PartitionEncoder file rows
-                // [0, liveRows) and would export the wrong rows with a matching row count. Export the
-                // table as a SELECT instead - the page-frame cursors walk a composite partition piece by
-                // piece - and keep the table's own partitioning so the export still lands one parquet
-                // file per partition.
+                // A composite partition keeps dead rows between its live pieces, so its live row count is no longer its
+                // file extent.
                 final boolean hasCompositePartitions = hasCompositePartitions(executionContext, tableToken);
                 if (partitionBy != -1 || hasCompositePartitions) {
                     try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {

@@ -25,42 +25,34 @@
 package io.questdb.cairo.frm;
 
 /**
- * Where a writable {@link Frame} reports a column's new top, instead of writing straight into the
- * {@code ColumnVersionWriter} every worker thread shares and which is not thread safe.
- * <p>
- * Shaped so a frame's per-column work can fan out: {@link #setColumnTop} writes only its own pre-sized
- * slot, {@link #commitColumnTops} touches anything shared once the frame has joined, and
- * {@link #ofColumnCount} sizes the slots up front.
+ * Where a writable {@link Frame} reports a column's new top, instead of writing straight into the {@code
+ * ColumnVersionWriter} every worker thread shares and which is not thread safe.
  */
 public interface ColumnTopSink {
 
     /**
-     * Applies everything {@link #setColumnTop} staged, and is the ONLY place a thread-safe implementation
-     * may touch shared, structurally mutable state. Called once per frame operation, on one thread, after
-     * every column has reported. A no-op for a sink whose {@link #setColumnTop} lands the final value.
+     * Applies everything {@link #setColumnTop} staged, and is the ONLY place a thread-safe implementation may touch
+     * shared, structurally mutable state.
      */
     default void commitColumnTops() {
     }
 
     /**
-     * Whether {@link #setColumnTop} may run concurrently, one thread per DISTINCT column index, once
-     * {@link #ofColumnCount} has sized this sink. {@code true} promises the write lands in its own
-     * pre-existing slot and touches nothing shared until {@link #commitColumnTops}.
+     * Whether {@link #setColumnTop} may run concurrently, one thread per DISTINCT column index, once {@link
+     * #ofColumnCount} has sized this sink.
      */
     default boolean isThreadSafe() {
         return false;
     }
 
     /**
-     * Sizes this sink for a frame of {@code columnCount} columns and drops whatever a previous frame left
-     * in it. Called when the frame is opened, so no {@link #setColumnTop} ever has to grow a buffer.
+     * Sizes this sink for a frame of {@code columnCount} columns and drops whatever a previous frame left in it.
      */
     default void ofColumnCount(int columnCount) {
     }
 
     /**
-     * Reports one column's top. Addresses only {@code columnIndex}'s own slot - see
-     * {@link #isThreadSafe}.
+     * Reports one column's top.
      */
     void setColumnTop(int columnIndex, long columnTop);
 }

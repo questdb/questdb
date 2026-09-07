@@ -37,52 +37,14 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 /**
- * Codec and I/O for {@code _geometry.<generation>}, the per-PHYSICAL-PARTITION geometry file that lives
- * inside the partition's own directory. See {@code COMPOSITE_PARTITIONS.md}.
- * <p>
- * The file is APPEND-ONLY and every record is a FULL SNAPSHOT of the physical partition's geometry, not
- * a delta: a reader seeks to the one offset {@code _txn} publishes and is done, with no replay and no
- * dependence on records it cannot see. Records are small and pieces are few, so the redundancy is not
- * worth optimising away, and it is what makes the record chain a usable version chain for compaction.
- * <p>
- * Layout of one record:
- * <pre>
- * header (56 bytes)
- *   0   magic            i32   sanity, catches a garbage offset
- *   4   pieceCount       i32
- *   8   writerTxn        i64   the txn that APPENDED this record
- *   16  physicalRows     i64   E - the furthest file row this directory has ever held, live or dead
- *   24  liveRows         i64   sum of piece row counts; cross-checks the _txn slot-1 value
- *   32  checksum         i64   over the whole record
- *   40  lastWriteMicros  i64   wall clock at which this record was appended
- *   48  seqTxn           i64   the partition's last-modifying seqTxn, -1 when unknown/non-WAL. A
- *                              composite partition spends its _txn slot-3 value field on the geometry
- *                              pointer and so carries no slot-3 stamp; this is where TxReader's
- *                              getNativePartitionSeqTxn contract is answered for it.
- *
- * piece entry (32 bytes) x pieceCount, ascending by tsLo, non-overlapping
- *   0   tsLo           i64   routing floor
- *   8   tsHi           i64   the piece's actual max data timestamp, LONG_NULL when not known
- *   16  rowOffset      i64   the partition top: file row of this piece's logical row 0
- *   24  rowCount       i64   live logical rows
- * </pre>
- * <p>
- * Publication is the {@code _txn} slot-3 offset: the writer appends the record, syncs it per
- * {@code commitMode}, and only then commits {@code _txn} - the same ordering {@code _cv} already obeys.
- * Bytes past the committed offset are unreferenced, so a crash mid-append leaves garbage nothing can
- * reach. The magic and checksum are belt-and-braces for a torn sync, not the primary defence.
- * <p>
- * One instance holds one growable native scratch buffer and is reused across records. It is NOT thread
- * safe; a {@link TxReader} owns one for reading, a {@link TxWriter} owns one for reading and appending.
+ * Codec and I/O for {@code _geometry.<generation>}, the per-PHYSICAL-PARTITION geometry file that lives inside the
+ * partition's own directory.
  */
 public class PartitionGeometryFile implements Closeable, Mutable {
     public static final int HEADER_SIZE = 56;
     public static final int MAGIC = 0x4D4F4547; // 'G','E','O','M'
-    // Below TxReader's PARTITION_GEOMETRY_OFFSET_MASK's own reach (24 bits of 8-byte units = 128MB), on
-    // purpose: PartitionGeometry.publish rotates to a fresh generation once a record would cross this,
-    // leaving headroom under the hard bit-width ceiling for a caller that wants to see the rotation
-    // coming - e.g. compacting a partition's pieces as it writes them, once nearing the limit costs more
-    // than compacting does.
+    // Below TxReader's PARTITION_GEOMETRY_OFFSET_MASK's own reach (24 bits of 8-byte units = 128MB), on purpose:
+    // PartitionGeometry.publish rotates to a fresh generation once a record would cross this, leaving headroom under
     public static final long MAX_FILE_SIZE = 100L * 1024 * 1024;
     public static final int PIECE_SIZE = 32;
     public static final int HEADER_OFFSET_CHECKSUM_64 = 32;
@@ -121,9 +83,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     }
 
     /**
-     * Starts building a record in the scratch buffer. Follow with {@link #addPiece(long, long, long, long)}
-     * calls and finish with {@link #append(FilesFacade, Path, int, long, int)}.
-     *
+     * Starts building a record in the scratch buffer.
      * @param seqTxn the partition's last-modifying seqTxn, or -1 when unknown (non-WAL table)
      */
     public void beginRecord(long writerTxn, long seqTxn, int expectedPieceCount) {
@@ -151,12 +111,9 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     }
 
     /**
-     * Appends the record built since {@link #beginRecord(long, long, int)} at {@code offset} of
-     * {@code <partitionDir>/_geometry.<generation>}, creating the file when it does not exist, and syncs
-     * it per {@code commitMode}. Returns the number of bytes written, so the caller's append cursor
-     * becomes {@code offset + returned}.
-     * <p>
-     * {@code partitionDir} must be set to the physical partition's directory and is restored on return.
+     * Appends the record built since {@link #beginRecord(long, long, int)} at {@code offset} of {@code
+     * <partitionDir>/_geometry.<generation>}, creating the file when it does not exist, and syncs it per {@code
+     * commitMode}.
      */
     public long append(FilesFacade ff, Path partitionDir, int generation, long offset, int commitMode) {
         final long size = recordSize(pieceCount);
@@ -246,12 +203,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     }
 
     /**
-     * Reads the record at {@code offset} of {@code <partitionDir>/_geometry.<generation>} into the scratch
-     * buffer. Throws {@link CairoException} when the file cannot be opened or the record does not
-     * validate - a reader that cannot resolve a committed geometry must fail loudly rather than serve a
-     * partition it cannot address.
-     * <p>
-     * {@code partitionDir} must be set to the physical partition's directory and is restored on return.
+     * Reads the record at {@code offset} of {@code <partitionDir>/_geometry.<generation>} into the scratch buffer.
      */
     public void read(FilesFacade ff, Path partitionDir, int generation, long offset) {
         final int dirLen = partitionDir.size();

@@ -34,38 +34,8 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 /**
- * Resolves a COMPOSITE partition's PIECES on demand, and is the only thing in the engine that knows a
- * partition can have more than one.
- * <p>
- * The model is parquet's, exactly. {@link TxReader} holds what {@code _txn} holds - one 4-long record per
- * partition - and knows nothing about pieces, precisely as it holds one record per parquet partition and
- * knows nothing about row groups. Loading {@code _txn} performs ZERO {@code _geometry} I/O. A partition's
- * geometry is read the first time a query or a commit actually lands on THAT partition, and stays cached
- * until its record stops naming the same {@code (partitionTimestamp, nameTxn, geometryRef)}.
- * <p>
- * So the cost is proportional to what is touched, not to what exists: a table with no composite partition
- * never opens the file at all, and a query over one partition of a thousand opens one file. Every index
- * here is the ordinary partition index - there is no second index space, and no piece ever appears in an
- * API outside this class.
- * <p>
- * A partition with no chain needs no read ever. Its record already says everything: one piece starting at
- * its own timestamp, rooted at file row 0, with {@code E == liveRows ==} slot 1.
- * <p>
- * <b>Row numbering.</b> A partition's rows are numbered CUMULATIVELY over its pieces in {@code tsLo}
- * order: piece 0 owns {@code [0, n0)}, piece 1 owns {@code [n0, n0+n1)}, and the partition owns
- * {@code [0, liveRows)}. Pieces ascend by {@code tsLo} and never overlap, so that order is also TIMESTAMP
- * order, which is what lets a partition be scanned, binary-searched and framed as one unit however many
- * pieces it has. For a row {@code r} falling in piece {@code p}:
- * <pre>
- * shift(p) = rowOffset(p) - cumulativeLo(p)
- * file_row = r + shift(p) - columnTop
- * </pre>
- * {@code shift} is SIGNED: a piece rewritten at the tail of the shared files keeps its position in
- * timestamp order while moving to a higher file row, so {@code rowOffset} is not monotone across pieces
- * and a later piece can sit at a lower file row than an earlier one.
- * <p>
- * Not thread safe. One instance belongs to one {@link TxWriter}, one {@link TableReader} or one
- * job-scoped consumer, and a resolve never runs on a worker thread.
+ * Resolves a COMPOSITE partition's PIECES on demand, and is the only thing in the engine that knows a partition can
+ * have more than one.
  */
 public class PartitionGeometry implements Closeable, Mutable {
     /**
@@ -74,11 +44,8 @@ public class PartitionGeometry implements Closeable, Mutable {
     public static final int NO_PARTITION = -1;
     private static final long FLAG_DIRTY = 1L;
     /**
-     * Stride of {@link #pieces}: the four longs of the on-disk piece entry, then the piece's cumulative
-     * row - the running sum of the row counts before it. The cumulative row is derived, never stored, and
-     * exists so that every per-piece lookup is a binary search or a constant-time read. Summing it on
-     * demand made {@link #getPieceCumulativeLo} linear in the ordinal, which made the frame cursors
-     * quadratic in the piece count.
+     * Stride of {@link #pieces}: the four longs of the on-disk piece entry, then the piece's cumulative row - the
+     * running sum of the row counts before it.
      */
     private static final int LONGS_PER_PIECE = 5;
     /**
@@ -87,9 +54,8 @@ public class PartitionGeometry implements Closeable, Mutable {
     private static final int MIN_PIECE_HOLES = 1024;
     private static final int MIN_RESOLVED_BEFORE_EVICT = 256;
     /**
-     * Stride of {@link #resolved}, kept sorted by {@link #RES_PARTITION_TS} so the cache is keyed on values
-     * that never change for a directory - unlike a partition index, which shifts whenever a partition is
-     * inserted or removed.
+     * Stride of {@link #resolved}, kept sorted by {@link #RES_PARTITION_TS} so the cache is keyed on values that never
+     * change for a directory - unlike a partition index, which shifts whenever a partition is inserted or removed.
      */
     private static final int LONGS_PER_RESOLVED = 11;
     private static final int PIECE_CUMULATIVE_LO = 4;
@@ -122,15 +88,11 @@ public class PartitionGeometry implements Closeable, Mutable {
     private int memoryTag;
     private int partitionBy;
     /**
-     * Longs of {@link #pieces} no resolved directory points at any more. A directory update writes its
-     * new array at the tail rather than in place, because the array can change length; the holes are
-     * reclaimed by {@link #compactPieces()} at a safe point.
+     * Longs of {@link #pieces} no resolved directory points at any more.
      */
     private int pieceHoles;
     /**
      * Slot count {@link #resolved} has to reach before {@link #evictRetiredDirectories} walks it again.
-     * Doubled off whatever survives an eviction, so the walk costs O(1) per resolution amortised rather
-     * than one full scan per resolution once the cache is large.
      */
     private int resolvedEvictWatermark = MIN_RESOLVED_BEFORE_EVICT;
     private String tableRoot;
@@ -162,9 +124,8 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * The ordinal of the piece owning {@code ts} inside {@code partitionIndex}, by the same floor rule the record
-     * level uses: the piece at or below the timestamp. Returns 0 when {@code ts} falls below every piece,
-     * which is a head-insert into this directory rather than a miss - the record already owns the range.
+     * The ordinal of the piece owning {@code ts} inside {@code partitionIndex}, by the same floor rule the record level
+     * uses: the piece at or below the timestamp.
      */
     public int findPiece(int partitionIndex, long ts) {
         final int res = resolveInternal(partitionIndex);
@@ -187,9 +148,7 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * The ordinal of the piece holding directory-cumulative row {@code row}. Rows at or above the
-     * directory's live count belong to the last piece, which is what the callers that address the append
-     * point expect.
+     * The ordinal of the piece holding directory-cumulative row {@code row}.
      */
     public int findPieceByRow(int partitionIndex, long row) {
         final int res = resolveInternal(partitionIndex);
@@ -213,10 +172,7 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * The byte size of the geometry record currently COMMITTED for this directory. The next append goes
-     * at {@code committedOffset + committedRecordSize}, and the size has to come from the record that was
-     * actually committed - the live piece count is what this commit is about to change. Never from the
-     * file length: bytes past the committed offset can be a rolled-back append nothing ever referenced.
+     * The byte size of the geometry record currently COMMITTED for this directory.
      */
     public long getCommittedRecordSize(int partitionIndex) {
         final int res = resolveInternal(partitionIndex);
@@ -224,8 +180,7 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * {@code E}, the furthest file row this directory has ever held, live or dead. Implied by the record
-     * for a directory with no chain; read from {@code _geometry} otherwise.
+     * {@code E}, the furthest file row this directory has ever held, live or dead.
      */
     public long getE(int partitionIndex) {
         final int res = resolveInternal(partitionIndex);
@@ -238,8 +193,7 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * Live rows summed over the directory's pieces. Always the record's slot 1 - the {@code _geometry}
-     * header's copy is a cross-check, not the source - so this costs no read.
+     * Live rows summed over the directory's pieces.
      */
     public long getLiveRows(int partitionIndex) {
         return txReader.getPartitionSize(partitionIndex);
@@ -281,21 +235,17 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * The signed shift that turns a directory-cumulative row into a file row for this piece:
-     * {@code rowOffset - cumulativeLo}. Negative when a merge-append has relocated an earlier piece above
-     * a later one.
+     * The signed shift that turns a directory-cumulative row into a file row for this piece: {@code rowOffset -
+     * cumulativeLo}.
      */
     public long getPieceShift(int partitionIndex, int ordinal) {
         return getPieceRowOffset(partitionIndex, ordinal) - getPieceCumulativeLo(partitionIndex, ordinal);
     }
 
     /**
-     * Splits the directory-cumulative row range {@code [rowLo, rowHi)} of {@code partitionIndex} into the
-     * FILE row ranges of the pieces it overlaps, appending them to {@code out} as {@code (fileLo, fileHi)}
-     * pairs, {@code fileHi} exclusive, in ascending cumulative-row order. This is the same split
-     * {@link CompositeAwarePartitionFrameCursor} performs one frame at a time; a caller that needs every
-     * range of a frame at once - to ask the partition's INDEX about it, which stores file rows - takes them
-     * from here. A plain (single-piece) partition yields its one range unshifted.
+     * Splits the directory-cumulative row range {@code [rowLo, rowHi)} of {@code partitionIndex} into the FILE row
+     * ranges of the pieces it overlaps, appending them to {@code out} as {@code (fileLo, fileHi)} pairs, {@code fileHi}
+     * exclusive, in ascending cumulative-row order.
      */
     public void collectPieceFileRanges(int partitionIndex, long rowLo, long rowHi, LongList out) {
         final int pieceCount = getPieceCount(partitionIndex);
@@ -331,10 +281,7 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * The partition's last-modifying seqTxn, as recorded in its committed {@code _geometry} record, or
-     * -1 when unknown. A composite partition spends its {@code _txn} slot-3 value field on the geometry
-     * pointer and carries no slot-3 stamp, so this is where {@link TxReader#getNativePartitionSeqTxn}'s
-     * contract is answered for it.
+     * The partition's last-modifying seqTxn, as recorded in its committed {@code _geometry} record, or -1 when unknown.
      */
     public long getSeqTxn(int partitionIndex) {
         final int res = findResolved(txReader.getPartitionTimestampByIndex(partitionIndex), txReader.getPartitionNameTxn(partitionIndex));
@@ -352,7 +299,6 @@ public class PartitionGeometry implements Closeable, Mutable {
 
     /**
      * Exact: more than one piece, or dead space above the live rows, or rows starting above file row 0.
-     * Resolves the directory, unlike {@link TxReader#isPartitionComposite(int)}.
      */
     public boolean isComposite(int partitionIndex) {
         final int res = resolveInternal(partitionIndex);
@@ -381,17 +327,14 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * Makes {@code partitionIndex}'s pieces resident. A no-op for a partition already resolved at the same
-     * {@code geometryRef}, and for a partition that is not composite, which needs no file at all.
+     * Makes {@code partitionIndex}'s pieces resident.
      */
     public void resolve(int partitionIndex) {
         resolveInternal(partitionIndex);
     }
 
     /**
-     * Starts building the partition's new piece array. Follow with {@link #addPiece} calls in ascending
-     * {@code tsLo} order and finish with {@link #commitUpdate}. The directory's current array stays
-     * readable until then, so a plan can be computed from it while the new one is assembled.
+     * Starts building the partition's new piece array.
      */
     public void beginUpdate(int partitionIndex) {
         resolveInternal(partitionIndex);
@@ -400,9 +343,7 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * Drops what {@link #beginUpdate} opened without installing it. For a partition whose planned shape
-     * turns out to be the ordinary one - a single piece over the whole of its files - which needs no
-     * geometry record at all.
+     * Drops what {@link #beginUpdate} opened without installing it.
      */
     public void abandonUpdate() {
         pending.clear();
@@ -423,11 +364,6 @@ public class PartitionGeometry implements Closeable, Mutable {
 
     /**
      * Replaces {@code partitionIndex}'s piece array with what {@link #addPiece} built and raises its {@code E}.
-     * The array is written at the tail of {@link #pieces} rather than in place, because it can change
-     * length; the span it vacates becomes a hole {@link #compactPieces()} reclaims at publish time.
-     * <p>
-     * {@code E} is GROW-ONLY: the region above the live rows is dead space a pinned reader may still
-     * address, so a directory that loses its furthest piece keeps the extent it reached.
      */
     public void commitUpdate(int partitionIndex, long e) {
         assert pendingRec == partitionIndex : "commitUpdate for a record that beginUpdate did not open";
@@ -461,16 +397,7 @@ public class PartitionGeometry implements Closeable, Mutable {
 
     /**
      * Appends {@code partitionIndex}'s geometry as one full-snapshot record and returns the slot-3 word {@code _txn}
-     * must publish for it. The caller writes that word into the record; this class never touches
-     * {@code _txn}, so the two writes stay one transaction under the caller's control.
-     * <p>
-     * The append goes at {@code committedOffset + committedRecordSize} - the offset out of the COMMITTED
-     * slot 3, the size out of the record this directory was resolved from. Never the file length: bytes
-     * past the committed offset can be a rolled-back append no transaction ever referenced.
-     * <p>
-     * Ordering is the crash-consistency contract and belongs to the caller: append here and fsync, THEN
-     * commit {@code _txn}. A crash between the two leaves an unreferenced record, which is harmless; the
-     * reverse order is durably inconsistent.
+     * must publish for it.
      */
     public long publish(int partitionIndex, long writerTxn, long seqTxn, long nowMicros, int commitMode) {
         final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
@@ -504,10 +431,8 @@ public class PartitionGeometry implements Closeable, Mutable {
         long offset = committedRef == -1L
                 ? 0
                 : TxReader.geometryOffset(committedRef) + resolved.getQuick(slot + RES_COMMITTED_RECORD_SIZE);
-        // Every record is a full snapshot (see the class doc), so rotating costs nothing beyond starting
-        // a fresh file: this record, not a copy of what came before, is what the new generation opens
-        // with. A record only ever needs to know its OWN size ahead of writing to decide this - it is
-        // built already, in the scratch buffer beginRecord/addPiece above filled.
+        // Every record is a full snapshot (see the class doc), so rotating costs nothing beyond starting a fresh file:
+        // this record, not a copy of what came before, is what the new generation opens with.
         if (committedRef != -1L && offset + geometryFile.getRecordSize() > PartitionGeometryFile.MAX_FILE_SIZE) {
             generation++;
             offset = 0;
@@ -549,9 +474,7 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * Reclaims the holes left by in-place directory updates. Safe only when nothing holds a piece span
-     * index across the call - see {@link #compactPiecesIfNeeded}, the only caller, for the two points
-     * where that holds.
+     * Reclaims the holes left by in-place directory updates.
      */
     private void compactPieces() {
         scratch.clear();
@@ -570,13 +493,7 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * Amortised reclaim of {@link #pieces}. Runs only once the holes outweigh the live longs, which makes
-     * the copy O(1) per hole created rather than O(total pieces) on every publish - the shape it had when
-     * {@link #publish} compacted unconditionally, where one partition's publish paid for every piece of
-     * every directory the writer had ever touched.
-     * <p>
-     * The two call sites are the only points where no caller holds a piece span index: the tail of
-     * {@link #publish}, and the head of {@link #resolveInternal}, before it takes one.
+     * Amortised reclaim of {@link #pieces}.
      */
     private void compactPiecesIfNeeded() {
         if (pieceHoles > MIN_PIECE_HOLES && pieceHoles > pieces.size() - pieceHoles) {
@@ -585,12 +502,8 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * Drops resolutions for directories {@code _txn} no longer names - a partition that was dropped, or
-     * one a rewrite retired under a fresh {@code nameTxn}. Without this a long-lived pooled reader keeps
-     * one slot, and one piece array, for every directory it has ever observed.
-     * <p>
-     * Only ever runs with no update open and nothing dirty, so a writer mid-commit is never the caller
-     * and no slot the commit is about to publish can be evicted.
+     * Drops resolutions for directories {@code _txn} no longer names - a partition that was dropped, or one a rewrite
+     * retired under a fresh {@code nameTxn}.
      */
     private void evictRetiredDirectories() {
         int keep = 0;
@@ -708,8 +621,7 @@ public class PartitionGeometry implements Closeable, Mutable {
 
     /**
      * Finds the resolved slot for {@code partitionIndex}, reading {@code _geometry} when it is not resident at the
-     * record's current {@code geometryRef}. Returns {@code -1} for a record that implies its own single
-     * piece, which is every record of an unsplit table.
+     * record's current {@code geometryRef}.
      */
     private int resolveInternal(int partitionIndex) {
         if (!txReader.isPartitionComposite(partitionIndex)) {

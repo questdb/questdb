@@ -80,11 +80,9 @@ public interface ColumnIndexer extends QuietCloseable {
     );
 
     /**
-     * Same as {@link #configureFollowerAndWriter(Path, CharSequence, long, MemoryMA, long, long, long)}, but
-     * lets the caller opt into skipping the underlying writer's key-file existence probe when it has already
-     * established the column had no data before this reopen's writer session began - see
-     * {@link io.questdb.cairo.idx.IndexWriter#of(Path, CharSequence, long, long, long, boolean)} for when
-     * that is safe.
+     * Same as {@link #configureFollowerAndWriter(Path, CharSequence, long, MemoryMA, long, long, long)}, but lets the
+     * caller opt into skipping the underlying writer's key-file existence probe when it has already established the
+     * column had no data before this reopen's writer session began - see {@link
      */
     default void configureFollowerAndWriter(
             Path path,
@@ -156,13 +154,8 @@ public interface ColumnIndexer extends QuietCloseable {
     void releaseIndexWriter();
 
     /**
-     * Releases the writer without persisting any of its own cached state to disk - no size-truncating
-     * close, and no best-effort seal either. Use this instead of {@link #releaseIndexWriter()} whenever
-     * the last partition transitioned to composite (or parquet) while this follower stayed open: the
-     * composite executor rewrites the same index files through its own writer, which this follower never
-     * observes, so persisting anything from this follower's stale view - a truncate to its old sizes, or a
-     * seal publishing a chain entry from its old generation - would corrupt or shadow what the composite
-     * executor already correctly wrote. See {@link io.questdb.cairo.idx.IndexWriter#abandon()}.
+     * Releases the writer without persisting any of its own cached state to disk - no size-truncating close, and no
+     * best-effort seal either.
      */
     void releaseIndexWriterNoTruncate();
 

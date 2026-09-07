@@ -591,10 +591,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * The level-2 resolver for this table's COMPOSITE partitions, created on first use. Owned HERE rather
-     * than by {@link TxReader}, which carries only the flag and the offset out of {@code _txn} and reaches
-     * no file: this class is what knows the table's path, so it is what can open a partition's
-     * {@code _geometry}.
+     * The level-2 resolver for this table's COMPOSITE partitions, created on first use.
      */
     public PartitionGeometry getGeometry() {
         if (partitionGeometry == null) {
@@ -610,10 +607,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * The number of file rows a partition's column files span - {@code E}, the furthest row it has ever
-     * held, live or dead. Equal to the live row count for an ordinary partition, larger for a COMPOSITE one
-     * that holds dead space or whose pieces do not start at file row 0. This, not the row count, is what a
-     * reader must MAP: a piece can live anywhere in {@code [0, E)}.
+     * The number of file rows a partition's column files span - {@code E}, the furthest row it has ever held, live or
+     * dead.
      */
     public long getPartitionPhysicalRowCount(int partitionIndex) {
         if (!txFile.isPartitionComposite(partitionIndex)) {
@@ -1381,10 +1376,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                     pathGenNativePartition(partitionIndex, nameTxn);
                     hasNewColumns = true;
                 }
-                // A column that only now became active can't skip the same E-vs-live-count sizing
-                // openPartition0 and reloadColumnFiles already apply - mapping it to partitionSize
-                // (the live count) leaves it short exactly like the two call sites that already
-                // route through mappedRowCount for this reason.
+                // A column that only now became active can't skip the same E-vs-live-count sizing openPartition0 and
+                // reloadColumnFiles already apply - mapping it to partitionSize (the live count) leaves it short
                 reloadColumnAt(
                         partitionIndex,
                         path,
@@ -1566,11 +1559,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
-                        // MAP the whole file extent, not the live row count. A COMPOSITE partition's pieces
-                        // sit anywhere in [0, E) - one can start above file row 0, and dead space can sit
-                        // above the live rows - so a mapping sized to the row count would stop short of
-                        // rows the partition still holds. Equal to partitionSize for an ordinary partition,
-                        // and it costs a _geometry read only for a partition that has one.
+                        // MAP the whole file extent, not the live row count.
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), getPartitionPhysicalRowCount(partitionIndex));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
@@ -1690,9 +1679,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         // Reconcile partition full or partial will only update row count of last partition and append new partitions
         boolean truncateHappened = txFile.getTruncateVersion() != prevTruncateVersion;
         // Every write that installs, changes or clears a partition's geometry ref goes through
-        // TxWriter#setPartitionGeometryRef, which bumps partitionTableVersion in the same transaction. So
-        // a composite partition's geometry cannot move behind this guard's back, and the fast path needs
-        // no extra per-partition check for it.
+        // TxWriter#setPartitionGeometryRef, which bumps partitionTableVersion in the same transaction.
         if (txFile.getPartitionTableVersion() == prevPartitionVersion && txFile.getColumnVersion() == prevColumnVersion && !truncateHappened) {
             int partitionIndex = Math.max(0, partitionCount - 1);
             final int txPartitionCount = txFile.getPartitionCount();
@@ -1993,11 +1980,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * How many file rows a mapping of {@code partitionIndex} must cover. A COMPOSITE partition's pieces sit
-     * anywhere in {@code [0, E)} - one can start above file row 0, and dead space can sit above the live
-     * rows - so its mapping is sized by {@code E} and never by a row count, exactly as openPartition0 sizes
-     * the first open. Every other partition keeps the count the caller computed: the callers derive theirs
-     * from several different places and the two are not interchangeable.
+     * How many file rows a mapping of {@code partitionIndex} must cover.
      */
     private long mappedRowCount(int partitionIndex, long liveRowCount) {
         if (partitionIndex < 0 || !txFile.isPartitionComposite(partitionIndex)) {

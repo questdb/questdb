@@ -110,12 +110,8 @@ public final class TableUtils {
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     /**
-     * Marks a composite-partition REWRITE built off a {@link io.questdb.cairo.TableReader} snapshot,
-     * staged next to the source directory before the writer has agreed to swap it in - see
-     * {@code PartitionCompactionScanJob}. Same idiom as {@link #DETACHED_DIR_MARKER}: append after a
-     * {@code nameTxn}-suffixed path built with a real {@code nameTxn}, never with {@code -1}, since the
-     * source directory's own txn is what makes concurrent staging attempts (different source generations)
-     * name-distinct.
+     * Marks a composite-partition REWRITE built off a {@link io.questdb.cairo.TableReader} snapshot, staged next to the
+     * source directory before the writer has agreed to swap it in - see {@code PartitionCompactionScanJob}.
      */
     public static final String COMPACTING_DIR_MARKER = ".compacting";
     public static final String DEFAULT_PARTITION_NAME = "default";
@@ -1295,13 +1291,9 @@ public final class TableUtils {
     }
 
     /**
-     * A lock reason the WAL apply machinery did not arrange itself is unsolicited - including
-     * {@link io.questdb.cairo.pool.WriterPool#OWNERSHIP_REASON_UNKNOWN}, reported while a holder
-     * is still constructing the writer and has not stamped its reason yet. ApplyWal2TableJob
-     * responds to an unsolicited lock by re-arming notification delivery
-     * ({@link CairoEngine#notifyWalTxnRepublisher}); treating an unidentified holder as solicited
-     * instead would drop the in-flight notification with no recovery until the next commit or the
-     * sequencer check interval.
+     * A lock reason the WAL apply machinery did not arrange itself is unsolicited - including {@link
+     * io.questdb.cairo.pool.WriterPool#OWNERSHIP_REASON_UNKNOWN}, reported while a holder is still constructing the
+     * writer and has not stamped its reason yet.
      */
     public static boolean isUnsolicitedTableLock(String lockReason) {
         return !WAL_2_TABLE_WRITE_REASON.equals(lockReason)

@@ -125,9 +125,8 @@ public final class MemoryFixFrameColumn implements FrameColumn {
     }
 
     /**
-     * Re-points this column at the SORTED TIMESTAMP INDEX. The O3 buffers hold no timestamp column of their
-     * own - the index is the only sorted copy of the timestamps - so a frame over them reads its designated
-     * timestamp from here.
+     * Re-points this column at the SORTED TIMESTAMP INDEX. The O3 buffers hold no timestamp column of their own - the
+     * index is the only sorted copy of the timestamps - so a frame over them reads its designated timestamp from here.
      */
     public void ofTimestampIndex(long timestampIndexAddr) {
         this.timestampIndexAddr = timestampIndexAddr;

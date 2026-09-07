@@ -247,11 +247,8 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                 );
                 long rowLo = frame.getRowLo();
                 long rowHi = frame.getRowHi();
-                // collectDistinctKeys() (no range) scans the WHOLE persisted index chain, including any
-                // dead-space bytes a composite partition's pieces do not cover -- so a full-looking frame
-                // (rowLo == 0, rowHi == live row count) only licenses the unbounded scan when the partition
-                // is genuinely not composite. A composite partition always falls back to the ranged scan,
-                // which CompositeAwarePartitionFrameCursor has already bounded to physical piece rows.
+                // collectDistinctKeys() (no range) scans the WHOLE persisted index chain, including any dead-space
+                // bytes a composite partition's pieces do not cover -- so a full-looking frame (rowLo == 0, rowHi ==
                 boolean fullPartition = rowLo == 0 && rowHi == tableReader.getPartitionRowCount(partitionIndex)
                         && !tableReader.getTxFile().isPartitionComposite(partitionIndex);
                 foundCount += fullPartition

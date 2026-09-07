@@ -666,14 +666,7 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 selectedRows += rowHiExclusive - rowLo;
                 maxIndexRows = Math.max(1, selectedRows / maxRowShareDivisor);
             }
-            // The row ranges to ask the INDEX about. An index lists the FILE rows a key appears at, and
-            // on a composite partition those differ from the frame's partition rows by each piece's
-            // shift (see PageFrame#getIndexRowLo): asked for the frame's own rows, it would count dead
-            // rows and miss live ones. So a composite frame splits into one file-row range per piece,
-            // the way CompositeAwarePartitionFrameCursor splits it for the covering delegate, while a
-            // plain partition's frame is one range, its own rows. The split does not add frames: the
-            // frame cap above stays a count of partition frames, and the ranges of one frame share
-            // its key-probe budget.
+            // The row ranges to ask the INDEX about.
             estimateRanges.clear();
             if (tableReader.getTxFile().isPartitionComposite(frame.getPartitionIndex())) {
                 tableReader.getGeometry().collectPieceFileRanges(frame.getPartitionIndex(), rowLo, rowHiExclusive, estimateRanges);

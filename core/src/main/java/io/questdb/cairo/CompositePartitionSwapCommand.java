@@ -29,20 +29,8 @@ import io.questdb.cairo.wal.MetadataService;
 import io.questdb.tasks.TableWriterTask;
 
 /**
- * Swaps in a composite partition REWRITE built off a {@link TableReader} snapshot - see
- * {@code PartitionCompactionScanJob} - without ever holding the writer for the copy itself.
- * <p>
- * Published via {@link CairoEngine#getWriterOrPublishCommand}: an idle writer applies it directly, a busy
- * writer serializes it onto its own {@link TableWriterTask} command queue and applies it later on the
- * writer's own thread via {@link TableWriter#tick()}. This command does not override
- * {@link #newInstance()}: the producer's own instance - already carrying the recorded column tops - is
- * what the writer applies, so {@link #deserialize} has nothing to reconstruct from the task buffer.
- * <p>
- * {@link #apply} throws {@link io.questdb.cairo.sql.TableReferenceOutOfDateException} when the source
- * partition's generation no longer matches what the build snapshot saw - the writer discards the staged
- * directory and the caller's next sweep starts over from a fresh snapshot. Non-structural (it never
- * changes table structure, only a partition's own storage layout), so it is safe to queue for a WAL table
- * too.
+ * Swaps in a composite partition REWRITE built off a {@link TableReader} snapshot - see {@code
+ * PartitionCompactionScanJob} - without ever holding the writer for the copy itself.
  */
 public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     private final ColumnTopRecorder columnTops = new ColumnTopRecorder();

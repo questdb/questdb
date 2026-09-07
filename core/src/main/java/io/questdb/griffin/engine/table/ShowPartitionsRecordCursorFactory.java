@@ -427,11 +427,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     }
                     closeParquetMeta();
                 } else if (isComposite) {
-                    // A COMPOSITE partition's file rows are not in timestamp order - a merge-append
-                    // parks a rewritten piece at the tail and leaves the rows it superseded behind
-                    // as dead space - so file row 0 and file row numRows-1 name neither bound. The
-                    // geometry lists the pieces in timestamp order and carries each one's bounds,
-                    // so the directory's own bounds are the first piece's low and the last's high.
+                    // A COMPOSITE partition's file rows are not in timestamp order - a merge-append parks a rewritten
+                    // piece at the tail and leaves the rows it superseded behind as dead space - so file row 0 and
                     final PartitionGeometry geometry = tableReader.getGeometry();
                     minTimestamp = geometry.getPieceTimestampLo(partitionIndex, 0);
                     maxTimestamp = geometry.getPieceTimestampHi(partitionIndex, geometry.getPieceCount(partitionIndex) - 1);

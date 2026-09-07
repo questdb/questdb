@@ -681,10 +681,7 @@ public final class PostingIndexChainWriter {
     }
 
     /**
-     * The region limit the on-disk chain header currently publishes, or -1 when the header cannot be
-     * read. Unlike {@link #getRegionLimit()} this does not go through the helper's in-memory mirror, so
-     * it also sees an entry another writer instance appended to the same {@code .pk} while this one sat
-     * idle on it.
+     * The region limit the on-disk chain header currently publishes, or -1 when the header cannot be read.
      */
     public long readPublishedRegionLimit(MemoryR keyMem) {
         if (!PostingIndexChainHeader.readUnderSeqlock(keyMem, headerScratch)

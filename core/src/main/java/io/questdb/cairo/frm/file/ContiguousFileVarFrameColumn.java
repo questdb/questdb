@@ -150,9 +150,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     }
 
     /**
-     * Copies one contiguous run of the source's DATA vector to {@code targetDataOffset} in this column's data
-     * file. Only a file source has an fd to copy from, so only it can take the kernel's fd-to-fd path and
-     * skip both mappings; otherwise the bytes are mapped or already addressable, and memcpy'd.
+     * Copies one contiguous run of the source's DATA vector to {@code targetDataOffset} in this column's data file.
      */
     private void appendData(
             FrameColumn sourceColumn,
@@ -370,10 +368,8 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         // directly and emits this type's NULL for the rows underneath.
         final long src1Top = sourceColumn1.getColumnTop();
         final boolean readsBelowTop = source1Lo < source1Hi && source1Lo < src1Top;
-        // Both vectors are addressed from ROW 0 and BYTE 0 of their own column: the merge index carries
-        // absolute row ids, and an aux entry carries an absolute data offset, so neither side is relative to
-        // the slice being read. The top-aware kernel wants source 1 UNBIASED instead - its first stored row
-        // IS logical row src1Top - and does the subtraction itself.
+        // Both vectors are addressed from ROW 0 and BYTE 0 of their own column: the merge index carries absolute row
+        // ids, and an aux entry carries an absolute data offset, so neither side is relative to the slice being read.
         final long src1AuxAddr = readsBelowTop
                 ? sourceColumn1.getContiguousAuxAddr(source1Hi)
                 : rowZeroAuxAddr(sourceColumn1, source1Lo, source1Hi);
@@ -381,11 +377,8 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         final long src1DataAddr = source1Lo < source1Hi ? sourceColumn1.getContiguousDataAddr(source1Hi) : 0;
         final long src2DataAddr = source2Lo < source2Hi ? sourceColumn2.getContiguousDataAddr(source2Hi) : 0;
 
-        // Every row of both slices is written out exactly once and carries its own bytes with it, so the
-        // merged image is as long as the two slices put together - the interleaving moves bytes around but
-        // creates none. A row below the data side's top carries no bytes of its own; what it costs is the
-        // type's minimum entry, which is what the kernel writes for a NULL (zero for VARCHAR and ARRAY,
-        // whose nulls live entirely in the aux entry).
+        // Every row of both slices is written out exactly once and carries its own bytes with it, so the merged image
+        // is as long as the two slices put together - the interleaving moves bytes around but creates none.
         final long belowTopRows = readsBelowTop ? Math.min(source1Hi, src1Top) - source1Lo : 0;
         final long dataSize = (readsBelowTop
                 ? sourceDataSize(src1AuxAddr, Math.max(source1Lo, src1Top) - src1Top, source1Hi - src1Top)
@@ -408,10 +401,8 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             if (dataSize > 0) {
                 dstDataAddr = TableUtils.mapAppendColumnBuffer(ff, dataFd, targetDataOffset, dataSize, true, MEMORY_TAG);
             }
-            // The kernel writes ABSOLUTE data offsets into the aux entries and addresses its writes by the
-            // same value, so it is handed the address byte 0 of the data file would be at. That lands
-            // outside the mapping, which is safe only because the offset it starts from is where the
-            // mapping starts and only ever grows.
+            // The kernel writes ABSOLUTE data offsets into the aux entries and addresses its writes by the same value,
+            // so it is handed the address byte 0 of the data file would be at.
             final long dstDataBase = dstDataAddr != 0 ? dstDataAddr - targetDataOffset : 0;
             if (readsBelowTop) {
                 columnTypeDriver.o3ColumnMergeWithTop(
@@ -558,10 +549,8 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     }
 
     /**
-     * The address the source's row 0 WOULD be at in its AUX vector, which is what the merge index's absolute
-     * row ids address. The fixed-width merge does the same thing for its data vector, and for the same
-     * reason: a column whose data starts at a top does not hold the rows below it, so its mapping begins
-     * that many rows in and the base steps back by the same amount.
+     * The address the source's row 0 WOULD be at in its AUX vector, which is what the merge index's absolute row ids
+     * address.
      */
     private long rowZeroAuxAddr(FrameColumn column, long lo, long hi) {
         if (lo >= hi) {

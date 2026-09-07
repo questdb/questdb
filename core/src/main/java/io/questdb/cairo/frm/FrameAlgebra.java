@@ -61,23 +61,8 @@ public class FrameAlgebra {
 
     /**
      * Appends the MERGE of two frames to {@code target}'s tail, interleaved by {@code mergeIndexAddr}.
-     * <p>
-     * {@link #append} carries ONE source through unchanged, and is what writes a brand-new piece: the
-     * incoming rows go down at the tail as they are. This carries TWO, in the order the merge index
-     * dictates, and is what rewrites a piece the incoming rows land inside - the piece and the batch go out
-     * as one image at the tail, in timestamp order, and the piece's old bytes become dead space.
-     * <p>
-     * The index is the standard 16-bytes-per-row form {@code Vect.mergeTwoLongIndexesAsc} produces from the
-     * piece's designated-timestamp slice and the sorted O3 index: a timestamp, then a row id whose top bit
-     * says which side it came from. So the row count appended is the index's row count, and both sources
-     * are read in a single pass.
-     * <p>
-     * Column TOPS are each column's own business, exactly as they are in {@link #append}: a source column
-     * knows the row its data starts at and offsets its own reads, and the target knows where its data
-     * starts and offsets its own writes. Nothing here has to reason about them.
-     *
-     * @param mergeIndexAddr native address of the merge index over {@code [source1Lo, source1Hi)} and
-     *                       {@code [source2Lo, source2Hi)}
+     * @param mergeIndexAddr native address of the merge index over {@code [source1Lo, source1Hi)} and {@code
+     * [source2Lo, source2Hi)}
      */
     public static void merge(
             Frame target,
@@ -174,10 +159,7 @@ public class FrameAlgebra {
     }
 
     /**
-     * One column's share of {@link #append}, which is what a frame runs per column task. Unlike a merge
-     * there is no column primitive to call straight through to: a source column whose data starts below
-     * {@code sourceLo} contributes NULLs for the rows underneath its top, and settling that is this
-     * method's whole job.
+     * One column's share of {@link #append}, which is what a frame runs per column task.
      */
     public static void appendColumn(FrameColumn targetColumn, long targetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         int columnType = sourceColumn.getColumnType();

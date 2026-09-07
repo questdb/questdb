@@ -430,21 +430,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     /**
-     * Publishes a partition's geometry pointer into its {@code _txn} record - the offset-3 word, whose
-     * VALUE field a composite NATIVE partition spends on the pointer instead of on a seqTxn stamp. The
-     * value comes from the composite write path and is opaque here: this class stores it, and only
-     * {@link TxReader#isPartitionComposite} and the resolver take it apart. Pass
-     * {@link TableWriter#NO_GEOMETRY_REF} to drop the partition back to plain.
-     * <p>
-     * REMOTE and the reserved flags survive; {@link TxReader#PARTITION_SEQ_TXN_VALID_BIT} does not,
-     * because a composite word holds no stamp - that is what makes
-     * {@link TxReader#getNativePartitionSeqTxn} read the seqTxn out of the {@code _geometry} record
-     * instead. A caller dropping back to plain is free to stamp one afterwards.
-     * <p>
-     * Ordering is the crash-consistency contract and belongs to the caller: the {@code _geometry} record
-     * must be durable BEFORE the {@code _txn} that points at it, the same ordering {@code _cv} obeys. A
-     * crash between the two leaves an unreferenced record, which is harmless; the reverse is durably
-     * inconsistent.
+     * Publishes a partition's geometry pointer into its {@code _txn} record - the offset-3 word, whose VALUE field a
+     * composite NATIVE partition spends on the pointer instead of on a seqTxn stamp.
      */
     public void setPartitionGeometryRef(long timestamp, long geometryRef) {
         final int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(timestamp);
@@ -548,12 +535,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
      */
     public void setPartitionSeqTxnByRawIndex(int indexRaw, long seqTxn) {
         if (isPartitionCompositeByRawIndex(indexRaw)) {
-            // A composite partition spends the offset-3 value field on its geometry pointer, so there is
-            // nowhere here to put a stamp; its seqTxn goes into the _geometry record instead. Leaving the
-            // pointer alone is what keeps an in-place rewrite - ALTER COLUMN TYPE, UPDATE - from losing a
-            // partition's piece layout. A caller that rewrites the partition into a NEW directory must
-            // clear the pointer itself, because the new directory has no _geometry file: see the native
-            // mutate branch of o3ConsumePartitionUpdateSink.
+            // A composite partition spends the offset-3 value field on its geometry pointer, so there is nowhere here
+            // to put a stamp; its seqTxn goes into the _geometry record instead.
             return;
         }
         setPartitionParquetGeneratedByRawIndex(indexRaw, false);

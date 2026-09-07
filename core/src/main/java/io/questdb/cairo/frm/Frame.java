@@ -33,12 +33,8 @@ public interface Frame extends Closeable {
 
     /**
      * Appends {@code [sourceLo, sourceHi)} of {@code source} to this frame's tail, one column at a time.
-     * <p>
-     * The frame drives its own per-column work, on the shared column-task pool when it has one. It moves
-     * no row count and commits no tops; that is {@link FrameAlgebra#append}'s part, its only caller.
-     *
-     * @param upcomingTableTxn tags posting-index chain entries published during this append, so a partial
-     *                         publish is droppable by recovery. See {@link FrameColumn#setUpcomingTableTxn}.
+     * @param upcomingTableTxn tags posting-index chain entries published during this append, so a partial publish is
+     * droppable by recovery.
      */
     void appendColumns(Frame source, long sourceLo, long sourceHi, long upcomingTableTxn, int commitMode);
 
@@ -47,17 +43,14 @@ public interface Frame extends Closeable {
     int columnCount();
 
     /**
-     * Forwards {@link ColumnTopSink#commitColumnTops()} to this frame's sink, if it has one. A no-op for
-     * a frame that tracks its own tops.
+     * Forwards {@link ColumnTopSink#commitColumnTops()} to this frame's sink, if it has one.
      */
     void commitColumnTops();
 
     FrameColumn createColumn(int columnIndex);
 
     /**
-     * Opens a COVERING posting-indexed column as a plain one, so this frame writes its data but adds no
-     * index entries. The caller indexes the rows it appended itself, after every column is on disk, with
-     * the covered columns described. Default: index as usual.
+     * Opens a COVERING posting-indexed column as a plain one, so this frame writes its data but adds no index entries.
      */
     default void setDeferCoveredIndexing(boolean deferCoveredIndexing) {
     }
@@ -67,8 +60,7 @@ public interface Frame extends Closeable {
     long getRowCount();
 
     /**
-     * Appends the MERGE of two sources to this frame's tail, interleaved by {@code mergeIndexAddr}. The
-     * counterpart of {@link #appendColumns}; only {@link FrameAlgebra#merge} calls it.
+     * Appends the MERGE of two sources to this frame's tail, interleaved by {@code mergeIndexAddr}.
      */
     void mergeColumns(
             Frame source1,
@@ -84,11 +76,8 @@ public interface Frame extends Closeable {
     );
 
     /**
-     * Reports every column's self-tracked top to {@code sink}, one {@link ColumnTopSink#setColumnTop}
-     * call per column this frame actually wrote through (see {@link #saveChanges}). A {@link ColumnTopSink}
-     * rather than a {@code ColumnVersionWriter} directly, so a caller can defer applying the values - e.g.
-     * record them off the writer thread and push them into the real {@code ColumnVersionWriter} only once
-     * it holds the writer - instead of writing straight into a table-wide, non-thread-safe instance.
+     * Reports every column's self-tracked top to {@code sink}, one {@link ColumnTopSink#setColumnTop} call per column
+     * this frame actually wrote through (see {@link #saveChanges}).
      */
     void publishColumnTops(ColumnTopSink sink);
 

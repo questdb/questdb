@@ -326,10 +326,8 @@ public class ConvertOperatorImpl implements Closeable {
                     }
                     try {
                         final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
-                        // The conversion rewrites a FILE, so it spans the rows the file spans - E, not the
-                        // live row count. A composite partition scatters its live rows over [0, E) and the
-                        // gaps hold superseded images, so a walk that stops at the live count leaves live
-                        // rows above it unconverted.
+                        // The conversion rewrites a FILE, so it spans the rows the file spans - E, not the live row
+                        // count.
                         final long maxRow = Math.max(
                                 tableWriter.getPartitionSize(partitionIndex),
                                 tableWriter.getPartitionPhysicalRowCount(partitionIndex)
@@ -373,14 +371,8 @@ public class ConvertOperatorImpl implements Closeable {
                                     throw th;
                                 }
 
-                                // A composite partition's dead space (a relocated piece's old, superseded
-                                // copy) must never be read - it can be short, missing, or simply garbage
-                                // relative to what this conversion expects. Piece-walking is available for
-                                // every direction this converter supports EXCEPT symbol and decimal: source
-                                // and destination are each either a fixed-width type or STRING/VARCHAR, and
-                                // "fixed" deliberately excludes SYMBOL (isFixedSize) since a symbol key is
-                                // meaningless without the dictionary remap dispatchConvertColumnPartitionTask
-                                // still routes it through.
+                                // A composite partition's dead space (a relocated piece's old, superseded copy) must
+                                // never be read - it can be short, missing, or simply garbage relative to what this.
                                 final boolean srcPieceable = ColumnType.isFixedSize(existingType) || existingType == ColumnType.STRING || existingType == ColumnType.VARCHAR;
                                 final boolean dstFixed = ColumnType.isFixedSize(newType);
                                 final boolean dstVarStringy = newType == ColumnType.STRING || newType == ColumnType.VARCHAR;
@@ -389,11 +381,8 @@ public class ConvertOperatorImpl implements Closeable {
                                         ? tableWriter.getGeometry().getPieceCount(partitionIndex)
                                         : 1;
                                 if (dstFixed && pieceWalkable && pieceCount > 1) {
-                                    // For a fixed-width destination, walk the partition's own pieces
-                                    // (its live sections) instead of the flat [columnTop, maxRow) range: convert
-                                    // each piece from its own file position, and pad the gaps between them -
-                                    // never reading them - so every piece keeps the same absolute row it had,
-                                    // which is the address a reader still uses to find it.
+                                    // For a fixed-width destination, walk the partition's own pieces (its live
+                                    // sections) instead of the flat [columnTop, maxRow) range: convert each piece from
                                     try {
                                         convertToFixedDestByPieces(
                                                 partitionIndex, pieceCount, columnTop, maxRow,
@@ -402,9 +391,6 @@ public class ConvertOperatorImpl implements Closeable {
                                     } finally {
                                         // These two paths own the four descriptors outright - unlike
                                         // dispatchConvertColumnPartitionTask, which hands them to
-                                        // cthConvertPartitionHandler and its own finally. The walk can
-                                        // throw: allocateDiskSpaceToPage and mapAppendColumnBuffer both
-                                        // raise CairoException on ENOSPC.
                                         closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
                                     }
                                 } else if (dstVarStringy && pieceWalkable && pieceCount > 1) {
@@ -477,10 +463,9 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
     /**
-     * Fills {@link #pieceRowOffsets} / {@link #pieceRowCounts} with this partition's own pieces, clipped
-     * to the column's own span and sorted into file (row) order - pieces are recorded in ascending tsLo
-     * order, not file-row order, because a merge-append relocates a piece to the tail, so the two
-     * diverge, and a piece walk has to go in file order.
+     * Fills {@link #pieceRowOffsets} / {@link #pieceRowCounts} with this partition's own pieces, clipped to the
+     * column's own span and sorted into file (row) order - pieces are recorded in ascending tsLo order, not file-row
+     * order, because a merge-append relocates a piece to the tail, so the two diverge, and a piece walk has to go in
      */
     private void collectPieces(int partitionIndex, int pieceCount, long columnTop, long maxRow) {
         final PartitionGeometry geometry = tableWriter.getGeometry();
@@ -503,9 +488,7 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
     /**
-     * Piece walk into a FIXED destination, from either a fixed or a STRING/VARCHAR source. Every dead
-     * gap is padded with the destination type's null, regardless of source shape - a dead row costs the
-     * same fixed-width slot whether it was ever going to be read from a fixed file or a var one.
+     * Piece walk into a FIXED destination, from either a fixed or a STRING/VARCHAR source.
      */
     private void convertToFixedDestByPieces(
             int partitionIndex,
@@ -546,9 +529,7 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
     /**
-     * Piece walk into a STRING/VARCHAR destination, from either a fixed or a STRING/VARCHAR source. The
-     * gap padding (aux entries per dead row, dense data vector) is identical regardless of source shape -
-     * {@link ColumnTypeConverter#padVarGap} only ever looks at the destination type.
+     * Piece walk into a STRING/VARCHAR destination, from either a fixed or a STRING/VARCHAR source.
      */
     private void convertToVarDestByPieces(
             int partitionIndex,

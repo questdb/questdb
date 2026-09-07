@@ -117,13 +117,8 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     /**
-     * Records a column top a Frame write just established, reconciled against what this writer already
-     * resolves for {@code (partitionTimestamp, columnIndex)} instead of blindly recorded like {@link
-     * #upsertColumnTop} does.
-     * <p>
-     * A non-zero top goes straight through. Zero is the one value needing a check first: both "confirmed,
-     * no top" and "nothing recorded yet, resolved from a default" collapse to it. Already 0 here means
-     * nothing changed; anything else - most often -1, "column absent" - gets corrected to an explicit 0.
+     * Records a column top a Frame write just established, reconciled against what this writer already resolves for
+     * {@code (partitionTimestamp, columnIndex)} instead of blindly recorded like {@link #upsertColumnTop} does.
      */
     public void mergeColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
         if (colTop != 0 || getColumnTop(partitionTimestamp, columnIndex) != 0) {
@@ -457,10 +452,8 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     /**
-     * The {@link ColumnTopSink} view {@link #asColumnTopSink} hands out - one reused instance, forwarding
-     * to {@link #mergeColumnTop} against whichever partition was last armed. Keeps
-     * {@link ColumnTopSink#isThreadSafe}'s default {@code false}: every report goes straight into the
-     * outer writer's record list, which an upsert can insert into the middle of.
+     * The {@link ColumnTopSink} view {@link #asColumnTopSink} hands out - one reused instance, forwarding to {@link
+     * #mergeColumnTop} against whichever partition was last armed.
      */
     private final class ColumnTopSinkImpl implements ColumnTopSink {
         private long partitionTimestamp = Long.MIN_VALUE;

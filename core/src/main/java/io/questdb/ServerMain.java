@@ -635,11 +635,8 @@ public class ServerMain implements Closeable {
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPoolWrite, engine);
 
-                        // Own single thread, never the shared write pool: a composite partition's REWRITE
-                        // copies the whole partition inline on the worker that picked the job up, and on
-                        // sharedPoolWrite that copy would starve WAL apply, O3 and mat-view refresh for as
-                        // long as it runs. One worker also serialises compaction against itself, so at most
-                        // one partition copy is ever in flight.
+                        // Own single thread, never the shared write pool: a composite partition's REWRITE copies the
+                        // whole partition inline on the worker that picked the job up, and on sharedPoolWrite that
                         final PartitionCompactionScanJob partitionCompactionScanJob = new PartitionCompactionScanJob(engine);
                         final WorkerPool compactionPool = getWorkerPool(
                                 new PartitionCompactionPoolConfiguration(config.getMetrics()),
