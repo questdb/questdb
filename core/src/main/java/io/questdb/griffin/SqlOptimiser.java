@@ -38,6 +38,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -11084,6 +11085,54 @@ public class SqlOptimiser implements Mutable {
         LttbFunctionFactory.parseGapThresholdMicros(Chars.toString(gapStr, 1, gapStr.length() - 1), gapNode.position);
     }
 
+    private static boolean hasUnresolvableSdtCompdevReference(ExpressionNode compdevNode, SqlExecutionContext sqlExecutionContext) {
+        // An independently invalid outer reference preserves SDT's shape error even when
+        // parsing encounters another error first. Inspect only the error path: successful
+        // constant folding can discard binds. Query models have their own metadata scope.
+        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+        final ObjList<ExpressionNode> nodes = new ObjList<>();
+        nodes.add(compdevNode);
+        while (nodes.size() > 0) {
+            final ExpressionNode node = nodes.popLast();
+            if (node == null || node.type == ExpressionNode.QUERY) {
+                continue;
+            }
+            switch (node.paramCount) {
+                case 0 -> {
+                    if (node.type == ExpressionNode.LITERAL) {
+                        return true;
+                    }
+                    if (node.type == ExpressionNode.BIND_VARIABLE) {
+                        if (node.token.charAt(0) == ':') {
+                            if (bindVariableService != null && bindVariableService.getFunction(node.token) == null) {
+                                return true;
+                            }
+                        } else {
+                            try {
+                                if (Numbers.parseInt(node.token, 1, node.token.length()) < 1) {
+                                    return true;
+                                }
+                            } catch (NumericException e) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                case 1 -> nodes.add(node.rhs);
+                case 2 -> {
+                    nodes.add(node.lhs);
+                    nodes.add(node.rhs);
+                }
+                default -> {
+                    for (int i = 0; i < node.paramCount; i++) {
+                        nodes.add(node.args.getQuick(i));
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     /**
      * True only when {@code compdevNode} is a compile-time numeric constant whose double value is
      * non-negative and finite - the sole sdt compdev shape the {@code sdt(NDd)} keep-flag window
@@ -11092,7 +11141,7 @@ public class SqlOptimiser implements Mutable {
      * false, so the total sdt gate throws a specific "constant, non-negative finite compdev" error instead of
      * migrating (sdt has no cursor fallback).
      */
-    private boolean isConstantSdtCompdev(ExpressionNode compdevNode, SqlExecutionContext sqlExecutionContext) {
+    private boolean isConstantSdtCompdev(ExpressionNode compdevNode, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (compdevNode == null) {
             return false;
         }
@@ -11110,8 +11159,11 @@ public class SqlOptimiser implements Mutable {
             }
             final double compdev = func.getDouble(null);
             return compdev >= 0 && Numbers.isFinite(compdev);
-        } catch (Throwable th) {
-            return false;
+        } catch (SqlException e) {
+            if (hasUnresolvableSdtCompdevReference(compdevNode, sqlExecutionContext)) {
+                return false;
+            }
+            throw e;
         } finally {
             Misc.free(func);
         }
