@@ -274,6 +274,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         CoveringPageFrameCursor.coveredRowsWrittenForTesting = 0;
     }
 
+    /**
+     * Test-only view of {@link #hasAnyColumnTop}, so a test can compare the walk's answer
+     * against an independent oracle over the same reader without going through a query.
+     */
+    @TestOnly
+    public static boolean hasAnyColumnTopForTesting(TableReader reader, int writerIndex) {
+        return hasAnyColumnTop(reader, writerIndex);
+    }
+
     @TestOnly
     public static void clearMergeObserverForTesting() {
         TEST_MERGE_OBSERVER.remove();
@@ -399,19 +408,41 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private static boolean hasAnyColumnTop(TableReader reader, int writerIndex) {
         final ColumnVersionReader cv = reader.getColumnVersionReader();
         final long addedAtPartition = cv.getColumnTopPartitionTimestamp(writerIndex);
-        for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+        // Both lists ascend by partition timestamp -- the reader's partitions strictly, _cv's
+        // records by (timestamp, column index) -- so one merged pass answers what a
+        // getRecordIndex() binary search per partition answers, while reading each _cv block at
+        // most once. The search pays LongList.binarySearchBlock's up-to-66-block linear tail per
+        // partition instead. A pointer that only moves forward is also what steps over the two
+        // pseudo-partition records _cv keeps below every real timestamp, and over the records of
+        // partitions the reader no longer lists.
+        final LongList records = cv.getCachedColumnVersionList();
+        final int recordCount = records.size();
+        final int partitionCount = reader.getPartitionCount();
+        int recordIndex = 0;
+        for (int i = 0; i < partitionCount; i++) {
             final long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
-            final int recordIndex = cv.getRecordIndex(partitionTimestamp, writerIndex);
-            if (recordIndex > -1) {
-                if (cv.getColumnTopByIndex(recordIndex) > 0) {
+            while (recordIndex < recordCount && records.getQuick(recordIndex) < partitionTimestamp) {
+                recordIndex += ColumnVersionReader.BLOCK_SIZE;
+            }
+            // Within one timestamp the records ascend by column index, so stop at the first
+            // one at or above ours -- exactly where getRecordIndex() stops.
+            while (recordIndex < recordCount
+                    && records.getQuick(recordIndex) == partitionTimestamp
+                    && records.getQuick(recordIndex + ColumnVersionReader.COLUMN_INDEX_OFFSET) < writerIndex) {
+                recordIndex += ColumnVersionReader.BLOCK_SIZE;
+            }
+            if (recordIndex < recordCount
+                    && records.getQuick(recordIndex) == partitionTimestamp
+                    && records.getQuick(recordIndex + ColumnVersionReader.COLUMN_INDEX_OFFSET) == writerIndex) {
+                if (records.getQuick(recordIndex + ColumnVersionReader.COLUMN_TOP_OFFSET) > 0) {
                     return true;
                 }
             } else if (addedAtPartition > partitionTimestamp && reader.getPartitionRowCountFromMetadata(i) > 0) {
-                // No record and the partition predates the column: it holds no value for any of
-                // its rows, which is a top equal to its row count. An empty partition has no row
-                // to be wrong about. Read the size from the transaction file, not from
-                // openPartitionInfo, which answers -1 until the partition is opened -- and none
-                // of them are, this early in the open.
+                // No record and the partition predates the column: it holds no value for any
+                // of its rows, which is a top equal to its row count. An empty partition has
+                // no row to be wrong about. Read the size from the transaction file, not from
+                // openPartitionInfo, which answers -1 until the partition is opened -- and
+                // none of them are, this early in the open.
                 return true;
             }
         }
