@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -40,6 +41,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -373,15 +375,72 @@ public class SubsampleSdtDiagnosticTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLegacyPrecedenceIsolation() throws Exception {
+        assertModernPrecedence();
+        testLegacyPrecedenceNestedError();
+        assertModernPrecedence();
+    }
+
+    @Test
+    public void testLegacyPrecedenceFoldedBindsIsolation() throws Exception {
+        assertModernPrecedence();
+        testControlLegacyPrecedenceFoldedBinds();
+        assertModernPrecedence();
+    }
+
+    @Test
+    public void testLegacyPrecedenceErrorIsolation() throws Exception {
+        assertLegacyPrecedenceFailureRestoration(new AssertionError("legacy precedence error probe"));
+    }
+
+    @Test
+    public void testLegacyPrecedenceRuntimeExceptionIsolation() throws Exception {
+        assertLegacyPrecedenceFailureRestoration(new IllegalStateException("legacy precedence runtime probe"));
+    }
+
+    @Test
+    public void testLegacyPrecedenceSqlExceptionIsolation() throws Exception {
+        assertLegacyPrecedenceFailureRestoration(SqlException.$(0, "legacy precedence SQL probe"));
+    }
+
+    private void assertLegacyPrecedenceFailureRestoration(Throwable failure) throws Exception {
+        // Drain before the outer baseline: the scoped helper also disposes cached compilers.
+        engine.getSqlCompilerPool().releaseAll();
+        assertMemoryLeak(() -> {
+            try {
+                withLegacyPrecedence(() -> {
+                    if (failure instanceof Exception exception) {
+                        throw exception;
+                    }
+                    throw (Error) failure;
+                });
+                Assert.fail("expected legacy callback failure");
+            } catch (Throwable actual) {
+                Assert.assertSame(failure, actual);
+            }
+            assertModernPrecedence();
+        });
+    }
+
+    private void assertModernPrecedence() throws Exception {
+        assertMemoryLeak(() -> {
+            // Check both a newly constructed parser and the class-shared compiler pool.
+            try (SqlCompiler compiler = new SqlCompilerImpl(engine)) {
+                assertQuery("SELECT true OR false AND false AS value").withCompiler(compiler)
+                        .expectSize().returns("value\ntrue\n");
+            }
+            assertQuery("SELECT true OR false AND false AS value").expectSize().returns("value\ntrue\n");
+        });
+    }
+
+    @Test
     public void testControlLegacyPrecedenceFoldedBinds() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE, "true");
-        testControlConstantFoldedBinds();
+        withLegacyPrecedence(this::testControlConstantFoldedBinds);
     }
 
     @Test
     public void testLegacyPrecedenceNestedError() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE, "true");
-        testNestedUnknownFunction();
+        withLegacyPrecedence(this::testNestedUnknownFunction);
     }
 
     private void assertUnexpectedFailure(boolean isError, boolean isSdt) throws Exception {
@@ -441,5 +500,21 @@ public class SubsampleSdtDiagnosticTest extends AbstractCairoTest {
 
     private void assertValid(String expression) throws Exception {
         assertQuery(PREFIX + "sdt(v, " + expression + ")").timestamp("ts").returns(ROWS);
+    }
+
+    private void withLegacyPrecedence(TestUtils.LeakProneCode code) throws Exception {
+        final boolean isLegacyPrecedence = engine.getConfiguration().getCairoSqlLegacyOperatorPrecedence();
+        // Parsers capture precedence at construction. No borrowed compiler crosses either drain.
+        // Keep disposal outside nested leak checks so their compiler-memory baselines stay valid.
+        engine.getSqlCompilerPool().releaseAll();
+        try {
+            setProperty(PropertyKey.CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE, "true");
+            assertQuery("SELECT true OR false AND false AS value")
+                    .expectSize().returns("value\nfalse\n");
+            code.run();
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE, Boolean.toString(isLegacyPrecedence));
+            engine.getSqlCompilerPool().releaseAll();
+        }
     }
 }
