@@ -1055,6 +1055,23 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
      */
     @Test
     public void testScanDoesNotRebuildAStagingCopyWhileItsSwapIsStillQueued() throws Exception {
+        assertNoRebuildWhileSwapQueued("1h");
+    }
+
+    /**
+     * The same guard, under an idle timeout short enough to have expired the record that carries it. The
+     * timeout says how long a partition must sit still before compacting it is worth it, and a fuzz run
+     * sets it sub-millisecond; using it as the pending-swap window too dropped the record on the sweep
+     * right after the one that queued it, and the rebuild then re-created the exact directory the queued
+     * command was about to rename and reseal - taking the files out from under a copy still appending to
+     * them, which surfaced as a SIGBUS in PostingIndexWriter rather than as a wasted copy.
+     */
+    @Test
+    public void testScanDoesNotRebuildAStagingCopyWhileItsSwapIsStillQueuedUnderATinyIdleTimeout() throws Exception {
+        assertNoRebuildWhileSwapQueued("1us");
+    }
+
+    private void assertNoRebuildWhileSwapQueued(String idleTimeout) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
@@ -1087,7 +1104,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             }
             engine.releaseAllReaders();
 
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, idleTimeout);
             final long interval = engine.getConfiguration().getPartitionCompactionCheckInterval() * 1000;
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
 

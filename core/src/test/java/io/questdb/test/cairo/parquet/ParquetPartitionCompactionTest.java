@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
@@ -39,6 +40,7 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -89,6 +91,145 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
             Assert.assertNotEquals("the queued swap did not land", nameTxnBefore, parquetPartitionNameTxn(tableToken));
             assertUnusedBytesZero(tableToken);
             assertDataIntact("y");
+        });
+    }
+
+    /**
+     * The schema check compares the file's stored column type against the table's EXACTLY, so a type whose
+     * {@code _pm} descriptor did not round-trip byte for byte would read as a permanent schema change and
+     * the sweep would rewrite the partition once per interval for the rest of the table's life. This walks
+     * every column kind a partition can hold - fixed, var-size, symbol, geohash of each width, decimal,
+     * array, uuid, long256, ipv4, binary, both timestamp units - through a conversion nothing has altered
+     * since, and asserts the sweep finds nothing to do.
+     */
+    @Test
+    public void testIdleSweepLeavesAFreshlyConvertedPartitionOfEveryColumnTypeAlone() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        assertMemoryLeak(() -> {
+            createAllColumnTypesParquetPartition();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+
+            Assert.assertEquals(
+                    "the sweep rewrote a parquet partition nothing has changed since it was converted;" +
+                            " some column type does not round-trip through the _pm descriptor",
+                    nameTxnBefore,
+                    parquetPartitionNameTxn(tableToken)
+            );
+        });
+    }
+
+    /**
+     * The clearing half of {@link #testIdleSweepLeavesAFreshlyConvertedPartitionOfEveryColumnTypeAlone}:
+     * the re-encode has to reproduce every column kind under exactly the type the table names, or the
+     * schema check it just satisfied would report the partition stale again on the very next pass. One
+     * DROP over the all-types fixture, then two sweeps: the first rewrites, the second must find nothing,
+     * and the rows must survive the round trip.
+     */
+    @Test
+    public void testIdleSweepRewriteOfEveryColumnTypeSettlesAfterOnePass() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        assertMemoryLeak(() -> {
+            createAllColumnTypesParquetPartition();
+            execute("ALTER TABLE t DROP COLUMN c_long");
+            drainWalQueue();
+            // Read off the parquet partition as it stands, to compare the re-encoded rows against.
+            execute("CREATE TABLE t_expected AS (SELECT * FROM t) TIMESTAMP(ts) PARTITION BY DAY");
+            engine.releaseInactive();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+            final long nameTxnAfter = parquetPartitionNameTxn(tableToken);
+            Assert.assertNotEquals("the sweep left a partition still carrying a dropped column alone", nameTxnBefore, nameTxnAfter);
+
+            runSweepPastTheIdleTimeout();
+            Assert.assertEquals(
+                    "the re-encode did not reproduce some column's type exactly, so the sweep rewrites the" +
+                            " partition on every pass",
+                    nameTxnAfter,
+                    parquetPartitionNameTxn(tableToken)
+            );
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM t_expected", "SELECT * FROM t", LOG);
+        });
+    }
+
+    /**
+     * The ALTER COLUMN TYPE twin of {@link #testIdleSweepRewritesAParquetPartitionAfterDropColumn}: the file
+     * keeps the old physical type and every read pays a lazy per-row cast for it. One sweep re-encodes the
+     * column to the table's current type, and the pass after that finds nothing to do.
+     */
+    @Test
+    public void testIdleSweepRewritesAParquetPartitionAfterAlterColumnType() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        assertMemoryLeak(() -> {
+            createCleanParquetPartition("ac");
+            final TableToken tableToken = engine.verifyTableName("ac");
+            Assert.assertEquals(ColumnType.INT, ColumnType.tagOf(parquetColumnType(tableToken, "a")));
+
+            execute("ALTER TABLE ac ALTER COLUMN a TYPE LONG");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+
+            Assert.assertNotEquals("the sweep left a parquet partition holding the pre-ALTER type alone", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            Assert.assertEquals("the column was not re-encoded to the table's current type", ColumnType.LONG, ColumnType.tagOf(parquetColumnType(tableToken, "a")));
+
+            final long nameTxnAfter = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+            Assert.assertEquals("the schema trigger did not clear, so the sweep rewrites the partition every interval", nameTxnAfter, parquetPartitionNameTxn(tableToken));
+            assertCleanParquetDataIntact("ac");
+        });
+    }
+
+    /**
+     * A DROP COLUMN leaves the dropped column's pages in every row group of an already-converted parquet
+     * partition, and changes neither the partition's {@code nameTxn} nor its file size, so the dead-bytes
+     * trigger alone never notices. The schema check picks it up, and the compaction re-encodes the
+     * partition under the current schema instead of copying its row groups verbatim.
+     * <p>
+     * The second sweep is the important half: the rewrite must CLEAR what triggered it, or the job would
+     * rewrite the whole partition once per interval for the rest of the table's life.
+     */
+    @Test
+    public void testIdleSweepRewritesAParquetPartitionAfterDropColumn() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        assertMemoryLeak(() -> {
+            createCleanParquetPartition("dc");
+            final TableToken tableToken = engine.verifyTableName("dc");
+            Assert.assertTrue("the fixture should have converted with the column in place", parquetColumnType(tableToken, "b") >= 0);
+
+            execute("ALTER TABLE dc DROP COLUMN b");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+
+            Assert.assertNotEquals("the sweep left a parquet partition still carrying a dropped column alone", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            Assert.assertEquals("the dropped column is still in the rewritten file", -1, parquetColumnType(tableToken, "b"));
+
+            // Nothing left to react to: a second pass must leave the partition where it is.
+            final long nameTxnAfter = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+            Assert.assertEquals("the schema trigger did not clear, so the sweep rewrites the partition every interval", nameTxnAfter, parquetPartitionNameTxn(tableToken));
+            assertCleanParquetDataIntact("dc");
         });
     }
 
@@ -284,6 +425,38 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * One sweep with the clock past the idle timeout, applied by the job itself - no writer is held.
+     */
+    private static void runSweepPastTheIdleTimeout() {
+        try (PartitionCompactionScanJob job = newSweepPastTheIdleTimeout()) {
+            job.run();
+        }
+        engine.releaseInactive();
+    }
+
+    private void assertCleanParquetDataIntact(String tableName) throws Exception {
+        assertQuery("SELECT count() FROM " + tableName)
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("count\n5\n");
+        assertQuery("SELECT a, s, ts FROM " + tableName + " ORDER BY ts")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(
+                        """
+                                a\ts\tts
+                                1\tk1\t2020-01-01T00:00:00.000000Z
+                                2\tk2\t2020-01-01T01:00:00.000000Z
+                                3\tk1\t2020-01-01T02:00:00.000000Z
+                                4\tk2\t2020-01-01T03:00:00.000000Z
+                                99\tk1\t2020-01-02T00:00:00.000000Z
+                                """
+                );
+    }
+
     private void assertDataIntact(String tableName) throws Exception {
         assertQuery("SELECT count() FROM " + tableName)
                 .noLeakCheck()
@@ -347,6 +520,72 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * Table {@code t}: a parquet partition holding one column of every kind a partition can hold, converted
+     * and untouched since. The fixture both all-types schema tests are calibrated against.
+     */
+    private void createAllColumnTypesParquetPartition() throws Exception {
+            execute("""
+                    CREATE TABLE t AS (
+                      SELECT
+                        (x % 5 = 0) c_bool,
+                        x::byte c_byte,
+                        x::short c_short,
+                        rnd_char() c_char,
+                        x::int c_int,
+                        x::long c_long,
+                        x::float c_float,
+                        x::double c_double,
+                        cast(x as date) c_date,
+                        rnd_uuid4() c_uuid,
+                        rnd_long256() c_l256,
+                        rnd_ipv4() c_ip,
+                        rnd_bin(10, 20, 2) c_bin,
+                        rnd_geohash(5) c_gh5,
+                        rnd_geohash(15) c_gh15,
+                        rnd_geohash(31) c_gh31,
+                        rnd_geohash(60) c_gh60,
+                        ('s' || (x % 3))::symbol c_sym,
+                        ('str' || x)::string c_str,
+                        rnd_varchar(1, 5, 1) c_vch,
+                        ARRAY[[x::double, x + 0.5]] c_arr,
+                        (x::double)::decimal(10, 2) c_dec64,
+                        (x::double)::decimal(30, 4) c_dec128,
+                        (x * 1000)::timestamp_ns c_ts_ns,
+                        cast(x * 1000 as timestamp) c_ts_micro,
+                        timestamp_sequence('2024-01-01', 60_000_000) ts
+                      FROM long_sequence(20)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO t(c_int, ts) VALUES (1, '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+        engine.releaseInactive();
+    }
+
+    /**
+     * A parquet partition with no dead bytes at all, so the only thing a sweep can react to is the DDL the
+     * test applies afterwards.
+     */
+    private void createCleanParquetPartition(String tableName) throws Exception {
+        execute(
+                "CREATE TABLE " + tableName + " (a INT, b LONG, s SYMBOL, ts TIMESTAMP)\n" +
+                        "TIMESTAMP(ts) PARTITION BY DAY WAL"
+        );
+        execute(
+                "INSERT INTO " + tableName + "(a, b, s, ts) VALUES" +
+                        "(1, 10, 'k1', '2020-01-01T00:00:00.000Z')," +
+                        "(2, 20, 'k2', '2020-01-01T01:00:00.000Z')," +
+                        "(3, 30, 'k1', '2020-01-01T02:00:00.000Z')," +
+                        "(4, 40, 'k2', '2020-01-01T03:00:00.000Z')"
+        );
+        // Moves the table's max timestamp off the partition being converted: CONVERT PARTITION TO PARQUET
+        // will not take the active one.
+        execute("INSERT INTO " + tableName + "(a, b, s, ts) VALUES (99, 990, 'k1', '2020-01-02T00:00:00.000Z')");
+        drainWalQueue();
+        execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+        drainWalQueue();
+        engine.releaseInactive();
+    }
+
+    /**
      * Builds a Parquet-format partition with 3 row groups (row group size 4, 12 rows), then
      * performs 3 separate O3 (out-of-order) inserts into it, each an in-place update that appends
      * a merged row group and leaves the row group it replaced as dead bytes. With the auto-rewrite
@@ -401,6 +640,20 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
         return -1;
     }
 
+    /**
+     * The type the parquet FILE holds for {@code columnName}, or -1 when the file no longer carries it.
+     */
+    private int parquetColumnType(TableToken tableToken, String columnName) {
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final int parquetIdx = findParquetPartitionIndex(reader);
+            Assert.assertTrue("expected a parquet partition", parquetIdx >= 0);
+            reader.openPartition(parquetIdx);
+            final var meta = reader.getAndInitParquetPartitionDecoder(parquetIdx).metadata();
+            final int columnIndex = meta.getColumnIndex(columnName);
+            return columnIndex < 0 ? -1 : meta.getColumnType(columnIndex);
+        }
+    }
+
     private long parquetPartitionNameTxn(TableToken tableToken) {
         try (TableReader reader = engine.getReader(tableToken)) {
             final int parquetIdx = findParquetPartitionIndex(reader);
@@ -415,7 +668,9 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
     }
 
-    /** The directory the sweep stages the parquet partition's compacted copy into, for its live generation. */
+    /**
+     * The directory the sweep stages the parquet partition's compacted copy into, for its live generation.
+     */
     private String stagingDir(TableToken tableToken) {
         return stagingDir(tableToken, 0);
     }
