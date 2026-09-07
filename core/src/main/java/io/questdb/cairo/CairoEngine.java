@@ -126,7 +126,6 @@ import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.griffin.SqlCompilerFactoryImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SystemSqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -208,27 +207,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private static final CarrierLocal<ObjList<LiveViewInstance>> tlInvalidateSink = new CarrierLocal<>(ObjList::new);
     private static final CarrierLocal<StringSink> tlInvalidationReasonSink = new CarrierLocal<>(StringSink::new);
     private static final CarrierLocal<MatViewRefreshTask> tlMatViewRefreshTask = new CarrierLocal<>(MatViewRefreshTask::new);
-    protected final CairoConfiguration configuration;
-    private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
-    private final BackupSeqPartLock backupSeqPartLock = new BackupSeqPartLock();
-    private final DatabaseCheckpointAgent checkpointAgent;
-    private final CopyExportContext copyExportContext;
-    private final CopyImportContext copyImportContext;
-    private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
-    private final DataID dataID;
-    private final DependentViewGraph dependentViewGraph;
-    private final FunctionFactoryCache ffCache;
-    private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
-    private final Queue<MatViewTimerTask> matViewTimerQueue;
-    private final MessageBusImpl messageBus;
-    // volatile: assigned by completeInit() on the orchestrator thread, read by worker threads
-    // and hydration threads; volatile ensures safe cross-thread publication after completeInit.
-    private volatile MetadataCache metadataCache;
-    private final Metrics metrics;
-    private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
-    private final QueryRegistry queryRegistry;
-    private final ReaderPool readerPool;
-    private final RecentWriteTracker recentWriteTracker;
     // Fences client commits against the PRIMARY-to-REPLICA role flip. Commit/DDL paths
     // (TableUpdateDetails.commit/closeNoLock/releaseWriter, the /exec and pg-wire executor
     // commits, the ILP-UDP flush) hold the READ side while re-checking read-only mode and
@@ -256,6 +234,24 @@ public class CairoEngine implements Closeable, WriterSource {
     // a single static volatile read with no side effect when no test installed a hook.
     @TestOnly
     private static volatile Runnable roleSwitchMintObserver;
+    protected final CairoConfiguration configuration;
+    private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
+    private final BackupSeqPartLock backupSeqPartLock = new BackupSeqPartLock();
+    private final DatabaseCheckpointAgent checkpointAgent;
+    private final CopyExportContext copyExportContext;
+    private final CopyImportContext copyImportContext;
+    private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
+    private final DataID dataID;
+    private final DependentViewGraph dependentViewGraph;
+    private final FunctionFactoryCache ffCache;
+    private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
+    private final Queue<MatViewTimerTask> matViewTimerQueue;
+    private final MessageBusImpl messageBus;
+    private final Metrics metrics;
+    private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
+    private final QueryRegistry queryRegistry;
+    private final ReaderPool readerPool;
+    private final RecentWriteTracker recentWriteTracker;
     // The role-switch lock tracks read nesting by logical execution, so a fiber can re-enter after
     // migration without queueing behind a writer that is waiting for its outer read hold.
     private final RoleSwitchReadWriteLock roleSwitchLock = new RoleSwitchReadWriteLock();
@@ -264,15 +260,9 @@ public class CairoEngine implements Closeable, WriterSource {
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
-    // volatile: see metadataCache comment above.
-    private volatile SettingsStore settingsStore;
-    // volatile: see metadataCache comment above.
-    private volatile SqlCompilerPool sqlCompilerPool;
     private final TableFlagResolver tableFlagResolver;
     private final IDGenerator tableIdGenerator;
     private final TableMetadataPool tableMetadataPool;
-    // volatile: see metadataCache comment above.
-    private volatile TableNameRegistry tableNameRegistry;
     private final TableSequencerAPI tableSequencerAPI;
     private final ObjList<Telemetry<? extends AbstractTelemetryTask>> telemetries;
     private final Telemetry<TelemetryTask> telemetry;
@@ -287,7 +277,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private volatile boolean closing;
-    private volatile boolean isCompleteInitDone;
     // volatile: configReloader is reassigned by EntCairoEngine.switchRole on the lifecycle
     // thread and read by SqlCompilerImpl, GenericDropOperation, WriterPool, WalWriterPool,
     // CopyImportTask on worker threads; no implicit fence between writer and readers.
@@ -313,13 +302,24 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
+    private volatile boolean isCompleteInitDone;
+    private boolean isSqlExecutionCooperativePollingEnabled;
     private @NotNull LiveViewStateStore liveViewStateStore = NoOpLiveViewStateStore.INSTANCE;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     // Lazily initialized on first call to getMemoryTrackerProvider(), because the
     // FactoryProvider that produces it is not bound until config.init(engine, ...)
     // runs, which is *after* the engine constructor returns.
     private volatile MemoryTrackerProvider memoryTrackerProvider;
+    // volatile: assigned by completeInit() on the orchestrator thread, read by worker threads
+    // and hydration threads; volatile ensures safe cross-thread publication after completeInit.
+    private volatile MetadataCache metadataCache;
     private volatile Runnable recentWriteTrackerHydrationCallback;
+    // volatile: see metadataCache comment above.
+    private volatile SettingsStore settingsStore;
+    // volatile: see metadataCache comment above.
+    private volatile SqlCompilerPool sqlCompilerPool;
+    // volatile: see metadataCache comment above.
+    private volatile TableNameRegistry tableNameRegistry;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     // volatile: walListener is reassigned by PrimaryRoleState.openLoops on the lifecycle thread
@@ -444,6 +444,19 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public static RecordCursorFactory select(SqlCompiler compiler, CharSequence selectSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         return compiler.compile(selectSql, sqlExecutionContext).getRecordCursorFactory();
+    }
+
+    /**
+     * Test seam: installs a hook fired at the replicated-state externalization sites on both the fenced
+     * and the unfenced tree -- inside the parse-time DDL / replicated-write fences (within their
+     * role-switch read-lock hold) and at the OperationDispatcher externalization site before its
+     * read-lock acquire. Pass null to uninstall. The hook is shared across engines, so an installer must
+     * scope its own pause to the statement under test. Never set outside tests -- the field defaults to
+     * null and the fire-site is a no-op then.
+     */
+    @TestOnly
+    public static void setRoleSwitchMintObserver(Runnable observer) {
+        roleSwitchMintObserver = observer;
     }
 
     /**
@@ -1164,98 +1177,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    /**
-     * Repopulates {@code matViewStateStore} from the view graph and the on-disk {@code _mv}
-     * state, for every mat-view already present in {@code dependentViewGraph}. Unlike
-     * {@link #buildViewGraphs()} (which only creates state for views not yet in the graph), this
-     * forces {@code createViewState} for each graph view that has no state yet, so a freshly built
-     * store on a role promote ends up populated rather than empty. Idempotent: a view that already
-     * has state is re-initialized from disk, not duplicated.
-     * <p>
-     * Delegates to {@link #hydrateMatViewStateStore(MatViewStateStore)} with the engine field as
-     * target; see that overload for the enterprise role-switch contract.
-     */
-    public void hydrateMatViewStateStore() {
-        hydrateMatViewStateStore(matViewStateStore);
-    }
-
-    /**
-     * Repopulates {@code target} from the view graph and the on-disk {@code _mv} state, for every
-     * mat-view already present in {@code dependentViewGraph}. Unlike {@link #buildViewGraphs()} (which
-     * only creates state for views not yet in the graph), this forces {@code createViewState} for
-     * each graph view that has no state yet, so a freshly built store on a role promote ends up
-     * populated rather than empty. Idempotent: a view that already has state is re-initialized from
-     * disk, not duplicated.
-     * <p>
-     * Used by the enterprise role switch: a promote hydrates a PRIVATE, not-yet-installed
-     * {@link MatViewStateStore} and installs it into the engine only after hydration completes
-     * and a final closing check passes. Keeping the store private for the whole load means a
-     * close whose rendezvous budget expires mid-hydrate frees only the installed NoOp delegate,
-     * never the store this loop is writing into. The loader still reads engine-owned state
-     * (tableNameRegistry, sequencers), so the enterprise engine additionally quiesces an
-     * in-flight hydration, bounded, before teardown frees those. The per-token isClosing()
-     * poll below is the promptness half of that contract.
-     *
-     * @throws NullPointerException if {@code target} is null. Checked up front rather than left
-     *                              to fail implicitly: with zero views on disk nothing ever
-     *                              dereferences {@code target}, and with any view present the
-     *                              per-view {@code catch (Throwable)} further down would swallow
-     *                              the resulting NPE, so a null target could otherwise look like
-     *                              a silent no-op hydrate.
-     */
-    public void hydrateMatViewStateStore(MatViewStateStore target) {
-        Objects.requireNonNull(target, "target");
-        if (isClosing()) {
-            // Same abort as the per-token poll below, taken BEFORE the first engine-state read
-            // (getTableTokens walks the tableNameRegistry): a close that already won the race
-            // must not see this loader touch registry state at all.
-            throw CairoException.nonCritical().put("engine is closing; mat-view hydration aborted");
-        }
-        final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
-        getTableTokens(tableTokenBucket, false);
-        try (
-                Path path = new Path();
-                BlockFileReader reader = new BlockFileReader(configuration);
-                WalEventReader walEventReader = new WalEventReader(configuration);
-                MemoryCMR txnMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())
-        ) {
-            path.of(configuration.getDbRoot());
-            final int pathLen = path.size();
-            final MatViewStateReader matViewStateReader = new MatViewStateReader();
-            for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
-                if (isClosing()) {
-                    // SIGTERM/close landed mid-promote hydrate. Abort so the caller can unwind its
-                    // private, not-yet-installed target store: the enterprise close waits, bounded,
-                    // for this loop to exit before freeing engine-owned state (tableNameRegistry,
-                    // sequencers), and on budget expiry it LEAKS its teardown to process exit
-                    // rather than freeing under a wedged loader. The enterprise caller runs this
-                    // loader inside a role-switch critical-section span with two-sided admission
-                    // (the span is counted before the closing flag is checked), so a close cannot
-                    // miss a loader that was already admitted; this poll is the cooperative abort
-                    // that lets close's bounded wait finish promptly instead of expiring.
-                    // signalClose() sets closing before freeOnExit reaches the engine, so it is
-                    // observable here. The poll stays in the loop body, not loadMatViewIntoStore,
-                    // because that method's catch(Throwable) would swallow the abort.
-                    throw CairoException.nonCritical().put("engine is closing; mat-view hydration aborted");
-                }
-                final TableToken tableToken = tableTokenBucket.get(i);
-                if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
-                    loadMatViewIntoStore(
-                            target,
-                            tableToken,
-                            path,
-                            pathLen,
-                            reader,
-                            walEventReader,
-                            txnMem,
-                            matViewStateReader,
-                            true
-                    );
-                }
-            }
-        }
-    }
-
     public void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isIncrementalBackup) throws SqlException {
         checkpointAgent.checkpointCreate(circuitBreaker, false, isIncrementalBackup);
     }
@@ -1359,6 +1280,37 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void closeNameRegistry() {
         tableNameRegistry.close();
+    }
+
+    /**
+     * Runs the post-restore engine initialization that historically lived inside the constructor.
+     * MUST be called after
+     * BackupRestoreEnvelope.start() reaches READY when the orchestrator boots the engine envelope.
+     * Ordering is now enforced by the lifecycle DAG (engine.hardDeps includes "backup-restore"),
+     * not by sequential statement ordering as it used to be inside the constructor.
+     * <p>
+     * Calling twice on the same instance has undefined behavior -- fields like tableNameRegistry
+     * and metadataCache would be re-assigned, leaking the previous instances. Production code
+     * (the orchestrator EngineEnvelope.start() and the back-compat constructors) invoke it
+     * exactly once.
+     */
+    public void completeInit() {
+        initDataID();
+        settingsStore = new SettingsStore(configuration);
+        tableIdGenerator.open();
+        checkpointRecover();
+        // Initialize settings store after checkpoint recovery so it reads the restored file
+        settingsStore.init();
+        // Migrate database files.
+        EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+        tableNameRegistry = createTableNameRegistry(configuration, tableFlagResolver);
+        tableNameRegistry.reload();
+        this.sqlCompilerPool = new SqlCompilerPool(this);
+        if (configuration.isPartitionO3OverwriteControlEnabled()) {
+            enablePartitionOverwriteControl();
+        }
+        this.metadataCache = new MetadataCache(this);
+        this.isCompleteInitDone = true;
     }
 
     /**
@@ -1815,41 +1767,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 throw t;
             }
         }
-    }
-
-    /**
-     * Runs the post-restore engine initialization that historically lived inside the constructor.
-     * MUST be called after
-     * BackupRestoreEnvelope.start() reaches READY when the orchestrator boots the engine envelope.
-     * Ordering is now enforced by the lifecycle DAG (engine.hardDeps includes "backup-restore"),
-     * not by sequential statement ordering as it used to be inside the constructor.
-     * <p>
-     * Calling twice on the same instance has undefined behavior -- fields like tableNameRegistry
-     * and metadataCache would be re-assigned, leaking the previous instances. Production code
-     * (the orchestrator EngineEnvelope.start() and the back-compat constructors) invoke it
-     * exactly once.
-     */
-    public void completeInit() {
-        initDataID();
-        settingsStore = new SettingsStore(configuration);
-        tableIdGenerator.open();
-        checkpointRecover();
-        // Initialize settings store after checkpoint recovery so it reads the restored file
-        settingsStore.init();
-        // Migrate database files.
-        EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
-        tableNameRegistry = createTableNameRegistry(configuration, tableFlagResolver);
-        tableNameRegistry.reload();
-        this.sqlCompilerPool = new SqlCompilerPool(this);
-        if (configuration.isPartitionO3OverwriteControlEnabled()) {
-            enablePartitionOverwriteControl();
-        }
-        this.metadataCache = new MetadataCache(this);
-        this.isCompleteInitDone = true;
-    }
-
-    public boolean isCompleteInitDone() {
-        return isCompleteInitDone;
     }
 
     public @NotNull MatViewDefinition createMatView(
@@ -2735,6 +2652,98 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
+     * Repopulates {@code matViewStateStore} from the view graph and the on-disk {@code _mv}
+     * state, for every mat-view already present in {@code dependentViewGraph}. Unlike
+     * {@link #buildViewGraphs()} (which only creates state for views not yet in the graph), this
+     * forces {@code createViewState} for each graph view that has no state yet, so a freshly built
+     * store on a role promote ends up populated rather than empty. Idempotent: a view that already
+     * has state is re-initialized from disk, not duplicated.
+     * <p>
+     * Delegates to {@link #hydrateMatViewStateStore(MatViewStateStore)} with the engine field as
+     * target; see that overload for the enterprise role-switch contract.
+     */
+    public void hydrateMatViewStateStore() {
+        hydrateMatViewStateStore(matViewStateStore);
+    }
+
+    /**
+     * Repopulates {@code target} from the view graph and the on-disk {@code _mv} state, for every
+     * mat-view already present in {@code dependentViewGraph}. Unlike {@link #buildViewGraphs()} (which
+     * only creates state for views not yet in the graph), this forces {@code createViewState} for
+     * each graph view that has no state yet, so a freshly built store on a role promote ends up
+     * populated rather than empty. Idempotent: a view that already has state is re-initialized from
+     * disk, not duplicated.
+     * <p>
+     * Used by the enterprise role switch: a promote hydrates a PRIVATE, not-yet-installed
+     * {@link MatViewStateStore} and installs it into the engine only after hydration completes
+     * and a final closing check passes. Keeping the store private for the whole load means a
+     * close whose rendezvous budget expires mid-hydrate frees only the installed NoOp delegate,
+     * never the store this loop is writing into. The loader still reads engine-owned state
+     * (tableNameRegistry, sequencers), so the enterprise engine additionally quiesces an
+     * in-flight hydration, bounded, before teardown frees those. The per-token isClosing()
+     * poll below is the promptness half of that contract.
+     *
+     * @throws NullPointerException if {@code target} is null. Checked up front rather than left
+     *                              to fail implicitly: with zero views on disk nothing ever
+     *                              dereferences {@code target}, and with any view present the
+     *                              per-view {@code catch (Throwable)} further down would swallow
+     *                              the resulting NPE, so a null target could otherwise look like
+     *                              a silent no-op hydrate.
+     */
+    public void hydrateMatViewStateStore(MatViewStateStore target) {
+        Objects.requireNonNull(target, "target");
+        if (isClosing()) {
+            // Same abort as the per-token poll below, taken BEFORE the first engine-state read
+            // (getTableTokens walks the tableNameRegistry): a close that already won the race
+            // must not see this loader touch registry state at all.
+            throw CairoException.nonCritical().put("engine is closing; mat-view hydration aborted");
+        }
+        final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+        getTableTokens(tableTokenBucket, false);
+        try (
+                Path path = new Path();
+                BlockFileReader reader = new BlockFileReader(configuration);
+                WalEventReader walEventReader = new WalEventReader(configuration);
+                MemoryCMR txnMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())
+        ) {
+            path.of(configuration.getDbRoot());
+            final int pathLen = path.size();
+            final MatViewStateReader matViewStateReader = new MatViewStateReader();
+            for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+                if (isClosing()) {
+                    // SIGTERM/close landed mid-promote hydrate. Abort so the caller can unwind its
+                    // private, not-yet-installed target store: the enterprise close waits, bounded,
+                    // for this loop to exit before freeing engine-owned state (tableNameRegistry,
+                    // sequencers), and on budget expiry it LEAKS its teardown to process exit
+                    // rather than freeing under a wedged loader. The enterprise caller runs this
+                    // loader inside a role-switch critical-section span with two-sided admission
+                    // (the span is counted before the closing flag is checked), so a close cannot
+                    // miss a loader that was already admitted; this poll is the cooperative abort
+                    // that lets close's bounded wait finish promptly instead of expiring.
+                    // signalClose() sets closing before freeOnExit reaches the engine, so it is
+                    // observable here. The poll stays in the loop body, not loadMatViewIntoStore,
+                    // because that method's catch(Throwable) would swallow the abort.
+                    throw CairoException.nonCritical().put("engine is closing; mat-view hydration aborted");
+                }
+                final TableToken tableToken = tableTokenBucket.get(i);
+                if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
+                    loadMatViewIntoStore(
+                            target,
+                            tableToken,
+                            path,
+                            pathLen,
+                            reader,
+                            walEventReader,
+                            txnMem,
+                            matViewStateReader,
+                            true
+                    );
+                }
+            }
+        }
+    }
+
+    /**
      * Populates the RecentWriteTracker with data from existing tables.
      * This should be called at startup to ensure the tracker is not empty.
      * <p>
@@ -2899,93 +2908,6 @@ public class CairoEngine implements Closeable, WriterSource {
         invalidateLiveViewsForBaseTable0(baseTableToken, reason, null);
     }
 
-    private void invalidateLiveViewsForBaseTable0(
-            TableToken baseTableToken,
-            String reason,
-            @Nullable io.questdb.cairo.sql.RecordMetadata postChangeMetadata
-    ) {
-        final long invalidationTimestampUs = configuration.getMicrosecondClock().getTicks();
-        // Persist each affected view's _lv.s before flipping its in-memory invalid
-        // bit (see the per-view block below) so the invalidation survives restart.
-        // The registry-only helper exists for tests that don't need durability.
-        ObjList<LiveViewInstance> sink = tlInvalidateSink.get();
-        sink.clear();
-        liveViewRegistry.getViewsForBaseTable(baseTableToken.getTableName(), sink);
-        if (sink.size() == 0) {
-            // No dependent live views: skip the BlockFileWriter + Path alloc. Runs on
-            // every base-table drop / rename / schema change.
-            return;
-        }
-        final StringSink reasonSink = tlInvalidationReasonSink.get();
-        try (
-                BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
-                Path path = new Path()
-        ) {
-            for (int i = 0, n = sink.size(); i < n; i++) {
-                LiveViewInstance instance = sink.getQuick(i);
-                CharSequence viewReason = reason;
-                if (postChangeMetadata != null) {
-                    final String brokenColumn = instance.findFirstMissingOrRetypedColumn(postChangeMetadata);
-                    if (brokenColumn == null) {
-                        // Schema change touches columns the LV doesn't read — leave it valid.
-                        continue;
-                    }
-                    // Name the offending column so live_views().invalidation_reason
-                    // points at the exact dependency that broke, not just the
-                    // operation. markInvalid / LiveViewState.append copy the reason
-                    // out, so the per-view sink is safe to reuse across iterations.
-                    reasonSink.clear();
-                    reasonSink.put(reason).put(" [column=").put(brokenColumn).put(']');
-                    viewReason = reasonSink;
-                }
-                synchronized (instance) {
-                    // Queue invalidation behind any in-progress checkpoint
-                    // freeze so the snapshot reflects the pre-invalidation
-                    // state and the agent's _lv.s copy is not raced by this
-                    // rewrite.
-                    instance.waitForUnfrozen();
-                    final LiveViewStateReader reader = instance.getStateReader();
-                    // Persist _lv.s before flipping the in-memory invalid bit, matching
-                    // invalidateLiveView: WalPurgeJob releases the floor on the in-memory bit, so
-                    // writing the durable state first keeps a concurrent purge from releasing the
-                    // floor while _lv.s still records the view as valid. On persist failure the view
-                    // still flips invalid in-memory (best-effort, terminal) and re-derives the same
-                    // state on restart.
-                    path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
-                    try {
-                        blockFileWriter.of(path.$());
-                        LiveViewState.append(
-                                true,
-                                viewReason,
-                                invalidationTimestampUs,
-                                reader.getSubscribeFromSeqTxn(),
-                                reader.getLastProcessedSeqTxn(),
-                                reader.getAppliedWatermark(),
-                                reader.getLvConsumedSeqTxn(),
-                                reader.getSeedState(),
-                                reader.getSeedTargetSeqTxn(),
-                                blockFileWriter
-                        );
-                    } catch (Throwable t) {
-                        LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
-                                .$(", reason=").$safe(viewReason)
-                                .$(", error=").$(t).I$();
-                    }
-                    instance.markInvalid(viewReason, invalidationTimestampUs);
-                }
-                // Free refresh-worker-internal runtime state now that the view
-                // is INVALID. Best-effort: a refresh cycle in flight defers the
-                // free to the worker's finally hook (latch CAS fails here).
-                instance.tryFreeRuntimeStateIfInvalid();
-            }
-        } finally {
-            // The sink is carrier-local and outlives the call, so instances left in
-            // it stay reachable - including views a concurrent DROP retires - until
-            // the next invalidation overwrites the list. Release them here instead.
-            sink.clear();
-        }
-    }
-
     /**
      * Completes deadline-aware work that must finish after worker pools stop and before
      * {@link #close()} releases engine-owned resources. Subclasses retain ownership and return
@@ -2997,6 +2919,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public boolean isClosing() {
         return closing;
+    }
+
+    public boolean isCompleteInitDone() {
+        return isCompleteInitDone;
     }
 
     /**
@@ -3038,6 +2964,10 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     public boolean isReadOnlyMode() {
         return configuration.isReadOnlyInstance();
+    }
+
+    public final boolean isSqlExecutionCooperativePollingEnabled() {
+        return isSqlExecutionCooperativePollingEnabled;
     }
 
     public boolean isTableDropped(TableToken tableToken) {
@@ -3623,19 +3553,6 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void setRecentWriteTrackerHydrationCallback(Runnable callback) {
         this.recentWriteTrackerHydrationCallback = callback;
-    }
-
-    /**
-     * Test seam: installs a hook fired at the replicated-state externalization sites on both the fenced
-     * and the unfenced tree -- inside the parse-time DDL / replicated-write fences (within their
-     * role-switch read-lock hold) and at the OperationDispatcher externalization site before its
-     * read-lock acquire. Pass null to uninstall. The hook is shared across engines, so an installer must
-     * scope its own pause to the statement under test. Never set outside tests -- the field defaults to
-     * null and the fire-site is a no-op then.
-     */
-    @TestOnly
-    public static void setRoleSwitchMintObserver(Runnable observer) {
-        roleSwitchMintObserver = observer;
     }
 
     @TestOnly
@@ -4312,6 +4229,93 @@ public class CairoEngine implements Closeable, WriterSource {
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .I$();
             return false;
+        }
+    }
+
+    private void invalidateLiveViewsForBaseTable0(
+            TableToken baseTableToken,
+            String reason,
+            @Nullable io.questdb.cairo.sql.RecordMetadata postChangeMetadata
+    ) {
+        final long invalidationTimestampUs = configuration.getMicrosecondClock().getTicks();
+        // Persist each affected view's _lv.s before flipping its in-memory invalid
+        // bit (see the per-view block below) so the invalidation survives restart.
+        // The registry-only helper exists for tests that don't need durability.
+        ObjList<LiveViewInstance> sink = tlInvalidateSink.get();
+        sink.clear();
+        liveViewRegistry.getViewsForBaseTable(baseTableToken.getTableName(), sink);
+        if (sink.size() == 0) {
+            // No dependent live views: skip the BlockFileWriter + Path alloc. Runs on
+            // every base-table drop / rename / schema change.
+            return;
+        }
+        final StringSink reasonSink = tlInvalidationReasonSink.get();
+        try (
+                BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+                Path path = new Path()
+        ) {
+            for (int i = 0, n = sink.size(); i < n; i++) {
+                LiveViewInstance instance = sink.getQuick(i);
+                CharSequence viewReason = reason;
+                if (postChangeMetadata != null) {
+                    final String brokenColumn = instance.findFirstMissingOrRetypedColumn(postChangeMetadata);
+                    if (brokenColumn == null) {
+                        // Schema change touches columns the LV doesn't read — leave it valid.
+                        continue;
+                    }
+                    // Name the offending column so live_views().invalidation_reason
+                    // points at the exact dependency that broke, not just the
+                    // operation. markInvalid / LiveViewState.append copy the reason
+                    // out, so the per-view sink is safe to reuse across iterations.
+                    reasonSink.clear();
+                    reasonSink.put(reason).put(" [column=").put(brokenColumn).put(']');
+                    viewReason = reasonSink;
+                }
+                synchronized (instance) {
+                    // Queue invalidation behind any in-progress checkpoint
+                    // freeze so the snapshot reflects the pre-invalidation
+                    // state and the agent's _lv.s copy is not raced by this
+                    // rewrite.
+                    instance.waitForUnfrozen();
+                    final LiveViewStateReader reader = instance.getStateReader();
+                    // Persist _lv.s before flipping the in-memory invalid bit, matching
+                    // invalidateLiveView: WalPurgeJob releases the floor on the in-memory bit, so
+                    // writing the durable state first keeps a concurrent purge from releasing the
+                    // floor while _lv.s still records the view as valid. On persist failure the view
+                    // still flips invalid in-memory (best-effort, terminal) and re-derives the same
+                    // state on restart.
+                    path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+                    try {
+                        blockFileWriter.of(path.$());
+                        LiveViewState.append(
+                                true,
+                                viewReason,
+                                invalidationTimestampUs,
+                                reader.getSubscribeFromSeqTxn(),
+                                reader.getLastProcessedSeqTxn(),
+                                reader.getAppliedWatermark(),
+                                reader.getLvConsumedSeqTxn(),
+                                reader.getSeedState(),
+                                reader.getSeedTargetSeqTxn(),
+                                blockFileWriter
+                        );
+                    } catch (Throwable t) {
+                        LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
+                                .$(", reason=").$safe(viewReason)
+                                .$(", error=").$(t).I$();
+                    }
+                    instance.markInvalid(viewReason, invalidationTimestampUs);
+                }
+                // Free refresh-worker-internal runtime state now that the view
+                // is INVALID. Best-effort: a refresh cycle in flight defers the
+                // free to the worker's finally hook (latch CAS fails here).
+                instance.tryFreeRuntimeStateIfInvalid();
+            }
+        } finally {
+            // The sink is carrier-local and outlives the call, so instances left in
+            // it stay reachable - including views a concurrent DROP retires - until
+            // the next invalidation overwrites the list. Release them here instead.
+            sink.clear();
         }
     }
 
@@ -4995,6 +4999,14 @@ public class CairoEngine implements Closeable, WriterSource {
 
     protected @NotNull ViewGraph createViewGraph() {
         return new ViewGraph();
+    }
+
+    /**
+     * Enables the cooperative SQL circuit-breaker extension for this engine. Subclasses must call
+     * this only after their constructor has established the corresponding scheduling runtime.
+     */
+    protected final void enableSqlExecutionCooperativePolling() {
+        isSqlExecutionCooperativePollingEnabled = true;
     }
 
     protected Iterable<FunctionFactory> getFunctionFactories() {

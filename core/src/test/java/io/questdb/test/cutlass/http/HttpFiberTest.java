@@ -872,7 +872,7 @@ public class HttpFiberTest extends AbstractTest {
     }
 
     @Test
-    public void testRequestJobReservesFiberForEachIoEvent() throws Exception {
+    public void testRequestJobDirectMountsReservedFiberForEachIoEvent() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(2);
             DisconnectingHttpConnectionContext firstContext = null;
@@ -899,9 +899,9 @@ public class HttpFiberTest extends AbstractTest {
                         waitProcessor,
                         runtime
                 ));
-                Assert.assertEquals(2, runtime.getOutstandingTaskCount());
-                Assert.assertEquals(2, runtime.drain(8));
                 Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(0, runtime.getQueuedCount());
+                Assert.assertEquals(0, runtime.drain(8));
                 Assert.assertTrue(firstTask.isDone());
                 Assert.assertTrue(secondTask.isDone());
                 Assert.assertEquals(2, dispatcher.getDisconnectCount());
@@ -967,6 +967,47 @@ public class HttpFiberTest extends AbstractTest {
                 if (waitProcessor != null) {
                     waitProcessor.close();
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testRerunDirectMountsReservedFiber() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final DefaultHttpServerConfiguration configuration =
+                    new DefaultHttpServerConfiguration(new DefaultTestCairoConfiguration(root));
+            final TestHttpDispatcher dispatcher = new TestHttpDispatcher();
+            final HttpConnectionContext context = new HttpConnectionContext(configuration, PlainSocketFactory.INSTANCE) {
+                @Override
+                public boolean tryRerun(
+                        HttpRequestProcessorSelector selector,
+                        RescheduleContext rescheduleContext
+                ) {
+                    return true;
+                }
+            };
+            final HttpConnectionFiberTask task = HttpConnectionFiberTask.createForTesting(context, dispatcher);
+            final Fiber fiber = runtime.tryReserveFiber();
+            Assert.assertNotNull(fiber);
+            final long reservationEpoch = fiber.getReservationEpoch();
+            try {
+                Assert.assertEquals(
+                        LaunchResult.LAUNCHED,
+                        task.launchRerunReservedForTesting(runtime, fiber, reservationEpoch)
+                );
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(0, runtime.getQueuedCount());
+                Assert.assertEquals(0, runtime.drain(8));
+                Assert.assertEquals(1, dispatcher.registerCount);
+                Assert.assertEquals(IOOperation.READ, dispatcher.registeredOperation);
+                runtime.releaseReservedFiber(fiber, reservationEpoch);
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+            } finally {
+                runtime.releaseReservedFiber(fiber, reservationEpoch);
+                closeFiberRuntime(runtime);
+                task.closeForTesting();
+                context.close();
             }
         });
     }
@@ -1313,6 +1354,24 @@ public class HttpFiberTest extends AbstractTest {
                             "{\"query\":\"SELECT 42 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[42]],\"count\":1}",
                             "SELECT 42 x"
                     );
+                    if (workerPoolMode == WorkerPoolMode.FIBER_HOST && isFiberExecutionExpected) {
+                        final FiberRuntime fiberRuntime = workerPool.getFiberRuntime();
+                        TestUtils.assertEventually(() -> {
+                            final long launched = fiberRuntime.getLaunchCount(LaunchResult.LAUNCHED);
+                            Assert.assertTrue(launched > 0);
+                            Assert.assertEquals(launched, fiberRuntime.getMountCount());
+                            Assert.assertEquals(0, fiberRuntime.getMountedCount());
+                            Assert.assertEquals(0, fiberRuntime.getOutstandingTaskCount());
+                            Assert.assertEquals(0, fiberRuntime.getParkedFiberCount());
+                            Assert.assertEquals(0, fiberRuntime.getQueuedCount());
+                        }, 5);
+                        Assert.assertEquals(0, fiberRuntime.getGlobalPublicationCount());
+                        Assert.assertEquals(0, fiberRuntime.getGlobalSelectionCount());
+                        Assert.assertEquals(0, fiberRuntime.getLocalFallbackPublicationCount());
+                        Assert.assertEquals(0, fiberRuntime.getLocalPublicationCount());
+                        Assert.assertEquals(0, fiberRuntime.getLocalSelectionCount());
+                        Assert.assertEquals(0, fiberRuntime.getStolenSelectionCount());
+                    }
                 }
 
                 Assert.assertEquals(workerPoolMode, workerPool.getWorkerPoolMode());

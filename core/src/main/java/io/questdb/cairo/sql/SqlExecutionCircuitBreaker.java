@@ -31,7 +31,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, CancellationBinding.Source {
 
+    /**
+     * Minimum interval between cooperative engine hooks on high-throttle stateful paths.
+     */
+    long COOPERATIVE_POLL_INTERVAL_NANOS = 50_000L;
+
+    /**
+     * Number of healthy, suspendable breaker visits between cooperative engine hooks for the
+     * non-stateful variants.
+     */
     int COOPERATIVE_POLL_STRIDE = 128;
+
+    /** Number of healthy visits between cooperative clock samples on hot stateful paths. */
+    int STATEFUL_COOPERATIVE_POLL_STRIDE = 1024;
     int STATE_OK = 0;
     SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
         @Override
@@ -278,8 +290,11 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
      * Stateful breaker check followed by the policy-neutral cooperative-poll extension point.
      * Use only at a call site where the current continuation may safely suspend. The OSS default
      * preserves {@link #statefulThrowExceptionIfTripped()} semantics. Implementations backed by a
-     * {@code CairoEngine} invoke its extension point after the breaker check; neither the breaker
-     * nor this interface carries scheduling state.
+     * {@code CairoEngine} sample cooperative eligibility on real breaker checks and at most
+     * {@link #STATEFUL_COOPERATIVE_POLL_STRIDE} healthy visits apart. High-throttle paths coalesce
+     * engine hooks that occur within {@link #COOPERATIVE_POLL_INTERVAL_NANOS}; zero and small
+     * throttle values retain the non-stateful {@link #COOPERATIVE_POLL_STRIDE} visit cadence to
+     * avoid frequent clock reads.
      */
     default void statefulThrowExceptionIfTrippedOrYield() {
         statefulThrowExceptionIfTripped();

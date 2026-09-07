@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -68,6 +69,7 @@ import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.tasks.GroupByLongTopKTask;
 import io.questdb.tasks.GroupByMergeShardTask;
 import io.questdb.tasks.LatestByTask;
@@ -85,6 +87,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class QueryParallelFiberDispatcherTest extends AbstractTest {
@@ -1238,6 +1241,203 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testMergeShardFiberOwnerHelpsOwnUnpublishedShards() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicLong clockTicks = new AtomicLong();
+            final NanosecondClock nanosecondClock = () -> clockTicks.getAndAdd(1_000_000L);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getGroupByMergeShardQueueCapacity() {
+                    return 1;
+                }
+
+                @Override
+                public int getGroupByShardingThreshold() {
+                    return 1;
+                }
+
+                @Override
+                public NanosecondClock getNanosecondClock() {
+                    return nanosecondClock;
+                }
+
+                @Override
+                public int getSqlPageFrameMaxRows() {
+                    return 128;
+                }
+
+                @Override
+                public int getSqlPageFrameMinRows() {
+                    return 1;
+                }
+            };
+            final WorkerPoolConfiguration poolConfiguration = new WorkerPoolConfiguration() {
+                @Override
+                public Metrics getMetrics() {
+                    return Metrics.DISABLED;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "fiber-owner-merge-shard-test";
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 0;
+                }
+
+                @Override
+                public WorkerPoolMode getWorkerPoolMode() {
+                    return WorkerPoolMode.FIBER_HOST;
+                }
+            };
+            final TestWorkerPool queryPool = new TestWorkerPool(poolConfiguration);
+            try (CairoEngine engine = new CairoEngine(configuration);
+                 SqlCompiler compiler = engine.getSqlCompiler();
+                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine, 1);
+                 TestWorkerPool ownerPool = new TestWorkerPool(
+                         "fiber-owner-merge-shard-owner",
+                         1,
+                         Metrics.DISABLED,
+                         WorkerPoolMode.FIBER_HOST
+                 )) {
+                TestUtils.setupWorkerPool(queryPool, engine);
+                queryPool.start(LOG);
+                final QueryParallelFiberDispatcher dispatcher = engine.getMessageBus()
+                        .getQueryParallelFiberDispatcher();
+                Assert.assertNotNull(dispatcher);
+                engine.execute(
+                        "CREATE TABLE tab AS (SELECT ('k' || x) key, x v FROM long_sequence(128))",
+                        executionContext
+                );
+                try (RecordCursorFactory factory = compiler.compile(
+                        "SELECT key, MAX(v) m FROM tab",
+                        executionContext
+                ).getRecordCursorFactory()) {
+                    TestUtils.assertFactoryInTree(factory, AsyncGroupByRecordCursorFactory.class);
+                }
+
+                final FiberRuntime ownerRuntime = ownerPool.getFiberRuntime();
+                final AtomicReference<Throwable> ownerFailure = new AtomicReference<>();
+                final CountDownLatch ownerDone = new CountDownLatch(1);
+                final AtomicBoolean launched = new AtomicBoolean();
+                final AtomicInteger rowCount = new AtomicInteger();
+                final AtomicLong valueSum = new AtomicLong();
+                final FiberTask ownerTask = new FiberTask() {
+                    @Override
+                    protected void onDone() {
+                        ownerDone.countDown();
+                    }
+
+                    @Override
+                    protected void onError(Throwable th) {
+                        ownerFailure.compareAndSet(null, th);
+                        ownerDone.countDown();
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        SuspensionScope.enterTimerShards(engine.getTimerShards());
+                        try (RecordCursorFactory factory = engine.select(
+                                "SELECT key, MAX(v) m FROM tab",
+                                executionContext
+                        ); RecordCursor cursor = factory.getCursor(executionContext)) {
+                            final Record record = cursor.getRecord();
+                            while (cursor.hasNext()) {
+                                rowCount.incrementAndGet();
+                                valueSum.addAndGet(record.getLong(1));
+                            }
+                        } catch (io.questdb.griffin.SqlException e) {
+                            throw new AssertionError(e);
+                        }
+                        return true;
+                    }
+                };
+                ownerPool.assign(_ -> {
+                    if (launched.compareAndSet(false, true)) {
+                        final LaunchResult result = ownerRuntime.launch(ownerTask);
+                        if (result != LaunchResult.LAUNCHED) {
+                            ownerFailure.compareAndSet(
+                                    null,
+                                    new AssertionError("owner Fiber launch failed [result=" + result + ']')
+                            );
+                            ownerDone.countDown();
+                        }
+                        return true;
+                    }
+                    return false;
+                });
+
+                final MessageBus messageBus = engine.getMessageBus();
+                final MPSequence pubSeq = messageBus.getGroupByMergeShardPubSeq();
+                final MCSequence subSeq = messageBus.getGroupByMergeShardSubSeq();
+                final long publishedBefore = pubSeq.current();
+                boolean isOwnerPoolStarted = false;
+                try {
+                    ownerPool.start(LOG);
+                    isOwnerPoolStarted = true;
+                    awaitParkedCount(ownerRuntime, 1, ownerFailure);
+                    Assert.assertEquals(
+                            "the Fiber owner must leave only the first published shard for consumers",
+                            publishedBefore + 1,
+                            pubSeq.current()
+                    );
+                    Assert.assertTrue(
+                            "unmanaged owner helping must honor its cooperative deadline",
+                            ownerRuntime.getMountCount() > 1
+                    );
+
+                    final long cursor = subSeq.next();
+                    Assert.assertEquals(publishedBefore + 1, cursor);
+                    final GroupByMergeShardTask task = messageBus.getGroupByMergeShardQueue().get(cursor);
+                    final GroupByShardingContext shardingContext = task.getShardingContext();
+                    GroupByMergeShardJob.run(-1, task, subSeq, cursor, shardingContext);
+                    try {
+                        dispatcher.signalQueueProgress();
+                    } finally {
+                        dispatcher.signalOwnerProgress(shardingContext.getProgressState());
+                    }
+
+                    Assert.assertTrue("merge-shard Fiber owner did not finish", ownerDone.await(10, TimeUnit.SECONDS));
+                    Assert.assertNull(ownerFailure.get());
+                    Assert.assertEquals(128, rowCount.get());
+                    Assert.assertEquals(8_256, valueSum.get());
+                    Assert.assertEquals(pubSeq.current(), subSeq.current());
+                    Assert.assertEquals(0, dispatcher.getMergeShardCreatedTaskCount());
+                } finally {
+                    if (ownerDone.getCount() > 0) {
+                        executionContext.getCircuitBreaker().cancel();
+                        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                        while (ownerDone.getCount() > 0 && System.nanoTime() < deadline) {
+                            final long cursor = subSeq.next();
+                            if (cursor > -1) {
+                                final GroupByMergeShardTask task = messageBus.getGroupByMergeShardQueue().get(cursor);
+                                final GroupByShardingContext shardingContext = task.getShardingContext();
+                                try {
+                                    GroupByMergeShardJob.run(-1, task, subSeq, cursor, shardingContext);
+                                } catch (Throwable th) {
+                                    ownerFailure.compareAndSet(null, th);
+                                } finally {
+                                    dispatcher.signalQueueProgress();
+                                    dispatcher.signalOwnerProgress(shardingContext.getProgressState());
+                                }
+                            } else {
+                                Os.pause();
+                            }
+                        }
+                    }
+                    if (isOwnerPoolStarted) {
+                        ownerPool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+                    }
+                }
+            } finally {
+                queryPool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+            }
+        });
+    }
+
+    @Test
     public void testMergeShardOwnerCancelledMidDrainWaitsForCompletion() throws Exception {
         assertParallelOwnerCancelledMidDrain(DrainTaskType.MERGE_SHARD);
     }
@@ -1853,9 +2053,12 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 }
             };
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                final FiberDispatchContext contextA = new FiberDispatchContext() {
-                };
-                final FiberDispatchContext contextB = new FiberDispatchContext() {
+                final AtomicLong ownerId = new AtomicLong(1);
+                final FiberDispatchContext context = new FiberDispatchContext() {
+                    @Override
+                    public long getQueryRegistryOwnerId() {
+                        return ownerId.get();
+                    }
                 };
                 final RecordingFiberDispatchController controller = new RecordingFiberDispatchController();
                 final FiberRuntime runtime = controller.createRuntime(1);
@@ -1874,7 +2077,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                             new AtomicBooleanCircuitBreaker(engine),
                             doneA,
                             1,
-                            null,
+                            () -> ownerId.set(2),
                             new AsyncQueryProgressState()
                     );
                     final TestVectorAggregateEntry entryB = new TestVectorAggregateEntry(
@@ -1899,9 +2102,9 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                         }
                     };
 
-                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(publisherA, contextA));
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(publisherA, context));
                     Assert.assertEquals(1, runtime.drain(1));
-                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(publisherB, contextB));
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(publisherB, context));
                     Assert.assertEquals(1, runtime.drain(1));
                     Assert.assertFalse(dispatcher.consumeVectorAggregate(-1));
 
@@ -1914,10 +2117,14 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     Assert.assertEquals(1, doneB.get());
                     Assert.assertEquals(0, runtime.getOutstandingTaskCount());
                     Assert.assertEquals(4, controller.getMountCount());
-                    Assert.assertSame(contextA, controller.getMountedContext(0));
-                    Assert.assertSame(contextB, controller.getMountedContext(1));
-                    Assert.assertSame(contextA, controller.getMountedContext(2));
-                    Assert.assertSame(contextB, controller.getMountedContext(3));
+                    Assert.assertSame(context, controller.getMountedContext(0));
+                    Assert.assertEquals(1, controller.getMountedOwnerId(0));
+                    Assert.assertSame(context, controller.getMountedContext(1));
+                    Assert.assertEquals(1, controller.getMountedOwnerId(1));
+                    Assert.assertSame(context, controller.getMountedContext(2));
+                    Assert.assertEquals(1, controller.getMountedOwnerId(2));
+                    Assert.assertSame(context, controller.getMountedContext(3));
+                    Assert.assertEquals(2, controller.getMountedOwnerId(3));
                     Assert.assertEquals(4, controller.getUnmountCount());
                 } finally {
                     closeRuntime(runtime);

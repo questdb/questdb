@@ -446,6 +446,24 @@ public final class FiberRuntime {
         fiberPool.clearRegistry();
     }
 
+    /**
+     * Consumes one virtual mount from the current owned Worker turn. Dispatch controllers use
+     * this to renew a mounted Fiber without letting renewals extend the Worker's configured mount
+     * budget. Returns the number of remaining mounts, or -1 outside an owned drain or when the
+     * current turn has exhausted its budget.
+     */
+    public int consumeCurrentMountBudget() {
+        final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        if (scope.fiberDrainRuntime != this || scope.fiber == null) {
+            return -1;
+        }
+        final int mountLimit = Math.min(scope.fiberDrainMountLimit, configuration.mountBudget);
+        if (scope.fiberDrainMountCount >= mountLimit) {
+            return -1;
+        }
+        return mountLimit - ++scope.fiberDrainMountCount;
+    }
+
     public int drain(int attemptBudget) {
         validateAttemptBudget(attemptBudget);
         if (bindingRole == BindingRole.POOL_BOUND && ownerWorkerCount > 0) {
@@ -500,21 +518,58 @@ public final class FiberRuntime {
     public int drainOwned(OwnerContext ownerContext, int attemptBudget) {
         validateAttemptBudget(attemptBudget);
         final Shard shard = ownedShard(ownerContext);
-        if (SuspensionScope.hasAnyRoleSwitchLock(shard.carrierScope)) {
+        // Every queued, mounted, parked, reserved, or dispatch-pending Fiber owns a task slot.
+        // External publication increments the count before queue commit and wakes after commit, so
+        // observing zero while OPEN can skip all queue probes without losing a concurrent launch.
+        if (state == FiberRuntimeState.OPEN && outstandingTaskCount.get() == 0) {
+            return 0;
+        }
+        final SuspensionScope.CarrierScope scope = shard.carrierScope;
+        if (SuspensionScope.hasAnyRoleSwitchLock(scope)) {
             tryClose();
             return 0;
         }
         int attempts = 0;
-        while (attempts < attemptBudget) {
-            final Fiber fiber = selectOwned(shard);
-            if (fiber == null) {
-                break;
+        if (dispatchSession == null) {
+            while (attempts < attemptBudget) {
+                final Fiber fiber = selectOwned(shard);
+                if (fiber == null) {
+                    break;
+                }
+                attempts++;
+                processSelected(fiber, ownerContext, false);
             }
-            attempts++;
-            processSelected(fiber, ownerContext, false);
+            if (attempts == attemptBudget && hasQueuedWork()) {
+                budgetExhaustionCount.increment();
+            }
+            tryClose();
+            return attempts;
         }
-        if (attempts == attemptBudget && hasQueuedWork()) {
-            budgetExhaustionCount.increment();
+        if (scope.fiberDrainRuntime != null) {
+            throw new IllegalStateException("owned Fiber drain cannot nest");
+        }
+        scope.fiberDrainLocalQueue = shard.localQueue;
+        scope.fiberDrainMountCount = 0;
+        scope.fiberDrainMountLimit = attemptBudget;
+        scope.fiberDrainRuntime = this;
+        try {
+            while (hasCurrentMountBudget(scope)) {
+                final Fiber fiber = selectOwned(shard);
+                if (fiber == null) {
+                    break;
+                }
+                attempts++;
+                scope.fiberDrainMountCount++;
+                processSelected(fiber, ownerContext, false);
+            }
+            if (!hasCurrentMountBudget(scope) && hasQueuedWork()) {
+                budgetExhaustionCount.increment();
+            }
+        } finally {
+            scope.fiberDrainLocalQueue = null;
+            scope.fiberDrainMountCount = 0;
+            scope.fiberDrainMountLimit = 0;
+            scope.fiberDrainRuntime = null;
         }
         tryClose();
         return attempts;
@@ -683,6 +738,11 @@ public final class FiberRuntime {
     }
 
     @TestOnly
+    public @Nullable Fiber tryDequeueGlobalForTesting() {
+        return runQueue.tryDequeue();
+    }
+
+    @TestOnly
     public @Nullable Fiber tryDequeueLocalForTesting(int workerId) {
         return getShardForTesting(workerId).localQueue.tryDequeue();
     }
@@ -697,6 +757,21 @@ public final class FiberRuntime {
 
     public long getWakeClaimCount() {
         return wakeClaimCount.sum();
+    }
+
+    /**
+     * Reports whether the current owned Worker turn can immediately service another Fiber. The
+     * check covers the runtime-wide injection queue and this Worker's local queue without scanning
+     * peer shards. Calls outside an owned drain conservatively report work.
+     */
+    public boolean hasQueuedWorkForCurrentOwner() {
+        final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        return scope.fiberDrainRuntime != this
+                || scope.fiber == null
+                || scope.fiberDrainLocalQueue == null
+                || runQueue.hasAvailable()
+                || scope.fiberDrainLocalQueue.hasAvailable()
+                || orphanedCount.get() != 0;
     }
 
     /**
@@ -1311,6 +1386,10 @@ public final class FiberRuntime {
             finalizerCount.decrementAndGet();
         }
         return true;
+    }
+
+    private boolean hasCurrentMountBudget(SuspensionScope.CarrierScope scope) {
+        return scope.fiberDrainMountCount < Math.min(scope.fiberDrainMountLimit, configuration.mountBudget);
     }
 
     private boolean hasQueuedWork() {

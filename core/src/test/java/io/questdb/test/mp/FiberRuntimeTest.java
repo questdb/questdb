@@ -310,6 +310,28 @@ public class FiberRuntimeTest {
     }
 
     @Test
+    public void testCooperativeYieldReschedulesUncontrolledFiber() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final CooperativeYieldTask task = new CooperativeYieldTask();
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertFalse(task.isResumed);
+                Assert.assertFalse(task.isDone());
+                Assert.assertEquals(1, runtime.getMountCount());
+                Assert.assertEquals(1, runtime.getQueuedCount());
+
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertTrue(task.isResumed);
+                Assert.assertTrue(task.isDone());
+                Assert.assertEquals(2, runtime.getMountCount());
+                Assert.assertEquals(0, runtime.getQueuedCount());
+            }
+        });
+    }
+
+    @Test
     public void testConfigurationListenerReceivesCurrentValuesOnRegistration() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1, 1, 1);
@@ -1570,6 +1592,17 @@ public class FiberRuntimeTest {
             }
             hasReservedAfterWake = true;
             runtime.releaseReservedFiber(fiber, fiber.getReservationEpoch());
+            return true;
+        }
+    }
+
+    private static class CooperativeYieldTask extends FiberTask {
+        private boolean isResumed;
+
+        @Override
+        protected boolean runStep() {
+            Assert.assertTrue(Fiber.yieldCooperatively());
+            isResumed = true;
             return true;
         }
     }

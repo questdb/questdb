@@ -127,6 +127,93 @@ public class FiberDispatchControllerTest {
     }
 
     @Test
+    public void testCooperativePollReportsOnlyActualRemount() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CooperativePollYieldTicket ticket = new CooperativePollYieldTicket();
+            final TestController controller = new TestController(ticket);
+            final FiberRuntime runtime = newRuntime(1, controller);
+            final CooperativePollTask task = new CooperativePollTask();
+
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertFalse(task.isDone());
+            Assert.assertEquals(FiberDispatchRoute.DISPATCH_YIELD, controller.session.peekRoute());
+
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertTrue(task.isRemountReported);
+            Assert.assertTrue(task.isDone());
+            Assert.assertEquals(1, ticket.pollCount);
+            Assert.assertEquals(2, ticket.mountCount);
+            Assert.assertEquals(2, ticket.unmountCount);
+
+            close(runtime);
+        });
+    }
+
+    @Test
+    public void testCooperativeYieldPreservesNullContextAndRequiresGrant() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestController controller = new TestController();
+            final FiberRuntime runtime = newRuntime(1, controller);
+            final CooperativeYieldTask task = new CooperativeYieldTask();
+
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertFalse(task.isResumed);
+            Assert.assertFalse(task.isDone());
+            Assert.assertEquals(FiberDispatchRoute.DISPATCH_YIELD, controller.session.peekRoute());
+            Assert.assertNull(controller.session.pending.element().request.getDispatchContext());
+            Assert.assertEquals(1, controller.ticket.mountCount);
+            Assert.assertEquals(1, controller.ticket.unmountCount);
+
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertTrue(task.isResumed);
+            Assert.assertTrue(task.isDone());
+            Assert.assertEquals(2, controller.ticket.mountCount);
+            Assert.assertEquals(2, controller.ticket.unmountCount);
+
+            close(runtime);
+        });
+    }
+
+    @Test
+    public void testCurrentMountBudgetIncludesVirtualMountsAndConfigurationDecrease() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestController controller = new TestController();
+            final FiberRuntime runtime = new FiberRuntime(2, 2, 4, 1, controller, FiberWakeSink.NO_OP);
+            final FiberRuntime.OwnerContext owner = runtime.getOwnerContext(0);
+            final BudgetConsumingTask firstTask = new BudgetConsumingTask(runtime, true);
+            final BudgetConsumingTask secondTask = new BudgetConsumingTask(runtime, false);
+            runtime.activateOwner(owner);
+
+            Assert.assertEquals(-1, runtime.consumeCurrentMountBudget());
+            Assert.assertTrue(runtime.hasQueuedWorkForCurrentOwner());
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(firstTask));
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(secondTask));
+            controller.session.grantAll();
+
+            Assert.assertEquals(1, runtime.drainOwned(owner, 4));
+            Assert.assertEquals(2, firstTask.remainingAfterFirstConsume);
+            Assert.assertEquals(-1, firstTask.remainingAfterSecondConsume);
+            Assert.assertTrue(firstTask.isQueuedWorkObserved);
+            Assert.assertEquals(0, secondTask.runCount);
+
+            Assert.assertEquals(1, runtime.drainOwned(owner, 4));
+            Assert.assertEquals(0, secondTask.remainingAfterFirstConsume);
+            Assert.assertEquals(-1, secondTask.remainingAfterSecondConsume);
+            Assert.assertFalse(secondTask.isQueuedWorkObserved);
+            Assert.assertEquals(1, secondTask.runCount);
+            Assert.assertEquals(-1, runtime.consumeCurrentMountBudget());
+
+            close(runtime);
+        });
+    }
+
+    @Test
     public void testControllerFailureCannotRunTask() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final TestController controller = new TestController();
@@ -448,6 +535,30 @@ public class FiberDispatchControllerTest {
     }
 
     @Test
+    public void testPinnedCooperativeYieldRestoresMountedStateAndContext() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestController controller = new TestController();
+            final FiberRuntime runtime = newRuntime(1, controller);
+            final CooperativePinnedYieldTask task = new CooperativePinnedYieldTask();
+
+            Assert.assertEquals(
+                    LaunchResult.LAUNCHED,
+                    runtime.launch(task, TestDispatchContext.INSTANCE)
+            );
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertTrue(task.isRefusalObserved);
+            Assert.assertTrue(task.isDone());
+            Assert.assertTrue(controller.session.pending.isEmpty());
+            Assert.assertEquals(1, controller.ticket.mountCount);
+            Assert.assertEquals(1, controller.ticket.unmountCount);
+            Assert.assertSame(TestDispatchContext.INSTANCE, controller.ticket.mountContexts.get(0));
+
+            close(runtime, 1);
+        });
+    }
+
+    @Test
     public void testPinnedDispatchYieldRestoresMountedStateAndContext() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final TestController controller = new TestController();
@@ -558,6 +669,88 @@ public class FiberDispatchControllerTest {
                 controller,
                 FiberWakeSink.NO_OP
         );
+    }
+
+    private static class BudgetConsumingTask extends FiberTask {
+        private final boolean isBudgetReduced;
+        private boolean isQueuedWorkObserved;
+        private int remainingAfterFirstConsume;
+        private int remainingAfterSecondConsume;
+        private int runCount;
+        private final FiberRuntime runtime;
+
+        private BudgetConsumingTask(FiberRuntime runtime, boolean isBudgetReduced) {
+            this.isBudgetReduced = isBudgetReduced;
+            this.runtime = runtime;
+        }
+
+        @Override
+        protected boolean runStep() {
+            runCount++;
+            isQueuedWorkObserved = runtime.hasQueuedWorkForCurrentOwner();
+            remainingAfterFirstConsume = runtime.consumeCurrentMountBudget();
+            if (isBudgetReduced) {
+                runtime.updateConfiguration(2, 2, 2);
+            }
+            remainingAfterSecondConsume = runtime.consumeCurrentMountBudget();
+            return true;
+        }
+    }
+
+    private static class CooperativePinnedYieldTask extends FiberTask {
+        private boolean isRefusalObserved;
+
+        @Override
+        protected boolean runStep() {
+            Assert.assertSame(TestDispatchContext.INSTANCE, Fiber.getDispatchContext());
+            Continuation.pin();
+            try {
+                Assert.assertFalse(Fiber.yieldCooperatively());
+                isRefusalObserved = true;
+                Assert.assertSame(TestDispatchContext.INSTANCE, Fiber.getDispatchContext());
+            } finally {
+                Continuation.unpin();
+            }
+            return true;
+        }
+    }
+
+    private static class CooperativePollTask extends FiberTask {
+        private boolean isRemountReported;
+
+        @Override
+        protected boolean runStep() {
+            isRemountReported = Fiber.pollMountedDispatchTicketAndCheckYield();
+            return true;
+        }
+    }
+
+    private static class CooperativePollYieldTicket extends TestTicket {
+        private boolean isFirstPoll = true;
+        private int pollCount;
+
+        @Override
+        public void onCooperativePoll() {
+            pollCount++;
+            if (isFirstPoll) {
+                isFirstPoll = false;
+                Assert.assertTrue(Fiber.yieldForDispatch());
+            }
+        }
+    }
+
+    private static class CooperativeYieldTask extends FiberTask {
+        private boolean isResumed;
+
+        @Override
+        protected boolean runStep() {
+            Assert.assertNull(Fiber.getDispatchContext());
+            Assert.assertFalse(Fiber.pollMountedDispatchTicketAndCheckYield());
+            Assert.assertTrue(Fiber.yieldCooperatively());
+            Assert.assertNull(Fiber.getDispatchContext());
+            isResumed = true;
+            return true;
+        }
     }
 
     private static class CountingTask extends FiberTask {

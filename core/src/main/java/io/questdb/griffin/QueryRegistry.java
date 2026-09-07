@@ -905,7 +905,11 @@ public class QueryRegistry {
                     this.queryText = SECRET_QUERY_TEXT;
                 } else {
                     query.clear();
-                    query.put(queryText);
+                    if (queryText instanceof StringSink sink) {
+                        query.putStringSink(sink);
+                    } else {
+                        query.put(queryText);
+                    }
                     // Volatile publication happens only after the reusable sink is complete, so
                     // query_activity() can never race a mutation of the visible buffer.
                     this.queryText = query;

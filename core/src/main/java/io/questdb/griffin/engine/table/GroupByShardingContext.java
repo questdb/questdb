@@ -44,6 +44,8 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -51,6 +53,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.tasks.GroupByMergeShardTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -72,6 +75,7 @@ import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS;
  */
 public class GroupByShardingContext implements QuietCloseable, Mutable {
     private static final Log LOG = LogFactory.getLog(GroupByShardingContext.class);
+    private static final long OWNER_HELP_YIELD_INTERVAL_NANOS = 1_000_000L;
     private final CairoConfiguration configuration;
     private final ObjList<Map> destShards;
     private final ColumnTypes keyTypes;
@@ -168,6 +172,23 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
 
     public void release(int slotId) {
         perWorkerLocks.releaseSlot(slotId);
+    }
+
+    private long checkOwnerBreaker(SqlExecutionCircuitBreaker circuitBreaker, boolean isFiberOwner, long lastYieldNanos) {
+        if (!isFiberOwner) {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            return lastYieldNanos;
+        }
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+        final NanosecondClock clock = configuration.getNanosecondClock();
+        if (Fiber.pollMountedDispatchTicketAndCheckYield() || lastYieldNanos == Long.MIN_VALUE) {
+            return clock.getTicks();
+        }
+        if (clock.getTicks() - lastYieldNanos < OWNER_HELP_YIELD_INTERVAL_NANOS) {
+            return lastYieldNanos;
+        }
+        Fiber.yieldCooperatively();
+        return clock.getTicks();
     }
 
     private Map mergeOwnerMap(GroupByFunctionsUpdater functionUpdater) {
@@ -394,8 +415,12 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         final boolean publicationPermit = dispatcher != null && dispatcher.tryAcquirePublication();
 
         if (dispatcher != null && !publicationPermit) {
+            final boolean isFiberOwner = SuspensionScope.isFiberMode()
+                    && Fiber.current() != null
+                    && Fiber.isMounted();
+            long lastOwnerYieldNanos = Long.MIN_VALUE;
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                lastOwnerYieldNanos = checkOwnerBreaker(circuitBreaker, isFiberOwner, lastOwnerYieldNanos);
                 mergeShard(-1, shardIndex);
             }
             finalizeShardStats();
@@ -407,6 +432,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         int reclaimed = 0;
         int total = 0;
         int mergedCount = 0; // used for work stealing decisions
+        long lastOwnerYieldNanos = Long.MIN_VALUE;
 
         try {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
@@ -416,15 +442,15 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                     final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-
-                        if (!isOwnerParkable && strategy.shouldSteal(mergedCount)) {
+                        if (strategy.shouldSteal(mergedCount)) {
+                            lastOwnerYieldNanos = checkOwnerBreaker(circuitBreaker, isOwnerParkable, lastOwnerYieldNanos);
                             mergeShard(-1, shardIndex);
                             ownCount++;
                             total++;
                             mergedCount = postAggregationDoneLatch.getCount();
                             break;
                         }
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                         if (isOwnerParkable) {
                             if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
                                 Os.pause();
@@ -464,7 +490,8 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                     if (postAggregationDoneLatch.done(queuedCount)) {
                         break;
                     }
-                    if (circuitBreaker.checkIfTrippedOrYield()) {
+                    final boolean isOwnerTripped = circuitBreaker.checkIfTrippedOrYield();
+                    if (isOwnerTripped) {
                         postAggregationCircuitBreaker.cancel();
                     }
 
@@ -483,7 +510,12 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                             Os.pause();
                         }
                     } else if (isOwnerParkable) {
-                        if (!dispatcher.awaitProgressWhileDraining(progressState, observedProgress, observedGlobalProgress)) {
+                        if (!dispatcher.awaitProgressWhileDraining(
+                                progressState,
+                                observedProgress,
+                                observedGlobalProgress,
+                                isOwnerTripped ? null : circuitBreaker
+                        )) {
                             Os.pause();
                         }
                     } else {

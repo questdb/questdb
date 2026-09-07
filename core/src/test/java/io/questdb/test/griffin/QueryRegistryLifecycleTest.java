@@ -46,6 +46,7 @@ import io.questdb.mp.continuation.FiberWakeSink;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -569,6 +570,111 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 }
                 Assert.assertTrue(runtime.awaitClosed(deadline));
                 runtime.closeAfterDrained();
+            }
+        });
+    }
+
+    @Test
+    public void testProtocolOwnerPublicationCopiesMutableQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final String expectedQuery = "SELECT 'ā中\uD83D\uDE03' AS text";
+            final StringSink source = new StringSink();
+            source.put(expectedQuery);
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                final long ownerId = registry.registerOwner(source, context);
+                try {
+                    final QueryRegistry.Entry entry = registry.getEntry(ownerId);
+                    Assert.assertNotNull(entry);
+                    TestUtils.assertEquals("<PENDING>", entry.getQuery());
+                    registry.publishOwnerQuery(ownerId, source, false);
+                    final CharSequence publishedQuery = entry.getQuery();
+                    Assert.assertNotSame(source, publishedQuery);
+                    TestUtils.assertEquals(expectedQuery, publishedQuery);
+
+                    source.clear();
+                    source.put("SELECT replacement");
+                    TestUtils.assertEquals(expectedQuery, publishedQuery);
+                    registry.publishOwnerQuery(ownerId, source, false);
+                    registry.publishOwnerQuery(ownerId, source, true);
+                    Assert.assertSame(publishedQuery, entry.getQuery());
+                    TestUtils.assertEquals(expectedQuery, entry.getQuery());
+                    Assert.assertTrue(QueryRegistry.Entry.isActiveLifecycle(ownerId, entry.getLifecycle()));
+                    assertQuery("SELECT query FROM query_activity() WHERE query_id = " + ownerId)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("query\n" + expectedQuery + '\n');
+                } finally {
+                    registry.unregister(ownerId, context);
+                }
+                Assert.assertNull(registry.getEntry(ownerId));
+            }
+        });
+    }
+
+    @Test
+    public void testProtocolOwnerPublicationPreservesStringSinkSubclass() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final StringSink source = new StringSink() {
+                @Override
+                public char charAt(int index) {
+                    return Character.toUpperCase(super.charAt(index));
+                }
+
+                @Override
+                public int length() {
+                    return super.length() - 1;
+                }
+            };
+            source.put("select 1!");
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                final long ownerId = registry.registerOwner(source, context);
+                try {
+                    registry.publishOwnerQuery(ownerId, source, false);
+                    final QueryRegistry.Entry entry = registry.getEntry(ownerId);
+                    Assert.assertNotNull(entry);
+                    TestUtils.assertEquals("SELECT 1", entry.getQuery());
+                    Assert.assertTrue(QueryRegistry.Entry.isActiveLifecycle(ownerId, entry.getLifecycle()));
+                } finally {
+                    registry.unregister(ownerId, context);
+                }
+                Assert.assertNull(registry.getEntry(ownerId));
+            }
+        });
+    }
+
+    @Test
+    public void testProtocolOwnerSecretPublicationDoesNotReadQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final StringSink source = new StringSink() {
+                @Override
+                public char charAt(int index) {
+                    throw new AssertionError("secret query characters must not be read");
+                }
+
+                @Override
+                public int length() {
+                    throw new AssertionError("secret query length must not be read");
+                }
+            };
+            source.put("secret query text");
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                final long ownerId = registry.registerOwner(source, context);
+                try {
+                    final QueryRegistry.Entry entry = registry.getEntry(ownerId);
+                    Assert.assertNotNull(entry);
+                    TestUtils.assertEquals("<PENDING>", entry.getQuery());
+                    registry.publishOwnerQuery(ownerId, source, true);
+                    TestUtils.assertEquals("<SECRET>", entry.getQuery());
+                    registry.publishOwnerQuery(ownerId, source, false);
+                    TestUtils.assertEquals("<SECRET>", entry.getQuery());
+                    Assert.assertTrue(QueryRegistry.Entry.isActiveLifecycle(ownerId, entry.getLifecycle()));
+                } finally {
+                    registry.unregister(ownerId, context);
+                }
+                Assert.assertNull(registry.getEntry(ownerId));
             }
         });
     }

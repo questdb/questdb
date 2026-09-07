@@ -136,6 +136,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence,
             @Nullable PageFrameReduceDispatcher dispatcher
     ) {
+        boolean hasRetriedOwnerClaim = false;
         do {
             final long cursor = subSeq.next();
             if (cursor > -1) {
@@ -236,7 +237,17 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
             } else if (cursor == -1) {
                 break;
             }
-            Os.pause();
+            if (!hasRetriedOwnerClaim
+                    && workerId == -1
+                    && stealingFrameSequence != null
+                    && stealingFrameSequence.getDispatchContext() != null) {
+                // Another consumer changed the cursor during this claim attempt. Let the managed
+                // query owner retry once before yielding the carrier to the operating system.
+                hasRetriedOwnerClaim = true;
+                Thread.onSpinWait();
+            } else {
+                Os.pause();
+            }
         } while (true);
         return true;
     }

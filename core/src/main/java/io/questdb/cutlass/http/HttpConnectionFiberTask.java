@@ -167,13 +167,22 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
     }
 
     @TestOnly
+    public LaunchResult launchRerunReservedForTesting(
+            FiberRuntime runtime,
+            Fiber fiber,
+            long reservationEpoch
+    ) {
+        return launchRerunReserved(runtime, fiber, reservationEpoch, getIncarnation());
+    }
+
+    @TestOnly
     public LaunchResult launchReservedForTesting(
             FiberRuntime runtime,
             Fiber fiber,
             long reservationEpoch,
             int operation
     ) {
-        return launchReserved(runtime, fiber, reservationEpoch, operation);
+        return launchReservedEvent(runtime, fiber, reservationEpoch, operation, false);
     }
 
     @Override
@@ -220,7 +229,8 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
             @Nullable Fiber fiber,
             long reservationEpoch,
             long taskIncarnation,
-            int eventAction
+            int eventAction,
+            boolean isDirectMount
     ) {
         if (taskIncarnation < 1 || taskIncarnation > MAX_EVENT_INCARNATION) {
             throw incarnationOutOfRange(taskIncarnation);
@@ -278,7 +288,9 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
         }
         final LaunchResult result;
         if (fiber != null) {
-            result = runtime.launchReserved(fiber, reservationEpoch, this, taskIncarnation);
+            result = isDirectMount
+                    ? runtime.launchReservedDirect(fiber, reservationEpoch, this, taskIncarnation)
+                    : runtime.launchReserved(fiber, reservationEpoch, this, taskIncarnation);
         } else {
             result = runtime.launch(this, taskIncarnation);
         }
@@ -286,6 +298,33 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
             return resolveLaunchFailure(result, taskIncarnation, readyEvent);
         }
         return result;
+    }
+
+    private LaunchResult launchReservedEvent(
+            FiberRuntime runtime,
+            Fiber fiber,
+            long reservationEpoch,
+            int operation,
+            boolean isDirectMount
+    ) {
+        try {
+            tryReopen();
+            final int eventAction = switch (operation) {
+                case IOOperation.READ -> EVENT_READ;
+                case IOOperation.WRITE -> EVENT_WRITE;
+                default -> throw unsupportedOperation(operation);
+            };
+            return launchEvent(
+                    runtime,
+                    fiber,
+                    reservationEpoch,
+                    getIncarnation(),
+                    eventAction,
+                    isDirectMount
+            );
+        } finally {
+            runtime.releaseReservedFiber(fiber, reservationEpoch);
+        }
     }
 
     private LaunchResult resolveLaunchFailure(LaunchResult result, long taskIncarnation, long readyEvent) {
@@ -356,11 +395,11 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
             case IOOperation.WRITE -> EVENT_WRITE;
             default -> throw unsupportedOperation(operation);
         };
-        return launchEvent(runtime, null, 0, getIncarnation(), eventAction);
+        return launchEvent(runtime, null, 0, getIncarnation(), eventAction, false);
     }
 
     LaunchResult launchRerun(FiberRuntime runtime, long taskIncarnation) {
-        return launchEvent(runtime, null, 0, taskIncarnation, EVENT_RERUN);
+        return launchEvent(runtime, null, 0, taskIncarnation, EVENT_RERUN, false);
     }
 
     LaunchResult launchRerunReserved(
@@ -369,21 +408,11 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
             long reservationEpoch,
             long taskIncarnation
     ) {
-        return launchEvent(runtime, fiber, reservationEpoch, taskIncarnation, EVENT_RERUN);
+        return launchEvent(runtime, fiber, reservationEpoch, taskIncarnation, EVENT_RERUN, true);
     }
 
     LaunchResult launchReserved(FiberRuntime runtime, Fiber fiber, long reservationEpoch, int operation) {
-        try {
-            tryReopen();
-            final int eventAction = switch (operation) {
-                case IOOperation.READ -> EVENT_READ;
-                case IOOperation.WRITE -> EVENT_WRITE;
-                default -> throw unsupportedOperation(operation);
-            };
-            return launchEvent(runtime, fiber, reservationEpoch, getIncarnation(), eventAction);
-        } finally {
-            runtime.releaseReservedFiber(fiber, reservationEpoch);
-        }
+        return launchReservedEvent(runtime, fiber, reservationEpoch, operation, true);
     }
 
     @Override

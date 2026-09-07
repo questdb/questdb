@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.sql;
 
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
@@ -35,6 +36,7 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestMillisecondClock;
@@ -48,6 +50,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
@@ -74,37 +77,46 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     public void testCooperativePollVariantsUseEngineHookAfterBreakerCheck() throws Exception {
         assertMemoryLeak(() -> {
             final AtomicInteger pollCount = new AtomicInteger();
-            try (CairoEngine pollingEngine = new CairoEngine(configuration, false) {
+            final AtomicLong pollClockTicks = new AtomicLong();
+            final NanosecondClock pollClock = pollClockTicks::get;
+            final CairoConfigurationWrapper pollingConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public NanosecondClock getNanosecondClock() {
+                    return pollClock;
+                }
+            };
+            try (CairoEngine pollingEngine = new CairoEngine(pollingConfiguration, false) {
+                {
+                    enableSqlExecutionCooperativePolling();
+                }
+
                 @Override
                 public void onSqlExecutionCooperativePoll() {
                     pollCount.incrementAndGet();
                 }
             }) {
-                final int stride = SqlExecutionCircuitBreaker.COOPERATIVE_POLL_STRIDE;
-                final AtomicBooleanCircuitBreaker atomicBreaker = new AtomicBooleanCircuitBreaker(pollingEngine);
-                // the first cooperative boundary polls; every variant shares one stride countdown
-                Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield());
-                Assert.assertEquals(1, pollCount.get());
-                Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield(0, -1));
-                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, atomicBreaker.getStateOrYield());
-                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, atomicBreaker.getStateOrYield(0, -1));
-                atomicBreaker.statefulThrowExceptionIfTrippedOrYield();
-                atomicBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
-                atomicBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-                Assert.assertEquals(1, pollCount.get());
-                for (int i = 7; i < stride; i++) {
-                    Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield());
-                }
-                Assert.assertEquals(1, pollCount.get());
-                Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield());
-                Assert.assertEquals("the stride boundary polls again", 2, pollCount.get());
-                atomicBreaker.clear();
-                atomicBreaker.statefulThrowExceptionIfTrippedOrYield();
-                Assert.assertEquals("a query boundary restarts the stride", 3, pollCount.get());
+                final int statefulStride = SqlExecutionCircuitBreaker.STATEFUL_COOPERATIVE_POLL_STRIDE;
+                Assert.assertEquals(
+                        "the hot-path mask requires a power-of-two stride",
+                        1,
+                        Integer.bitCount(statefulStride)
+                );
+
+                final AtomicBooleanCircuitBreaker sharedAtomicBreaker =
+                        new AtomicBooleanCircuitBreaker(pollingEngine);
+                assertSharedAtomicCooperativePoll(sharedAtomicBreaker, pollCount);
+                final AtomicBooleanCircuitBreaker throttledAtomicBreaker =
+                        new AtomicBooleanCircuitBreaker(pollingEngine, 2 * statefulStride);
+                assertCoarseCooperativePollCadence(throttledAtomicBreaker, pollCount);
 
                 final TestMillisecondClock clock = new TestMillisecondClock(1_000);
-                final SqlExecutionCircuitBreakerConfiguration config =
+                final SqlExecutionCircuitBreakerConfiguration coarseConfig =
                         new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                            @Override
+                            public int getCircuitBreakerThrottle() {
+                                return 2 * statefulStride;
+                            }
+
                             @Override
                             public @NotNull MillisecondClock getClock() {
                                 return clock;
@@ -112,56 +124,204 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
                         };
                 try (
                         NetworkSqlExecutionCircuitBreaker networkBreaker =
-                                new NetworkSqlExecutionCircuitBreaker(pollingEngine, config);
+                                new NetworkSqlExecutionCircuitBreaker(pollingEngine, coarseConfig);
                         SqlExecutionCircuitBreakerWrapper wrapper =
-                                new SqlExecutionCircuitBreakerWrapper(pollingEngine, config)
+                                new SqlExecutionCircuitBreakerWrapper(pollingEngine, coarseConfig)
                 ) {
                     networkBreaker.resetTimer();
-                    Assert.assertFalse(networkBreaker.checkIfTrippedOrYield());
-                    Assert.assertEquals(4, pollCount.get());
-                    Assert.assertFalse(networkBreaker.checkIfTrippedOrYield(1_000, -1));
-                    Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, networkBreaker.getStateOrYield());
+                    assertCoarseCooperativePollCadence(networkBreaker, pollCount);
+                    final int countBeforeRearm = pollCount.get();
+                    networkBreaker.statefulThrowExceptionIfTrippedOrYield();
+                    networkBreaker.rearmTimer();
+                    networkBreaker.statefulThrowExceptionIfTrippedOrYield();
                     Assert.assertEquals(
-                            SqlExecutionCircuitBreaker.STATE_OK,
-                            networkBreaker.getStateOrYield(1_000, -1)
+                            "a task rearm must preserve cross-task cooperative coalescing",
+                            countBeforeRearm + 1,
+                            pollCount.get()
                     );
-                    networkBreaker.statefulThrowExceptionIfTrippedOrYield();
-                    networkBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
-                    networkBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-                    Assert.assertEquals(4, pollCount.get());
-                    for (int i = 7; i < stride; i++) {
-                        Assert.assertFalse(networkBreaker.checkIfTrippedOrYield());
-                    }
-                    Assert.assertFalse(networkBreaker.checkIfTrippedOrYield());
-                    Assert.assertEquals(5, pollCount.get());
-                    networkBreaker.clear();
-                    networkBreaker.resetTimer();
-                    networkBreaker.statefulThrowExceptionIfTrippedOrYield();
-                    Assert.assertEquals(6, pollCount.get());
-
-                    // init is a query boundary; afterwards the wrapper's boundaries share the delegate's stride
                     wrapper.init(networkBreaker);
-                    Assert.assertFalse(wrapper.checkIfTrippedOrYield());
-                    Assert.assertEquals(7, pollCount.get());
-                    for (int i = 1; i < stride; i++) {
-                        Assert.assertFalse(wrapper.checkIfTrippedOrYield());
-                    }
-                    Assert.assertEquals(7, pollCount.get());
-                    Assert.assertFalse(wrapper.checkIfTrippedOrYield());
-                    Assert.assertEquals(8, pollCount.get());
+                    assertCoarseCooperativePollCadence(wrapper, pollCount);
                 }
 
-                atomicBreaker.clear();
-                atomicBreaker.setCancelledFlag(new AtomicBoolean(true));
-                Assert.assertTrue(atomicBreaker.checkIfTrippedOrYield());
-                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, atomicBreaker.getStateOrYield());
+                final AtomicBooleanCircuitBreaker coalescedStatefulBreaker =
+                        new AtomicBooleanCircuitBreaker(pollingEngine, 2 * statefulStride);
+                final int countBeforeCoalescedStatefulChecks = pollCount.get();
+                for (int i = 0; i < statefulStride; i++) {
+                    coalescedStatefulBreaker.statefulThrowExceptionIfTrippedOrYield();
+                }
+                Assert.assertEquals(
+                        "the time window must coalesce successful stateful checks",
+                        countBeforeCoalescedStatefulChecks + 1,
+                        pollCount.get()
+                );
+                coalescedStatefulBreaker.reset();
+                coalescedStatefulBreaker.statefulThrowExceptionIfTrippedOrYield();
+                Assert.assertEquals(
+                        "reset must restart the cooperative cadence",
+                        countBeforeCoalescedStatefulChecks + 2,
+                        pollCount.get()
+                );
+                pollClockTicks.addAndGet(-SqlExecutionCircuitBreaker.COOPERATIVE_POLL_INTERVAL_NANOS);
+                for (int i = 0; i < statefulStride; i++) {
+                    coalescedStatefulBreaker.statefulThrowExceptionIfTrippedOrYield();
+                }
+                Assert.assertEquals(
+                        "a clock rollback must restart cooperative polling",
+                        countBeforeCoalescedStatefulChecks + 3,
+                        pollCount.get()
+                );
+
+                // Exercise the stateful hot path with the two legal edge throttles and a larger
+                // non-divisor of the cooperative stride. Small throttles retain the coarse visit
+                // cadence; large throttles also poll on their real breaker checks.
+                final int[] throttles = {0, 5, statefulStride + 513};
+                for (int throttle : throttles) {
+                    final AtomicBooleanCircuitBreaker statefulAtomicBreaker =
+                            new AtomicBooleanCircuitBreaker(pollingEngine, throttle);
+                    assertStatefulCooperativePollCadence(statefulAtomicBreaker, pollClockTicks, pollCount, throttle);
+
+                    final SqlExecutionCircuitBreakerConfiguration statefulConfig =
+                            new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                                @Override
+                                public int getCircuitBreakerThrottle() {
+                                    return throttle;
+                                }
+
+                                @Override
+                                public @NotNull MillisecondClock getClock() {
+                                    return clock;
+                                }
+                            };
+                    try (NetworkSqlExecutionCircuitBreaker statefulNetworkBreaker =
+                                 new NetworkSqlExecutionCircuitBreaker(pollingEngine, statefulConfig)) {
+                        assertStatefulCooperativePollCadence(
+                                statefulNetworkBreaker,
+                                pollClockTicks,
+                                pollCount,
+                                throttle
+                        );
+                    }
+                }
+
+                final AtomicBooleanCircuitBreaker cancelledBreaker =
+                        new AtomicBooleanCircuitBreaker(pollingEngine, 2 * statefulStride);
+                cancelledBreaker.setCancelledFlag(new AtomicBoolean(true));
+                final int countBeforeCancel = pollCount.get();
+                Assert.assertTrue(cancelledBreaker.checkIfTrippedOrYield());
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, cancelledBreaker.getStateOrYield());
                 try {
-                    atomicBreaker.statefulThrowExceptionIfTrippedOrYield();
+                    cancelledBreaker.statefulThrowExceptionIfTrippedOrYield();
                     Assert.fail("expected cancellation");
                 } catch (CairoException e) {
                     Assert.assertTrue(e.isInterruption());
                 }
-                Assert.assertEquals("the engine hook must not run after a tripped breaker", 8, pollCount.get());
+                Assert.assertEquals("a tripped breaker must suppress the engine hook", countBeforeCancel, pollCount.get());
+
+                final SqlExecutionCircuitBreakerConfiguration timeoutConfig =
+                        new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                            @Override
+                            public @NotNull MillisecondClock getClock() {
+                                return clock;
+                            }
+
+                            @Override
+                            public long getQueryTimeout() {
+                                return 100;
+                            }
+                        };
+                try (NetworkSqlExecutionCircuitBreaker timeoutBreaker =
+                             new NetworkSqlExecutionCircuitBreaker(pollingEngine, timeoutConfig)) {
+                    timeoutBreaker.resetTimer();
+                    clock.millis += 101;
+                    final int countBeforeTimeout = pollCount.get();
+                    Assert.assertTrue(timeoutBreaker.checkIfTrippedOrYield());
+                    try {
+                        timeoutBreaker.statefulThrowExceptionIfTrippedOrYield();
+                        Assert.fail("expected timeout");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isInterruption());
+                    }
+                    Assert.assertEquals("a timed-out breaker must suppress the engine hook", countBeforeTimeout, pollCount.get());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDisabledCooperativePollingKeepsOriginalBreakerPath() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger clockReadCount = new AtomicInteger();
+            final AtomicInteger pollCount = new AtomicInteger();
+            final CairoConfigurationWrapper disabledConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public NanosecondClock getNanosecondClock() {
+                    return () -> clockReadCount.getAndIncrement();
+                }
+            };
+            try (CairoEngine disabledEngine = new CairoEngine(disabledConfiguration, false) {
+                @Override
+                public void onSqlExecutionCooperativePoll() {
+                    pollCount.incrementAndGet();
+                }
+            }) {
+                Assert.assertFalse(disabledEngine.isSqlExecutionCooperativePollingEnabled());
+                final int throttle = 2 * SqlExecutionCircuitBreaker.STATEFUL_COOPERATIVE_POLL_STRIDE;
+                final AtomicBooleanCircuitBreaker atomicBreaker =
+                        new AtomicBooleanCircuitBreaker(disabledEngine, throttle);
+                final TestMillisecondClock networkClock = new TestMillisecondClock(1_000);
+                final SqlExecutionCircuitBreakerConfiguration networkConfiguration =
+                        new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                            @Override
+                            public int getCircuitBreakerThrottle() {
+                                return throttle;
+                            }
+
+                            @Override
+                            public @NotNull MillisecondClock getClock() {
+                                return networkClock;
+                            }
+                        };
+                try (NetworkSqlExecutionCircuitBreaker networkBreaker =
+                             new NetworkSqlExecutionCircuitBreaker(disabledEngine, networkConfiguration)) {
+                    atomicBreaker.resetTimer();
+                    networkBreaker.resetTimer();
+                    for (int i = 0; i < 3 * throttle; i++) {
+                        atomicBreaker.statefulThrowExceptionIfTrippedOrYield();
+                        networkBreaker.statefulThrowExceptionIfTrippedOrYield();
+                    }
+                    Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield());
+                    Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield(0, -1));
+                    Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, atomicBreaker.getStateOrYield());
+                    Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, atomicBreaker.getStateOrYield(0, -1));
+                    atomicBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+                    atomicBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                    Assert.assertFalse(networkBreaker.checkIfTrippedOrYield());
+                    Assert.assertFalse(networkBreaker.checkIfTrippedOrYield(1_000, -1));
+                    Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, networkBreaker.getStateOrYield());
+                    Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, networkBreaker.getStateOrYield(1_000, -1));
+                    networkBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+                    networkBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+
+                    atomicBreaker.cancel();
+                    Assert.assertTrue(atomicBreaker.checkIfTrippedOrYield());
+                    try {
+                        atomicBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+                        Assert.fail("expected cancellation");
+                    } catch (CairoException e) {
+                        Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, e.getInterruptionReason());
+                    }
+
+                    networkBreaker.cancel();
+                    Assert.assertTrue(networkBreaker.checkIfTrippedOrYield());
+                    try {
+                        networkBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+                        Assert.fail("expected cancellation");
+                    } catch (CairoException e) {
+                        Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, e.getInterruptionReason());
+                    }
+                }
+                Assert.assertEquals("disabled polling must not read the cooperative clock", 0, clockReadCount.get());
+                Assert.assertEquals("disabled polling must not invoke the engine hook", 0, pollCount.get());
             }
         });
     }
@@ -225,6 +385,55 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
                 clock.millis += THROTTLE;
                 Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION, breaker.getState());
                 Assert.assertEquals(2, breaker.probeCount);
+            }
+        });
+    }
+
+    @Test
+    public void testHighThrottleStatefulPollSamplesClockAtStride() throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(50_000L, SqlExecutionCircuitBreaker.COOPERATIVE_POLL_INTERVAL_NANOS);
+            final AtomicInteger clockReadCount = new AtomicInteger();
+            final CairoConfigurationWrapper pollingConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public NanosecondClock getNanosecondClock() {
+                    return () -> {
+                        clockReadCount.incrementAndGet();
+                        return 0;
+                    };
+                }
+            };
+            try (CairoEngine pollingEngine = new CairoEngine(pollingConfiguration, false) {
+                {
+                    enableSqlExecutionCooperativePolling();
+                }
+            }) {
+                final int stride = SqlExecutionCircuitBreaker.STATEFUL_COOPERATIVE_POLL_STRIDE;
+                final int throttle = 3 * stride + 1;
+                final AtomicBooleanCircuitBreaker atomicBreaker =
+                        new AtomicBooleanCircuitBreaker(pollingEngine, throttle);
+                atomicBreaker.resetTimer();
+                for (int i = 0; i < 3 * stride; i++) {
+                    atomicBreaker.statefulThrowExceptionIfTrippedOrYield();
+                }
+                Assert.assertEquals(3, clockReadCount.get());
+
+                final SqlExecutionCircuitBreakerConfiguration networkConfiguration =
+                        new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                            @Override
+                            public int getCircuitBreakerThrottle() {
+                                return throttle;
+                            }
+                        };
+                clockReadCount.set(0);
+                try (NetworkSqlExecutionCircuitBreaker networkBreaker =
+                             new NetworkSqlExecutionCircuitBreaker(pollingEngine, networkConfiguration)) {
+                    networkBreaker.resetTimer();
+                    for (int i = 0; i < 3 * stride; i++) {
+                        networkBreaker.statefulThrowExceptionIfTrippedOrYield();
+                    }
+                    Assert.assertEquals(3, clockReadCount.get());
+                }
             }
         });
     }
@@ -411,6 +620,126 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWrapperIsolatesExactAtomicBreakerPerWorker() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger pollCount = new AtomicInteger();
+            final CairoConfigurationWrapper pollingConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public NanosecondClock getNanosecondClock() {
+                    return () -> 0;
+                }
+            };
+            try (CairoEngine pollingEngine = new CairoEngine(pollingConfiguration, false) {
+                {
+                    enableSqlExecutionCooperativePolling();
+                }
+
+                @Override
+                public void onSqlExecutionCooperativePoll() {
+                    pollCount.incrementAndGet();
+                }
+            }) {
+                final AtomicBoolean cancellationFlag = new AtomicBoolean();
+                final AtomicBooleanCircuitBreaker ownerBreaker = new AtomicBooleanCircuitBreaker(pollingEngine, 5);
+                ownerBreaker.setCancelledFlag(cancellationFlag);
+                ownerBreaker.setFd(42);
+                final SqlExecutionCircuitBreakerConfiguration wrapperConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                    @Override
+                    public int getCircuitBreakerThrottle() {
+                        return 17;
+                    }
+                };
+                try (
+                        SqlExecutionCircuitBreakerWrapper first = new SqlExecutionCircuitBreakerWrapper(
+                                pollingEngine,
+                                wrapperConfiguration
+                        );
+                        SqlExecutionCircuitBreakerWrapper second = new SqlExecutionCircuitBreakerWrapper(
+                                pollingEngine,
+                                wrapperConfiguration
+                        )
+                ) {
+                    Assert.assertTrue(first.hasLocalAtomicCircuitBreaker());
+                    Assert.assertTrue(second.hasLocalAtomicCircuitBreaker());
+                    first.init(ownerBreaker);
+                    second.init(ownerBreaker);
+                    Assert.assertNotSame(ownerBreaker, first.getDelegate());
+                    Assert.assertNotSame(ownerBreaker, second.getDelegate());
+                    Assert.assertNotSame(first.getDelegate(), second.getDelegate());
+                    Assert.assertEquals(AtomicBooleanCircuitBreaker.class, first.getDelegate().getClass());
+                    Assert.assertEquals(42, first.getFd());
+
+                    final int initialPollCount = pollCount.get();
+                    first.statefulThrowExceptionIfTrippedOrYield();
+                    second.statefulThrowExceptionIfTrippedOrYield();
+                    Assert.assertEquals(
+                            "each worker copy must start with an independent cooperative cadence",
+                            initialPollCount + 2,
+                            pollCount.get()
+                    );
+
+                    cancellationFlag.set(true);
+                    for (int i = 0; i < 4; i++) {
+                        first.statefulThrowExceptionIfTrippedOrYield();
+                    }
+                    try {
+                        first.statefulThrowExceptionIfTrippedOrYield();
+                        Assert.fail("expected copied throttle boundary to observe cancellation");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isInterruption());
+                    }
+                    cancellationFlag.set(false);
+
+                    final int pollCountBeforeRebind = pollCount.get();
+                    first.clear();
+                    first.init(ownerBreaker);
+                    first.statefulThrowExceptionIfTrippedOrYield();
+                    Assert.assertEquals(
+                            "worker-local cooperative cadence must span reduce-task rebinds",
+                            pollCountBeforeRebind,
+                            pollCount.get()
+                    );
+
+                    final FiberCancellationSignal signal = new FiberCancellationSignal();
+                    final long staleGeneration = signal.getGeneration();
+                    ownerBreaker.setCancelledFlag(signal, staleGeneration);
+                    final long currentGeneration = signal.reopen();
+                    first.init(ownerBreaker);
+                    try {
+                        first.statefulThrowExceptionIfTrippedNoThrottle();
+                        Assert.fail("expected copied stale cancellation binding to fail closed");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isInterruption());
+                    }
+                    first.cancel();
+                    Assert.assertFalse(signal.isCancelled(currentGeneration));
+
+                    final AtomicBooleanCircuitBreaker customBreaker =
+                            new AtomicBooleanCircuitBreaker(pollingEngine) {
+                            };
+                    second.init(customBreaker);
+                    Assert.assertSame("custom subclasses must retain their behavior", customBreaker, second.getDelegate());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWrapperSharesAtomicDelegateWhenCooperativePollingIsDisabled() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBooleanCircuitBreaker ownerBreaker = new AtomicBooleanCircuitBreaker(engine, 5);
+            try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(
+                    engine,
+                    new DefaultSqlExecutionCircuitBreakerConfiguration()
+            )) {
+                Assert.assertFalse(wrapper.hasLocalAtomicCircuitBreaker());
+                wrapper.init(ownerBreaker);
+                Assert.assertSame(ownerBreaker, wrapper.getDelegate());
+            }
+        });
+    }
+
+    @Test
     public void testWrapperPreservesCancellationGeneration() throws Exception {
         assertMemoryLeak(() -> {
             final SqlExecutionCircuitBreakerConfiguration config =
@@ -495,6 +824,106 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
         Assert.assertSame(replacement, breaker.getCancelledFlag());
         breaker.clearCancelledFlag(replacement);
         Assert.assertNull(breaker.getCancelledFlag());
+    }
+
+    private static void assertCoarseCooperativePollCadence(
+            SqlExecutionCircuitBreaker breaker,
+            AtomicInteger pollCount
+    ) {
+        final int initialPollCount = pollCount.get();
+        final int stride = SqlExecutionCircuitBreaker.COOPERATIVE_POLL_STRIDE;
+        Assert.assertFalse(breaker.checkIfTrippedOrYield());
+        Assert.assertEquals(initialPollCount + 1, pollCount.get());
+        Assert.assertFalse(breaker.checkIfTrippedOrYield(0, -1));
+        Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, breaker.getStateOrYield());
+        Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, breaker.getStateOrYield(0, -1));
+        breaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+        breaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+        Assert.assertEquals(initialPollCount + 1, pollCount.get());
+        for (int i = 6; i < stride; i++) {
+            Assert.assertFalse(breaker.checkIfTrippedOrYield());
+        }
+        Assert.assertEquals(initialPollCount + 1, pollCount.get());
+        Assert.assertFalse(breaker.checkIfTrippedOrYield());
+        Assert.assertEquals(initialPollCount + 2, pollCount.get());
+        for (int i = 1; i < stride; i++) {
+            Assert.assertFalse(breaker.checkIfTrippedOrYield());
+        }
+        Assert.assertEquals(initialPollCount + 2, pollCount.get());
+        Assert.assertFalse(breaker.checkIfTrippedOrYield());
+        Assert.assertEquals(initialPollCount + 3, pollCount.get());
+    }
+
+    private static void assertSharedAtomicCooperativePoll(
+            AtomicBooleanCircuitBreaker breaker,
+            AtomicInteger pollCount
+    ) throws InterruptedException {
+        final int initialPollCount = pollCount.get();
+        Assert.assertFalse(breaker.checkIfTrippedOrYield());
+        Assert.assertFalse(breaker.checkIfTrippedOrYield(0, -1));
+        Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, breaker.getStateOrYield());
+        Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, breaker.getStateOrYield(0, -1));
+        Assert.assertEquals(
+                "shared boolean/state checks must each poll without mutable shared cadence",
+                initialPollCount + 4,
+                pollCount.get()
+        );
+
+        final int callsPerThread = 1_000;
+        final CountDownLatch start = new CountDownLatch(1);
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final Runnable poll = () -> {
+            try {
+                start.await();
+                for (int i = 0; i < callsPerThread; i++) {
+                    Assert.assertFalse(breaker.checkIfTrippedOrYield());
+                }
+            } catch (Throwable th) {
+                failure.compareAndSet(null, th);
+            }
+        };
+        final Thread first = new Thread(poll, "atomic-breaker-poll-1");
+        final Thread second = new Thread(poll, "atomic-breaker-poll-2");
+        first.start();
+        second.start();
+        start.countDown();
+        join(first);
+        join(second);
+        Assert.assertNull(failure.get());
+        Assert.assertEquals(initialPollCount + 4 + 2 * callsPerThread, pollCount.get());
+    }
+
+    private static void assertStatefulCooperativePollCadence(
+            SqlExecutionCircuitBreaker breaker,
+            AtomicLong pollClockTicks,
+            AtomicInteger pollCount,
+            int throttle
+    ) {
+        final int stride = SqlExecutionCircuitBreaker.STATEFUL_COOPERATIVE_POLL_STRIDE;
+        final int visitCount = 3 * Math.max(stride, Math.max(throttle, 1)) + 1;
+        int breakerVisitCount = 0;
+        int expectedPollCount = pollCount.get();
+        breaker.resetTimer();
+        for (int i = 0; i < visitCount; i++) {
+            final boolean isRealCheck = breakerVisitCount == 0 || breakerVisitCount >= throttle;
+            final boolean isBatchBoundary = (breakerVisitCount & (stride - 1)) == 0;
+            final boolean isCooperativePoll = throttle <= stride
+                    ? i % SqlExecutionCircuitBreaker.COOPERATIVE_POLL_STRIDE == 0
+                    : isRealCheck || isBatchBoundary;
+            if (i > 0 && isCooperativePoll) {
+                pollClockTicks.addAndGet(SqlExecutionCircuitBreaker.COOPERATIVE_POLL_INTERVAL_NANOS);
+            }
+            breaker.statefulThrowExceptionIfTrippedOrYield();
+            if (isRealCheck) {
+                breakerVisitCount = 0;
+            }
+            breakerVisitCount++;
+            if (isCooperativePoll) {
+                expectedPollCount++;
+            }
+            Assert.assertEquals("unexpected poll cadence [throttle=" + throttle + ", visit=" + i + ']',
+                    expectedPollCount, pollCount.get());
+        }
     }
 
     private static void await(CountDownLatch latch) throws InterruptedException {

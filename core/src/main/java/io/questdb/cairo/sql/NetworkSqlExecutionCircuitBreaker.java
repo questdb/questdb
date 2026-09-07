@@ -31,6 +31,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.std.Mutable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -40,7 +41,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final MillisecondClock clock;
     private final SqlExecutionCircuitBreakerConfiguration configuration;
     private final long connectionCheckThrottle;
-    private int cooperativePollCountdown;
+    private final @Nullable CooperativePoller cooperativePoller;
     private final long defaultMaxTime;
     private final CairoEngine engine;
     private final NetworkFacade nf;
@@ -64,6 +65,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         this.throttle = configuration.getCircuitBreakerThrottle();
         this.connectionCheckThrottle = configuration.getCircuitBreakerConnectionCheckThrottle();
         this.clock = configuration.getClock();
+        this.cooperativePoller = CooperativePoller.newInstance(engine);
         long timeout = configuration.getQueryTimeout();
         if (timeout > 0) {
             this.timeout = timeout;
@@ -149,18 +151,10 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         secret = -1;
         powerUpTime = Long.MAX_VALUE;
         testCount = 0;
-        cooperativePollCountdown = 0;
         lastConnectionCheckTime = 0;
         fd = -1;
         timeout = defaultMaxTime;
-    }
-
-    private void cooperativePoll() {
-        if (cooperativePollCountdown == 0) {
-            cooperativePollCountdown = COOPERATIVE_POLL_STRIDE;
-            engine.onSqlExecutionCooperativePoll();
-        }
-        cooperativePollCountdown--;
+        resetCooperativePoll();
     }
 
     public void clearCancelSentinel() {
@@ -291,6 +285,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         // Force a prompt connection probe at the start of the new query (lastConnectionCheckTime=0 makes
         // the first time-throttled check fall outside any window for a real wall-clock).
         lastConnectionCheckTime = 0;
+        resetCooperativePoll();
     }
 
     @Override
@@ -341,8 +336,11 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public void statefulThrowExceptionIfTrippedOrYield() {
+        final int count = testCount;
         statefulThrowExceptionIfTripped();
-        cooperativePoll();
+        if (cooperativePoller != null) {
+            cooperativePoller.pollStateful(count, throttle);
+        }
     }
 
     @Override
@@ -384,8 +382,20 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         powerUpTime = Long.MAX_VALUE;
     }
 
+    private void cooperativePoll() {
+        if (cooperativePoller != null) {
+            cooperativePoller.poll();
+        }
+    }
+
     private boolean isCancelled() {
         return powerUpTime == Long.MIN_VALUE;
+    }
+
+    private void resetCooperativePoll() {
+        if (cooperativePoller != null) {
+            cooperativePoller.reset();
+        }
     }
 
     private void testCancelled() {

@@ -78,11 +78,13 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private final AtomicInteger reduceStartedCounter = new AtomicInteger(0);
     private final MCSequence reduceSubSeq;
     private final UnorderedPageFrameReducer reducer;
+    private final long tailSpinTimeoutNanos;
     private final WorkStealingStrategy workStealingStrategy;
     private T atom;
     private PageFrameAddressCache frameAddressCache;
     private int frameCount;
     private PageFrameCursor frameCursor;
+    private boolean hasTailSpun;
     private long id;
     private boolean isClosing;
     private boolean isReadyToDispatch;
@@ -112,6 +114,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             this.messageBus = messageBus;
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
+            this.tailSpinTimeoutNanos = Math.max(
+                    0,
+                    Math.min(configuration.getSqlParallelWorkStealingSpinTimeout(), 16_000L)
+            );
             this.workStealingStrategy = configuration.getFactoryProvider()
                     .getWorkStealingStrategy(configuration, sharedQueryWorkerCount, atom);
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
@@ -185,6 +191,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
      * @throws CairoException if a worker encountered an error
      */
     public void dispatchAndAwait() {
+        hasTailSpun = false;
         if (frameCount == 0) {
             return;
         }
@@ -515,6 +522,26 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         if (errorState.setError(th)) {
             cancelOnReducerError(th);
         }
+    }
+
+    boolean isDoneAfterTailSpin() {
+        if (hasTailSpun
+                || tailSpinTimeoutNanos == 0
+                || !isActive()
+                || isUninterruptible
+                || queuedCount < 1
+                || !doneLatch.done(Math.max(0, queuedCount - 2))) {
+            return false;
+        }
+        hasTailSpun = true;
+        final long startNanos = System.nanoTime();
+        do {
+            if (doneLatch.done(queuedCount)) {
+                return true;
+            }
+            Thread.onSpinWait();
+        } while (isActive() && System.nanoTime() - startNanos < tailSpinTimeoutNanos);
+        return doneLatch.done(queuedCount);
     }
 
     private void buildAddressCache() {

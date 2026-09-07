@@ -47,6 +47,8 @@ import org.jetbrains.annotations.Nullable;
 
 final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(PageFrameFiberTask.class);
+    private @Nullable FiberDispatchContext batchDispatchContext;
+    private long batchDispatchOwnerId;
     private final SqlExecutionCircuitBreakerWrapper circuitBreaker;
     private final PageFrameReduceDispatcher dispatcher;
     private long orderedCursor = -1;
@@ -194,18 +196,22 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     @Override
     protected boolean runStep() {
         SuspensionScope.enterTimerShards(timerShards);
-        FiberDispatchContext batchDispatchContext = Fiber.captureDispatchContext();
+        batchDispatchContext = Fiber.captureDispatchContext();
+        batchDispatchOwnerId = getQueryRegistryOwnerId(batchDispatchContext);
         if (orderedFrameSequence != null) {
             final RingQueue<PageFrameReduceTask> queue = orderedQueue;
             final MCSequence subSeq = orderedSubSeq;
             // row counts must be read before done() releases the queue slot for reuse
             long batchRows = orderedReduceTask.getFrameRowCount();
+            orderedFrameSequence.enterReducerCancellationScope();
             reduceOrderedFrame(subSeq, orderedCursor, orderedReduceTask, orderedFrameSequence);
             final int batchLimit = dispatcher.getBatchLimit();
-            // Stop claiming once the accumulated work reaches one configured-max-frame's row
-            // count. The last claimed frame may take the total above that threshold.
+            // The last claimed frame may take the total above the configured row budget.
             final long batchRowBudget = dispatcher.getBatchRowBudget();
             for (int i = 1; i < batchLimit && batchRows < batchRowBudget; i++) {
+                if (hasNoPendingTasks(subSeq)) {
+                    break;
+                }
                 final long cursor;
                 while (true) {
                     final long next = subSeq.next();
@@ -224,7 +230,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 orderedReduceTask = reduceTask;
                 orderedFrameSequence = frameSequence;
                 frameSequence.enterReducerCancellationScope();
-                batchDispatchContext = switchDispatchContext(batchDispatchContext, frameSequence.getDispatchContext());
+                pollOrSwitchDispatchContext(frameSequence.getDispatchContext());
                 batchRows += reduceTask.getFrameRowCount();
                 reduceOrderedFrame(subSeq, cursor, reduceTask, frameSequence);
             }
@@ -232,10 +238,14 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             final RingQueue<UnorderedPageFrameReduceTask> queue = unorderedQueue;
             final MCSequence subSeq = unorderedSubSeq;
             long batchRows = unorderedFrameSequence.getFrameRowCount(unorderedFrameIndex);
+            unorderedFrameSequence.enterReducerCancellationScope();
             reduceUnorderedFrame(unorderedFrameIndex, unorderedFrameSequence);
             final int batchLimit = dispatcher.getBatchLimit();
             final long batchRowBudget = dispatcher.getBatchRowBudget();
             for (int i = 1; i < batchLimit && batchRows < batchRowBudget; i++) {
+                if (hasNoPendingTasks(subSeq)) {
+                    break;
+                }
                 final long cursor;
                 while (true) {
                     final long next = subSeq.next();
@@ -265,7 +275,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 unorderedFrameIndex = frameIndex;
                 unorderedFrameSequence = frameSequence;
                 frameSequence.enterReducerCancellationScope();
-                batchDispatchContext = switchDispatchContext(batchDispatchContext, frameSequence.getDispatchContext());
+                pollOrSwitchDispatchContext(frameSequence.getDispatchContext());
                 batchRows += frameSequence.getFrameRowCount(frameIndex);
                 reduceUnorderedFrame(frameIndex, frameSequence);
             }
@@ -283,14 +293,12 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         return primary;
     }
 
-    private static @Nullable FiberDispatchContext switchDispatchContext(
-            @Nullable FiberDispatchContext currentContext,
-            @Nullable FiberDispatchContext nextContext
-    ) {
-        if (currentContext != nextContext && !Fiber.yieldForDispatch(nextContext)) {
-            throw new IllegalStateException("page frame reducer could not switch dispatch context");
-        }
-        return nextContext;
+    private static long getQueryRegistryOwnerId(@Nullable FiberDispatchContext context) {
+        return context != null ? context.getQueryRegistryOwnerId() : -1;
+    }
+
+    private static boolean hasNoPendingTasks(MCSequence subSeq) {
+        return subSeq.current() >= subSeq.getBarrier().current();
     }
 
     private void cancelFrameSequence(int reason) {
@@ -335,6 +343,19 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         }
     }
 
+    private void pollOrSwitchDispatchContext(@Nullable FiberDispatchContext nextContext) {
+        // Query leases may pool and mutate a context object after its owner finishes. The owner ID
+        // snapshot prevents reference-identity ABA from running a later query on the previous grant.
+        final long nextOwnerId = getQueryRegistryOwnerId(nextContext);
+        if (batchDispatchContext == nextContext && batchDispatchOwnerId == nextOwnerId) {
+            Fiber.pollMountedDispatchTicket();
+        } else if (!Fiber.yieldForDispatch(nextContext)) {
+            throw new IllegalStateException("page frame reducer could not switch dispatch context");
+        }
+        batchDispatchContext = nextContext;
+        batchDispatchOwnerId = nextOwnerId;
+    }
+
     // The frame stays bound while the reducer runs, so a park freezes owning exactly this cursor;
     // the cleared binding is what tells completeOwnership() the cursor is already done.
     private void reduceOrderedFrame(
@@ -346,9 +367,6 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         this.orderedCursor = cursor;
         this.orderedReduceTask = reduceTask;
         this.orderedFrameSequence = frameSequence;
-        // frames of one batch can belong to different queries; the carrier scope's signal must
-        // track the frame, not the mount
-        frameSequence.enterReducerCancellationScope();
         try {
             if (frameSequence.isActive()) {
                 circuitBreaker.init(frameSequence.getCircuitBreaker());
@@ -389,7 +407,6 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private void reduceUnorderedFrame(int frameIndex, UnorderedPageFrameSequence<?> frameSequence) {
         this.unorderedFrameIndex = frameIndex;
         this.unorderedFrameSequence = frameSequence;
-        frameSequence.enterReducerCancellationScope();
         try {
             if (frameSequence.isActive()) {
                 circuitBreaker.init(frameSequence.getCircuitBreaker());

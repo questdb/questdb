@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.sql.async;
 
+import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.FiberDispatchController;
 import io.questdb.mp.continuation.FiberDispatchRequest;
@@ -37,7 +38,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 final class RecordingFiberDispatchController implements FiberDispatchController {
+    private Runnable cooperativePollAction;
+    private int cooperativePollCount;
     private final List<FiberDispatchContext> mountedContexts = new ArrayList<>();
+    private final List<Long> mountedOwnerIds = new ArrayList<>();
+    private final List<FiberDispatchContext> polledContexts = new ArrayList<>();
+    private final List<Long> polledOwnerIds = new ArrayList<>();
     private final Session session = new Session();
     private final Ticket ticket = new Ticket();
     private int unmountCount;
@@ -53,13 +59,29 @@ final class RecordingFiberDispatchController implements FiberDispatchController 
         );
     }
 
+    int getCooperativePollCount() {
+        return cooperativePollCount;
+    }
+
+    int getMountCount() {
+        return mountedContexts.size();
+    }
+
     @Nullable
     FiberDispatchContext getMountedContext(int index) {
         return mountedContexts.get(index);
     }
 
-    int getMountCount() {
-        return mountedContexts.size();
+    long getMountedOwnerId(int index) {
+        return mountedOwnerIds.get(index);
+    }
+
+    FiberDispatchContext getPolledContext(int index) {
+        return polledContexts.get(index);
+    }
+
+    long getPolledOwnerId(int index) {
+        return polledOwnerIds.get(index);
     }
 
     int getUnmountCount() {
@@ -69,6 +91,10 @@ final class RecordingFiberDispatchController implements FiberDispatchController 
     @Override
     public FiberDispatchSession openSession(FiberRuntime runtime) {
         return session;
+    }
+
+    void setCooperativePollAction(Runnable cooperativePollAction) {
+        this.cooperativePollAction = cooperativePollAction;
     }
 
     private final class Session implements FiberDispatchSession {
@@ -103,8 +129,21 @@ final class RecordingFiberDispatchController implements FiberDispatchController 
 
     private final class Ticket implements FiberDispatchTicket {
         @Override
+        public void onCooperativePoll() {
+            cooperativePollCount++;
+            final FiberDispatchContext context = Fiber.getDispatchContext();
+            polledContexts.add(context);
+            polledOwnerIds.add(context != null ? context.getQueryRegistryOwnerId() : -1);
+            if (cooperativePollAction != null) {
+                cooperativePollAction.run();
+            }
+        }
+
+        @Override
         public void onMount(FiberDispatchRequest request) {
-            mountedContexts.add(request.getDispatchContext());
+            final FiberDispatchContext context = request.getDispatchContext();
+            mountedContexts.add(context);
+            mountedOwnerIds.add(context != null ? context.getQueryRegistryOwnerId() : -1);
         }
 
         @Override

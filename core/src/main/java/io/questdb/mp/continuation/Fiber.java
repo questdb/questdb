@@ -150,17 +150,41 @@ public final class Fiber implements FiberWaitCoordinator.Target {
      * Fibers and ordinary non-Fiber execution have no ticket and therefore make this a no-op.
      */
     public static void pollMountedDispatchTicket() {
+        pollMountedDispatchTicketAndCheckYield();
+    }
+
+    /**
+     * Polls the mounted dispatch ticket, when present, and reports whether the poll unmounted and
+     * remounted the current Fiber. An installed ticket may represent unmanaged work, so ticket
+     * presence alone does not imply that the poll enforced a scheduling boundary.
+     */
+    public static boolean pollMountedDispatchTicketAndCheckYield() {
         final Fiber fiber = current();
         if (fiber != null && isMounted()) {
             final FiberDispatchTicket ticket = fiber.mountedDispatchTicket;
             if (ticket != null) {
+                final FiberDispatchRequest request = fiber.dispatchRequest;
+                final long dispatchEpoch = request.getDispatchEpoch();
                 ticket.onCooperativePoll();
+                return request.getDispatchEpoch() != dispatchEpoch;
             }
         }
+        return false;
     }
 
     public static @Nullable FiberDispatchContext getDispatchContext() {
         return requireControlledMountedFiber().dispatchContext;
+    }
+
+    /**
+     * Cooperatively unmounts the current Fiber while preserving its dispatch context. Controlled
+     * runtimes settle and reacquire their dispatch ticket; uncontrolled runtimes reschedule the
+     * Fiber through the ordinary owner-local run queue. A false return means the continuation was
+     * pinned and could not suspend.
+     */
+    public static boolean yieldCooperatively() {
+        final Fiber fiber = requireMountedFiber();
+        return yieldForDispatch(fiber, fiber.dispatchContext);
     }
 
     /**
@@ -184,13 +208,18 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     private static Fiber requireControlledMountedFiber() {
+        final Fiber fiber = requireMountedFiber();
+        if (fiber.dispatchRequest == null) {
+            throw new IllegalStateException("Fiber dispatch operation requires a controlled runtime");
+        }
+        return fiber;
+    }
+
+    private static Fiber requireMountedFiber() {
         final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
         final Fiber fiber = scope.fiber;
         if (fiber == null || scope.mode != SuspensionScope.Mode.FIBER) {
             throw new IllegalStateException("Fiber dispatch operation requires a mounted Fiber scope");
-        }
-        if (fiber.dispatchRequest == null) {
-            throw new IllegalStateException("Fiber dispatch operation requires a controlled runtime");
         }
         return fiber;
     }

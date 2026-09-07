@@ -175,22 +175,53 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         };
     }
 
-    // Drain loops must run to latch completion before their callers release native state, so this
-    // variant never throws; the loop-top breaker check surfaces the error after the drain.
     public boolean awaitProgressWhileDraining(
             AsyncQueryProgressState progressState,
             long observedVersion,
             long observedGlobalVersion
     ) {
+        return awaitProgressWhileDraining(progressState, observedVersion, observedGlobalVersion, null);
+    }
+
+    /**
+     * Drain loops must run to latch completion before their callers release native state, so this
+     * variant never throws; the loop-top breaker check surfaces the error after the drain. A
+     * non-null breaker lets its cancellation wake the Fiber without escaping the drain. Once the
+     * caller has observed the trip and cancelled its workers it must pass null, so an already
+     * cancelled signal cannot make the drain spin.
+     */
+    public boolean awaitProgressWhileDraining(
+            AsyncQueryProgressState progressState,
+            long observedVersion,
+            long observedGlobalVersion,
+            @Nullable SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        FiberCancellationSignal cancellationSignal = null;
+        long cancellationSignalGeneration = CancellationBinding.NO_GENERATION;
+        if (circuitBreaker != null) {
+            cancellationSignal = SuspensionScope.getCancellationSignal();
+            cancellationSignalGeneration = SuspensionScope.getCancellationSignalGeneration();
+            if (cancellationSignal == null) {
+                final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
+                circuitBreaker.copyCancelledFlagTo(cancellationBinding);
+                final AtomicBoolean cancelledFlag = cancellationBinding.getFlag();
+                if (cancelledFlag instanceof FiberCancellationSignal signal) {
+                    cancellationSignal = signal;
+                    cancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
+                }
+            }
+        }
         final int reason = awaitProgress(
                 progressState,
                 observedVersion,
                 observedGlobalVersion,
-                null,
-                CancellationBinding.NO_GENERATION
+                cancellationSignal,
+                cancellationSignalGeneration
         );
         return switch (reason) {
-            case FiberWaitCoordinator.REASON_PROGRESS, FiberWaitCoordinator.REASON_TIMER -> true;
+            case FiberWaitCoordinator.REASON_CANCEL,
+                    FiberWaitCoordinator.REASON_PROGRESS,
+                    FiberWaitCoordinator.REASON_TIMER -> true;
             case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> false;
             default -> throw new IllegalStateException(
                     "unexpected query parallel drain wait reason [reason=" + reason + ']'

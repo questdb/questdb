@@ -62,6 +62,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private static final int QUIESCE_DRAINING = 2;
     private static final int QUIESCE_OPEN = 0;
     private static final int QUIESCE_REQUESTED = 1;
+    private static final int REASON_TAIL_PROGRESS_POLL = -1;
     private final long configuredBatchRowBudget;
     private final MessageBus messageBus;
     private final AtomicLong progressVersion = new AtomicLong();
@@ -79,8 +80,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private volatile boolean isClosed;
 
     public PageFrameReduceDispatcher(CairoEngine engine, MessageBus messageBus, FiberRuntime runtime) {
-        // Stop each batch after it reaches one configured-max-frame's row count.
-        this.configuredBatchRowBudget = engine.getConfiguration().getSqlPageFrameMaxRows();
+        // Amortize dispatch overhead across two max-sized frames' worth of rows. Managed reducers
+        // still poll their dispatch ticket at every frame boundary; this row budget separately
+        // bounds when a runnable batch returns naturally to the host worker.
+        this.configuredBatchRowBudget = 2L * engine.getConfiguration().getSqlPageFrameMaxRows();
         this.batchRowBudget = configuredBatchRowBudget;
         this.messageBus = messageBus;
         this.runtime = runtime;
@@ -611,10 +614,6 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         }
         final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
         try {
-            if (!coordinator.armEvent(token, frameSequence.getProgressWaitQueue())
-                    || !coordinator.armEvent(token, progressWaitQueue)) {
-                throw new IllegalStateException("page frame progress wait registration failed");
-            }
             if (cancellationSignal != null
                     && !coordinator.armCancellation(token, cancellationSignal, cancellationSignalGeneration)) {
                 throw new IllegalStateException("page frame progress cancellation registration failed");
@@ -626,6 +625,23 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                     supplementalCancellationSignalGeneration
             )) {
                 throw new IllegalStateException("page frame supplemental cancellation registration failed");
+            }
+            // conditions present at registration win over completion, so re-check after the spin
+            if (!isQuiescingAllowed
+                    && frameSequence instanceof UnorderedPageFrameSequence<?> unorderedFrameSequence
+                    && isOpenForTailSpin()
+                    && unorderedFrameSequence.isDoneAfterTailSpin()
+                    && isOpenForTailSpin()) {
+                final int reason = coordinator.preferPendingCancel(token, FiberWaitCoordinator.REASON_PROGRESS);
+                if (reason == FiberWaitCoordinator.REASON_PROGRESS
+                        && unorderedFrameSequence.getDispatchContext() != null) {
+                    return REASON_TAIL_PROGRESS_POLL;
+                }
+                return reason;
+            }
+            if (!coordinator.armEvent(token, frameSequence.getProgressWaitQueue())
+                    || !coordinator.armEvent(token, progressWaitQueue)) {
+                throw new IllegalStateException("page frame progress wait registration failed");
             }
             if (!coordinator.armTimer(token, timerShards, timerClock, timerIntervalMillis)) {
                 return FiberWaitCoordinator.REASON_SHUTDOWN;
@@ -760,6 +776,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         }
     }
 
+    private boolean isOpenForTailSpin() {
+        return timerShards.isRunning() && !isClosed && quiesceState.get() == QUIESCE_OPEN;
+    }
+
     private void launch(
             Fiber fiber,
             long reservationEpoch,
@@ -854,6 +874,13 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             }
             case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> true;
             case FiberWaitCoordinator.REASON_PROGRESS -> false;
+            case REASON_TAIL_PROGRESS_POLL -> {
+                // awaitProgress() tears down the BUILDING wait before returning this private
+                // reason. Poll the current owner ticket only after that teardown, so an expired
+                // grant can yield without nesting two suspension protocols.
+                Fiber.pollMountedDispatchTicket();
+                yield false;
+            }
             case FiberWaitCoordinator.REASON_TIMER -> {
                 if (circuitBreaker != null) {
                     circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();

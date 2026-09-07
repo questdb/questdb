@@ -45,6 +45,8 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
     private final QueryParallelFiberDispatcher dispatcher;
     private final FiberTaskPool<?> pool;
     private final TimerShards timerShards;
+    private @Nullable FiberDispatchContext batchDispatchContext;
+    private long batchDispatchOwnerId;
     private MCSequence batchSubSeq;
     private int batchWorkerId = -1;
     private FiberDispatchContext dispatchContext;
@@ -157,7 +159,8 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
     @Override
     protected final boolean runStep() {
         SuspensionScope.enterTimerShards(timerShards);
-        FiberDispatchContext batchDispatchContext = Fiber.captureDispatchContext();
+        batchDispatchContext = Fiber.captureDispatchContext();
+        batchDispatchOwnerId = getQueryRegistryOwnerId(batchDispatchContext);
         long batchWeight = boundEntryWeight();
         if (!runTask()) {
             return false;
@@ -177,7 +180,7 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
                 // entries of one batch can belong to different queries; the carrier scope's
                 // signal must track the entry, not the mount
                 enterBoundCancellationScope();
-                batchDispatchContext = switchDispatchContext(batchDispatchContext, dispatchContext);
+                switchDispatchContext(dispatchContext);
                 batchWeight += boundEntryWeight();
                 if (!runTask()) {
                     return false;
@@ -233,14 +236,8 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
         }
     }
 
-    private static @Nullable FiberDispatchContext switchDispatchContext(
-            @Nullable FiberDispatchContext currentContext,
-            @Nullable FiberDispatchContext nextContext
-    ) {
-        if (currentContext != nextContext && !Fiber.yieldForDispatch(nextContext)) {
-            throw new IllegalStateException("query parallel reducer could not switch dispatch context");
-        }
-        return nextContext;
+    private static long getQueryRegistryOwnerId(@Nullable FiberDispatchContext context) {
+        return context != null ? context.getQueryRegistryOwnerId() : -1;
     }
 
     private void enterBoundCancellationScope() {
@@ -266,5 +263,17 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
         } finally {
             pool.releaseSelf(this);
         }
+    }
+
+    private void switchDispatchContext(@Nullable FiberDispatchContext nextContext) {
+        // Query leases may pool and mutate a context object after its owner finishes. The owner ID
+        // snapshot prevents reference-identity ABA from running a later query on the previous grant.
+        final long nextOwnerId = getQueryRegistryOwnerId(nextContext);
+        if ((batchDispatchContext != nextContext || batchDispatchOwnerId != nextOwnerId)
+                && !Fiber.yieldForDispatch(nextContext)) {
+            throw new IllegalStateException("query parallel reducer could not switch dispatch context");
+        }
+        batchDispatchContext = nextContext;
+        batchDispatchOwnerId = nextOwnerId;
     }
 }
