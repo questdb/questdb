@@ -391,7 +391,15 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     public static int misdirectedRequestWithRoleSize(byte[] roleBytes) {
-        return MISDIRECTED_REQUEST_PREFIX.length + roleBytes.length + RESPONSE_SUFFIX.length;
+        return misdirectedRequestWithRoleSize(roleBytes, null);
+    }
+
+    public static int misdirectedRequestWithRoleSize(byte[] roleBytes, byte[] sessionCookieValueBytes) {
+        int size = MISDIRECTED_REQUEST_PREFIX.length + roleBytes.length + RESPONSE_SUFFIX.length;
+        if (sessionCookieValueBytes != null) {
+            size += RESPONSE_SESSION_COOKIE_PREFIX.length + sessionCookieValueBytes.length;
+        }
+        return size;
     }
 
     /**
@@ -514,7 +522,16 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     public static int writeMisdirectedRequestWithRole(long buf, int bufferSize, byte[] roleBytes) {
-        int needed = misdirectedRequestWithRoleSize(roleBytes);
+        return writeMisdirectedRequestWithRole(buf, bufferSize, roleBytes, null);
+    }
+
+    public static int writeMisdirectedRequestWithRole(
+            long buf,
+            int bufferSize,
+            byte[] roleBytes,
+            byte[] sessionCookieValueBytes
+    ) {
+        int needed = misdirectedRequestWithRoleSize(roleBytes, sessionCookieValueBytes);
         if (needed > bufferSize) {
             return -1;
         }
@@ -524,6 +541,14 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         }
         for (byte b : roleBytes) {
             Unsafe.putByte(buf + offset++, b);
+        }
+        if (sessionCookieValueBytes != null) {
+            for (byte b : RESPONSE_SESSION_COOKIE_PREFIX) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+            for (byte b : sessionCookieValueBytes) {
+                Unsafe.putByte(buf + offset++, b);
+            }
         }
         for (byte b : RESPONSE_SUFFIX) {
             Unsafe.putByte(buf + offset++, b);

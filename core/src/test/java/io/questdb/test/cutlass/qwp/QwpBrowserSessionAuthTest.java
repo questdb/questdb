@@ -31,6 +31,8 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpCookieHandler;
@@ -38,6 +40,8 @@ import io.questdb.cutlass.http.HttpCookieHandlerImpl;
 import io.questdb.cutlass.http.HttpSessionStore;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.test.AbstractBootstrapTest;
@@ -185,6 +189,95 @@ public class QwpBrowserSessionAuthTest extends AbstractBootstrapTest {
 
                 Assert.assertNotEquals(oldSessionId, newSessionId);
                 Assert.assertTrue(response.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+                Assert.assertTrue(response.contains(
+                        "Set-Cookie: " + SESSION_COOKIE_NAME + "=" + newSessionId
+                                + "; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000\r\n"
+                ));
+            }
+        });
+    }
+
+    @Test
+    public void testRoleRejectReturnsRotatedSessionCookie() throws Exception {
+        AtomicLong currentMicros = new AtomicLong(1_760_743_438_000_000L);
+        MicrosecondClock testClock = currentMicros::get;
+        QwpServerInfoProvider replica = new QwpServerInfoProvider() {
+            @Override
+            public int getCapabilities() {
+                return 0;
+            }
+
+            @Override
+            public CharSequence getClusterId() {
+                return "";
+            }
+
+            @Override
+            public long getEpoch() {
+                return 0;
+            }
+
+            @Override
+            public CharSequence getNodeId() {
+                return "";
+            }
+
+            @Override
+            public byte role() {
+                return QwpEgressMsgKind.ROLE_REPLICA;
+            }
+        };
+        Bootstrap bootstrap = new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return testClock;
+                    }
+
+                    @Override
+                    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
+                        return new PropServerConfiguration(
+                                bootstrap.getRootDirectory(),
+                                bootstrap.loadProperties(),
+                                getEnv(),
+                                bootstrap.getLog(),
+                                bootstrap.getBuildInformation(),
+                                FilesFacadeImpl.INSTANCE,
+                                bootstrap.getMicrosecondClock(),
+                                (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration)
+                        ) {
+                            private final CairoConfiguration qwpCairoConfiguration =
+                                    new CairoConfigurationWrapper(super.getCairoConfiguration()) {
+                                        @Override
+                                        public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
+                                            return replica;
+                                        }
+                                    };
+
+                            @Override
+                            public CairoConfiguration getCairoConfiguration() {
+                                return qwpCairoConfiguration;
+                            }
+                        };
+                    }
+                },
+                getServerMainArgs()
+        );
+
+        assertMemoryLeak(() -> {
+            try (ServerMain questdb = new ServerMain(bootstrap)) {
+                questdb.start();
+                String oldSessionId = createSession();
+                HttpSessionStore sessionStore = questdb.getConfiguration().getFactoryProvider().getHttpSessionStore();
+                HttpSessionStore.SessionInfo session = sessionStore.getSession(oldSessionId);
+                Assert.assertNotNull(session);
+
+                currentMicros.set(session.getRotateAt() + 1);
+                String response = webSocketUpgrade("/write/v4", oldSessionId);
+                String newSessionId = session.getSessionId().toString();
+
+                Assert.assertNotEquals(oldSessionId, newSessionId);
+                Assert.assertTrue(response.startsWith("HTTP/1.1 421 Misdirected Request\r\n"));
                 Assert.assertTrue(response.contains(
                         "Set-Cookie: " + SESSION_COOKIE_NAME + "=" + newSessionId
                                 + "; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000\r\n"

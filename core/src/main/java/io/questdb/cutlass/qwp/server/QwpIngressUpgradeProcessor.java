@@ -387,14 +387,24 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             return;
         }
 
+        // Authentication may rotate qdb_session before the upgrade processor
+        // runs. Preserve that cookie even when this node rejects ingress due
+        // to its role, otherwise the client keeps using the expiring id while
+        // following the 421 redirect/retry path.
+        byte[] sessionCookieValueBytes = QwpIngressHttpProcessor.getSessionCookieValueBytes(context);
         byte role = engine.getQwpServerInfoProvider().role();
         byte[] roleBytes = QwpEgressMsgKind.roleNameBytes(role);
         if (role == QwpEgressMsgKind.ROLE_REPLICA || role == QwpEgressMsgKind.ROLE_PRIMARY_CATCHUP) {
-            int rejectSize = QwpIngressHttpProcessor.misdirectedRequestWithRoleSize(roleBytes);
+            int rejectSize = QwpIngressHttpProcessor.misdirectedRequestWithRoleSize(roleBytes, sessionCookieValueBytes);
             if (rejectSize > bufferSize) {
                 throw responseDoesNotFitSendBuffer(context.getFd(), "421 ingress role-reject response", bufferSize, rejectSize);
             }
-            int rejectBytes = QwpIngressHttpProcessor.writeMisdirectedRequestWithRole(bufferAddr, bufferSize, roleBytes);
+            int rejectBytes = QwpIngressHttpProcessor.writeMisdirectedRequestWithRole(
+                    bufferAddr,
+                    bufferSize,
+                    roleBytes,
+                    sessionCookieValueBytes
+            );
             if (rejectBytes <= 0) {
                 throw responseDoesNotFitSendBuffer(context.getFd(), "421 ingress role-reject response", bufferSize, rejectSize);
             }
@@ -437,8 +447,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         boolean browserHandshakeRequested = effectiveMaxBatchSize > 0
                 && browserHandshake != null
                 && Utf8s.equalsAscii("v1", browserHandshake);
-        byte[] sessionCookieValueBytes = QwpIngressHttpProcessor.getSessionCookieValueBytes(context);
-
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocolEnabled);
