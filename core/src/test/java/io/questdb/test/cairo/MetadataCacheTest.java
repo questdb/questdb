@@ -1214,8 +1214,6 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 final MetadataCache.ExpiryPolicyGuard secondGuard = cache.sampleExpiryPolicyGuard();
                 Assert.assertTrue("a steady pending marker has an unchanged generation",
                         firstGuard.hasSameVersion(secondGuard));
-                Assert.assertFalse("the legacy database-wide stability contract remains unchanged",
-                        firstGuard.isStableWith(secondGuard));
             } finally {
                 cache.cancelExpiryPolicyUpdate(mv.getTableId());
             }

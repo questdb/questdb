@@ -1175,10 +1175,6 @@ public class MetadataCache implements QuietCloseable {
         public boolean hasSameVersion(ExpiryPolicyGuard other) {
             return version == other.version;
         }
-
-        public boolean isStableWith(ExpiryPolicyGuard other) {
-            return !pending && !other.pending && version == other.version;
-        }
     }
 
     public static final class ExpiryPolicyInfo {
