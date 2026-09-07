@@ -257,6 +257,23 @@ public class QwpMessageHeaderTest {
             Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
             Unsafe.putByte(addr + HEADER_OFFSET_TABLE_COUNT, (byte) 0);
 
+            Unsafe.putInt(addr + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE + 1);
+            Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
+            Unsafe.putInt(addr + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
+
+            Unsafe.putByte(addr + HEADER_OFFSET_VERSION, (byte) (VERSION + 1));
+            Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
+            Unsafe.putByte(addr + HEADER_OFFSET_VERSION, VERSION);
+
+            Unsafe.putInt(addr + HEADER_OFFSET_PAYLOAD_LENGTH, 1);
+            Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
+            Unsafe.putInt(addr + HEADER_OFFSET_PAYLOAD_LENGTH, 0);
+
+            // Every field restored: the frame must be recognised again, so a
+            // mutation above that silently failed to restore cannot mask a
+            // later assertion.
+            Assert.assertTrue(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
+
             Unsafe.putByte(addr + HEADER_OFFSET_FLAGS, FLAG_DEFER_COMMIT);
             Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
         } finally {

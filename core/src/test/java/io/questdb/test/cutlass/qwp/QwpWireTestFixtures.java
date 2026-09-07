@@ -124,6 +124,17 @@ final class QwpWireTestFixtures {
      * frames (SERVER_INFO first) unconsumed in the stream.
      */
     static void performReadHandshake(Socket socket) throws Exception {
+        performReadHandshake(socket, "");
+    }
+
+    /**
+     * Upgrades the read endpoint with an optional query string, so a test can
+     * drive the browser-only URL carriers a browser WebSocket must use in
+     * place of the {@code X-QWP-*} headers it cannot set.
+     *
+     * @param query leading {@code ?} included, or empty for none
+     */
+    static void performReadHandshake(Socket socket, String query) throws Exception {
         OutputStream out = socket.getOutputStream();
         InputStream in = socket.getInputStream();
 
@@ -133,7 +144,7 @@ final class QwpWireTestFixtures {
         }
         String wsKey = Base64.getEncoder().encodeToString(keyBytes);
 
-        String request = "GET /read/v1 HTTP/1.1\r\n" +
+        String request = "GET /read/v1" + query + " HTTP/1.1\r\n" +
                 "Host: localhost\r\n" +
                 "Upgrade: websocket\r\n" +
                 "Connection: Upgrade\r\n" +
