@@ -557,11 +557,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void setMetadataProbe(boolean value) {
-        this.metadataProbe = value;
-    }
-
-    @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
     }
@@ -575,6 +570,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         this.memoryTracker = tracker;
+    }
+
+    @Override
+    public void setMetadataProbe(boolean value) {
+        this.metadataProbe = value;
     }
 
     @Override

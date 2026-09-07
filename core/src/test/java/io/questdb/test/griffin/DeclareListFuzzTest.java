@@ -70,16 +70,20 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
                 final String declared = "DECLARE @x := (" + list + ") SELECT " + col + " FROM t WHERE "
                         + col + op + declaredRhs + " ORDER BY " + col;
 
+                // The reference side is printed, because what it returns is what the declared side
+                // has to match. The declared side goes through assertQuery().returns() rather than
+                // a second print, so every generated shape also gets the second cursor pass, the
+                // calculateSize() cross-check and the variable-column check that a print skips.
                 printSql(written);
                 final String expected = sink.toString();
-                printSql(declared);
-                final String actual = sink.toString();
-                if (!expected.equals(actual)) {
+                try {
+                    assertQuery(declared).noLeakCheck().returns(expected);
+                } catch (AssertionError e) {
                     throw new AssertionError("spliced list differs from the written-out list"
                             + "\n  written : " + written
                             + "\n  declared: " + declared
                             + "\n  expected: " + expected.replace('\n', '/')
-                            + "\n  actual  : " + actual.replace('\n', '/'));
+                            + "\n  detail  : " + e.getMessage(), e);
                 }
             }
             // A fuzz run that never reached these shapes would prove nothing about them.
@@ -123,25 +127,33 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
 
                 // Read it as declared, and with a caller override of a different length, since the
                 // override is re-parsed through the same subquery path.
-                printSql("SELECT " + col + " FROM " + viewName + " ORDER BY " + col);
-                final String viaView = sink.toString();
                 printSql("SELECT " + col + " FROM t2 WHERE " + col + " IN ("
                         + stripTrailingComma(list.toString()) + ") ORDER BY " + col);
                 final String written = sink.toString();
-                if (!viaView.equals(written)) {
+                final String viaView = "SELECT " + col + " FROM " + viewName + " ORDER BY " + col;
+                try {
+                    assertQuery(viaView).noLeakCheck().returns(written);
+                } catch (AssertionError e) {
                     throw new AssertionError("view with a declared list differs from the written-out list"
                             + "\n  list    : " + list
-                            + "\n  via view: " + viaView.replace('\n', '/')
-                            + "\n  written : " + written.replace('\n', '/'));
+                            + "\n  via view: " + viaView
+                            + "\n  written : " + written.replace('\n', '/')
+                            + "\n  detail  : " + e.getMessage(), e);
                 }
 
                 if (rnd.nextBoolean()) {
                     final String other = member(rnd, useLong) + ", " + member(rnd, useLong);
-                    printSql("DECLARE @x := (" + other + ") SELECT " + col + " FROM " + viewName + " ORDER BY " + col);
-                    final String viaOverride = sink.toString();
                     printSql("SELECT " + col + " FROM t2 WHERE " + col + " IN (" + other + ") ORDER BY " + col);
-                    if (!viaOverride.equals(sink.toString())) {
-                        throw new AssertionError("overridden list in a view differs from the written-out list");
+                    final String writtenOverride = sink.toString();
+                    final String viaOverride = "DECLARE @x := (" + other + ") SELECT " + col
+                            + " FROM " + viewName + " ORDER BY " + col;
+                    try {
+                        assertQuery(viaOverride).noLeakCheck().returns(writtenOverride);
+                    } catch (AssertionError e) {
+                        throw new AssertionError("overridden list in a view differs from the written-out list"
+                                + "\n  override: " + viaOverride
+                                + "\n  written : " + writtenOverride.replace('\n', '/')
+                                + "\n  detail  : " + e.getMessage(), e);
                     }
                     overridden++;
                 }

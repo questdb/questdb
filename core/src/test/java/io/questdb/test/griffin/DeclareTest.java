@@ -1139,6 +1139,108 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclaredListOfBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG)");
+            execute("INSERT INTO k VALUES ('a',1), ('b',2), ('c',3)");
+            drainWalQueue();
+            // Splicing at parse time is what lets a list hold bind variables: each one lands in IN
+            // as its own argument and binds to its own type, which a typed-array literal carrying
+            // the list could not do.
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "a");
+            bindVariableService.setStr(1, "c");
+            assertQuery("DECLARE @s := ($1, $2) SELECT s FROM k WHERE s IN @s ORDER BY s")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            a
+                            c
+                            """);
+            // Re-binding the same plan to different values is the point of leaving them unbound.
+            bindVariableService.setStr(0, "b");
+            bindVariableService.setStr(1, "c");
+            assertQuery("DECLARE @s := ($1, $2) SELECT s FROM k WHERE s IN @s ORDER BY s")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            b
+                            c
+                            """);
+            // A one-member list of a bind variable needs the trailing comma like any other.
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 2L);
+            assertQuery("DECLARE @l := ($1,) SELECT l FROM k WHERE l IN @l")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            2
+                            """);
+            // Bind variables mix with literals on either side of the list.
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 1L);
+            assertQuery("DECLARE @l := ($1, 2) SELECT l FROM k WHERE l IN (@l, 3) ORDER BY l")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            1
+                            2
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclaredVariableCanBeMarkedAudited() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL)");
+            execute("INSERT INTO k VALUES ('a'), ('b')");
+            drainWalQueue();
+            // AUDITED only marks the variable here; what a read of an audited view does with the
+            // marking is an Enterprise concern. What OSS owns is that the marking parses, in
+            // either order with OVERRIDABLE and on a list as readily as on a scalar.
+            final String expected = """
+                    s
+                    a
+                    """;
+            assertQuery("DECLARE AUDITED @s := 'a' SELECT s FROM k WHERE s = @s")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE OVERRIDABLE AUDITED @s := 'a' SELECT s FROM k WHERE s = @s")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE AUDITED OVERRIDABLE @s := 'a' SELECT s FROM k WHERE s = @s")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE AUDITED @s := ('a',) SELECT s FROM k WHERE s IN @s")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testDeclaredVariableMarkerMisuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL)");
+            // A repeated marker is a typo, not a stronger marking, and saying which one repeated
+            // is the whole value of the message.
+            assertQuery("DECLARE AUDITED AUDITED @s := 'a' SELECT s FROM k")
+                    .fails(16, "duplicate AUDITED");
+            assertQuery("DECLARE OVERRIDABLE OVERRIDABLE @s := 'a' SELECT s FROM k")
+                    .fails(20, "duplicate OVERRIDABLE");
+            assertQuery("DECLARE AUDITED OVERRIDABLE AUDITED @s := 'a' SELECT s FROM k")
+                    .fails(28, "duplicate AUDITED");
+            // A marker with nothing to mark names what it was expecting.
+            assertQuery("DECLARE AUDITED := 'a' SELECT s FROM k")
+                    .fails(16, "variable name expected after AUDITED");
+            assertQuery("DECLARE OVERRIDABLE := 'a' SELECT s FROM k")
+                    .fails(20, "variable name expected after OVERRIDABLE");
+            assertQuery("DECLARE OVERRIDABLE AUDITED := 'a' SELECT s FROM k")
+                    .fails(28, "variable name expected after OVERRIDABLE/AUDITED");
+        });
+    }
+
+    @Test
     public void testParenthesisedScalarIsNotAList() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE k (l LONG)");

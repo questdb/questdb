@@ -366,9 +366,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setJitMode(int jitMode);
 
-    default void setMetadataProbe(boolean value) {
-    }
-
     default void setLiveViewCompile(boolean value) {
     }
 
@@ -379,6 +376,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * at workload end so the context is ready for the next workload.
      */
     default void setMemoryTracker(@Nullable MemoryTracker tracker) {
+    }
+
+    default void setMetadataProbe(boolean value) {
     }
 
     void setNowAndFixClock(long now, int nowTimestampType);

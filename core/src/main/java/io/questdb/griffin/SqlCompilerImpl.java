@@ -5028,6 +5028,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         securityContext.authorizeMatViewDrop(tableToken);
                     } else {
                         securityContext.authorizeTableDrop(tableToken);
+                        // Same veto executeDropTable applies. DROP ALL TABLES skips system tables,
+                        // which an undroppable table need not be, so without this the one route
+                        // that drops every table at once would be the route around the veto. The
+                        // throw lands in dropAllTablesFailures below, so the rest still drop.
+                        checkTableDroppable(tableToken);
                     }
                     if (tableToken.isLiveView()) {
                         // A live view carries state the generic drop does not know about:
@@ -5474,6 +5479,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 metadata.getColumnType(metadataColumnIndex),
                 metadata.getColumnName(metadataColumnIndex)
         );
+    }
+
+    private boolean isAuditedView(TableToken tableToken) {
+        if (!tableToken.isView()) {
+            return false;
+        }
+        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(tableToken);
+        return viewDefinition != null && viewDefinition.isAudited();
     }
 
     private boolean isCompatibleColumnTypeChange(int from, int to) {
@@ -5927,18 +5940,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Exposed so that a subclass can compile expressions the base compiler captured but does not
-     * itself consume - the audited-view parameters, which Enterprise turns into functions.
-     */
-    private boolean isAuditedView(TableToken tableToken) {
-        if (!tableToken.isView()) {
-            return false;
-        }
-        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(tableToken);
-        return viewDefinition != null && viewDefinition.isAudited();
-    }
-
-    /**
      * Vetoes dropping a specific table outright, independently of permissions. Distinct from
      * {@code isProtected()}, which denies every kind of access: a table can be readable, writable
      * and truncatable by anyone holding the permission, yet still be one the database refuses to
@@ -5947,6 +5948,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     protected void checkTableDroppable(TableToken tableToken) {
     }
 
+    /**
+     * Exposed so that a subclass can compile expressions the base compiler captured but does not
+     * itself consume - the audited-view parameters, which Enterprise turns into functions.
+     */
     protected FunctionParser getFunctionParser() {
         return functionParser;
     }

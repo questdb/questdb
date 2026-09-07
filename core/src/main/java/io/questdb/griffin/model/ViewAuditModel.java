@@ -33,10 +33,14 @@ import io.questdb.std.ObjectFactory;
 /**
  * One read of an audited view, captured while the parser expands that view.
  * <p>
- * It names the view and pairs each of the view's {@code DECLARE OVERRIDABLE} parameters with the
+ * It names the view and pairs each of the view's {@code DECLARE AUDITED} parameters with the
  * expression that parameter resolved to at this reference site - the caller's override where the
  * caller supplied one, the view's own default otherwise. The expression is what the parser
  * substituted into the view body, so it is exactly what the read filters on.
+ * <p>
+ * {@code AUDITED} is what decides membership here, not {@code OVERRIDABLE}: the two markings are
+ * independent, and a parameter no caller can set still resolves differently on every execution when
+ * its default is not constant.
  * <p>
  * The expression is deliberately kept unevaluated here. A caller may bind a parameter to a bind
  * variable, in which case the same compiled plan serves many executions with different values, and
@@ -77,12 +81,12 @@ public class ViewAuditModel implements Mutable {
         return paramValues.getQuick(index);
     }
 
-    public CharSequence getViewName() {
-        return viewName;
-    }
-
     public int getViewId() {
         return viewId;
+    }
+
+    public CharSequence getViewName() {
+        return viewName;
     }
 
     /**

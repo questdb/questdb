@@ -130,6 +130,10 @@ public abstract class AbstractAllowAllSecurityContext extends AbstractPrincipalA
     }
 
     @Override
+    public void authorizeAuditView() {
+    }
+
+    @Override
     public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
     }
 
@@ -242,10 +246,6 @@ public abstract class AbstractAllowAllSecurityContext extends AbstractPrincipalA
 
     @Override
     public void authorizeViewCompile(TableToken tableToken) {
-    }
-
-    @Override
-    public void authorizeAuditView() {
     }
 
     @Override

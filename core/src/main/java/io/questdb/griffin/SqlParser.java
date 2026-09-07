@@ -65,8 +65,8 @@ import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.ViewAuditModel;
 import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.ViewAuditModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.model.WindowJoinContext;
 import io.questdb.griffin.model.WithClauseModel;
@@ -139,19 +139,21 @@ public class SqlParser {
     private final ObjectPool<PivotForColumn> pivotQueryColumnPool;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
+    // One entry per reference to an audited view, in the order the parser expanded them. A list
+    // rather than a map: the same view read twice is two reads, and each records its own arguments.
+    private final ObjList<ViewAuditModel> recordedViewAudits = new ObjList<>();
     // Map of view definitions encountered during query compilation.
     // Using a map ensures consistent view definitions even if views are modified concurrently.
-    private final ObjList<ViewAuditModel> recordedViewAudits = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<ViewDefinition> recordedViews = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo.Visitor rejectJoinSubQueryRef = this::rejectJoinSubQuery;
     private final ObjectPool<RenameTableModel> renameTableModelPool;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcatRef = this::rewriteConcat;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCountAndWindowExpressionsRef = this::rewriteCountAndWindowExpressions;
     private final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
-    private final ObjList<ExpressionNode> splicedArgs = new ObjList<>();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCastRef = this::rewriteJsonExtractCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCastRef = this::rewritePgCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgNumericRef = this::rewritePgNumeric;
+    private final ObjList<ExpressionNode> splicedArgs = new ObjList<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final IntList tableNamePositions = new IntList();
     private final LowerCaseCharSequenceHashSet tableNames = new LowerCaseCharSequenceHashSet();
@@ -593,6 +595,32 @@ public class SqlParser {
     private void assertNotDot(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (Chars.indexOfLastUnquoted(tok, '.') != -1) {
             throw SqlException.$(lexer.lastTokenPosition(), "'.' is not allowed here");
+        }
+    }
+
+    /**
+     * Hands the audits collected while expanding audited views to the statement's query model.
+     * <p>
+     * This sits at the single parse entry point rather than in {@code parseSelect}, because a read
+     * of an audited view is a read whichever statement performs it: {@code INSERT INTO ... SELECT},
+     * {@code CREATE TABLE AS SELECT} and {@code UPDATE ... FROM} build their query model through
+     * {@code parseDml} directly and never reach {@code parseSelect}, so recording there left the
+     * statements that copy rows out of an audited view as the ones leaving no record.
+     * <p>
+     * {@link IQueryModel#recordViewAudits(ObjList)} skips audits the model already holds, so a
+     * statement whose parser also recorded them does not end up with duplicates.
+     */
+    private void attachViewAudits(ExecutionModel model) {
+        if (recordedViewAudits.size() == 0) {
+            return;
+        }
+        // EXPLAIN carries the statement it explains; the audits belong to that statement's model.
+        final ExecutionModel target = model.getModelType() == ExecutionModel.EXPLAIN
+                ? ((ExplainModel) model).getInnerExecutionModel()
+                : model;
+        final IQueryModel queryModel = target.getQueryModel();
+        if (queryModel != null) {
+            queryModel.recordViewAudits(recordedViewAudits);
         }
     }
 
@@ -5652,7 +5680,7 @@ public class SqlParser {
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
             model.recordViews(recordedViews);
-            model.recordViewAudits(recordedViewAudits);
+            // Audits are attached in parse(), which covers every statement that reads a view.
             return model;
         }
         if (Chars.equals(tok, ":=")) {
@@ -7288,6 +7316,12 @@ public class SqlParser {
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
+        final ExecutionModel model = parse0(lexer, executionContext, sqlParserCallback);
+        attachViewAudits(model);
+        return model;
+    }
+
+    private ExecutionModel parse0(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
         // ANCHOR is a live-view-only clause. A live-view re-compile (the refresh
         // worker, the startup graph build, CREATE's own validating compile of the
         // stored SELECT) parses the view's SELECT as a plain query with this flag

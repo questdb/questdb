@@ -125,7 +125,10 @@ public class ViewDefinition implements Mutable {
             }
             if (block.type() == VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE) {
                 readExtraBlock(destDefinition, block);
-                return;
+                // Keep going rather than return: a file carrying the extra block but no definition
+                // block has no view SQL to build from, and returning here would hand back an empty
+                // definition instead of reaching the check below.
+                continue;
             }
         }
 
