@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.TableToken;
@@ -80,7 +81,7 @@ import org.jetbrains.annotations.TestOnly;
  * This cursor yields at most one frame per call to {@link #of}; iteration of
  * larger-than-page-frame row ranges is not supported yet.
  */
-public class WalSegmentPageFrameCursor implements PageFrameCursor {
+public class WalSegmentPageFrameCursor implements PageFrameCursor, LiveViewSymbolIdSource {
     // Retained-capacity cap for the extracted-timestamp scratch. Above it, computeFrame shrinks
     // the buffer back to its base page instead of only rewinding the append cursor, so a single
     // outlier transaction (up to 8 bytes per row) does not pin its peak for the whole refresh
@@ -133,6 +134,9 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     private WalReader reader;
     private long rowHi;
     private long rowLo;
+    // The registry the current of() armed, held only so releaseSegment/close can clear the
+    // arming this cursor stamped. Null for a read that translates nothing.
+    private LiveViewSymbolIdRegistry symbolIdRegistry;
 
     public WalSegmentPageFrameCursor(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -159,8 +163,49 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         }
     }
 
+    /**
+     * Describes one live-view dictionary slot's band in THIS transaction's symbol space:
+     * the diff's clean count, the width of the band above it, and the cursor's own symbol
+     * table as the resolver.
+     * <p>
+     * The resolver has to be {@link WalSymbolTable} rather than a base {@code SymbolMapReader}
+     * the refresh holds, because only this one probes the transaction's overlay before falling
+     * through to the segment's clean files. A pinned base reader is a different object with a
+     * different count, and resolving the clean band through it would name the ids in a
+     * dictionary this epoch did not come from.
+     * <p>
+     * A column with no diff in this transaction arms a zero-width band, never the previous
+     * transaction's: the WAL writer emits a diff for a column whenever its committed
+     * dictionary holds anything at all, so no diff means no committed symbol, which means the
+     * rows can carry nothing but NULL. Any other id is then out of band and refused rather
+     * than translated through a boundary that does not belong to it.
+     */
+    @Override
+    public void armSlot(LiveViewSymbolIdRegistry registry, int slot, int baseScanColumnIndex, int baseWriterColumnIndex) {
+        final int projectedIndex = columnIndexes.indexOf(baseWriterColumnIndex, 0, columnIndexes.size());
+        final WalSymbolTable symbolTable = projectedIndex >= 0 && projectedIndex < symbolTables.size()
+                ? symbolTables.getQuick(projectedIndex)
+                : null;
+        if (symbolTable == null) {
+            // The view keys by a base column its own scan does not project, or projects as
+            // something other than a SYMBOL. Either way there is no id space to arm against.
+            throw CairoException.critical(0)
+                    .put("live view partition key column is not projected by the WAL scan [slot=").put(slot)
+                    .put(", baseWriterColumn=").put(baseWriterColumnIndex)
+                    .put(']');
+        }
+        final DirectSymbolMap txnDiff = baseWriterColumnIndex < txnSymbolDiffs.size()
+                ? txnSymbolDiffs.getQuick(baseWriterColumnIndex)
+                : null;
+        final int cleanSymbolCount = baseWriterColumnIndex < txnSymbolCleanCounts.size()
+                ? txnSymbolCleanCounts.getQuick(baseWriterColumnIndex)
+                : 0;
+        registry.armWal(slot, cleanSymbolCount, txnDiff != null ? txnDiff.size() : 0, symbolTable);
+    }
+
     @Override
     public void close() {
+        disarmSymbolIdRegistry();
         reader = Misc.free(reader);
         Misc.free(extractedTimestampMem);
         Misc.freeObjList(txnSymbolDiffs);
@@ -236,6 +281,12 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
      * <p>
      * Reuses internal buffers across calls; callers should {@link #close()} the
      * cursor when all segments have been consumed.
+     * <p>
+     * {@code symbolIdRegistry}, when non-null, is armed for this transaction once the frame
+     * is built: every slot it holds takes this transaction's clean count, dirty-band width and
+     * symbol table. A read that keys no partition by a translated symbol passes null, which
+     * also clears whatever arming a previous {@link #of} left on its registry - a stale band
+     * is what turns a legitimate base id into a plausible id for the wrong string.
      *
      * @throws TableReferenceOutOfDateException when the opened segment's schema no longer
      *                                          matches {@code metadata} - a referenced base
@@ -252,7 +303,8 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             @NotNull RecordMetadata metadata,
             @Transient @NotNull IntList columnIndexes,
             @Transient @NotNull IntList columnSizeShifts,
-            @Nullable SymbolMapDiffCursor txnDiffs
+            @Nullable SymbolMapDiffCursor txnDiffs,
+            @Nullable LiveViewSymbolIdRegistry symbolIdRegistry
     ) {
         assert rowLo >= 0 && rowHi >= rowLo && rowHi <= segmentRowCount;
         assert columnIndexes.size() == columnSizeShifts.size();
@@ -296,6 +348,14 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         }
         buildTxnSymbolDiffs(txnDiffs);
         computeFrame(metadata);
+        // After computeFrame, which is what binds each projected SYMBOL column's table to
+        // this transaction's overlay: arming before it would hand the registry the previous
+        // transaction's resolver.
+        disarmSymbolIdRegistry();
+        this.symbolIdRegistry = symbolIdRegistry;
+        if (symbolIdRegistry != null) {
+            symbolIdRegistry.armFor(this);
+        }
         toTop();
         return this;
     }
@@ -315,6 +375,10 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
      * reader, so the cursor stays reusable.
      */
     public void releaseSegment() {
+        // The arming this cursor stamped names a transaction whose segment is about to be
+        // unmapped, so it must not survive the drain that produced it. An unarmed slot is the
+        // default state; a stale one translates through the wrong boundary.
+        disarmSymbolIdRegistry();
         reader = Misc.free(reader);
     }
 
@@ -496,6 +560,13 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             } else {
                 symbolTables.setQuick(i, null);
             }
+        }
+    }
+
+    private void disarmSymbolIdRegistry() {
+        if (symbolIdRegistry != null) {
+            symbolIdRegistry.disarm();
+            symbolIdRegistry = null;
         }
     }
 

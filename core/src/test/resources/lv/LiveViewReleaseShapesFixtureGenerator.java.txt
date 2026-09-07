@@ -1,0 +1,344 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo.lv;
+
+import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
+import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRefreshJob;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+
+/**
+ * NOT A REGRESSION TEST. Run under an unmodified 10.0.x checkout to emit the second
+ * cross-version checkpoint fixture, the one carrying the durable shapes
+ * {@code lv_checkpoint_10_0_1.zip} does not.
+ * <p>
+ * That first fixture is a single anchored cumulative view, which reaches the
+ * {@code 0x1a}/{@code 0x1b}/{@code 0x18}/{@code 0x19} metadata roots and a one-page-deep
+ * partition map, and nothing else. Four durable shapes stay unreached by it, each a
+ * decoder this branch would run against released bytes on a real upgrade:
+ * <ul>
+ *     <li>a bounded {@code ROWS} frame, whose functions freeze a whole-state page;</li>
+ *     <li>a bounded {@code RANGE} frame, whose functions keep the chunked ring - a
+ *     timestamp page per chunk, plus a value page whose kind the ring's value kind
+ *     selects, and a scalar continuation state in the partition entry;</li>
+ *     <li>the same over {@code DECIMAL} columns, which widen both the ring value and
+ *     the scalar continuation past one 64-bit word;</li>
+ *     <li>a partition map deep enough to have an internal node ({@code 0x17}), which
+ *     needs more distinct keys than a leaf holds, and a row-position delta tree
+ *     ({@code 0x13}/{@code 0x14}), which only a localized out-of-order repair writes.</li>
+ * </ul>
+ * <p>
+ * mvn -pl core -Dtest=LiveViewReleaseShapesFixtureGenerator -Dlv.fixture.out=/path/to/shapes.zip test
+ */
+public class LiveViewReleaseShapesFixtureGenerator extends AbstractLiveViewTest {
+
+    /**
+     * Distinct keys the wide view partitions by. A partition map leaf holds 64 entries,
+     * so this splits the tree and forces the internal node the audit has no released
+     * bytes for otherwise.
+     */
+    private static final int WIDE_KEYS = 100;
+    private static final String DAILY_ANCHOR = "2026-01-01T";
+    /**
+     * In-order commits driven into the late-correction base before the out-of-order one,
+     * one boundary each. Long enough that boundaries remain above the point a bounded
+     * 3-row frame reconverges at, which is what leaves the splice a suffix to shift.
+     */
+    private static final int LATE_COMMITS = 12;
+    /**
+     * Second-of-history the out-of-order row lands on. Mid-history, so the replay
+     * reconverges with boundaries still above it: the splice shifts that suffix by one
+     * output row, and the point add recording the shift is the row-position delta tree.
+     */
+    private static final int O3_SECOND = 5;
+
+    @After
+    public void resetClock() {
+        setCurrentMicros(-1);
+    }
+
+    @Before
+    public void setUpCadence() {
+        // One logical boundary per commit, so every view carries a multi-entry timeline.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        configOverrideMangleTableDirNames(false);
+        setCurrentMicros(0);
+    }
+
+    @Test
+    public void generate() throws Exception {
+        final String out = System.getProperty("lv.fixture.out");
+        Assert.assertNotNull("-Dlv.fixture.out=<zip path> is required", out);
+
+        createDenseShapes();
+        createWideShape();
+        createLateShape();
+
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveSeedToCompletion(job, "lv_rows");
+            driveSeedToCompletion(job, "lv_range");
+            driveSeedToCompletion(job, "lv_decimal");
+            driveSeedToCompletion(job, "lv_keyed");
+            driveSeedToCompletion(job, "lv_late");
+
+            for (int second = 0; second <= 40; second += 10) {
+                insertDense(second);
+                insertWide(second);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            for (int commit = 0; commit < LATE_COMMITS; commit++) {
+                insertLate(commit * 10);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+
+            // The out-of-order correction, on the late view alone. Its bounded 3-row frame
+            // reconverges a few rows past the correction, so the replay stops there and the
+            // boundaries above it are reused by page reference - a timeline splice, whose
+            // suffix row delta lands as the one point add that creates the row-position
+            // delta tree. The other four bases stay strictly in order: an anchored window
+            // expires by time rather than by row count, so its convergence sits a whole day
+            // out and the same correction would resume from the anchor and write no delta.
+            execute("INSERT INTO late VALUES ('" + timestamp(O3_SECOND) + "', 'acct-1', 7.5)");
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        }
+
+        report("lv_rows");
+        report("lv_range");
+        report("lv_decimal");
+        report("lv_keyed");
+        report("lv_late");
+        System.out.println("FIXTURE-END-MICROS=" + currentMicros);
+
+        // Quiesce every mapped file before the copy, exactly as a clean shutdown would.
+        engine.getLiveViewRegistry().clear();
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseInactive();
+
+        zipDirectory(new File(root).toPath(), new File(out));
+        System.out.println("FIXTURE-WRITTEN=" + out + " bytes=" + new File(out).length());
+    }
+
+    private static String timestamp(int secondOfDay) {
+        return DAILY_ANCHOR + String.format("09:%02d:%02d.000000Z", secondOfDay / 60, secondOfDay % 60);
+    }
+
+    private static void copy(InputStream is, OutputStream os, byte[] buffer) throws IOException {
+        int read;
+        while ((read = is.read(buffer)) > 0) {
+            os.write(buffer, 0, read);
+        }
+    }
+
+    private static void zipDirectory(Path srcRoot, File dest) throws IOException {
+        final List<Path> files = new ArrayList<>();
+        try (java.util.stream.Stream<Path> walk = Files.walk(srcRoot)) {
+            walk.filter(Files::isRegularFile)
+                    .filter(f -> !f.getFileName().toString().endsWith(".lock"))
+                    .forEach(files::add);
+        }
+        // Deterministic entry order, so a regenerated fixture diffs cleanly.
+        Collections.sort(files);
+        try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(dest))) {
+            final byte[] buffer = new byte[64 * 1024];
+            for (int i = 0, n = files.size(); i < n; i++) {
+                final Path file = files.get(i);
+                final ZipEntry entry = new ZipEntry(srcRoot.relativize(file).toString().replace('\\', '/'));
+                entry.setTime(0L);
+                zip.putNextEntry(entry);
+                try (InputStream is = Files.newInputStream(file)) {
+                    copy(is, zip, buffer);
+                }
+                zip.closeEntry();
+            }
+        }
+    }
+
+    private int countSealedBoundaries(LiveViewInstance instance) {
+        final int[] count = {0};
+        try (
+                io.questdb.std.str.Path checkpointsDir = new io.questdb.std.str.Path()
+                        .of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(engine.getConfiguration());
+                LiveViewCheckpointTimelineReader reader =
+                        new LiveViewCheckpointTimelineReader(engine.getConfiguration())
+        ) {
+            store.of(checkpointsDir);
+            reader.of(checkpointsDir);
+            try (LiveViewCheckpointGenerationPin pin = store.pin()) {
+                reader.iterateAll(pin.getTimelineRootRef(), entry -> count[0]++);
+            }
+        }
+        return count[0];
+    }
+
+    /**
+     * The three views over the dense two-key base: a bounded ROWS frame, a bounded RANGE
+     * frame over DOUBLE and LONG, and the same frame over the two widest DECIMALs.
+     * <p>
+     * Between them the RANGE views reach every value kind the ring encodes. Each pairs an
+     * aggregate with a {@code max} over the same column, because a max root tags its value
+     * pages with the monotonic-deque page kinds rather than the value-ring ones and those
+     * are a separate decoder arm; the DOUBLE, LONG, 128-bit and 256-bit columns select the
+     * four widths; and the {@code count} carries the one chunk shape that has no value page
+     * at all, its per-row state being the designated timestamp itself.
+     */
+    private void createDenseShapes() throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE, qty LONG, "
+                + "d128 DECIMAL(38, 6), d256 DECIMAL(60, 0)) "
+                + "TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+
+        execute("CREATE LIVE VIEW lv_rows FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, "
+                + "sum(amount) OVER w AS windowed_sum, "
+                + "count(amount) OVER w AS windowed_count "
+                + "FROM tx WINDOW w AS ("
+                + "PARTITION BY account_id ORDER BY created_at ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)");
+
+        execute("CREATE LIVE VIEW lv_range FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, "
+                + "sum(amount) OVER w AS range_sum, "
+                + "max(amount) OVER w AS range_max, "
+                + "first_value(amount) OVER w AS range_first, "
+                + "sum(qty) OVER w AS range_qty_sum, "
+                + "max(qty) OVER w AS range_qty_max, "
+                + "first_value(qty) OVER w AS range_qty_first, "
+                + "count(amount) OVER w AS range_count "
+                + "FROM tx WINDOW w AS ("
+                + "PARTITION BY account_id ORDER BY created_at "
+                + "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW)");
+
+        execute("CREATE LIVE VIEW lv_decimal FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, "
+                + "sum(d128) OVER w AS decimal_sum128, "
+                + "max(d128) OVER w AS decimal_max128, "
+                + "sum(d256) OVER w AS decimal_sum256, "
+                + "max(d256) OVER w AS decimal_max256 "
+                + "FROM tx WINDOW w AS ("
+                + "PARTITION BY account_id ORDER BY created_at "
+                + "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW)");
+    }
+
+    /**
+     * The view the out-of-order correction runs against: a bounded ROWS frame over a base
+     * that cannot deduplicate, which is the pairing whose repair localizes into a timeline
+     * splice rather than rebuilding the history or resuming from an anchor.
+     */
+    private void createLateShape() throws Exception {
+        execute("CREATE TABLE late (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
+                + "TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+        execute("CREATE LIVE VIEW lv_late FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, sum(amount) OVER w AS windowed_sum "
+                + "FROM late WINDOW w AS ("
+                + "PARTITION BY account_id ORDER BY created_at ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)");
+    }
+
+    /**
+     * The wide-keyed anchored view, whose partition map outgrows a single leaf.
+     */
+    private void createWideShape() throws Exception {
+        execute("CREATE TABLE wide (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
+                + "TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+        execute("CREATE LIVE VIEW lv_keyed FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum "
+                + "FROM wide WINDOW w AS ("
+                + "PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
+    }
+
+    private void insertDense(int second) throws Exception {
+        final StringBuilder sql = new StringBuilder("INSERT INTO tx VALUES ");
+        for (int k = 0; k < 2; k++) {
+            if (k > 0) {
+                sql.append(", ");
+            }
+            final int varied = (second * 37 + 11 + k * 17) % 89;
+            sql.append("('").append(timestamp(second + k)).append("', 'acct-").append(k + 1).append("', ")
+                    .append(second + k + 1.0).append(", ")
+                    .append(varied * 1_000L + k).append(", ")
+                    .append(varied).append("12345678901234567890.123456m, ")
+                    .append(varied).append("1234567890123456789012345678901234567890m)");
+        }
+        execute(sql.toString());
+    }
+
+    private void insertLate(int second) throws Exception {
+        execute("INSERT INTO late VALUES "
+                + "('" + timestamp(second) + "', 'acct-1', " + (second + 1.0) + "), "
+                + "('" + timestamp(second + 1) + "', 'acct-2', " + (second + 2.0) + ")");
+    }
+
+    private void insertWide(int second) throws Exception {
+        final StringBuilder sql = new StringBuilder("INSERT INTO wide VALUES ");
+        for (int k = 0; k < WIDE_KEYS; k++) {
+            if (k > 0) {
+                sql.append(", ");
+            }
+            sql.append("('").append(timestamp(second)).append("', '")
+                    .append(String.format("k%03d", k)).append("', ")
+                    .append(second + k + 1.0).append(')');
+        }
+        execute(sql.toString());
+    }
+
+    private void report(String viewName) {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+        Assert.assertNotNull("live view '" + viewName + "' must be registered", instance);
+        Assert.assertFalse(viewName + ": the fixture must not carry an invalid view", instance.isInvalid());
+        final int boundaries = countSealedBoundaries(instance);
+        Assert.assertTrue(
+                viewName + ": the fixture must carry at least two sealed boundaries, got " + boundaries,
+                boundaries >= 2
+        );
+        System.out.println("FIXTURE-" + viewName + "-LADDER-ENTRIES=" + boundaries);
+        System.out.println("FIXTURE-" + viewName + "-HEAD-LV-SEQ-TXN=" + instance.getHeadCheckpointLvSeqTxn());
+        System.out.println("FIXTURE-" + viewName + "-HEAD-BASE-SEQ-TXN=" + instance.getHeadCheckpointBaseSeqTxn());
+        System.out.println("FIXTURE-" + viewName + "-HEAD-MAX-TS=" + instance.getHeadCheckpointMaxTs());
+    }
+}

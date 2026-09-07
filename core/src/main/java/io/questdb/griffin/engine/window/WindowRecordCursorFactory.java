@@ -28,8 +28,11 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointKeyProjector;
 import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
+import io.questdb.cairo.lv.LiveViewPartitionKeyClassifier;
+import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -61,12 +64,23 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     // Union of the finite RANGE dependencies every window function in this factory carries,
     // or null when the factory mixes shapes, is not a live-view compile, or has no window
     // function with a finite RANGE frame. Bounds the localized O3 repair interval.
+    private final LiveViewCheckpointKeyProjector checkpointKeyProjector;
     private final LiveViewCheckpointRangePlan checkpointRangePlan;
     // The same for the finite ROWS dependencies, plus the key projector the repair counts
     // per-key rows through. A factory mixing shapes carries both plans - each describes
     // the functions of its own kind - and the repair takes their union. This factory owns
     // the plan, because an expression-keyed projector holds compiled key functions.
     private final LiveViewCheckpointRowsPlan checkpointRowsPlan;
+    // The fused window-state plan: which accumulator components this live view's durable
+    // state is made of and which outputs project them. Null when the factory is not a
+    // live-view compile or when nothing in it can join a fused group. Holds only
+    // non-owning references into this factory's own functions, so it needs no cleanup.
+    private final LiveViewWindowStatePlan checkpointWindowStatePlan;
+    // How this compile decided to key every live-view SYMBOL partition term, and the
+    // inventory of source columns those terms key by. Null for non-live-view compiles.
+    // Holds no resources: it is the compiler's decision, kept so the refresh job can read
+    // it instead of making its own.
+    private final LiveViewPartitionKeyClassifier livePartitionKeyClassifier;
     // One entry per window Map group this factory's functions form: the components the
     // group's map value would be made of, and the outputs that read them. Null when the
     // factory is a live-view compile, or when no group forms that removes anything. Holds
@@ -92,7 +106,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             GenericRecordMetadata metadata,
             ObjList<Function> functions
     ) {
-        this(base, metadata, functions, null, null, null, null, null);
+        this(base, metadata, functions, null, null, null, null, null, null, null, null);
     }
 
     public WindowRecordCursorFactory(
@@ -101,7 +115,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             ObjList<Function> functions,
             ObjList<WindowFunction> anchorableWindowFunctions
     ) {
-        this(base, metadata, functions, anchorableWindowFunctions, null, null, null, null);
+        this(base, metadata, functions, anchorableWindowFunctions, null, null, null, null, null, null, null);
     }
 
     public WindowRecordCursorFactory(
@@ -109,8 +123,11 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             GenericRecordMetadata metadata,
             ObjList<Function> functions,
             ObjList<WindowFunction> anchorableWindowFunctions,
+            LiveViewPartitionKeyClassifier livePartitionKeyClassifier,
+            LiveViewCheckpointKeyProjector checkpointKeyProjector,
             LiveViewCheckpointRangePlan checkpointRangePlan,
             LiveViewCheckpointRowsPlan checkpointRowsPlan,
+            LiveViewWindowStatePlan checkpointWindowStatePlan,
             ObjList<WindowAccumulatorPlan> windowAccumulatorPlans,
             ObjList<WindowMapState> windowMapStates
     ) {
@@ -118,8 +135,11 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = base;
         this.functions = functions;
         this.anchorableWindowFunctions = anchorableWindowFunctions;
+        this.livePartitionKeyClassifier = livePartitionKeyClassifier;
+        this.checkpointKeyProjector = checkpointKeyProjector;
         this.checkpointRangePlan = checkpointRangePlan;
         this.checkpointRowsPlan = checkpointRowsPlan;
+        this.checkpointWindowStatePlan = checkpointWindowStatePlan;
         this.windowAccumulatorPlans = windowAccumulatorPlans;
         this.windowMapStates = windowMapStates;
         this.windowMapStatesCount = windowMapStates == null ? 0 : windowMapStates.size();
@@ -162,6 +182,29 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
+     * Returns the partition identity every window function on this factory shares, or null
+     * when they do not share one. Compiled once, and the only key schema the view has: the
+     * anchor window, the checkpoint roots and every repair speak it.
+     */
+    public @Nullable LiveViewCheckpointKeyProjector getCheckpointKeyProjector() {
+        return checkpointKeyProjector;
+    }
+
+    /**
+     * Returns the classifier that decided how this compile keys every live-view SYMBOL
+     * partition term, or null for an ordinary query. The refresh job hands it to
+     * {@code LiveViewWindow.build} so the anchor map keys each term the way the window
+     * functions' own maps do - the two are compared row for row by the frontier sweep, so
+     * a term the anchor resolved differently would not be a slower view but a wrong one.
+     * <p>
+     * Its slots are column indexes in this factory's base metadata, which is the window
+     * input metadata every site classifying for this view shares.
+     */
+    public @Nullable LiveViewPartitionKeyClassifier getLivePartitionKeyClassifier() {
+        return livePartitionKeyClassifier;
+    }
+
+    /**
      * Returns the immutable finite-RANGE repair contract, or null for a mixed/non-RANGE view.
      */
     public @Nullable LiveViewCheckpointRangePlan getCheckpointRangePlan() {
@@ -173,6 +216,16 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
      */
     public @Nullable LiveViewCheckpointRowsPlan getCheckpointRowsPlan() {
         return checkpointRowsPlan;
+    }
+
+    /**
+     * Returns the fused window-state plan, or null when this factory carries no group
+     * that can share one durable tree. Nothing persists it yet: the seal still writes
+     * one legacy root per function, and the plan's first durable consumer is the
+     * window-state root.
+     */
+    public @Nullable LiveViewWindowStatePlan getCheckpointWindowStatePlan() {
+        return checkpointWindowStatePlan;
     }
 
     /**
@@ -223,9 +276,9 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
      * subset this build gives a runtime, and a plan the kill switch or the
      * Map-implementation rule turned away stays compiled - which is what lets a test assert
      * that such a group was worked out and simply given to nobody, rather than assert an
-     * absence. A live-view compile never produces one at all: a live-view function keeps its
-     * accumulator in the private partition map that {@code LiveViewWindow} and the checkpoint
-     * framework drive, so the compiler forms no group for it.
+     * absence. A live-view compile never produces one at all -
+     * {@link #getCheckpointWindowStatePlan()} is that factory's group, and one accumulator
+     * may have one owner.
      */
     public @Nullable ObjList<WindowAccumulatorPlan> getWindowAccumulatorPlans() {
         return windowAccumulatorPlans;
@@ -294,7 +347,10 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         // ordering it first keeps that independence obvious rather than incidental.
         failure = Misc.freeObjListBestEffort(failure, windowMapStates);
         failure = Misc.freeObjListBestEffort(failure, functions);
+        // The rows plan first: it frees the key projector only when it compiled one of its
+        // own, and the shared one below is the object it would then not be holding.
         failure = Misc.freeBestEffort(failure, checkpointRowsPlan);
+        failure = Misc.freeBestEffort(failure, checkpointKeyProjector);
         CairoException.rethrowCleanupFailure(failure);
     }
 

@@ -371,9 +371,21 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void accumulateWindowState(Record record, MapValue value) {
-            final double d = arg.getDouble(record);
-            if (Numbers.isFinite(d)) {
-                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + d);
+            accumulateWindowState(record, value, arg.getDouble(record));
+        }
+
+        /**
+         * The whole of the absorption, off an argument the caller may already hold. The group's
+         * pass-1 skip evaluates exactly this {@code arg} to decide whether the row reaches the
+         * map, so taking its answer here is what stops the row's argument being read twice -
+         * see {@link io.questdb.griffin.engine.window.WindowMapState#computeNext(Record)}. The
+         * test is unchanged, and applying it to a value the caller read is the same test as
+         * applying it to one this method reads.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value, double argument) {
+            if (Numbers.isFinite(argument)) {
+                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + argument);
                 value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
             }
         }
@@ -1029,7 +1041,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void markPartitionAlive(Record record) {
+        public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
+            // The flag goes unread on purpose: this override keeps no checkpoint dirty
+            // set, so every seal full-scans it. See BasePartitionedWindowFunction's
+            // markCheckpointPartitionDirty - naming some of a cadence's keys and not the
+            // rest is the one outcome that is worse than naming none.
             if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
                 return;
             }
@@ -1647,7 +1663,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void markPartitionAlive(Record record) {
+        public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
+            // The flag goes unread on purpose: this override keeps no checkpoint dirty
+            // set, so every seal full-scans it. See BasePartitionedWindowFunction's
+            // markCheckpointPartitionDirty - naming some of a cadence's keys and not the
+            // rest is the one outcome that is worse than naming none.
             if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
                 return;
             }
@@ -2436,6 +2456,15 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public int windowAccumulatorProjection() {
             return WindowAccumulatorProjection.PROJECTION_AVG;
+        }
+
+        /**
+         * The whole image is {@code (sum, nonNullCount)} - the frame start is unbounded, so
+         * there are no live rows behind the accumulator to carry.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Double.BYTES + Long.BYTES;
         }
 
         @Override

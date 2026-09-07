@@ -79,6 +79,7 @@ import java.util.List;
 public class LiveViewCheckpointScalarStatePageTest extends AbstractCairoTest {
 
     private static final long DEFINITION_TXN = 7;
+    private static final long LIFECYCLE_IDENTITY = 102;
     private static final String LV_DIR = "lv_scalar_state_page";
 
     @Before
@@ -286,11 +287,13 @@ public class LiveViewCheckpointScalarStatePageTest extends AbstractCairoTest {
                     seq,
                     seq,
                     0,
+                    LIFECYCLE_IDENTITY,
                     true,
                     seq * 1_000_000L,
                     seq,
                     seq * 1_000_000L,
                     Numbers.LONG_NULL,
+                    null,
                     null
             );
         }

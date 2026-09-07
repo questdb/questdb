@@ -41,6 +41,8 @@ import org.jetbrains.annotations.NotNull;
  * <pre>
  *   &lt;live-view-table&gt;/_checkpoints/
  *     _timeline                 fixed A/B superblock (LiveViewCheckpointSuperblock)
+ *     _retirements              checksummed zero-reference reclamation work set
+ *     _retirements.tmp          copy-on-write queue publication
  *     meta/
  *       m.&lt;segmentId&gt;           immutable, per-page-checksummed metadata segment
  *       m.&lt;segmentId&gt;.tmp       unpublished metadata segment
@@ -117,6 +119,11 @@ public final class LiveViewCheckpointLayout {
      */
     public static final String REPAIRING_MARKER_FILE_NAME = "_repairing";
     /**
+     * CRC-checked copy-on-write work set of zero-reference segments awaiting
+     * generation-safe physical removal.
+     */
+    public static final String RETIREMENT_QUEUE_FILE_NAME = "_retirements";
+    /**
      * Filename prefix for a repair descriptor: {@code r.<repairId>}.
      */
     public static final String REPAIR_DESCRIPTOR_PREFIX = "r.";
@@ -173,6 +180,7 @@ public final class LiveViewCheckpointLayout {
      * Suffix for an unpublished ({@code .tmp}) metadata or data segment.
      */
     public static final String TMP_SUFFIX = ".tmp";
+    public static final String RETIREMENT_QUEUE_TMP_FILE_NAME = RETIREMENT_QUEUE_FILE_NAME + TMP_SUFFIX;
 
     private LiveViewCheckpointLayout() {
     }
@@ -256,9 +264,10 @@ public final class LiveViewCheckpointLayout {
      * record in place, exactly as it did before this method existed. Closing the
      * mapping before publishing is the caller's job on both platforms.
      * <p>
-     * Only for names a caller deliberately rewrites: the repair marker and the
-     * repair descriptor. Published metadata and data segments never reach an
-     * existing final name - their ids are allocated past every published one -
+     * Only for names a caller deliberately rewrites: the {@code _repairing}
+     * prefix-preservation marker, the repair descriptor and the
+     * {@code _retirements} work set. Published metadata and data segments never
+     * reach an existing final name - their ids are allocated past every published one -
      * so those paths rename directly and rely on that invariant rather than on
      * replace semantics.
      */
@@ -311,6 +320,10 @@ public final class LiveViewCheckpointLayout {
      */
     public static Path repairingMarkerPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {
         return dst.of(checkpointsDir).concat(REPAIRING_MARKER_FILE_NAME);
+    }
+
+    public static Path retirementQueuePath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {
+        return dst.of(checkpointsDir).concat(RETIREMENT_QUEUE_FILE_NAME);
     }
 
     /**

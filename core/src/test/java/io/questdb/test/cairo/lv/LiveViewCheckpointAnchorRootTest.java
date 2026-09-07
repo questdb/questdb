@@ -66,6 +66,56 @@ public class LiveViewCheckpointAnchorRootTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionKeyLengthBoundaryRoundTripsAndOversizeIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            final byte[] maxKey = new byte[1 << 20];
+            maxKey[maxKey.length - 1] = 1;
+            final LiveViewCheckpointPageRef rootRef = new LiveViewCheckpointPageRef();
+            try (LiveViewCheckpointAnchorRootBuilder builder = new LiveViewCheckpointAnchorRootBuilder(configuration);
+                 Path dir = new Path()) {
+                builder.of(
+                        checkpointsDir(dir),
+                        new LiveViewCheckpointPageRef(),
+                        WINDOW_NAME,
+                        ANCHOR_VALUE_TYPE,
+                        SYMBOL_KEY_SCHEMA
+                );
+                builder.putPartition(maxKey, 42);
+                builder.build(1, rootRef);
+            }
+
+            try (LiveViewCheckpointAnchorRoot root = new LiveViewCheckpointAnchorRoot(configuration);
+                 LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
+                 Path dir = new Path()) {
+                root.of(checkpointsDir(dir), rootRef);
+                final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
+                root.getPartitionMapRootRef(partitionMapRoot);
+                reader.of(checkpointsDir(dir));
+                final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+                Assert.assertTrue(reader.find(partitionMapRoot, maxKey, entry));
+                Assert.assertEquals(42, LiveViewCheckpointAnchorRoot.readAnchorValue(entry));
+            }
+
+            try (LiveViewCheckpointAnchorRootBuilder builder = new LiveViewCheckpointAnchorRootBuilder(configuration);
+                 Path dir = new Path()) {
+                builder.of(
+                        checkpointsDir(dir),
+                        new LiveViewCheckpointPageRef(),
+                        WINDOW_NAME,
+                        ANCHOR_VALUE_TYPE,
+                        SYMBOL_KEY_SCHEMA
+                );
+                try {
+                    builder.putPartition(new byte[(1 << 20) + 1], 42);
+                    Assert.fail("expected oversized anchor key rejection");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "partition key length out of bounds");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAdjacentAnchorRootsShareEntriesWhoseAnchorDidNotMove() throws Exception {
         assertMemoryLeak(() -> {
             final int keyCount = 300;

@@ -121,6 +121,16 @@ public class LiveViewCheckpointMetaSegmentReader implements Closeable {
     }
 
     /**
+     * Bounds-checks {@code [payloadOffset, payloadOffset + length)} against the open page
+     * once and returns the absolute address of its first byte, so a bulk decoder can read
+     * the range directly instead of paying a check per byte.
+     */
+    public long payloadAddressOf(long payloadOffset, int length) {
+        boundsCheck(payloadOffset, length);
+        return mem.addressOf(pagePayloadFileOffset + payloadOffset);
+    }
+
+    /**
      * Reads a signed 32-bit field at {@code payloadOffset} within the currently
      * open page, bounds-checked against the page payload length.
      */

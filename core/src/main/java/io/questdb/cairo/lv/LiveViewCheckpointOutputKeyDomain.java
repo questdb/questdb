@@ -110,6 +110,14 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable {
         return keyIndex(key) < 0;
     }
 
+    byte[] getKeyAt(int index) {
+        return keys[index];
+    }
+
+    int getSlotCount() {
+        return keys.length;
+    }
+
     /**
      * Replaces this domain with {@code other}'s, sharing its key arrays.
      */

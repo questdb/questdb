@@ -25,8 +25,10 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -41,9 +43,16 @@ public class LiveViewCheckpointFunctionDirectory implements Closeable {
     public static final int PAGE_KIND = 0x19;
     private static final int FORMAT_VERSION = 1;
     private static final int HEADER_SIZE = 2 * Integer.BYTES;
-    private byte[][] identities = new byte[0][];
+    /**
+     * Identity images of the open directory, one per entry, borrowed from
+     * {@link #identityBytes} and valid until the next {@link #of}. A publication
+     * opens several directories - the old one, a seed, a redirect - so allocating
+     * per entry would charge the whole function set to every one of them.
+     */
+    private final ObjList<byte[]> identities = new ObjList<>();
+    private final LiveViewCheckpointByteArrayPool identityBytes = new LiveViewCheckpointByteArrayPool();
     private final LiveViewCheckpointMetaSegmentReader reader;
-    private LiveViewCheckpointPageRef[] rootRefs = new LiveViewCheckpointPageRef[0];
+    private final ObjList<LiveViewCheckpointPageRef> rootRefs = new ObjList<>();
 
     public LiveViewCheckpointFunctionDirectory(@NotNull CairoConfiguration configuration) {
         reader = new LiveViewCheckpointMetaSegmentReader(configuration);
@@ -65,26 +74,29 @@ public class LiveViewCheckpointFunctionDirectory implements Closeable {
 
     public boolean find(@NotNull byte[] identity, @NotNull LiveViewCheckpointPageRef out) {
         int lo = 0;
-        int hi = identities.length;
+        int hi = identities.size();
         while (lo < hi) {
             final int mid = (lo + hi) >>> 1;
-            final int cmp = LiveViewCheckpointMetadata.compareBytes(identities[mid], identity);
+            final int cmp = LiveViewCheckpointMetadata.compareBytes(identities.getQuick(mid), identity);
             if (cmp < 0) {
                 lo = mid + 1;
             } else {
                 hi = mid;
             }
         }
-        if (lo == identities.length || LiveViewCheckpointMetadata.compareBytes(identities[lo], identity) != 0) {
+        if (lo == identities.size() || LiveViewCheckpointMetadata.compareBytes(identities.getQuick(lo), identity) != 0) {
             return false;
         }
-        final LiveViewCheckpointPageRef ref = rootRefs[lo];
+        final LiveViewCheckpointPageRef ref = rootRefs.getQuick(lo);
         out.of(ref.getSegmentId(), ref.getOffset(), ref.getLength());
         return true;
     }
 
     public void getRootRef(int index, @NotNull LiveViewCheckpointPageRef out) {
-        final LiveViewCheckpointPageRef ref = rootRefs[index];
+        if (index < 0 || index >= identities.size()) {
+            throw CairoException.critical(0).put("live view checkpoint function directory index out of bounds");
+        }
+        final LiveViewCheckpointPageRef ref = rootRefs.getQuick(index);
         out.of(ref.getSegmentId(), ref.getOffset(), ref.getLength());
     }
 
@@ -111,8 +123,9 @@ public class LiveViewCheckpointFunctionDirectory implements Closeable {
             throw LiveViewCheckpointMetadata.invalid("function directory count exceeds payload, count=")
                     .put(count);
         }
-        identities = new byte[count][];
-        rootRefs = new LiveViewCheckpointPageRef[count];
+        identityBytes.reset();
+        identities.clear();
+        ensureRootRefCapacity(count);
         long offset = HEADER_SIZE;
         byte[] previous = null;
         for (int i = 0; i < count; i++) {
@@ -125,17 +138,21 @@ public class LiveViewCheckpointFunctionDirectory implements Closeable {
                 throw LiveViewCheckpointMetadata.invalid("function directory entry body truncated");
             }
             offset += Integer.BYTES;
-            final byte[] identity = LiveViewCheckpointMetadata.readBytes(reader, offset, identityLength);
+            final byte[] identity = LiveViewCheckpointMetadata.readBytes(
+                    reader,
+                    offset,
+                    identityLength,
+                    identityBytes
+            );
             offset += identityLength;
             if (previous != null && LiveViewCheckpointMetadata.compareBytes(previous, identity) >= 0) {
                 throw LiveViewCheckpointMetadata.invalid("function directory identities not strictly increasing");
             }
-            final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
+            final LiveViewCheckpointPageRef functionRootRef = rootRefs.getQuick(i);
             LiveViewCheckpointMetadata.readMetaRef(reader, offset, functionRootRef);
             LiveViewCheckpointMetadata.validateMetaRef(functionRootRef, false, "function directory entry");
             offset += LiveViewCheckpointPageRef.BYTES;
-            identities[i] = identity;
-            rootRefs[i] = functionRootRef;
+            identities.add(identity);
             previous = identity;
         }
         if (offset != payloadLength) {
@@ -144,12 +161,12 @@ public class LiveViewCheckpointFunctionDirectory implements Closeable {
     }
 
     public int size() {
-        return identities.length;
+        return identities.size();
     }
 
     static void writeTo(
-            byte[][] identities,
-            LiveViewCheckpointPageRef[] rootRefs,
+            ObjList<byte[]> identities,
+            ObjList<LiveViewCheckpointPageRef> rootRefs,
             int count,
             LiveViewCheckpointMetaSegmentWriter writer,
             LiveViewCheckpointPageRef out
@@ -158,10 +175,22 @@ public class LiveViewCheckpointFunctionDirectory implements Closeable {
         mem.putInt(FORMAT_VERSION);
         mem.putInt(count);
         for (int i = 0; i < count; i++) {
-            mem.putInt(identities[i].length);
-            LiveViewCheckpointMetadata.putBytes(mem, identities[i]);
-            LiveViewCheckpointMetadata.putMetaRef(mem, rootRefs[i]);
+            final byte[] identity = identities.getQuick(i);
+            mem.putInt(identity.length);
+            LiveViewCheckpointMetadata.putBytes(mem, identity);
+            LiveViewCheckpointMetadata.putMetaRef(mem, rootRefs.getQuick(i));
         }
         writer.endPage(out);
+    }
+
+    /**
+     * Grows the retained reference shells to {@code count}, keeping the ones an
+     * earlier open already built. The directory reuses them in place, so a
+     * repeated open of the same shape builds none.
+     */
+    private void ensureRootRefCapacity(int count) {
+        for (int i = rootRefs.size(); i < count; i++) {
+            rootRefs.add(new LiveViewCheckpointPageRef());
+        }
     }
 }

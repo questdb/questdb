@@ -82,9 +82,12 @@ import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -910,12 +913,52 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testLiveViewConfigKeysAreDocumentedInDefaultConf() throws Exception {
+        // conf/server.conf is the only place an operator meets a key before setting it, and
+        // cairo.live.view.checkpoint.repair.sparse.publication.enabled is the one that cannot
+        // wait: CREATE reads it once and the view carries the resulting dedup keys - and the
+        // forward commits they stop coalescing - for its lifetime, so an operator who wants it
+        // off has to learn it exists before creating the view, not after.
+        // The guard covers cairo.live.view.* only. Other prefixes carry pre-existing
+        // undocumented keys, and documenting them is a separate piece of work.
+        final ObjList<String> lines = readShippedServerConfLines();
+        final ObjList<String> undocumented = new ObjList<>();
+        int matched = 0;
+        for (PropertyKey key : PropertyKey.values()) {
+            final String path = key.getPropertyPath();
+            if (path.startsWith("cairo.live.view.")) {
+                matched++;
+                if (!isKeyDocumentedIn(lines, path)) {
+                    undocumented.add(path);
+                }
+            }
+        }
+        // The failure below fires only on a NON-EMPTY list, so an empty filter passes it
+        // silently: rename the prefix, or change the shape PropertyKey reports paths in, and
+        // this test guards nothing while still claiming to guard the template. Pin the
+        // population first. The floor sits below the 27 keys the prefix carries today, so a
+        // retired key does not turn the guard into a chore, and far above the zero a rename
+        // would leave behind.
+        Assert.assertTrue(
+                "the cairo.live.view. filter matched " + matched + " keys: the prefix or the way"
+                        + " PropertyKey reports paths has moved, and this test no longer guards"
+                        + " conf/server.conf",
+                matched >= 20
+        );
+        if (undocumented.size() > 0) {
+            Assert.fail("live view keys missing from conf/server.conf: " + undocumented);
+        }
+    }
+
+    @Test
     public void testLiveViewDefaults() throws Exception {
         // Pin every live-view default through the real parser. Tests that set these keys
         // on a test configuration object never exercise PropServerConfiguration, so an
         // ignored key or a getter wired to the wrong field would go unnoticed there.
         CairoConfiguration cairo = newPropServerConfiguration(new Properties()).getCairoConfiguration();
 
+        Assert.assertTrue(cairo.isLiveViewCheckpointAdaptiveCadenceEnabled());
+        Assert.assertTrue(cairo.isLiveViewCheckpointRepairIsolatedRuntimeEnabled());
         Assert.assertEquals(5 * Micros.MINUTE_MICROS, cairo.getLiveViewCheckpointMaxDurationMicros());
         Assert.assertEquals(1_000_000L, cairo.getLiveViewCheckpointRows());
         Assert.assertTrue(cairo.isLiveViewEnabled());
@@ -924,6 +967,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16L * 1024 * 1024, cairo.getLiveViewInMemoryBufferGrowthBytes());
         Assert.assertEquals(64L * 1024, cairo.getLiveViewInMemoryBufferInitialBytes());
         Assert.assertEquals(60 * Micros.MINUTE_MICROS, cairo.getLiveViewInMemoryMaxMicros());
+        Assert.assertEquals(50, cairo.getLiveViewPartitionCompactStalePercent());
         Assert.assertEquals(100_000, cairo.getLiveViewPartitionCompactThreshold());
         Assert.assertEquals(0L, cairo.getLiveViewRefreshMemoryLimitBytes());
         Assert.assertEquals(64, cairo.getLiveViewRefreshTurnMaxCommits());
@@ -936,6 +980,9 @@ public class PropServerConfigurationTest {
         // duration/size units must convert on the env path too.
         final Properties properties = new Properties();
         final Map<String, String> env = new HashMap<>();
+
+        properties.setProperty("cairo.live.view.checkpoint.adaptive.cadence.enabled", "true");
+        env.put("QDB_CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED", "false");
 
         properties.setProperty("cairo.live.view.checkpoint.rows", "250000");
         env.put("QDB_CAIRO_LIVE_VIEW_CHECKPOINT_ROWS", "777000");
@@ -952,6 +999,7 @@ public class PropServerConfigurationTest {
         CairoConfiguration cairo = newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
                 .getCairoConfiguration();
 
+        Assert.assertFalse(cairo.isLiveViewCheckpointAdaptiveCadenceEnabled());
         Assert.assertEquals(777_000L, cairo.getLiveViewCheckpointRows());
         Assert.assertFalse(cairo.isLiveViewEnabled());
         Assert.assertEquals(90 * Micros.MINUTE_MICROS, cairo.getLiveViewInMemoryMaxMicros());
@@ -988,6 +1036,37 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testLiveViewPartitionCompactStalePercentAcceptsBothEndpoints() throws Exception {
+        // 0 and 100 are the two values the trigger gives their own meaning to - 0 leaves the
+        // percentage arm satisfied by anything, 100 satisfies it only when every entry in the
+        // map is stale - so both have to survive parse time. Only the values outside the range
+        // are rejected, and the sibling case below is what pins that.
+        for (String value : new String[]{"0", "100"}) {
+            final Properties properties = new Properties();
+            properties.setProperty("cairo.live.view.partition.compact.stale.percent", value);
+            final CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+            Assert.assertEquals(Integer.parseInt(value), cairo.getLiveViewPartitionCompactStalePercent());
+        }
+    }
+
+    @Test
+    public void testLiveViewPartitionCompactStalePercentRejectsOutOfRange() throws Exception {
+        // It is a share of the anchor map and stalePartitionCount counts entries of that same
+        // map, so only 0..100 means anything. Parse time is where a value outside the range
+        // fails, with the key named, rather than reaching the trigger.
+        for (String value : new String[]{"-1", "101"}) {
+            final Properties properties = new Properties();
+            properties.setProperty("cairo.live.view.partition.compact.stale.percent", value);
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail("expected rejection for stale.percent=" + value);
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertContains(e.getMessage(), "cairo.live.view.partition.compact.stale.percent");
+            }
+        }
+    }
+
+    @Test
     public void testLiveViewMalformedDurationRejected() throws Exception {
         // A duration key that cannot be parsed must fail the server start with a message
         // naming the offending key, not fall back to the default.
@@ -1008,6 +1087,7 @@ public class PropServerConfigurationTest {
         // its neighbour cannot satisfy these assertions. The duration and size keys carry
         // unit suffixes, exercising the getMicros()/getLongSize() conversions.
         Properties properties = new Properties();
+        properties.setProperty("cairo.live.view.checkpoint.adaptive.cadence.enabled", "false");
         properties.setProperty("cairo.live.view.checkpoint.max.duration.micros", "90s");
         properties.setProperty("cairo.live.view.checkpoint.rows", "640000");
         properties.setProperty("cairo.live.view.enabled", "false");
@@ -1016,12 +1096,14 @@ public class PropServerConfigurationTest {
         properties.setProperty("cairo.live.view.in.memory.buffer.growth.bytes", "32M");
         properties.setProperty("cairo.live.view.in.memory.buffer.initial.bytes", "128k");
         properties.setProperty("cairo.live.view.in.memory.max", "45m");
+        properties.setProperty("cairo.live.view.partition.compact.stale.percent", "25");
         properties.setProperty("cairo.live.view.partition.compact.threshold", "333000");
         properties.setProperty("cairo.live.view.refresh.turn.max.commits", "128");
         properties.setProperty("cairo.live.view.refresh.turn.max.duration.micros", "250ms");
 
         CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
 
+        Assert.assertFalse(cairo.isLiveViewCheckpointAdaptiveCadenceEnabled());
         Assert.assertEquals(90 * Micros.SECOND_MICROS, cairo.getLiveViewCheckpointMaxDurationMicros());
         Assert.assertEquals(640_000L, cairo.getLiveViewCheckpointRows());
         Assert.assertFalse(cairo.isLiveViewEnabled());
@@ -1030,6 +1112,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(32L * 1024 * 1024, cairo.getLiveViewInMemoryBufferGrowthBytes());
         Assert.assertEquals(128L * 1024, cairo.getLiveViewInMemoryBufferInitialBytes());
         Assert.assertEquals(45 * Micros.MINUTE_MICROS, cairo.getLiveViewInMemoryMaxMicros());
+        Assert.assertEquals(25, cairo.getLiveViewPartitionCompactStalePercent());
         Assert.assertEquals(333_000, cairo.getLiveViewPartitionCompactThreshold());
         Assert.assertEquals(128, cairo.getLiveViewRefreshTurnMaxCommits());
         Assert.assertEquals(250_000L, cairo.getLiveViewRefreshTurnMaxDurationMicros());
@@ -2669,6 +2752,45 @@ public class PropServerConfigurationTest {
                 )
         );
         return pathsThatCanBePinned;
+    }
+
+    /**
+     * Reports whether the template declares {@code key} as a key, commented out or not.
+     * Matches the whole text left of the first {@code =} so that a prose line naming a key
+     * in passing - "the same shape as cairo.live.view.enabled=false" - does not pass for a
+     * declaration, and so that one key does not answer for another that ends with its name.
+     */
+    private static boolean isKeyDocumentedIn(ObjList<String> lines, String key) {
+        for (int i = 0, n = lines.size(); i < n; i++) {
+            String line = lines.getQuick(i).trim();
+            while (line.startsWith("#")) {
+                line = line.substring(1).trim();
+            }
+            final int equalsIndex = line.indexOf('=');
+            if (equalsIndex > 0 && key.equals(line.substring(0, equalsIndex).trim())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Reads the server.conf template off the classpath - the same resource
+     * {@code Bootstrap.extractConfDir()} copies into a fresh root directory, so the guard
+     * reads what an operator actually receives rather than a source path.
+     */
+    private static ObjList<String> readShippedServerConfLines() throws IOException {
+        final ObjList<String> lines = new ObjList<>();
+        try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/io/questdb/site/conf/server.conf")) {
+            Assert.assertNotNull("conf/server.conf is not on the test classpath", is);
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    lines.add(line);
+                }
+            }
+        }
+        return lines;
     }
 
     private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws Exception {

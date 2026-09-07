@@ -48,19 +48,20 @@ import io.questdb.cairo.vm.api.MemoryR;
  * Variable-width column types other than STRING (VARCHAR, BINARY, UUID,
  * LONG256, DECIMAL128, DECIMAL256, etc.) are not supported and force the
  * containing function or anchor map onto the head-miss path. STRING is
- * supported because live-view partition-by RecordSinks rewrite SYMBOL
- * partition columns as resolved STRING values (see {@code LiveViewWindow.build}
- * and the live-view path in {@code SqlCodeGenerator.generateSelectWindow}),
- * so the live-view partition-key key types end up as STRING for any LV that
- * partitions by SYMBOL. Callers should gate {@code supportsCheckpointState()} on
- * {@link #isAllTypesSupported(ColumnTypes)}.
+ * supported because a live-view partition-by RecordSink that does not translate
+ * rewrites its SYMBOL partition columns as resolved STRING values (see
+ * {@code LiveViewWindow.build} and the live-view path in
+ * {@code SqlCodeGenerator.generateSelectWindow}), so such a view's
+ * partition-key key types end up as STRING. Callers should gate
+ * {@code supportsCheckpointState()} on {@link #isAllTypesSupported(ColumnTypes)}.
  * <p>
  * Format is type-dispatched and grows from {@code offset} byte-by-byte:
  * <pre>
  *     BYTE       / GEOBYTE  / BOOLEAN   - 1 byte (BOOLEAN as 0/1)
  *     SHORT      / GEOSHORT / CHAR      - 2 bytes
- *     INT        / SYMBOL   / IPv4      - 4 bytes (SYMBOL is the int id, not the resolved string)
- *     GEOINT     / FLOAT                - 4 bytes
+ *     INT        / IPv4     / GEOINT    - 4 bytes
+ *     FLOAT                             - 4 bytes
+ *     SYMBOL                            - 4 bytes, byte-reversed - see {@link #encodeSymbolKey}
  *     LONG       / DATE     / TIMESTAMP - 8 bytes
  *     GEOLONG    / DOUBLE               - 8 bytes
  *     STRING                            - 4 byte length prefix + 2 bytes per char
@@ -105,6 +106,38 @@ public final class LiveViewSnapshotKeyCodec {
         return byteSizeOf(types) >= 0;
     }
 
+    /**
+     * Decodes what {@link #encodeSymbolKey} wrote back into the id the map keys by.
+     */
+    public static int decodeSymbolKey(int encoded) {
+        return Integer.reverseBytes(encoded);
+    }
+
+    /**
+     * Encodes a SYMBOL id into the four bytes a persisted key carries.
+     * <p>
+     * Every other fixed-width slot goes out in the platform's own byte order, which is
+     * little-endian everywhere QuestDB runs. A SYMBOL slot is byte-reversed instead, so
+     * that its four bytes read big-endian and the unsigned byte comparison a checkpoint
+     * partition map orders its pages by puts the ids in numeric order. That matters
+     * because the dictionary behind a translated SYMBOL key hands ids out in first-seen
+     * order: with the bytes reversed, a batch of new keys is an append at the right edge
+     * of the tree, which is the cheapest shape a copy-on-write B+ tree has. Written in
+     * the native order the low byte is the one that moves, so a run of sequential ids
+     * scatters across every leaf and the seal rewrites the whole tree.
+     * <p>
+     * NULL is {@link io.questdb.cairo.sql.SymbolTable#VALUE_IS_NULL}, whose reversed
+     * image sorts after every non-negative id. The order carries no meaning beyond
+     * locality and determinism, so where NULL lands is free.
+     * <p>
+     * Only SYMBOL is reversed: an INT key's encoding is released format and stays as it
+     * is. A SYMBOL key reaches a persisted map only where a live view translates its
+     * partition term to an LV-private id, which no released build wrote.
+     */
+    public static int encodeSymbolKey(int id) {
+        return Integer.reverseBytes(id);
+    }
+
     public static boolean isAllTypesSupported(ColumnTypes keyTypes) {
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
             if (!isSupportedKeyType(keyTypes.getColumnType(i))) {
@@ -142,8 +175,11 @@ public final class LiveViewSnapshotKeyCodec {
                     dst.putChar(source.getChar(offset));
                     offset += Character.BYTES;
                     break;
-                case ColumnType.INT:
                 case ColumnType.SYMBOL:
+                    dst.putInt(decodeSymbolKey(source.getInt(offset)));
+                    offset += Integer.BYTES;
+                    break;
+                case ColumnType.INT:
                 case ColumnType.IPv4:
                 case ColumnType.GEOINT:
                     dst.putInt(source.getInt(offset));
@@ -209,8 +245,11 @@ public final class LiveViewSnapshotKeyCodec {
                     dst.putChar((char) source.getShort(offset));
                     offset += Character.BYTES;
                     break;
-                case ColumnType.INT:
                 case ColumnType.SYMBOL:
+                    dst.putInt(decodeSymbolKey(source.getInt(offset)));
+                    offset += Integer.BYTES;
+                    break;
+                case ColumnType.INT:
                 case ColumnType.IPv4:
                 case ColumnType.GEOINT:
                     dst.putInt(source.getInt(offset));
@@ -343,8 +382,11 @@ public final class LiveViewSnapshotKeyCodec {
                     dst.putChar(slotIndex, source.getChar(offset));
                     offset += Character.BYTES;
                     break;
-                case ColumnType.INT:
                 case ColumnType.SYMBOL:
+                    dst.putInt(slotIndex, decodeSymbolKey(source.getInt(offset)));
+                    offset += Integer.BYTES;
+                    break;
+                case ColumnType.INT:
                 case ColumnType.IPv4:
                 case ColumnType.GEOINT:
                     dst.putInt(slotIndex, source.getInt(offset));
@@ -415,8 +457,10 @@ public final class LiveViewSnapshotKeyCodec {
                 case ColumnType.CHAR:
                     sink.putChar(record.getChar(columnIndex));
                     break;
-                case ColumnType.INT:
                 case ColumnType.SYMBOL:
+                    sink.putInt(encodeSymbolKey(record.getInt(columnIndex)));
+                    break;
+                case ColumnType.INT:
                     sink.putInt(record.getInt(columnIndex));
                     break;
                 case ColumnType.IPv4:
@@ -481,8 +525,11 @@ public final class LiveViewSnapshotKeyCodec {
                     dst.putChar(slotIndex, (char) source.getShort(offset));
                     offset += Character.BYTES;
                     break;
-                case ColumnType.INT:
                 case ColumnType.SYMBOL:
+                    dst.putInt(slotIndex, decodeSymbolKey(source.getInt(offset)));
+                    offset += Integer.BYTES;
+                    break;
+                case ColumnType.INT:
                 case ColumnType.IPv4:
                 case ColumnType.GEOINT:
                     dst.putInt(slotIndex, source.getInt(offset));
@@ -538,8 +585,10 @@ public final class LiveViewSnapshotKeyCodec {
                 case ColumnType.CHAR:
                     sink.putShort((short) record.getChar(columnIndex));
                     break;
-                case ColumnType.INT:
                 case ColumnType.SYMBOL:
+                    sink.putInt(encodeSymbolKey(record.getInt(columnIndex)));
+                    break;
+                case ColumnType.INT:
                     sink.putInt(record.getInt(columnIndex));
                     break;
                 case ColumnType.IPv4:

@@ -46,9 +46,16 @@ import org.jetbrains.annotations.Nullable;
  * base column's cache flag, which the caller resolves and hands to the
  * constructor. Everything else - a computed SYMBOL, or a projection whose alias
  * no longer names a base column - falls back to the server default.
+ * <p>
+ * The table carries dedup keys only where the caller resolved a sparse-publication
+ * key; see {@link #isDedupKey(int)}.
  */
 public class LiveViewTableStructure implements TableStructure {
     private final CairoConfiguration configuration;
+    // The projected partition key's output column index, so this table carries
+    // (designated timestamp, that column) as its dedup keys, or
+    // LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN for a table that carries none.
+    private final int dedupKeyColumnIndex;
     private final LiveViewDefinition definition;
     private final GenericRecordMetadata metadata;
     private final int partitionBy;
@@ -64,7 +71,8 @@ public class LiveViewTableStructure implements TableStructure {
             int partitionBy,
             GenericRecordMetadata metadata,
             LiveViewDefinition definition,
-            @Nullable BoolList symbolCacheFlags
+            @Nullable BoolList symbolCacheFlags,
+            int dedupKeyColumnIndex
     ) {
         this.configuration = configuration;
         this.viewName = viewName;
@@ -72,6 +80,7 @@ public class LiveViewTableStructure implements TableStructure {
         this.metadata = metadata;
         this.definition = definition;
         this.symbolCacheFlags = symbolCacheFlags;
+        this.dedupKeyColumnIndex = dedupKeyColumnIndex;
     }
 
     @Override
@@ -169,9 +178,26 @@ public class LiveViewTableStructure implements TableStructure {
         return metadata.getTimestampIndex();
     }
 
+    /**
+     * The designated timestamp and the projected partition key, when the caller resolved
+     * one - the pair a sparse repair publication upserts on - and nothing otherwise.
+     * <p>
+     * A view carries them only where
+     * {@code CairoConfiguration.isLiveViewCheckpointRepairSparsePublicationEnabled()} held
+     * at CREATE and the view's output carries a key the pair can be named through. It is a
+     * schema property from that moment on: the flags live in the table's own {@code _meta},
+     * so a view created with them keeps them however the configuration moves afterwards.
+     * <p>
+     * The timestamp goes in because {@code TableWriter.isDeduplicationEnabled()} keys on
+     * it: a table whose designated timestamp is not a dedup key does not deduplicate at
+     * all, whatever else is flagged.
+     */
     @Override
     public boolean isDedupKey(int columnIndex) {
-        return false;
+        if (dedupKeyColumnIndex == LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN) {
+            return false;
+        }
+        return columnIndex == dedupKeyColumnIndex || columnIndex == metadata.getTimestampIndex();
     }
 
     @Override

@@ -57,12 +57,17 @@ import org.jetbrains.annotations.Nullable;
  *     <li>{@code 1} — ANCHOR_SPEC (optional). Captures the single anchored named
  *     WINDOW the LV's SELECT defined, so the live-view runtime can compile the
  *     anchor expression at startup without re-parsing the SELECT.</li>
+ *     <li>{@code 2} — PARTITION_KEY_DECISION (optional). Which PARTITION BY terms key
+ *     as LV-private symbol ids, so a later build honors the answer the view was
+ *     created with rather than re-deriving one its own classifier might change. Absent
+ *     for a view created before the decision was persisted, which re-derives.</li>
  * </ul>
  */
 public class LiveViewDefinition {
     public static final String LIVE_VIEW_DEFINITION_FILE_NAME = "_lv";
     public static final int LIVE_VIEW_DEFINITION_ANCHOR_MSG_TYPE = 1;
     public static final int LIVE_VIEW_DEFINITION_CORE_MSG_TYPE = 0;
+    public static final int LIVE_VIEW_DEFINITION_PARTITION_KEY_MSG_TYPE = 2;
     // Format version stamped as the first field of the CORE block. A reader that
     // finds a higher value refuses to load the view and surfaces it as
     // version_unsupported. Live views ship at version 1: while the feature is
@@ -118,6 +123,11 @@ public class LiveViewDefinition {
     private final char inMemoryIntervalUnit;
     private final GenericRecordMetadata metadata;
     private final int partitionBy;
+    // Which PARTITION BY terms this view keys as LV-private symbol ids, decided by the
+    // CREATE-time compile and honored by every later one. Null for a view created before
+    // the decision was persisted: that view re-derives the classification on each compile,
+    // which is what it has always done.
+    private final @Nullable LiveViewPartitionKeyDecision partitionKeyDecision;
     // The START FROM mode the user wrote at CREATE: one of START_FROM_NOW,
     // START_FROM_BEGINNING, START_FROM_TIMESTAMP.
     private final byte startFromKind;
@@ -156,6 +166,7 @@ public class LiveViewDefinition {
             @Nullable LvAnchorSpec anchorSpec,
             ObjList<String> dependencyColumnNames,
             IntList dependencyColumnTypes,
+            @Nullable LiveViewPartitionKeyDecision partitionKeyDecision,
             GenericRecordMetadata metadata
     ) {
         this.viewName = viewName;
@@ -173,6 +184,7 @@ public class LiveViewDefinition {
         this.anchorSpec = anchorSpec;
         this.dependencyColumnNames = dependencyColumnNames;
         this.dependencyColumnTypes = dependencyColumnTypes;
+        this.partitionKeyDecision = partitionKeyDecision;
         this.metadata = metadata;
     }
 
@@ -221,6 +233,20 @@ public class LiveViewDefinition {
                 anchor.putStr(spec.partitionColumnNames.get(i));
             }
             anchor.commit(LIVE_VIEW_DEFINITION_ANCHOR_MSG_TYPE);
+        }
+
+        // The partition-key decision rides in a block of its own rather than in CORE,
+        // because CORE has no read path for an older layout: a view written before this
+        // block existed has to keep loading, and it does - the reader finds no block and
+        // re-derives the classification, which is exactly what that view always did.
+        if (definition.partitionKeyDecision != null) {
+            final AppendableBlock partitionKey = writer.append();
+            final int keyCount = definition.partitionKeyDecision.getColumnCount();
+            partitionKey.putInt(keyCount);
+            for (int i = 0; i < keyCount; i++) {
+                partitionKey.putStr(definition.partitionKeyDecision.getColumnName(i));
+            }
+            partitionKey.commit(LIVE_VIEW_DEFINITION_PARTITION_KEY_MSG_TYPE);
         }
 
         writer.commit();
@@ -392,6 +418,7 @@ public class LiveViewDefinition {
         ObjList<String> dependencyColumnNames = new ObjList<>();
         IntList dependencyColumnTypes = new IntList();
         LvAnchorSpec anchorSpec = null;
+        LiveViewPartitionKeyDecision partitionKeyDecision = null;
 
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         while (cursor.hasNext()) {
@@ -476,6 +503,19 @@ public class LiveViewDefinition {
                         0,
                         partitionColumnNames
                 );
+            } else if (block.type() == LIVE_VIEW_DEFINITION_PARTITION_KEY_MSG_TYPE) {
+                long offset = 0;
+                final int keyCount = block.getInt(offset);
+                offset += Integer.BYTES;
+                final ObjList<String> translatedColumnNames = new ObjList<>(keyCount);
+                for (int i = 0; i < keyCount; i++) {
+                    // Same flyweight discipline as the anchor block above: materialise each
+                    // name before the next getStr reuses the buffer behind it.
+                    CharSequence colNameCs = block.getStr(offset);
+                    offset += Vm.getStorageLength(colNameCs);
+                    translatedColumnNames.add(Chars.toString(colNameCs));
+                }
+                partitionKeyDecision = LiveViewPartitionKeyDecision.of(translatedColumnNames);
             }
         }
         if (!coreFound) {
@@ -498,6 +538,7 @@ public class LiveViewDefinition {
                 anchorSpec,
                 dependencyColumnNames,
                 dependencyColumnTypes,
+                partitionKeyDecision,
                 metadata
         );
     }
@@ -556,6 +597,15 @@ public class LiveViewDefinition {
 
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    /**
+     * Which PARTITION BY terms this view keys as LV-private symbol ids, or null for a view
+     * created before the decision was persisted - which re-derives the classification on
+     * every compile, as it always has.
+     */
+    public @Nullable LiveViewPartitionKeyDecision getPartitionKeyDecision() {
+        return partitionKeyDecision;
     }
 
     public byte getStartFromKind() {

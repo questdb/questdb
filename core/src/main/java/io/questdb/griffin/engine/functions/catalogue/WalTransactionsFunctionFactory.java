@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -85,40 +86,64 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         CharSequence tableName = args.get(0).getStrA(null);
-        TableToken tableToken = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
-        if (tableToken == null) {
-            throw SqlException.$(argPositions.get(0), "table does not exist: ").put(tableName);
-        }
-        if (!sqlExecutionContext.getCairoEngine().isWalTable(tableToken)) {
-            throw SqlException.$(argPositions.get(0), "table is not a WAL table: ").put(tableName);
-        }
+        final CairoEngine engine = sqlExecutionContext.getCairoEngine();
+        final TableToken tableToken = getWalTableToken(engine, tableName, argPositions.get(0));
+        final int timestampType = getTimestampType(engine, tableToken);
+        return new CursorFunction(new WalTransactionsCursorFactory(tableToken, argPositions.get(0), timestampType));
+    }
+
+    private static int getTimestampType(CairoEngine engine, TableToken tableToken) {
         int timestampType = 0;
-        try (TableMetadata metadata = sqlExecutionContext.getCairoEngine().getTableMetadata(tableToken)) {
+        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
             if (metadata != null) {
                 timestampType = metadata.getTimestampType();
             }
         }
-        return new CursorFunction(new WalTransactionsCursorFactory(tableToken, timestampType));
+        return timestampType;
+    }
+
+    private static TableToken getWalTableToken(
+            CairoEngine engine,
+            CharSequence tableName,
+            int tableNamePosition
+    ) throws SqlException {
+        final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+        if (tableToken == null) {
+            throw SqlException.$(tableNamePosition, "table does not exist: ").put(tableName);
+        }
+        if (!engine.isWalTable(tableToken)) {
+            throw SqlException.$(tableNamePosition, "table is not a WAL table: ").put(tableName);
+        }
+        return tableToken;
     }
 
     private static class WalTransactionsCursorFactory extends AbstractRecordCursorFactory {
         private final TableListRecordCursor cursor;
+        private final int tableNamePosition;
         private final TableToken tableToken;
 
-        public WalTransactionsCursorFactory(TableToken tableToken, int timestampType) {
+        public WalTransactionsCursorFactory(TableToken tableToken, int tableNamePosition, int timestampType) {
             super(METADATA);
             this.tableToken = tableToken;
+            this.tableNamePosition = tableNamePosition;
             this.cursor = new TableListRecordCursor(ColumnType.getTimestampDriver(timestampType));
         }
 
         @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
             cursor.close();
+            final CairoEngine engine = executionContext.getCairoEngine();
+            final TableToken currentTableToken = getWalTableToken(
+                    engine,
+                    tableToken.getTableName(),
+                    tableNamePosition
+            );
+            cursor.timestampDriver = ColumnType.getTimestampDriver(getTimestampType(engine, currentTableToken));
             long txnLo = 0;
             while (true) {
                 TransactionLogCursor cursor = null;
                 try {
-                    cursor = executionContext.getCairoEngine().getTableSequencerAPI().getCursor(tableToken, txnLo);
+                    cursor = engine.getTableSequencerAPI().getCursor(currentTableToken, txnLo);
                     cursor.toMinTxn();
                     this.cursor.logCursor = cursor;
                     break;
@@ -128,7 +153,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                         // Txn sequencer can have its parts deleted due to housekeeping
                         // Need to keep scanning until we find a valid part
                         if (txnLo == 0) {
-                            long writerTxn = executionContext.getCairoEngine().getTableSequencerAPI().getTxnTracker(tableToken).getWriterTxn();
+                            long writerTxn = engine.getTableSequencerAPI().getTxnTracker(currentTableToken).getWriterTxn();
                             if (writerTxn > 0) {
                                 txnLo = writerTxn;
                                 continue;
@@ -154,7 +179,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
 
         private static class TableListRecordCursor implements NoRandomAccessRecordCursor {
-            private final TimestampDriver timestampDriver;
+            private TimestampDriver timestampDriver;
             TransactionRecord record = new TransactionRecord();
             private SqlExecutionCircuitBreaker circuitBreaker;
             private TransactionLogCursor logCursor;

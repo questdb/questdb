@@ -27,14 +27,21 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.cairo.lv.LiveViewStatePageWriter;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.WindowSPI;
@@ -44,6 +51,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -54,6 +62,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.Arrays;
 
 /**
@@ -70,6 +79,9 @@ import java.util.Arrays;
 public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
 
     private static final long DEFINITION_TXN = 7;
+    private static final long LIFECYCLE_IDENTITY = 201;
+    private static final long LIFECYCLE_IDENTITY_A = 202;
+    private static final long LIFECYCLE_IDENTITY_B = 203;
     private static final String LV_DIR = "lv_seal_scratch_memory";
     // Comfortably above every allocation the seal path retains by design, and
     // far below the state image, so the assertion separates "scratch released"
@@ -80,12 +92,60 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        try (Path dir = new Path(); Path path = new Path()) {
-            final FilesFacade ff = configuration.getFilesFacade();
-            checkpointsDir(dir);
-            ff.mkdirs(LiveViewCheckpointLayout.metaDirPath(path, dir).slash(), configuration.getMkDirMode());
-            ff.mkdirs(LiveViewCheckpointLayout.dataDirPath(path, dir).slash(), configuration.getMkDirMode());
-        }
+        createCheckpointLayout(LV_DIR);
+    }
+
+    @Test
+    public void testPartitionMapPoolOwnerSurvivesPublicationFailureAndRetry() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    PartitionedStateStub stub = new PartitionedStateStub();
+                    LiveViewCheckpointTimelineStoreWriter writer =
+                            new LiveViewCheckpointTimelineStoreWriter(configuration)
+            ) {
+                stub.putState(11, 0x11);
+                final int poolIdentity = writer.getPartitionMapObjectPoolIdentityForTest();
+                seal(writer, stub, 1);
+                Assert.assertEquals(poolIdentity, writer.getPartitionMapObjectPoolIdentityForTest());
+                final int retainedNodeIdentity = writer.getFirstRetainedPartitionMapNodeIdentityForTest();
+                Assert.assertNotEquals(0, retainedNodeIdentity);
+
+                writer.setTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+                try {
+                    seal(writer, stub, 2);
+                    Assert.fail("expected injected publication failure");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "test failure after live view checkpoint metadata publication"
+                    );
+                }
+                Assert.assertEquals(poolIdentity, writer.getPartitionMapObjectPoolIdentityForTest());
+                Assert.assertEquals(
+                        retainedNodeIdentity,
+                        writer.getFirstRetainedPartitionMapNodeIdentityForTest()
+                );
+                final int warmedObjectCount = writer.getRetainedPartitionMapObjectCountForTest();
+                Assert.assertTrue(warmedObjectCount > 0);
+
+                writer.setTestFailureStage(0);
+                seal(writer, stub, 2);
+                Assert.assertEquals(poolIdentity, writer.getPartitionMapObjectPoolIdentityForTest());
+                Assert.assertEquals(
+                        retainedNodeIdentity,
+                        writer.getFirstRetainedPartitionMapNodeIdentityForTest()
+                );
+                Assert.assertEquals(warmedObjectCount, writer.getRetainedPartitionMapObjectCountForTest());
+
+                seal(writer, stub, 3);
+                Assert.assertEquals(poolIdentity, writer.getPartitionMapObjectPoolIdentityForTest());
+                Assert.assertEquals(
+                        retainedNodeIdentity,
+                        writer.getFirstRetainedPartitionMapNodeIdentityForTest()
+                );
+                Assert.assertEquals(warmedObjectCount, writer.getRetainedPartitionMapObjectCountForTest());
+            }
+        });
     }
 
     @Test
@@ -184,7 +244,7 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                 checkpointsDir(dir);
                 final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
                 try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                             writer.beginRepair(dir, null, tracker)) {
+                             writer.beginRepair(dir, null, tracker, false)) {
                     final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
                     capture.collectBoundaries(0, 1_500_000, boundaries);
                     Assert.assertEquals(1, boundaries.size());
@@ -225,7 +285,7 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                 checkpointsDir(dir);
                 final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
                 try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                             writer.beginRepair(dir, null, tracker)) {
+                             writer.beginRepair(dir, null, tracker, false)) {
                     final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
                     capture.collectBoundaries(0, 1_500_000, boundaries);
                     Assert.assertEquals(1, boundaries.size());
@@ -239,9 +299,11 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                             2,
                             2,
                             0,
+                            LIFECYCLE_IDENTITY,
                             true,
                             1_500_000,
-                            0
+                            0,
+                            null
                     );
                     Assert.assertEquals(1, result.getRootsVersioned());
                 }
@@ -257,8 +319,173 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTwoParkedRepairCapturesOwnFrozenScratchAndPublishDurably() throws Exception {
+        assertMemoryLeak(() -> {
+            final MemoryTracker trackerA = acquireRefreshTracker();
+            final MemoryTracker trackerB = acquireRefreshTracker();
+            try (
+                    PartitionedStateStub partitionA = new PartitionedStateStub();
+                    PartitionedStateStub partitionB = new PartitionedStateStub();
+                    ScalarStateStub scalarA = new ScalarStateStub();
+                    ScalarStateStub scalarB = new ScalarStateStub();
+                    LiveViewCheckpointTimelineStoreWriter writer =
+                            new LiveViewCheckpointTimelineStoreWriter(configuration);
+                    Path dirA = new Path();
+                    Path dirB = new Path()
+            ) {
+                createCheckpointLayout(LV_DIR + "_a");
+                createCheckpointLayout(LV_DIR + "_b");
+                checkpointsDir(dirA, LV_DIR + "_a");
+                checkpointsDir(dirB, LV_DIR + "_b");
+                final ObjList<WindowFunction> functionsA = new ObjList<>();
+                functionsA.add(partitionA);
+                functionsA.add(scalarA);
+                final ObjList<WindowFunction> functionsB = new ObjList<>();
+                functionsB.add(partitionB);
+                functionsB.add(scalarB);
+
+                partitionA.putState(11, 0x11);
+                scalarA.state = filled(64, (byte) 0x21);
+                partitionB.putState(11, 0x12);
+                scalarB.state = filled(64, (byte) 0x22);
+                seal(writer, functionsA, LV_DIR + "_a", 1, LIFECYCLE_IDENTITY_A, null);
+                seal(writer, functionsA, LV_DIR + "_a", 2, LIFECYCLE_IDENTITY_A, null);
+                seal(writer, functionsB, LV_DIR + "_b", 1, LIFECYCLE_IDENTITY_B, null);
+                seal(writer, functionsB, LV_DIR + "_b", 2, LIFECYCLE_IDENTITY_B, null);
+
+                final ObjList<LiveViewCheckpointTimelineEntry> boundariesA = new ObjList<>();
+                final ObjList<LiveViewCheckpointTimelineEntry> boundariesB = new ObjList<>();
+                try (LiveViewCheckpointTimelineStoreWriter.RepairCapture captureA =
+                             writer.beginRepair(dirA, null, trackerA, false)) {
+                    captureA.collectBoundaries(0, 1_500_000, boundariesA);
+                    Assert.assertEquals(1, boundariesA.size());
+                    partitionA.putState(11, 0x71);
+                    scalarA.state = filled(64, (byte) 0x31);
+                    captureA.capture(boundariesA.getQuick(0), functionsA, null, 1);
+
+                    try (LiveViewCheckpointTimelineStoreWriter.RepairCapture captureB =
+                                 writer.beginRepair(dirB, null, trackerB, false)) {
+                        captureB.collectBoundaries(0, 1_500_000, boundariesB);
+                        Assert.assertEquals(1, boundariesB.size());
+                        partitionB.putState(11, 0x72);
+                        scalarB.state = filled(64, (byte) 0x32);
+                        captureB.capture(boundariesB.getQuick(0), functionsB, null, 1);
+
+                        assertFrozenGraphsDoNotAlias(captureA, captureB);
+                        Assert.assertTrue("capture A must retain its tracker-bound scratch", trackerA.getUsed() > 0);
+                        Assert.assertTrue("capture B must retain its tracker-bound scratch", trackerB.getUsed() > 0);
+
+                        writer.publishRepair(captureA, DEFINITION_TXN, 2, 2, 0, LIFECYCLE_IDENTITY_A, true, 1_500_000, 0, null);
+                        writer.publishRepair(captureB, DEFINITION_TXN, 2, 2, 0, LIFECYCLE_IDENTITY_B, true, 1_500_000, 0, null);
+                    }
+                }
+
+                assertRestoredState(dirA, boundariesA.getQuick(0), 0x71, (byte) 0x31);
+                assertRestoredState(dirB, boundariesB.getQuick(0), 0x72, (byte) 0x32);
+                Assert.assertEquals("capture A must release its tracker charge", 0, trackerA.getUsed());
+                Assert.assertEquals("capture B must release its tracker charge", 0, trackerB.getUsed());
+            } finally {
+                trackerA.close();
+                trackerB.close();
+            }
+        });
+    }
+
+    private static void assertFrozenGraphsDoNotAlias(
+            LiveViewCheckpointTimelineStoreWriter.RepairCapture captureA,
+            LiveViewCheckpointTimelineStoreWriter.RepairCapture captureB
+    ) throws Exception {
+        final Field boundariesField = captureA.getClass().getDeclaredField("boundaries");
+        boundariesField.setAccessible(true);
+        final Object boundaryA = ((ObjList<?>) boundariesField.get(captureA)).getQuick(0);
+        final Object boundaryB = ((ObjList<?>) boundariesField.get(captureB)).getQuick(0);
+        Assert.assertNotSame(boundaryA, boundaryB);
+
+        final Field functionsField = boundaryA.getClass().getDeclaredField("functions");
+        functionsField.setAccessible(true);
+        final ObjList<?> frozenFunctionsA = (ObjList<?>) functionsField.get(boundaryA);
+        final ObjList<?> frozenFunctionsB = (ObjList<?>) functionsField.get(boundaryB);
+        final Object partitionFunctionA = frozenFunctionsA.getQuick(0);
+        final Object partitionFunctionB = frozenFunctionsB.getQuick(0);
+        final Field partitionsField = partitionFunctionA.getClass().getDeclaredField("partitions");
+        partitionsField.setAccessible(true);
+        final Object partitionA = ((ObjList<?>) partitionsField.get(partitionFunctionA)).getQuick(0);
+        final Object partitionB = ((ObjList<?>) partitionsField.get(partitionFunctionB)).getQuick(0);
+        Assert.assertNotSame("live captures must not share frozen holders", partitionA, partitionB);
+
+        final Field keyField = partitionA.getClass().getDeclaredField("key");
+        final Field scalarStateField = partitionA.getClass().getDeclaredField("scalarState");
+        keyField.setAccessible(true);
+        scalarStateField.setAccessible(true);
+        Assert.assertNotSame(
+                "live captures must not share key arrays",
+                keyField.get(partitionA),
+                keyField.get(partitionB)
+        );
+        Assert.assertNotSame(
+                "live captures must not share scalar-state arrays",
+                scalarStateField.get(partitionA),
+                scalarStateField.get(partitionB)
+        );
+
+        final Object scalarFunctionA = frozenFunctionsA.getQuick(1);
+        final Object scalarFunctionB = frozenFunctionsB.getQuick(1);
+        final Field scalarStateRefField = scalarFunctionA.getClass().getDeclaredField("scalarStateRef");
+        scalarStateRefField.setAccessible(true);
+        Assert.assertNotSame(
+                "live captures must not share state-reference holders",
+                scalarStateRefField.get(scalarFunctionA),
+                scalarStateRefField.get(scalarFunctionB)
+        );
+
+        final Field scratchField = captureA.getClass().getDeclaredField("scratch");
+        scratchField.setAccessible(true);
+        Assert.assertNotSame(
+                "each live capture must own a distinct scratch lease",
+                scratchField.get(captureA),
+                scratchField.get(captureB)
+        );
+    }
+
+    private static void assertRestoredState(
+            Path checkpointsDir,
+            LiveViewCheckpointTimelineEntry entry,
+            long expectedPartitionState,
+            byte expectedScalarByte
+    ) {
+        try (
+                PartitionedStateStub partition = new PartitionedStateStub();
+                ScalarStateStub scalar = new ScalarStateStub();
+                LiveViewCheckpointTimelineStoreReader reader =
+                        new LiveViewCheckpointTimelineStoreReader(configuration)
+        ) {
+            scalar.state = new byte[64];
+            final ObjList<WindowFunction> functions = new ObjList<>();
+            functions.add(partition);
+            functions.add(scalar);
+            reader.of(checkpointsDir);
+            reader.restore(entry.maxTimestamp, entry.checkpointId, DEFINITION_TXN, functions, null, null);
+            Assert.assertEquals(expectedPartitionState, partition.readState(11));
+            Assert.assertArrayEquals(filled(64, expectedScalarByte), scalar.state);
+        }
+    }
+
     private static Path checkpointsDir(Path path) {
-        return path.of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
+        return checkpointsDir(path, LV_DIR);
+    }
+
+    private static Path checkpointsDir(Path path, String liveViewDir) {
+        return path.of(configuration.getDbRoot()).concat(liveViewDir).concat("_checkpoints");
+    }
+
+    private static void createCheckpointLayout(String liveViewDir) {
+        try (Path dir = new Path(); Path path = new Path()) {
+            final FilesFacade ff = configuration.getFilesFacade();
+            checkpointsDir(dir, liveViewDir);
+            ff.mkdirs(LiveViewCheckpointLayout.metaDirPath(path, dir).slash(), configuration.getMkDirMode());
+            ff.mkdirs(LiveViewCheckpointLayout.dataDirPath(path, dir).slash(), configuration.getMkDirMode());
+        }
     }
 
     private static byte[] filled(int length, byte value) {
@@ -275,20 +502,31 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
         );
     }
 
-    private void seal(LiveViewCheckpointTimelineStoreWriter writer, ScalarStateStub stub, long seq) {
-        seal(writer, stub, seq, null);
+    private void seal(LiveViewCheckpointTimelineStoreWriter writer, WindowFunction function, long seq) {
+        seal(writer, function, seq, null);
     }
 
     private void seal(
             LiveViewCheckpointTimelineStoreWriter writer,
-            ScalarStateStub stub,
+            WindowFunction function,
             long seq,
             MemoryTracker memoryTracker
     ) {
+        final ObjList<WindowFunction> functions = new ObjList<>();
+        functions.add(function);
+        seal(writer, functions, LV_DIR, seq, LIFECYCLE_IDENTITY, memoryTracker);
+    }
+
+    private void seal(
+            LiveViewCheckpointTimelineStoreWriter writer,
+            ObjList<WindowFunction> functions,
+            String liveViewDir,
+            long seq,
+            long lifecycleIdentity,
+            MemoryTracker memoryTracker
+    ) {
         try (Path dir = new Path()) {
-            checkpointsDir(dir);
-            final ObjList<WindowFunction> functions = new ObjList<>();
-            functions.add(stub);
+            checkpointsDir(dir, liveViewDir);
             writer.append(
                     dir,
                     functions,
@@ -298,13 +536,139 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                     seq,
                     seq,
                     0,
+                    lifecycleIdentity,
                     true,
                     seq * 1_000_000L,
                     seq,
                     seq * 1_000_000L,
                     Numbers.LONG_NULL,
-                    memoryTracker
+                    memoryTracker,
+                    null
             );
+        }
+    }
+
+    /**
+     * A one-key partitioned function that forces the production seal path through
+     * the retained partition-map object pool.
+     */
+    private static final class PartitionedStateStub extends BaseWindowFunction {
+        private static final ColumnTypes KEY_TYPES = new SingleColumnType(ColumnType.LONG);
+        private final Map map = new OrderedMap(
+                1024,
+                KEY_TYPES,
+                new SingleColumnType(ColumnType.LONG),
+                16,
+                0.7,
+                8
+        );
+
+        private PartitionedStateStub() {
+            super(null);
+            setCheckpointCompilerMetadata(
+                    new LiveViewCheckpointFunctionIdentity(
+                            "w0",
+                            "partitioned_seal_scratch_stub()",
+                            0,
+                            "k",
+                            "ts asc",
+                            "partitioned-seal-scratch-stub-v1"
+                    ),
+                    new LiveViewCheckpointDependency(
+                            LiveViewCheckpointContracts.DependencyKind.FIXED_ANCHOR_SEGMENT,
+                            "k",
+                            "ts asc",
+                            0,
+                            0,
+                            0,
+                            ColumnType.TIMESTAMP,
+                            false,
+                            false,
+                            false,
+                            LiveViewCheckpointDependency.StructuralConvergence.EXACT,
+                            LiveViewCheckpointDependency.NumericConvergence.EXACT
+                    )
+            );
+        }
+
+        @Override
+        public int checkpointStateFixedLength() {
+            return Long.BYTES;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            Misc.free(map);
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return KEY_TYPES;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return 1;
+        }
+
+        @Override
+        public String getName() {
+            return "partitioned_seal_scratch_stub";
+        }
+
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            map.clear();
+        }
+
+        @Override
+        public int getType() {
+            return ColumnType.LONG;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putLong(0, source.getLong(offset));
+            return Long.BYTES;
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return true;
+        }
+
+        private void putState(long key, long state) {
+            final MapKey mapKey = map.withKey();
+            mapKey.putLong(key);
+            mapKey.createValue().putLong(0, state);
+        }
+
+        private long readState(long key) {
+            final MapKey mapKey = map.withKey();
+            mapKey.putLong(key);
+            final MapValue value = mapKey.findValue();
+            Assert.assertNotNull("restored map must hold key " + key, value);
+            return value.getLong(0);
         }
     }
 
@@ -367,6 +731,14 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            for (int i = 0; i < state.length; i++) {
+                state[i] = source.getByte(offset + i);
+            }
+            return state.length;
         }
 
         @Override

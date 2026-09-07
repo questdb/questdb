@@ -27,31 +27,38 @@ package io.questdb.griffin.engine.window;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorPlan;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.DependencyKind;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency.NumericConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency.StructuralConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
+import io.questdb.cairo.lv.LiveViewCheckpointKeyProjector;
 import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewPartitionKeyBinding;
+import io.questdb.cairo.lv.LiveViewPartitionKeyClassifier;
+import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.WindowExpression;
-import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -68,6 +75,10 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class LiveViewCheckpointFunctionCompiler {
     private static final String STATE_PAGE_CODEC_FAMILY = "live-view-state-page";
+    // The UTC offset desugarDailyAnchor always emits beside the zone name. The zone
+    // carries the whole shift, so any other value is a hand-written anchor this does not
+    // describe rather than one it can fold into the zone's own grid.
+    private static final String UTC_ZERO_OFFSET = "+00:00";
 
     private LiveViewCheckpointFunctionCompiler() {
     }
@@ -91,10 +102,18 @@ public final class LiveViewCheckpointFunctionCompiler {
      *     carries as a cast expression, so this reads it from the definition's own
      *     {@code anchorDailyTimeUs} instead of folding the node, which is also why the
      *     three-argument form is accepted only for a DAILY anchor.</li>
+     *     <li>{@code timestamp_floor_utc('1d', ts, <origin>, '+00:00', '<zone>')} - what
+     *     {@code ANCHOR DAILY} with an IANA time zone desugars to. The buckets follow
+     *     the zone's civil day, so they are 23 or 25 hours wide across a DST transition
+     *     rather than a fixed stride, and
+     *     {@link LiveViewCheckpointAnchorPlan#ofTimeZone} computes them from the zone's
+     *     transition table. The origin and the DAILY-only restriction are read the same
+     *     way the three-argument form reads them; the offset argument is checked rather
+     *     than assumed, since only {@code desugarDailyAnchor}'s own output is known to
+     *     carry {@code '+00:00'}.</li>
      * </ul>
-     * Everything else declines, including the time-zone-aware daily anchor: it desugars
-     * to {@code timestamp_floor_utc}, whose buckets change width at a DST transition and
-     * so have no closed-form end. Declining costs a view only the localized repair path.
+     * Everything else declines, and so does a zone name this cannot resolve. Declining
+     * costs a view only the localized repair path.
      * <p>
      * The segment arithmetic is only half the contract. It bounds a repair because the
      * anchor resets state at every boundary, so the plan is withheld unless
@@ -127,20 +146,26 @@ public final class LiveViewCheckpointFunctionCompiler {
         final int timestampIndex = projectedMetadata.getTimestampIndex();
         if (timestampIndex == -1 || anchorNode == null || anchorNode.type != ExpressionNode.FUNCTION
                 || anchorNode.token == null
-                || !Chars.equalsIgnoreCase(anchorNode.token, TimestampFloorFunctionFactory.NAME)
                 || !isAnchorSegmentLocal(windowFunctions, anchorableWindowFunctions)) {
+            return null;
+        }
+        final boolean isZonedFloor =
+                Chars.equalsIgnoreCase(anchorNode.token, TimestampFloorFromOffsetUtcFunctionFactory.NAME);
+        if (!isZonedFloor && !Chars.equalsIgnoreCase(anchorNode.token, TimestampFloorFunctionFactory.NAME)) {
             return null;
         }
         final ExpressionNode unitNode;
         final ExpressionNode timestampNode;
         final long segmentOffset;
+        final CharSequence timeZone;
         final int timestampType = projectedMetadata.getTimestampType();
-        if (anchorNode.paramCount == 2) {
+        if (!isZonedFloor && anchorNode.paramCount == 2) {
             // Two children live in lhs/rhs, in the order they were written.
             unitNode = anchorNode.lhs;
             timestampNode = anchorNode.rhs;
             segmentOffset = 0;
-        } else if (anchorNode.paramCount == 3 && anchorNode.args.size() == 3
+            timeZone = null;
+        } else if (!isZonedFloor && anchorNode.paramCount == 3 && anchorNode.args.size() == 3
                 && spec.anchorKind == WindowExpression.ANCHOR_KIND_DAILY) {
             // Three or more children live in args, inverted, so the first written
             // argument is the last entry.
@@ -149,8 +174,25 @@ public final class LiveViewCheckpointFunctionCompiler {
             if (!ColumnType.isTimestamp(timestampType)) {
                 return null;
             }
-            segmentOffset = ColumnType.getTimestampDriver(timestampType)
-                    .from(spec.anchorDailyTimeUs, ColumnType.TIMESTAMP_MICRO);
+            segmentOffset = dailyAnchorOrigin(spec, timestampType);
+            timeZone = null;
+        } else if (isZonedFloor && anchorNode.paramCount == 5 && anchorNode.args.size() == 5
+                && spec.anchorKind == WindowExpression.ANCHOR_KIND_DAILY
+                && spec.anchorDailyTimeZone != null) {
+            // The same inverted args, two entries deeper: unit, ts, origin, offset, zone.
+            unitNode = anchorNode.args.getQuick(4);
+            timestampNode = anchorNode.args.getQuick(3);
+            // The zone the plan resolves has to be the zone the expression names, and the
+            // offset beside it has to be the zero the desugaring emits - a hand-written
+            // ANCHOR EXPRESSION could carry a different one, and a plan that ignored it
+            // would describe a grid the runtime does not use.
+            if (!ColumnType.isTimestamp(timestampType)
+                    || !isQuotedConstant(anchorNode.args.getQuick(1), UTC_ZERO_OFFSET)
+                    || !isQuotedConstant(anchorNode.args.getQuick(0), spec.anchorDailyTimeZone)) {
+                return null;
+            }
+            segmentOffset = dailyAnchorOrigin(spec, timestampType);
+            timeZone = spec.anchorDailyTimeZone;
         } else {
             return null;
         }
@@ -159,7 +201,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                 || SqlUtil.getColumnIndexQuiet(projectedMetadata, timestampNode.token) != timestampIndex) {
             return null;
         }
-        return segmentPlan(unitNode, segmentOffset, timestampType);
+        return segmentPlan(unitNode, segmentOffset, timestampType, timeZone);
     }
 
     public static void configure(
@@ -262,7 +304,8 @@ public final class LiveViewCheckpointFunctionCompiler {
                 outputPosition,
                 partitionSignature,
                 orderSignature,
-                codecIdentity
+                codecIdentity,
+                function.getCheckpointKeyColumnTypes()
         );
         function.setCheckpointCompilerMetadata(identity, dependency);
     }
@@ -463,6 +506,8 @@ public final class LiveViewCheckpointFunctionCompiler {
             @NotNull ObjList<Function> functions,
             @NotNull ObjList<QueryColumn> columns,
             @NotNull RecordMetadata baseMetadata,
+            @Nullable LiveViewCheckpointKeyProjector sharedProjector,
+            @NotNull LiveViewPartitionKeyClassifier partitionKeyClassifier,
             @NotNull CairoConfiguration configuration,
             @NotNull BytecodeAssembler asm,
             @NotNull FunctionParser functionParser,
@@ -514,15 +559,93 @@ public final class LiveViewCheckpointFunctionCompiler {
         if (firstRows == null || partitionBy.size() == 0 || maxPrecedingRows < 1) {
             return null;
         }
+        LiveViewCheckpointKeyProjector projector = sharedProjector;
+        if (projector == null || !projector.getPartitionSignature().equals(firstRows.getPartitionSignature())) {
+            // The view's checkpoint-capable functions do not all partition the way its ROWS
+            // functions do, so there is no one identity to share and the plan compiles - and
+            // owns - the ROWS one for itself. A keyed repair is unavailable to such a view
+            // anyway; the discovery is not.
+            projector = keyProjector(
+                    partitionBy,
+                    firstRows.getPartitionSignature(),
+                    baseMetadata,
+                    partitionKeyClassifier,
+                    configuration,
+                    asm,
+                    functionParser,
+                    executionContext
+            );
+        }
+        if (projector == null) {
+            return null;
+        }
+        final boolean ownsProjector = projector != sharedProjector;
+        try {
+            return new LiveViewCheckpointRowsPlan(
+                    rowsFunctionCount,
+                    maxPrecedingRows,
+                    firstRows.getPartitionSignature(),
+                    firstRows.getOrderSignature(),
+                    projector,
+                    ownsProjector,
+                    timestampIndex,
+                    firstRows.getTimestampType()
+            );
+        } catch (Throwable th) {
+            if (ownsProjector) {
+                Misc.free(projector);
+            }
+            throw th;
+        }
+    }
+
+    /**
+     * Compiles the partition identity {@code partitionBy} names into the projector every
+     * repair of the view reads its keys through, or returns null when the shape cannot be
+     * projected at all.
+     * <p>
+     * Two shapes, decided by whether every term is a plain column of {@code baseMetadata}:
+     * <ul>
+     *     <li><b>Plain columns.</b> The projector is a sink over their column indexes, and
+     *     those indexes are also what lets a repair seek one key's rows through a SYMBOL
+     *     index instead of walking every key's. A SYMBOL column is projected as its
+     *     table-local integer, which is stable for one reader's lifetime - exactly the
+     *     scope one repair plans and replays in - and a second sink writes the resolved
+     *     string a checkpoint partition map keys its entries by.</li>
+     *     <li><b>Expressions.</b> One term written as {@code upper(sym)} or {@code x % 10}
+     *     has no column index to read or to seek through, so <i>every</i> term is projected
+     *     through a compiled function instead. A SYMBOL-typed key function is projected
+     *     through its resolved string, because the integers a function hands out index its
+     *     own map rather than the reader's, and two cursors would not agree on them.</li>
+     * </ul>
+     * A non-deterministic expression key is refused: two cursors read the same base row and
+     * have to land on the same key both times, and a key that answers {@code now()} does
+     * not.
+     */
+    public static @Nullable LiveViewCheckpointKeyProjector keyProjector(
+            @NotNull ObjList<ExpressionNode> partitionBy,
+            @NotNull CharSequence partitionSignature,
+            @NotNull RecordMetadata baseMetadata,
+            @NotNull LiveViewPartitionKeyClassifier partitionKeyClassifier,
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
+            @NotNull FunctionParser functionParser,
+            @NotNull SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (partitionBy.size() == 0) {
+            // A window with no PARTITION BY compiles to a scalar function that carries no
+            // per-key state, so there is no identity here to name.
+            return null;
+        }
         final IntList partitionByColumnIndexes = new IntList(partitionBy.size());
         final ListColumnFilter keyColumnFilter = new ListColumnFilter(partitionBy.size());
         final ArrayColumnTypes keyColumnTypes = new ArrayColumnTypes();
         // The second projector's shape: what the view's window functions key their own
-        // maps by, which is this list with every SYMBOL resolved to a STRING. Left null
-        // while no key column is a SYMBOL, because the two projectors are then the same
-        // one and generating a second sink would buy nothing.
-        ArrayColumnTypes checkpointKeyColumnTypes = null;
-        BitSet writeSymbolAsString = null;
+        // maps by, which is this list with every SYMBOL term written the way the shared
+        // classifier says. Only its key types are read while the two shapes agree, which
+        // is why it is built even when nothing is rewritten.
+        final LiveViewPartitionKeyBinding checkpointKeyBinding =
+                new LiveViewPartitionKeyBinding(partitionKeyClassifier, new ArrayColumnTypes());
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
             final ExpressionNode node = partitionBy.getQuick(i);
             final int columnIndex = node.type == ExpressionNode.LITERAL
@@ -532,13 +655,11 @@ public final class LiveViewCheckpointFunctionCompiler {
                 // One term the sink cannot read off a page-frame record puts every term on
                 // a key function, so the projector stays one shape rather than two halves
                 // whose SYMBOL keys would live in different spaces.
-                return expressionKeyedPlan(
+                return expressionKeyProjector(
                         partitionBy,
-                        firstRows,
-                        rowsFunctionCount,
-                        maxPrecedingRows,
-                        timestampIndex,
+                        partitionSignature,
                         baseMetadata,
+                        partitionKeyClassifier,
                         configuration,
                         asm,
                         functionParser,
@@ -549,45 +670,235 @@ public final class LiveViewCheckpointFunctionCompiler {
             partitionByColumnIndexes.add(columnIndex);
             keyColumnFilter.add(columnIndex + 1);
             keyColumnTypes.add(columnType);
-            if (ColumnType.isSymbol(columnType)) {
-                if (checkpointKeyColumnTypes == null) {
-                    checkpointKeyColumnTypes = new ArrayColumnTypes();
-                    for (int j = 0; j < i; j++) {
-                        checkpointKeyColumnTypes.add(keyColumnTypes.getColumnType(j));
-                    }
-                    writeSymbolAsString = new BitSet();
-                }
-                writeSymbolAsString.set(columnIndex);
-                checkpointKeyColumnTypes.add(ColumnType.STRING);
-            } else if (checkpointKeyColumnTypes != null) {
-                checkpointKeyColumnTypes.add(columnType);
-            }
+            // The sink reads a page-frame record, so its column space is the base
+            // metadata's and the term's own index is the one both vectors are keyed by.
+            checkpointKeyBinding.addClassifiedTerm(columnIndex, columnIndex, columnType);
         }
-        // No writeSymbolAsString is set, so a SYMBOL key column is projected as its
-        // table-local integer. That is stable for one reader's lifetime, which is exactly
-        // the scope one repair plans and replays in.
+        // No writeSymbolAsString and no translator slot, so a SYMBOL key column is projected
+        // as its table-local integer. That is stable for one reader's lifetime, which is
+        // exactly the scope one repair plans and replays in. This sink stays reader-local
+        // whatever the classifier decides for the checkpoint one below.
         final RecordSink keySink = RecordSinkFactory.getInstance(configuration, asm, baseMetadata, keyColumnFilter);
-        // The checkpoint projector does set it, because the key it writes has to compare
-        // equal to the one a window function's partition map already holds, and those
-        // maps key a SYMBOL partition column by its resolved string. A plan with no
-        // SYMBOL key column needs no second sink at all.
-        final RecordSink checkpointKeySink = writeSymbolAsString == null
-                ? keySink
-                : RecordSinkFactory.getInstance(configuration, asm, baseMetadata, keyColumnFilter, writeSymbolAsString);
-        return new LiveViewCheckpointRowsPlan(
-                rowsFunctionCount,
-                maxPrecedingRows,
-                firstRows.getPartitionSignature(),
-                firstRows.getOrderSignature(),
+        // The checkpoint sink writes the key a window function's partition map already
+        // holds instead, which for a SYMBOL column is the resolved string or, once a
+        // dictionary backs it, the view's private id. A projector whose key needs neither
+        // needs no second sink at all.
+        final RecordSink checkpointKeySink = checkpointKeyBinding.isKeyRewritten()
+                ? checkpointKeyBinding.compileKeySink(configuration, asm, baseMetadata, keyColumnFilter)
+                : keySink;
+        return new LiveViewCheckpointKeyProjector(
                 partitionByColumnIndexes,
                 null,
                 keyColumnTypes,
                 keySink,
-                checkpointKeyColumnTypes != null ? checkpointKeyColumnTypes : keyColumnTypes,
+                checkpointKeyBinding.isKeyRewritten() ? checkpointKeyBinding.getKeyColumnTypes() : keyColumnTypes,
                 checkpointKeySink,
-                timestampIndex,
-                firstRows.getTimestampType()
+                partitionSignature,
+                baseMetadata
         );
+    }
+
+    /**
+     * Compiles the partition identity every checkpoint-capable window function in the
+     * factory shares, or returns null when they do not share one.
+     * <p>
+     * The compiler encodes each function's identity as a signature precisely so two of
+     * them can be compared without re-deriving either one's key layout, and this is the
+     * one place that comparison decides an object rather than a diagnostic:
+     * {@link io.questdb.cairo.lv.LiveViewSegmentRepairEnvelope#keyedScanGate}
+     * reports the same answer as {@code GATE_MIXED_PARTITION_KEYS}. A view with no shared
+     * identity keeps every repair it has today - what it loses is the ability to name one
+     * key domain for the whole view, which a keyed repair would have to rebuild.
+     */
+    public static @Nullable LiveViewCheckpointKeyProjector sharedKeyProjector(
+            @NotNull ObjList<Function> functions,
+            @NotNull ObjList<QueryColumn> columns,
+            @NotNull RecordMetadata baseMetadata,
+            @NotNull LiveViewPartitionKeyClassifier partitionKeyClassifier,
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
+            @NotNull FunctionParser functionParser,
+            @NotNull SqlExecutionContext executionContext
+    ) throws SqlException {
+        String signature = null;
+        ObjList<ExpressionNode> partitionBy = null;
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!(functions.getQuick(i) instanceof WindowFunction windowFunction)) {
+                continue;
+            }
+            final LiveViewCheckpointDependency dependency = windowFunction.checkpointDependency();
+            if (dependency == null) {
+                return null;
+            }
+            if (signature == null) {
+                if (!(columns.getQuick(i) instanceof WindowExpression window)) {
+                    return null;
+                }
+                signature = dependency.getPartitionSignature();
+                partitionBy = window.getPartitionBy();
+            } else if (!signature.equals(dependency.getPartitionSignature())) {
+                return null;
+            }
+        }
+        if (signature == null) {
+            return null;
+        }
+        return keyProjector(partitionBy, signature, baseMetadata, partitionKeyClassifier, configuration, asm, functionParser, executionContext);
+    }
+
+    /**
+     * Compiles the fused window-state plan for a live view: the accumulator components
+     * its durable state is made of, the projections that read them, and the residual
+     * functions that keep their own legacy roots. Returns null when nothing in the
+     * factory can join a fused group, which is an ordinary answer and leaves every
+     * function exactly where it is today.
+     * <p>
+     * Six things have to hold of a function before it may contribute a component, and
+     * each is a separate way of not being fusible:
+     * <ul>
+     *     <li>it is one of the functions the anchor resets. {@code SqlCodeGenerator}
+     *     has already collected that subset on the frame shape plus the anchor's
+     *     ownership of it, so membership here is both tests at once, read off the same
+     *     list the runtime dispatches through;</li>
+     *     <li>its dependency is the anchor segment and its per-partition state is one
+     *     the anchor can put back to identity;</li>
+     *     <li>it holds whole-state, non-ring checkpoint state - a ring-backed function's
+     *     root names chunk pages rather than an image, and a stateless one has no image
+     *     at all;</li>
+     *     <li>that image is fixed width and fits the per-component inline budget;</li>
+     *     <li>it declares an accumulator family and a projection off it;</li>
+     *     <li>its argument is a direct compiled column reference of a type whose
+     *     contribution predicate {@link WindowAccumulatorDescriptor} can name - or,
+     *     for a family that takes no argument, it has no argument at all.</li>
+     * </ul>
+     * Anything else is a residual. In particular an argument reached through an implicit
+     * cast is not a direct column reference. {@code count(*)} joins as a
+     * {@link WindowAccumulatorDescriptor#FAMILY_ROW_COUNT row count} rather than as a
+     * {@code count(x)}, and the two never merge: one counts rows and the other counts a
+     * column's non-null values, which agree only on data where that column is never
+     * null.
+     * <p>
+     * One {@code count(x)} nevertheless joins that row count, and it is the case the
+     * window rather than the argument settles: {@code x} being the very column the window
+     * partitions by makes it constant across a partition, so the call reads
+     * {@code partition-key-is-null ? 0 : rowCount}. See
+     * {@link WindowAccumulatorCandidate}, which sets out the conditions that keep the
+     * equality honest, and {@link #isCountOverTheWindowsOwnPartitionKey} for the one of them
+     * a live view proves differently from an ordinary query.
+     * <p>
+     * Sharing is proved from the component identity alone and never from SQL text.
+     * {@code sum(x)} and {@code avg(x)} over one window merge because both declare the
+     * same {@code (family, argument, contribution predicate, codec)}, and a
+     * {@code count(x)} over the same argument folds onto their counter because that
+     * counter is provably the one it would have persisted alone. The target shape's
+     * {@code sum(amt)} and {@code count(acct)} do neither, because their arguments
+     * differ and so, on any row where exactly one is null, do their counters. Which of
+     * the two relations applies is the runtime accumulator plan
+     * {@link LiveViewWindowStatePlan.Builder} composes to decide; this method's job is to
+     * hand it a component only where every part of the identity can be named.
+     *
+     * @param functions                 every SELECT-list function, in output order
+     * @param anchorableWindowFunctions the subset the anchor dispatches
+     *                                  {@code resetPartition} to, or null for a factory
+     *                                  with no anchored window
+     * @param baseMetadata              the metadata the window functions and their
+     *                                  arguments were compiled against
+     */
+    public static @Nullable LiveViewWindowStatePlan windowStatePlan(
+            @NotNull ObjList<Function> functions,
+            @Nullable ObjList<WindowFunction> anchorableWindowFunctions,
+            @NotNull RecordMetadata baseMetadata
+    ) {
+        if (anchorableWindowFunctions == null || anchorableWindowFunctions.size() == 0) {
+            return null;
+        }
+        // Read before a single projection is added, because whether a count over the
+        // partition key may join a row count depends on the group holding an unguarded
+        // reading of that same row count - and the count may precede it in the SELECT
+        // list. Everything else about a projection follows from the function alone.
+        final WindowFunction rowCountHost = rowCountHost(functions, anchorableWindowFunctions);
+        // A live view compiles no WindowMapSpec, so the group's key is proved from what each
+        // function carries for the checkpoint instead - its encoded key layout and its own
+        // PARTITION BY functions - plus the two belonging to one window group, which the
+        // builder's identity latch is what says for every other projection.
+        final WindowAccumulatorCandidate.PartitionKeyGuard partitionKeyGuard =
+                (function, argumentColumnIndex, host) ->
+                        isCountOverTheWindowsOwnPartitionKey(function, argumentColumnIndex, host, baseMetadata);
+        final LiveViewWindowStatePlan.Builder builder = new LiveViewWindowStatePlan.Builder();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final Function function = functions.getQuick(i);
+            if (!(function instanceof WindowFunction windowFunction)) {
+                continue;
+            }
+            if (!addAccumulatorProjection(
+                    builder,
+                    windowFunction,
+                    i,
+                    anchorableWindowFunctions,
+                    baseMetadata,
+                    rowCountHost,
+                    partitionKeyGuard
+            )) {
+                builder.addResidual(windowFunction);
+            }
+        }
+        return builder.build();
+    }
+
+    /**
+     * Reports a live view whose window functions and whose checkpoint key projector do not
+     * key one PARTITION BY the same way.
+     * <p>
+     * Both come from the same {@link LiveViewPartitionKeyClassifier}, and both classify the
+     * same terms against the same window input metadata, so they cannot disagree - which is
+     * exactly why nothing compared them before and why comparing them now costs a compile
+     * one pass over a handful of types. What it buys is the day one of the two classifiers
+     * stops going through the shared one. The two key images are compared row for row by
+     * the checkpoint row bounds and by every keyed repair, and an id or a string one side
+     * writes and the other does not read is in range for the map that holds it: the view
+     * would answer queries with the wrong rows rather than fail.
+     * <p>
+     * Only functions that name the projector's own partition signature are compared. A view
+     * whose functions do not all share one signature has no shared identity to disagree
+     * with - {@code sharedKeyProjector} has already returned null for it.
+     */
+    public static void validatePartitionKeyAgreement(
+            @NotNull ObjList<Function> functions,
+            @NotNull ObjList<QueryColumn> columns,
+            @Nullable LiveViewCheckpointKeyProjector projector
+    ) throws SqlException {
+        if (projector == null) {
+            return;
+        }
+        final ColumnTypes projected = projector.getCheckpointKeyColumnTypes();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!(functions.getQuick(i) instanceof WindowFunction windowFunction)) {
+                continue;
+            }
+            final LiveViewCheckpointDependency dependency = windowFunction.checkpointDependency();
+            if (dependency == null
+                    || !Chars.equals(projector.getPartitionSignature(), dependency.getPartitionSignature())) {
+                continue;
+            }
+            final ColumnTypes keyed = windowFunction.getCheckpointKeyColumnTypes();
+            if (keyed == null) {
+                continue;
+            }
+            final int position = columns.getQuick(i).getAst().position;
+            if (keyed.getColumnCount() != projected.getColumnCount()) {
+                throw SqlException.$(position, "live view partition key width disagrees with the checkpoint key [function=")
+                        .put(keyed.getColumnCount()).put(", checkpoint=").put(projected.getColumnCount()).put(']');
+            }
+            for (int j = 0, m = projected.getColumnCount(); j < m; j++) {
+                if (keyed.getColumnType(j) != projected.getColumnType(j)) {
+                    throw SqlException.$(position, "live view partition key type disagrees with the checkpoint key [column=")
+                            .put(j)
+                            .put(", function=").put(ColumnType.nameOf(keyed.getColumnType(j)))
+                            .put(", checkpoint=").put(ColumnType.nameOf(projected.getColumnType(j)))
+                            .put(']');
+                }
+            }
+        }
     }
 
     /**
@@ -615,6 +926,54 @@ public final class LiveViewCheckpointFunctionCompiler {
         if (dependencyKind(functionName, window) == DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI) {
             validateRangeOrder(functionName, window, baseMetadata);
         }
+    }
+
+    /**
+     * Offers {@code function} to the fused group, and reports whether it joined. Every
+     * rejection below is an ordinary answer: the caller records the function as a
+     * residual and it keeps the legacy root it has today.
+     */
+    private static boolean addAccumulatorProjection(
+            LiveViewWindowStatePlan.Builder builder,
+            WindowFunction function,
+            int outputPosition,
+            ObjList<WindowFunction> anchorableWindowFunctions,
+            RecordMetadata baseMetadata,
+            @Nullable WindowFunction rowCountHost,
+            WindowAccumulatorCandidate.PartitionKeyGuard partitionKeyGuard
+    ) {
+        if (!isFusibleAccumulator(function, anchorableWindowFunctions)) {
+            return false;
+        }
+        final WindowAccumulatorCandidate candidate = WindowAccumulatorCandidate.of(
+                function,
+                baseMetadata,
+                rowCountHost,
+                partitionKeyGuard
+        );
+        if (candidate == null) {
+            return false;
+        }
+        final LiveViewAccumulatorDescriptor component = LiveViewAccumulatorDescriptor.of(candidate.getComponent());
+        if (component == null) {
+            return false;
+        }
+        final LiveViewCheckpointFunctionIdentity identity = function.checkpointFunctionIdentity();
+        if (identity == null) {
+            return false;
+        }
+        return builder.addProjection(
+                function,
+                component,
+                candidate.getProjectionKind(),
+                outputPosition,
+                LiveViewWindowStatePlan.encodeWindowIdentity(
+                        identity.getCanonicalWindowName(),
+                        identity.getPartitionSignature(),
+                        identity.getOrderSignature()
+                ),
+                function.getCheckpointKeyColumnTypes()
+        );
     }
 
     /**
@@ -662,10 +1021,11 @@ public final class LiveViewCheckpointFunctionCompiler {
             return DependencyKind.UNANCHORED_RANK;
         }
         // Long.MIN_VALUE is the encoding an unbounded look-behind uses, and
-        // SqlOptimiser.normalizeWindowFrame() reaches it on the high bound too - a literal
-        // Long.MAX_VALUE PRECEDING negates into it, leaving a frame that ends below its own
-        // start. Such a bound names no finite lag, so it is turned away here alongside the
-        // unbounded frame starts.
+        // SqlOptimiser.normalizeWindowFrame() reaches it on the high bound of a ROWS frame - a
+        // literal Long.MAX_VALUE PRECEDING negates into it, leaving a frame that ends below its
+        // own start. Such a bound names no finite lag, so it is turned away here alongside the
+        // unbounded frame starts. A RANGE frame end of the same width negates exactly instead,
+        // to Long.MIN_VALUE + 1, and reaches this as the finite lag it names.
         if (hasFiniteStateLookBehind(functionName, window, rowsHi)
                 && rowsHi != Long.MIN_VALUE && rowsHi <= 0
                 && hasSupportedExclusion(window)) {
@@ -728,26 +1088,24 @@ public final class LiveViewCheckpointFunctionCompiler {
 
     /**
      * Builds the projector of a view whose PARTITION BY holds at least one expression, by
-     * compiling every term into a key function of the plan's own. The window runtime keeps
-     * its separate copies, so the two never share evaluation state.
+     * compiling every term into a key function of the projector's own. The window runtime
+     * keeps its separate copies, so the two never share evaluation state.
      * <p>
-     * There is no index seek on this path and no column list to name one: the plan's
-     * column indexes stay empty, and the discovery falls back to the unrestricted backward
-     * walk. The key types follow what the generated sink writes rather than what the
-     * function returns - a SYMBOL-typed key function is written through its resolved
-     * string, because the integers it hands out index its own map rather than the
+     * There is no index seek on this path and no column list to name one: the projector's
+     * column indexes stay empty, and a repair that would have sought one key's rows walks
+     * every key's instead. The key types follow what the generated sink writes rather than
+     * what the function returns - a SYMBOL-typed key function is written through its
+     * resolved string, because the integers it hands out index its own map rather than the
      * reader's, and two cursors would not agree on them.
      * <p>
-     * The functions are freed unless the plan takes ownership of them, so a parse failure,
-     * a declined key or a codegen failure leaves nothing behind.
+     * The functions are freed unless the projector takes ownership of them, so a parse
+     * failure, a declined key or a codegen failure leaves nothing behind.
      */
-    private static @Nullable LiveViewCheckpointRowsPlan expressionKeyedPlan(
+    private static @Nullable LiveViewCheckpointKeyProjector expressionKeyProjector(
             ObjList<ExpressionNode> partitionBy,
-            LiveViewCheckpointDependency firstRows,
-            int rowsFunctionCount,
-            long maxPrecedingRows,
-            int timestampIndex,
+            CharSequence partitionSignature,
             RecordMetadata baseMetadata,
+            @NotNull LiveViewPartitionKeyClassifier partitionKeyClassifier,
             CairoConfiguration configuration,
             BytecodeAssembler asm,
             FunctionParser functionParser,
@@ -756,6 +1114,12 @@ public final class LiveViewCheckpointFunctionCompiler {
         ObjList<Function> keyFunctions = new ObjList<>(partitionBy.size());
         try {
             final ArrayColumnTypes keyColumnTypes = new ArrayColumnTypes();
+            // Per term, not per key: one expression among the terms puts every term on a key
+            // function, but it does not make the direct SYMBOL terms beside it expressions.
+            // Classifying the whole key by its worst term is what would put this projector's
+            // identity in a different shape from the window maps it has to compare against.
+            final LiveViewPartitionKeyBinding keyBinding =
+                    new LiveViewPartitionKeyBinding(partitionKeyClassifier, keyColumnTypes);
             for (int i = 0, n = partitionBy.size(); i < n; i++) {
                 final Function function = functionParser.parseFunction(partitionBy.getQuick(i), baseMetadata, executionContext);
                 keyFunctions.add(function);
@@ -765,36 +1129,55 @@ public final class LiveViewCheckpointFunctionCompiler {
                     // one row's predecessors against another row's key.
                     return null;
                 }
-                final int type = function.getType();
-                keyColumnTypes.add(ColumnType.isSymbol(type) ? ColumnType.STRING : type);
+                // The sink reads the compiled functions rather than the record, so its column
+                // space is the key's own ordinals.
+                keyBinding.addClassifiedTerm(i, function, baseMetadata);
             }
+            // Reader-local: always the raw, unwrapped function list, bypassing the binding's
+            // own translation decision entirely - exactly as the column path's own reader-local
+            // keySink (:681 above) bypasses it. LiveViewCheckpointRowsBounds.createKey/findKey
+            // read this sink unconditionally against arbitrary base rows during a ROWS-bound
+            // repair, with no gate on key shape, so it must stay the reader's own table-local
+            // identity even when a term here would otherwise translate.
             final RecordSink keySink = RecordSinkFactory.getInstance(
                     configuration,
                     asm,
                     baseMetadata,
                     new ListColumnFilter(),
                     keyFunctions,
-                    null
+                    keyBinding.getWriteSymbolAsString()
             );
-            final LiveViewCheckpointRowsPlan plan = new LiveViewCheckpointRowsPlan(
-                    rowsFunctionCount,
-                    maxPrecedingRows,
-                    firstRows.getPartitionSignature(),
-                    firstRows.getOrderSignature(),
+            // The checkpoint sink writes the key a window function's partition map already
+            // holds instead. When no term here translates - still the common case, an
+            // expression-keyed view with no direct SYMBOL candidate or no translator bound -
+            // that key is the same resolved-string form the reader-local sink already
+            // produces, so one sink object serves both. A translated term needs a genuinely
+            // separate sink, not the same object under a different accessor: see the class
+            // comment on LiveViewTranslatingFunction for why sharing one here would be wrong.
+            final RecordSink checkpointKeySink = keyBinding.getSymbolIdSlotByColumn() == null
+                    ? keySink
+                    : keyBinding.compileKeySink(
+                    configuration,
+                    asm,
+                    baseMetadata,
+                    new ListColumnFilter(),
+                    keyFunctions
+            );
+            final LiveViewCheckpointKeyProjector projector = new LiveViewCheckpointKeyProjector(
                     null,
                     keyFunctions,
                     keyColumnTypes,
                     keySink,
-                    // The expression projector already resolves a SYMBOL key function
-                    // through its string, which is what a window function's own map
-                    // holds, so the checkpoint form is the same projector.
+                    // The expression projector's checkpoint form shares the window map's own
+                    // key types even when it needs its own sink: a translated term is SYMBOL
+                    // in both domains, only the meaning of the 4-byte int differs.
                     keyColumnTypes,
-                    keySink,
-                    timestampIndex,
-                    firstRows.getTimestampType()
+                    checkpointKeySink,
+                    partitionSignature,
+                    baseMetadata
             );
             keyFunctions = null;
-            return plan;
+            return projector;
         } finally {
             Misc.freeObjList(keyFunctions);
         }
@@ -974,10 +1357,116 @@ public final class LiveViewCheckpointFunctionCompiler {
                 && SqlUtil.getColumnIndexQuiet(baseMetadata, orderBy.getQuick(0).token) == timestampIndex;
     }
 
+    /**
+     * The live view's answer to
+     * {@link WindowAccumulatorCandidate.PartitionKeyGuard}: whether {@code function}'s own
+     * window partitions by exactly the one column {@code argumentColumnIndex} names, and
+     * {@code rowCountHost} belongs to that same window.
+     * <p>
+     * It is asked only of a {@code count(k)} whose argument type can carry the guard, and
+     * only where the group already holds an unguarded row count - the candidate has settled
+     * both by the time it gets here. What is left is the key, which a live view proves from
+     * what each function carries for the checkpoint rather than from a compiled
+     * {@link WindowMapSpec}:
+     * <ul>
+     *     <li><b>the partition key is one term and that term is the argument's own
+     *     column</b>, proved through {@link WindowAccumulatorDescriptor#directColumnIndex}
+     *     rather than through the rendered partition signature - two spellings of one
+     *     column are still one column, and one spelling of two is not;</li>
+     *     <li><b>the encoded key is one column too</b>, so the guard has one value to
+     *     read rather than a tuple whose null-ness is a different question;</li>
+     *     <li><b>the host is a function of the same window group.</b> An ordinary query
+     *     buckets by specification before it offers anything, so belonging to the builder is
+     *     what having that identity means there. Here every anchorable function of the
+     *     factory is offered to one builder, and the identity is not latched until the first
+     *     projection joins, so the two are compared directly.</li>
+     * </ul>
+     */
+    private static boolean isCountOverTheWindowsOwnPartitionKey(
+            WindowFunction function,
+            int argumentColumnIndex,
+            WindowFunction rowCountHost,
+            RecordMetadata baseMetadata
+    ) {
+        final ColumnTypes keyColumnTypes = function.getCheckpointKeyColumnTypes();
+        if (keyColumnTypes == null || keyColumnTypes.getColumnCount() != 1) {
+            return false;
+        }
+        final ObjList<? extends Function> partitionBy = function.checkpointPartitionByFunctions();
+        if (partitionBy == null || partitionBy.size() != 1) {
+            return false;
+        }
+        if (WindowAccumulatorDescriptor.directColumnIndex(partitionBy.getQuick(0), baseMetadata) != argumentColumnIndex) {
+            return false;
+        }
+        return isSameWindowGroup(function, rowCountHost);
+    }
+
+    /**
+     * The gates a function passes before any part of its accumulator identity is read.
+     * Shared by the projection walk and by the row-count pre-pass, so the pre-pass cannot
+     * name a host the walk would have declined.
+     */
+    private static boolean isFusibleAccumulator(
+            WindowFunction function,
+            ObjList<WindowFunction> anchorableWindowFunctions
+    ) {
+        if (anchorableWindowFunctions.indexOf(function) < 0) {
+            return false;
+        }
+        final LiveViewCheckpointDependency dependency = function.checkpointDependency();
+        if (dependency == null
+                || dependency.getKind() != DependencyKind.FIXED_ANCHOR_SEGMENT
+                || !dependency.supportsKeyReset()) {
+            return false;
+        }
+        if (!function.supportsCheckpointState()
+                || function.supportsCheckpointRingState()
+                || function.isCheckpointStateless()) {
+            return false;
+        }
+        return LiveViewCheckpointContracts.isInlineableStateLength(function.checkpointStateFixedLength());
+    }
+
     private static boolean isRanking(CharSequence name) {
         return Chars.equalsIgnoreCase(name, "row_number")
                 || Chars.equalsIgnoreCase(name, "rank")
                 || Chars.equalsIgnoreCase(name, "dense_rank");
+    }
+
+    /**
+     * Whether two functions belong to one fused window group: the same named window, the
+     * same partition and order domains, and the same encoded partition-key layout. It is
+     * the test {@code LiveViewWindowStatePlan.Builder} applies when a projection joins,
+     * read here from the two identities directly because the row-count pre-pass runs
+     * before any of them has been offered to the builder.
+     */
+    private static boolean isSameWindowGroup(WindowFunction left, WindowFunction right) {
+        final LiveViewCheckpointFunctionIdentity a = left.checkpointFunctionIdentity();
+        final LiveViewCheckpointFunctionIdentity b = right.checkpointFunctionIdentity();
+        if (a == null || b == null) {
+            return false;
+        }
+        if (!Chars.equals(a.getCanonicalWindowName(), b.getCanonicalWindowName())
+                || !Chars.equals(a.getPartitionSignature(), b.getPartitionSignature())
+                || !Chars.equals(a.getOrderSignature(), b.getOrderSignature())) {
+            return false;
+        }
+        final ColumnTypes leftKey = left.getCheckpointKeyColumnTypes();
+        final ColumnTypes rightKey = right.getCheckpointKeyColumnTypes();
+        if (leftKey == null || rightKey == null) {
+            return false;
+        }
+        final int n = leftKey.getColumnCount();
+        if (n != rightKey.getColumnCount()) {
+            return false;
+        }
+        for (int i = 0; i < n; i++) {
+            if (leftKey.getColumnType(i) != rightKey.getColumnType(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static NumericConvergence numericConvergence(WindowFunction function) {
@@ -1099,6 +1588,46 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
+     * The first function of {@code functions} that would join the group as an unguarded
+     * {@link WindowAccumulatorDescriptor#FAMILY_ROW_COUNT row count} - a
+     * {@code count(*)} or a partitioned {@code row_number()} - or null when the factory
+     * holds none.
+     * <p>
+     * It is the host a {@code count} over the window's own partition key may join, and
+     * the reason the search runs before any projection is added: such a count may precede
+     * its host in the SELECT list, and whether it fuses must not depend on that.
+     * <p>
+     * The gates are the same ones {@link #addAccumulatorProjection} applies, so this
+     * cannot name a host that walk would decline. Its own arm is deliberately narrow: the
+     * family must be the argumentless one and the function must actually hold no argument,
+     * which is what keeps a {@code count(x)} from being read as a row count here.
+     */
+    private static @Nullable WindowFunction rowCountHost(
+            ObjList<Function> functions,
+            ObjList<WindowFunction> anchorableWindowFunctions
+    ) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final Function function = functions.getQuick(i);
+            if (!(function instanceof WindowFunction windowFunction)
+                    || !isFusibleAccumulator(windowFunction, anchorableWindowFunctions)
+                    || !WindowAccumulatorCandidate.isRowCountHost(windowFunction)
+                    || windowFunction.checkpointFunctionIdentity() == null) {
+                continue;
+            }
+            final LiveViewAccumulatorDescriptor component = LiveViewAccumulatorDescriptor.of(
+                    WindowAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                    WindowAccumulatorDescriptor.NO_ARGUMENT_COLUMN_INDEX,
+                    ColumnType.UNDEFINED
+            );
+            if (component != null
+                    && component.getStateLength() == windowFunction.checkpointStateFixedLength()) {
+                return windowFunction;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Reads a {@code timestamp_floor} period literal - {@code '1d'}, {@code '15m'} - into
      * the segment plan it describes, or null when the token is not one. The literal is the
      * function's own first argument, so this repeats the split
@@ -1106,11 +1635,15 @@ public final class LiveViewCheckpointFunctionCompiler {
      * optional leading count that defaults to one. A non-constant, unquoted, or
      * unparseable token declines rather than throws - an anchor this cannot read is an
      * anchor with no fixed segment, which is an answer rather than a compile error.
+     * <p>
+     * A non-null {@code timeZone} builds the same period on that zone's civil grid
+     * instead of on the epoch-aligned one.
      */
     private static LiveViewCheckpointAnchorPlan segmentPlan(
             ExpressionNode unitNode,
             long segmentOffset,
-            int timestampType
+            int timestampType,
+            @Nullable CharSequence timeZone
     ) {
         if (unitNode == null || unitNode.type != ExpressionNode.CONSTANT || unitNode.token == null) {
             return null;
@@ -1130,7 +1663,35 @@ public final class LiveViewCheckpointFunctionCompiler {
                 return null;
             }
         }
-        return LiveViewCheckpointAnchorPlan.of(unit, stride, segmentOffset, timestampType);
+        return timeZone == null
+                ? LiveViewCheckpointAnchorPlan.of(unit, stride, segmentOffset, timestampType)
+                : LiveViewCheckpointAnchorPlan.ofTimeZone(unit, stride, segmentOffset, timestampType, timeZone);
+    }
+
+    /**
+     * The origin a DAILY anchor's buckets align to, in the designated timestamp's own
+     * units. The desugared expression carries it as a cast expression rather than as a
+     * foldable constant, so both DAILY forms read it off the definition's captured wall
+     * time instead - which is also why neither form is accepted for a hand-written
+     * {@code ANCHOR EXPRESSION}, where there is no captured wall time to read.
+     */
+    private static long dailyAnchorOrigin(LiveViewDefinition.LvAnchorSpec spec, int timestampType) {
+        return ColumnType.getTimestampDriver(timestampType).from(spec.anchorDailyTimeUs, ColumnType.TIMESTAMP_MICRO);
+    }
+
+    /**
+     * Whether {@code node} is the quoted string literal {@code expected} spells. The
+     * offset and time zone of a time-zone-aware daily anchor reach this as constants of
+     * that shape; a bind variable, an expression, or a different literal is not one, and
+     * an anchor this cannot read whole is an anchor with no fixed segment.
+     */
+    private static boolean isQuotedConstant(@Nullable ExpressionNode node, @NotNull CharSequence expected) {
+        if (node == null || node.type != ExpressionNode.CONSTANT || node.token == null) {
+            return false;
+        }
+        final CharSequence token = node.token;
+        return Chars.isQuoted(token)
+                && Chars.equals(token, 1, token.length() - 1, expected, 0, expected.length());
     }
 
     private static void validateRangeOrder(

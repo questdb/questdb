@@ -79,6 +79,39 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
     private static final ArrayColumnTypes RANK_COLUMN_TYPES;
     private static final String SIGNATURE = NAME + "()";
 
+    /**
+     * Reports whether every chain-prefix type still means the same thing after the live-view
+     * checkpoint writes it out and reads it back.
+     * <p>
+     * {@code freezeCheckpointState} persists the chain slots verbatim, as the raw ints and longs
+     * {@code recordValueSink} copied out of the window's input record, and
+     * {@code restoreCheckpointState} feeds them straight back to a {@code recordComparator} that a
+     * later cycle rebuilt. That round trip is only sound while a slot's bytes carry their own
+     * meaning. SYMBOL does not: it is fixed-width at 4 bytes and passes
+     * {@link LiveViewSnapshotKeyCodec#isAllTypesFixedWidth}, but under a live view the ORDER BY
+     * value arrives from the WAL segment page-frame cursor, whose symbol ints are transaction-local
+     * - WAL local ids restart on every commit, so the same int names a different string in a
+     * sibling transaction, and {@code buildRankMaps} re-encodes the rank maps against each cycle's
+     * own symbol table for exactly that reason. Persisting one would mis-order every row whose
+     * ORDER BY symbol was interned in between, silently, since the comparison still succeeds.
+     * <p>
+     * No live view can reach that shape today: {@code rank()} and {@code dense_rank()} require an
+     * anchored named WINDOW, and every named WINDOW in a live view must ORDER BY the base table's
+     * designated timestamp ascending, which is a TIMESTAMP.
+     * {@code LiveViewValidationTest.testRejectSymbolOrderByInLiveViewWindow} pins those gates. This
+     * predicate is the backstop for the day one of them is relaxed: refusing checkpoint state
+     * degrades the view to a rebuild from base, which is an already-exercised path, rather than
+     * publishing ranks computed against an id that has moved.
+     */
+    public static boolean hasCheckpointStableChainTypes(ColumnTypes chainTypes) {
+        for (int i = 0, n = chainTypes.getColumnCount(); i < n; i++) {
+            if (ColumnType.isSymbol(chainTypes.getColumnType(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -557,7 +590,11 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void markPartitionAlive(Record record) {
+        public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
+            // The flag goes unread on purpose: this override keeps no checkpoint dirty
+            // set, so every seal full-scans it. See BasePartitionedWindowFunction's
+            // markCheckpointPartitionDirty - naming some of a cadence's keys and not the
+            // rest is the one outcome that is worse than naming none.
             if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
                 return;
             }
@@ -838,10 +875,13 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             // The chain-prefix restores through MapValue slot setters, which have no
             // STRING variant - the chain types must be fixed-width, not merely
             // codec-supported (the codec admits STRING for partition keys only).
+            // Fixed width is necessary but not sufficient: see
+            // hasCheckpointStableChainTypes for the meaning half of the test.
             return liveView
                     && chainColumnTypes != null
                     && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes)
-                    && LiveViewSnapshotKeyCodec.isAllTypesFixedWidth(chainColumnTypes);
+                    && LiveViewSnapshotKeyCodec.isAllTypesFixedWidth(chainColumnTypes)
+                    && hasCheckpointStableChainTypes(chainColumnTypes);
         }
 
         @Override

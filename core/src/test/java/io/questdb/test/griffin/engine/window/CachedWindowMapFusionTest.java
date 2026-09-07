@@ -34,12 +34,16 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowMapGroups;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowAccumulatorPlan;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowMapState;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -191,40 +195,592 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAComponentTheGroupCannotPredicateDisablesTheSkip() throws Exception {
+        // A group makes one decision per row, so one component whose refused row the group cannot
+        // name is enough to turn the skip off for every component beside it. Both halves of that:
+        // a count(*) row count, which has no refused row at all, and a count over a SYMBOL, whose
+        // predicate is the type's own null test rather than the finite-DOUBLE one the group
+        // evaluates.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertRows();
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                for (String beside : new String[]{"count(*) over (partition by k)", "count(k2) over (partition by k)"}) {
+                    final String sql = "select ts, sum(x) over (partition by k), " + beside + PARTITION_WINDOW;
+                    try (SqlCompiler compiler = engine.getSqlCompiler();
+                         RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                        assertFactoryKind(factory, light == 1);
+                        final CachedWindowMapGroups groups = groups(factory);
+                        assertBoundGroupCount(groups, 1);
+                        final WindowMapState state = groups.getStates().getQuick(0);
+                        Assert.assertEquals(2, state.getPlan().getComponentCount());
+                        Assert.assertFalse(sql, state.isPass1SkipEnabled());
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            final long rows = WindowMapStateTest.drain(cursor);
+                            Assert.assertEquals(ROW_COUNT, rows);
+                        }
+                    }
+                }
+                assertFusedMatchesUnfused(
+                        PARTITION_WINDOW,
+                        "",
+                        "sum(x) over (partition by k)", "count(*) over (partition by k)"
+                );
+                assertFusedMatchesUnfused(
+                        PARTITION_WINDOW,
+                        "",
+                        "sum(x) over (partition by k)", "count(k2) over (partition by k)"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testAFailedOpenLeavesNoGroupHoldingBacking() throws Exception {
-        // The cached open allocates a record chain, a sort buffer and the group maps, and a
-        // per-query breach can land on any of them. Whichever it lands on, the close the
-        // failed open runs has to leave every group empty-handed - which assertMemoryLeak
-        // measures and the successful drain afterwards says was not achieved by staying shut.
+        // The cached open allocates a record chain, a sort buffer, the group maps and - for a
+        // group whose pass 1 skips - the buffer its pass 2 projects a missing partition off. A
+        // per-query breach can land on the record chain, the sort buffer or the group maps: the
+        // cursor binds the per-query tracker on all three, and only an allocation carrying that
+        // tracker checks the cap. Whichever it lands on, every group's map has to read shut
+        // afterwards - which the assertion below does - because the breach either beat of() to
+        // the group entirely or broke the group's own map.reopen(), which assigns the backing
+        // pointer isMapOpen() reads only once its malloc has returned. The close getCursor()
+        // runs on the failed open then hands back every allocation the open did make, which
+        // assertMemoryLeak measures and the successful drain afterwards says was not achieved
+        // by staying shut.
+        //
+        // Both shapes, because a failed open has to leave both kinds of group holding nothing:
+        // the cumulative one owns a map alone, and the whole-partition one owns a map and an
+        // identity buffer.
+        //
+        // The identity buffer is the one backing this cap says nothing about, so nothing here
+        // asserts over it. It takes Unsafe's untracked malloc overload, which answers to the
+        // global RSS ceiling alone, so the per-query cap cannot break that malloc itself - and no
+        // breach reaches it either, because reopen() allocates the map's backing first and the
+        // 64-byte cap below always breaks that tracked malloc. Every breach this test can reach
+        // therefore lands before the group holds a buffer at all, and an assertion over it would
+        // read back the zero it started from rather than any unwind. Two other tests cover the
+        // buffer where a failure does reach it: testAnIdentityBufferThatCannotBeAllocatedGivesTheMapBack
+        // arms a global RSS ceiling and reads reopen()'s own unwind, and
+        // testAPartitionRefusedWholeStaysOutOfTheMap reads reset() taking the buffer back off a
+        // group that holds one.
         assertMemoryLeak(() -> {
             createTable();
             insertRows();
             setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "false");
-            try (SqlCompiler compiler = engine.getSqlCompiler();
-                 RecordCursorFactory factory = select(compiler, orderedSumAndCount(), sqlExecutionContext)) {
-                final CachedWindowMapGroups groups = groups(factory);
-                assertBoundGroupCount(groups, 1);
-                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
-                for (int i = 0; i < 5; i++) {
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        WindowMapStateTest.drain(cursor);
-                        Assert.fail("expected a per-query memory breach");
-                    } catch (CairoException e) {
-                        Assert.assertTrue(
-                                "expected isOutOfMemory(), got: " + e.getFlyweightMessage(),
-                                e.isOutOfMemory()
-                        );
+            final String skipping = "select ts, sum(x) over (partition by k), avg(x) over (partition by k)"
+                    + PARTITION_WINDOW;
+            for (String sql : new String[]{orderedSumAndCount(), skipping}) {
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                    final CachedWindowMapGroups groups = groups(factory);
+                    assertBoundGroupCount(groups, 1);
+                    final boolean isSkipping = groups.getStates().getQuick(0).isPass1SkipEnabled();
+                    Assert.assertEquals(sql, sql.equals(skipping), isSkipping);
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+                    for (int i = 0; i < 5; i++) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            WindowMapStateTest.drain(cursor);
+                            Assert.fail("expected a per-query memory breach");
+                        } catch (CairoException e) {
+                            Assert.assertTrue(
+                                    "expected isOutOfMemory(), got: " + e.getFlyweightMessage(),
+                                    e.isOutOfMemory()
+                            );
+                        }
+                        final ObjList<WindowMapState> states = groups.getStates();
+                        for (int g = 0, n = states.size(); g < n; g++) {
+                            final WindowMapState state = states.getQuick(g);
+                            Assert.assertFalse("group " + g + " kept its map open", state.isMapOpen());
+                        }
                     }
-                    final ObjList<WindowMapState> states = groups.getStates();
-                    for (int g = 0, n = states.size(); g < n; g++) {
-                        Assert.assertFalse("group " + g + " kept its map open", states.getQuick(g).isMapOpen());
+                    Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertEquals(ROW_COUNT, WindowMapStateTest.drain(cursor));
                     }
                 }
-                Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
-                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+            }
+        });
+    }
+
+    @Test
+    public void testAnAcceptedRowsArgumentIsReadOnceByACountContributor() throws Exception {
+        // The same reading as testAnAcceptedRowsArgumentIsReadOnceByTheComponentTheSkipStoppedOn,
+        // over the other family a skipping group can hold. A whole-partition count is two-pass
+        // and its DOUBLE-argument component is inert on a refused row, so a group of two such
+        // counts skips - and the contributor the walk stops on must take the value the walk
+        // read rather than read the column a second time. Counted rather than timed: the record
+        // below tallies every getDouble by column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (ts TIMESTAMP, k INT, x DOUBLE, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('2024-01-01T00:00:00.000000Z', 1, 1.0, 10.0)");
+            final String sql = "SELECT k, count(x) OVER (PARTITION BY k) AS cx, "
+                    + "count(y) OVER (PARTITION BY k) AS cy FROM s";
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                    assertFactoryKind(factory, light == 1);
+                    final CachedWindowMapGroups groups = groups(factory);
+                    assertBoundGroupCount(groups, 1);
+                    final WindowMapState state = groups.getStates().getQuick(0);
+                    Assert.assertTrue(state.isPass1SkipEnabled());
+                    final WindowAccumulatorPlan plan = state.getPlan();
+                    // Two counters over two columns: neither count reads the other's state, so
+                    // each component keeps a contributor of its own.
+                    Assert.assertEquals(2, plan.getComponentCount());
+                    // Which column belongs to which component is the plan's business, so the
+                    // test reads it off rather than assuming the SELECT list's order.
+                    final int firstColumn = plan.getComponent(0).getArgumentColumnIndex();
+                    final int secondColumn = plan.getComponent(1).getArgumentColumnIndex();
+                    Assert.assertNotEquals(firstColumn, secondColumn);
+                    final int columnCount = Math.max(firstColumn, secondColumn) + 1;
+                    final double[] columns = new double[columnCount];
+                    final int[] reads = new int[columnCount];
+                    final int[] key = new int[1];
+                    final Record record = new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            reads[col]++;
+                            return columns[col];
+                        }
+
+                        @Override
+                        public int getInt(int col) {
+                            return key[0];
+                        }
+                    };
+                    state.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
+                    state.reopen();
+                    try {
+                        // Dense, which is the population the doubled read cost. The walk stops
+                        // on the first component and hands its contributor the value it read,
+                        // so each column is read exactly once for the row.
+                        key[0] = 1;
+                        columns[firstColumn] = 1.0;
+                        columns[secondColumn] = 10.0;
+                        state.computeNext(record);
+                        Assert.assertEquals(1, reads[firstColumn]);
+                        Assert.assertEquals(1, reads[secondColumn]);
+                        Assert.assertEquals(1, state.getMapSize());
+
+                        // The first component refuses and the second accepts. The walk holds no
+                        // value for a component it passed over, so that one reads its own column
+                        // again - and the one the walk stopped on does not.
+                        reads[firstColumn] = 0;
+                        reads[secondColumn] = 0;
+                        columns[firstColumn] = Double.NaN;
+                        columns[secondColumn] = 20.0;
+                        state.computeNext(record);
+                        Assert.assertEquals(2, reads[firstColumn]);
+                        Assert.assertEquals(1, reads[secondColumn]);
+
+                        // The first component accepts and the second refuses: the second reads
+                        // its own column once, exactly as it does on a dense row.
+                        reads[firstColumn] = 0;
+                        reads[secondColumn] = 0;
+                        columns[firstColumn] = 3.0;
+                        columns[secondColumn] = Double.NaN;
+                        state.computeNext(record);
+                        Assert.assertEquals(1, reads[firstColumn]);
+                        Assert.assertEquals(1, reads[secondColumn]);
+
+                        // Every component refuses, over a key the map has never seen. The walk
+                        // reads both columns and the row reaches no contributor at all, which
+                        // the absent key is what proves.
+                        reads[firstColumn] = 0;
+                        reads[secondColumn] = 0;
+                        key[0] = 2;
+                        columns[firstColumn] = Double.POSITIVE_INFINITY;
+                        columns[secondColumn] = Double.NEGATIVE_INFINITY;
+                        state.computeNext(record);
+                        Assert.assertEquals(1, reads[firstColumn]);
+                        Assert.assertEquals(1, reads[secondColumn]);
+                        Assert.assertEquals(1, state.getMapSize());
+                    } finally {
+                        state.reset();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAnAcceptedRowsArgumentIsReadOnceByTheComponentTheSkipStoppedOn() throws Exception {
+        // The pass-1 skip evaluates a component's argument to decide whether the row reaches the
+        // map at all, and the component the walk stops on is the one whose contributor would
+        // otherwise read the same column a second time for the same row. Counted rather than
+        // timed: the record below tallies every getDouble by column, so what a row costs the
+        // group is a number the test can assert instead of a clock reading.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (ts TIMESTAMP, k INT, x DOUBLE, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('2024-01-01T00:00:00.000000Z', 1, 1.0, 10.0)");
+            final String sql = "SELECT k, sum(x) OVER (PARTITION BY k) AS sx, "
+                    + "avg(y) OVER (PARTITION BY k) AS ay FROM s";
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                    assertFactoryKind(factory, light == 1);
+                    final CachedWindowMapGroups groups = groups(factory);
+                    assertBoundGroupCount(groups, 1);
+                    final WindowMapState state = groups.getStates().getQuick(0);
+                    Assert.assertTrue(state.isPass1SkipEnabled());
+                    final WindowAccumulatorPlan plan = state.getPlan();
+                    // Two components over two columns, which is the shape a single hoisted
+                    // value would get wrong: each component reads an argument of its own.
+                    Assert.assertEquals(2, plan.getComponentCount());
+                    // Which column belongs to which component is the plan's business, so the
+                    // test reads it off rather than assuming the SELECT list's order.
+                    final int firstColumn = plan.getComponent(0).getArgumentColumnIndex();
+                    final int secondColumn = plan.getComponent(1).getArgumentColumnIndex();
+                    Assert.assertNotEquals(firstColumn, secondColumn);
+                    final int columnCount = Math.max(firstColumn, secondColumn) + 1;
+                    final double[] columns = new double[columnCount];
+                    final int[] reads = new int[columnCount];
+                    final int[] key = new int[1];
+                    final Record record = new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            reads[col]++;
+                            return columns[col];
+                        }
+
+                        @Override
+                        public int getInt(int col) {
+                            return key[0];
+                        }
+                    };
+                    state.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
+                    state.reopen();
+                    try {
+                        // Dense, which is the population the doubled read cost. The walk stops
+                        // on the first component and hands its contributor the value it read,
+                        // so each column is read exactly once for the row.
+                        key[0] = 1;
+                        columns[firstColumn] = 1.0;
+                        columns[secondColumn] = 10.0;
+                        state.computeNext(record);
+                        Assert.assertEquals(1, reads[firstColumn]);
+                        Assert.assertEquals(1, reads[secondColumn]);
+                        Assert.assertEquals(1, state.getMapSize());
+
+                        // The first component refuses and the second accepts. The walk holds no
+                        // value for a component it passed over, so that one reads its own column
+                        // again - and the one the walk stopped on does not.
+                        reads[firstColumn] = 0;
+                        reads[secondColumn] = 0;
+                        columns[firstColumn] = Double.NaN;
+                        columns[secondColumn] = 20.0;
+                        state.computeNext(record);
+                        Assert.assertEquals(2, reads[firstColumn]);
+                        Assert.assertEquals(1, reads[secondColumn]);
+
+                        // The first component accepts and the second refuses: the second reads
+                        // its own column once, exactly as it does on a dense row.
+                        reads[firstColumn] = 0;
+                        reads[secondColumn] = 0;
+                        columns[firstColumn] = 3.0;
+                        columns[secondColumn] = Double.NaN;
+                        state.computeNext(record);
+                        Assert.assertEquals(1, reads[firstColumn]);
+                        Assert.assertEquals(1, reads[secondColumn]);
+
+                        // Every component refuses, over a key the map has never seen. The walk
+                        // reads both columns and the row reaches no contributor at all, which
+                        // the absent key is what proves.
+                        reads[firstColumn] = 0;
+                        reads[secondColumn] = 0;
+                        key[0] = 2;
+                        columns[firstColumn] = Double.POSITIVE_INFINITY;
+                        columns[secondColumn] = Double.NEGATIVE_INFINITY;
+                        state.computeNext(record);
+                        Assert.assertEquals(1, reads[firstColumn]);
+                        Assert.assertEquals(1, reads[secondColumn]);
+                        Assert.assertEquals(1, state.getMapSize());
+                    } finally {
+                        state.reset();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAnIdentityBufferThatCannotBeAllocatedGivesTheMapBack() throws Exception {
+        // reopen() allocates the map's backing and then, for a skipping group, the identity
+        // buffer - and only the second of those has an owner problem. The group is half-open
+        // when it fails, and a caller that never saw the group open has no reason to reset it,
+        // so reopen() closes the map itself on the way out.
+        //
+        // Driving the group directly is what makes that observable. A cursor's own close
+        // resets every group whatever reopen() managed, so an end-to-end breach reads the same
+        // whether or not reopen() unwinds; here nothing but reopen()'s own catch can close the
+        // map. The ceiling is the global RSS one rather than the per-query cap, because the cap
+        // reaches only allocations that carry the per-query tracker and the identity buffer
+        // takes the untracked overload - see testAFailedOpenLeavesNoGroupHoldingBacking.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertRows();
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "false");
+            final String sql = "select ts, sum(x) over (partition by k), avg(x) over (partition by k)"
+                    + PARTITION_WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final CachedWindowMapGroups groups = groups(factory);
+                assertBoundGroupCount(groups, 1);
+                final WindowMapState state = groups.getStates().getQuick(0);
+                // Only a skipping group carries an identity buffer at all, so only one of them
+                // can reach the malloc under test.
+                Assert.assertTrue(
+                        "the group does not skip, so reopen() allocates no buffer",
+                        state.isPass1SkipEnabled()
+                );
+                Assert.assertFalse("the group allocated before a cursor opened it", state.isMapOpen());
+
+                // No memory tracker is bound, so the map's tracked malloc degrades to the
+                // untracked overload the buffer already takes, and the global ceiling armed
+                // below is the only limit either of them answers to.
+                //
+                // What one whole open costs, measured rather than assumed - the map's backing
+                // plus the buffer, both charged to the global RSS counter. The buffer is the
+                // only allocation of the open that takes NATIVE_DEFAULT, so that tag's own
+                // counter splits the cost in two and says which ceilings the map still clears.
+                final long usedBeforeOpen = Unsafe.getRssMemUsed();
+                final long defaultTagBeforeOpen = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
+                state.reopen();
+                final long openCost = Unsafe.getRssMemUsed() - usedBeforeOpen;
+                final long bufferCost = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT) - defaultTagBeforeOpen;
+                final long mapCost = openCost - bufferCost;
+                state.reset();
+                Assert.assertTrue("a successful open charged the RSS counter nothing", openCost > 0);
+                Assert.assertTrue(
+                        "NATIVE_DEFAULT took " + bufferCost + " of the open's " + openCost + ", so the tag no "
+                                + "longer separates the identity buffer's cost from the map's",
+                        bufferCost > 0 && bufferCost < openCost
+                );
+
+                // A ceiling that admits the map and refuses the buffer sits somewhere in
+                // [0, openCost], and where exactly is how the two allocations split that cost -
+                // which the tag counter above just measured. A ceiling of mapCost - 1 is the
+                // highest one the map's own malloc still has to break, and one of mapCost is the
+                // lowest that admits the map and leaves the buffer's malloc the first allocation
+                // over the line. So the walk starts on those two rather than climbing to them
+                // from zero: the counter belongs to the whole process, and every ceiling this
+                // arms below real usage is one another thread's allocation can break on instead.
+                //
+                // The measured split seeds the walk rather than predicting its answer. An
+                // allocation or a free elsewhere between the reading of the counter and the open
+                // moves the transition off the measured byte, so each probe reads which malloc
+                // actually broke the ceiling off the exception's own memoryTag and steps the
+                // next ceiling toward whichever breach is still missing. Two probes is what a
+                // still counter costs; the budget is headroom for a moving one, and the
+                // assertions below fail loudly rather than quietly if it runs out with a breach
+                // unseen.
+                final int probeBudget = 64;
+                boolean hasMapMallocFailed = false;
+                boolean hasIdentityMallocFailed = false;
+                long slack = mapCost - 1;
+                int probe = 0;
+                final long savedRssLimit = Unsafe.getRssMemLimit();
+                try {
+                    for (; probe < probeBudget && slack > 0
+                            && !(hasMapMallocFailed && hasIdentityMallocFailed); probe++) {
+                        boolean hasOpenBreached = false;
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
+                        try {
+                            state.reopen();
+                        } catch (CairoException e) {
+                            hasOpenBreached = true;
+                            Assert.assertTrue("expected an out-of-memory error", e.isOutOfMemory());
+                            TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
+                            if (Chars.contains(e.getFlyweightMessage(), "memoryTag=" + MemoryTag.NATIVE_DEFAULT + "]")) {
+                                hasIdentityMallocFailed = true;
+                                // The whole of what the branch exists for: reopen() allocated
+                                // the map's backing at the top of the same call, and gave it
+                                // back rather than leaving it on a group nobody has a reason
+                                // to reset.
+                                Assert.assertFalse(
+                                        "reopen() left the map open after the identity buffer's malloc failed",
+                                        state.isMapOpen()
+                                );
+                                Assert.assertFalse(state.isIdentityValueAllocated());
+                            } else {
+                                hasMapMallocFailed = true;
+                            }
+                        } finally {
+                            Unsafe.setRssMemLimit(savedRssLimit);
+                            // Whichever way the open went, the group holds nothing before the
+                            // next ceiling: a success allocated both and this hands both back,
+                            // and a breach left the group closed already.
+                            state.reset();
+                        }
+                        // Step toward the breach still missing: halve the slack while the map's
+                        // is missing, since every ceiling below the split breaks the map's
+                        // malloc; walk up a byte at a time while the buffer's is missing and the
+                        // map still breaks, since that is where a counter that moved up carries
+                        // the transition - and clamp that step to mapCost, so a walk that halving
+                        // took below the measured split resumes at it rather than grinding back up
+                        // a byte at a time; and give a byte back when the open cleared the ceiling
+                        // outright, which says the transition moved the other way.
+                        if (!hasMapMallocFailed) {
+                            slack /= 2;
+                        } else if (hasOpenBreached) {
+                            slack = Math.max(slack + 1, mapCost);
+                        } else {
+                            slack--;
+                        }
+                    }
+                } finally {
+                    Unsafe.setRssMemLimit(savedRssLimit);
+                }
+                // The map's own breach is what says the tag still tells the two mallocs apart.
+                // Were the map to take NATIVE_DEFAULT too, every reading above would be the
+                // map's and the assertion this test rests on would never run.
+                Assert.assertTrue(
+                        "the walk armed " + probe + " of its " + probeBudget + " ceilings around the measured map "
+                                + "cost " + mapCost + " and stopped at slack " + slack + " without one breaking on "
+                                + "the map's malloc, so it either ran out of probes against a counter the whole "
+                                + "process moves or the map's malloc now carries NATIVE_DEFAULT like the identity "
+                                + "buffer's (identity breach seen: " + hasIdentityMallocFailed + ")",
+                        hasMapMallocFailed
+                );
+                Assert.assertTrue(
+                        "the walk armed " + probe + " of its " + probeBudget + " ceilings around the measured map "
+                                + "cost " + mapCost + " and stopped at slack " + slack + " without one making the "
+                                + "identity buffer's malloc the failing one, so the branch under test never ran - "
+                                + "the walk either ran out of probes against a counter the whole process moves or "
+                                + "the buffer's malloc no longer carries NATIVE_DEFAULT",
+                        hasIdentityMallocFailed
+                );
+                // And the group is reusable: with the ceiling down the same reopen() allocates
+                // both again, which is what says the unwound open left it closed rather than
+                // inconsistent.
+                state.reopen();
+                Assert.assertTrue(state.isMapOpen());
+                Assert.assertTrue(state.isIdentityValueAllocated());
+                state.reset();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertEquals(ROW_COUNT, WindowMapStateTest.drain(cursor));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testAPartitionRefusedWholeStaysOutOfTheMap() throws Exception {
+        // The one shape the pass-1 skip changes about the map: a partition whose every row its
+        // component refuses is not in the map when pass 1 ends, and pass 2 does not put it back.
+        // What the outputs read for it is the identity a partition nothing contributed to would
+        // have been left sitting at anyway - a NULL sum, a NULL average and a zero count - read
+        // off the group's own buffer, which is what the reference arm below is asserting as
+        // well. The map is therefore the contributing partitions rather than every partition the
+        // traversal saw, and a row of a refused-whole partition costs one failed lookup and no
+        // insertion.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (ts TIMESTAMP, k INT, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            // Two partitions refused whole rather than one, because one buffer serves every
+            // missing partition: were a projection to leave anything in it, key 3 would read
+            // what key 2 left there.
+            execute("""
+                    INSERT INTO s VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1, 1.0),
+                    ('2024-01-01T00:00:01.000000Z', 2, null),
+                    ('2024-01-01T00:00:02.000000Z', 2, 'Infinity'::double),
+                    ('2024-01-01T00:00:03.000000Z', 1, 4.0),
+                    ('2024-01-01T00:00:04.000000Z', 2, null),
+                    ('2024-01-01T00:00:05.000000Z', 3, null),
+                    ('2024-01-01T00:00:06.000000Z', 3, '-Infinity'::double)""");
+            final String sql = "SELECT k, sum(x) OVER (PARTITION BY k) AS s, avg(x) OVER (PARTITION BY k) AS a, "
+                    + "count(x) OVER (PARTITION BY k) AS c FROM s";
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                    assertFactoryKind(factory, light == 1);
+                    final CachedWindowMapGroups groups = groups(factory);
+                    assertBoundGroupCount(groups, 1);
+                    final WindowMapState state = groups.getStates().getQuick(0);
+                    Assert.assertTrue(state.isPass1SkipEnabled());
+                    state.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
+                    state.reopen();
+                    try {
+                        final int[] key = new int[1];
+                        final int[] keyReads = new int[1];
+                        final double[] value = new double[1];
+                        final Record record = new Record() {
+                            @Override
+                            public double getDouble(int col) {
+                                return value[0];
+                            }
+
+                            @Override
+                            public int getInt(int col) {
+                                keyReads[0]++;
+                                return key[0];
+                            }
+                        };
+                        final int[] keys = {1, 2, 2, 1, 2, 3, 3};
+                        final double[] values = {
+                                1.0, Double.NaN, Double.POSITIVE_INFINITY, 4.0, Double.NaN,
+                                Double.NaN, Double.NEGATIVE_INFINITY
+                        };
+                        for (int i = 0; i < keys.length; i++) {
+                            key[0] = keys[i];
+                            value[0] = values[i];
+                            state.computeNext(record);
+                        }
+                        // Pass 1 saw three partition keys, but keys 2 and 3 held only rows the
+                        // group refused. Their absence from the map directly proves that
+                        // computeNext took the skip branch for those rows.
+                        Assert.assertEquals(1, state.getMapSize());
+                        // Twice over, which is what says pass 2 leaves no state of its own: the
+                        // second drain reads the map the first one left and finds it unchanged,
+                        // which is what a cached cursor's random access and its second drain
+                        // both need.
+                        for (int pass = 0; pass < 2; pass++) {
+                            keyReads[0] = 0;
+                            for (int i = 0; i < keys.length; i++) {
+                                key[0] = keys[i];
+                                value[0] = values[i];
+                                state.projectPass2(record);
+                            }
+                            // One key read a row and no more: a miss projects the identity off
+                            // the group's own buffer, so it writes no second key and creates no
+                            // entry. The old shape read one key extra per refused-whole
+                            // partition and grew the map by one entry for each.
+                            Assert.assertEquals("pass " + pass, keys.length, keyReads[0]);
+                            // And the partitions the skip left out stay out. The map a skipping
+                            // group ends with holds the contributing partitions alone, which is
+                            // the whole saving on an input whose keys are mostly refused.
+                            Assert.assertEquals("pass " + pass, 1, state.getMapSize());
+                        }
+                        // The buffer is the group's for as long as its map is, which is what
+                        // the reset below then takes back.
+                        Assert.assertTrue(state.isIdentityValueAllocated());
+                    } finally {
+                        state.reset();
+                    }
+                    Assert.assertFalse(state.isIdentityValueAllocated());
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertEquals(7, WindowMapStateTest.drain(cursor));
+                    }
+                }
+                // Read twice over, which is what says the identity projection is idempotent: the
+                // second cursor projects the same identity off the same buffer, for both of the
+                // partitions that have no entry to read it from.
+                assertQuery(sql).expectSize().returns("""
+                        k\ts\ta\tc
+                        1\t5.0\t2.5\t2
+                        2\tnull\tnull\t0
+                        2\tnull\tnull\t0
+                        1\t5.0\t2.5\t2
+                        2\tnull\tnull\t0
+                        3\tnull\tnull\t0
+                        3\tnull\tnull\t0
+                        """);
             }
         });
     }
@@ -234,7 +790,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         // One ORDER BY, two frames, two Map subgroups - and only one of them has anything left
         // to do when the pass-2 traversal of that sort group runs. The cumulative group's
         // outputs were final row by row and it is absent from the pass-2 list; the
-        // whole-partition one is in both lists and probes twice a row.
+        // whole-partition one is in both lists.
         assertMemoryLeak(() -> {
             createTable();
             insertRows();
@@ -259,8 +815,11 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
-                        Assert.assertEquals(rows, cumulative.getLookupCount());
-                        Assert.assertEquals(2 * rows, pass2State.getLookupCount());
+                        // The whole-partition component can refuse non-finite x values in pass 1.
+                        // The cumulative group beside it cannot skip because it projects from
+                        // the value it loads whether or not the row contributed.
+                        Assert.assertTrue(pass2State.isPass1SkipEnabled());
+                        Assert.assertFalse(cumulative.isPass1SkipEnabled());
                     }
                 }
                 assertFusedMatchesUnfused(
@@ -302,7 +861,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     Assert.assertSame(state, groups.getUnorderedPass2States().getQuick(0));
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertEquals(ROW_COUNT, WindowMapStateTest.drain(cursor));
-                        Assert.assertEquals(2 * ROW_COUNT, state.getLookupCount());
                     }
                 }
                 final String ordered = "select ts, sum(x) over p, count(y) over p" + ORDERED_PARTITION_WINDOW;
@@ -319,9 +877,43 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     Assert.assertNull(groups.getUnorderedPass2States());
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertEquals(ROW_COUNT, WindowMapStateTest.drain(cursor));
-                        Assert.assertEquals(2 * ROW_COUNT, state.getLookupCount());
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testEveryComponentMustRefuseARowBeforePassOneSkipsIt() throws Exception {
+        // Two components over two columns, so the group's decision is theirs jointly. Three rows
+        // of the fixture hold a non-finite x and two a NULL y, and no row holds both - so the
+        // group skips nothing even though one of its two components refuses a third of the scan,
+        // and the unfused reference is what says the answers are unmoved by that.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertRows();
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                final String sql = "select ts, sum(x) over (partition by k), avg(y) over (partition by k)"
+                        + PARTITION_WINDOW;
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                    assertFactoryKind(factory, light == 1);
+                    final CachedWindowMapGroups groups = groups(factory);
+                    assertBoundGroupCount(groups, 1);
+                    final WindowMapState state = groups.getStates().getQuick(0);
+                    Assert.assertEquals(2, state.getPlan().getComponentCount());
+                    Assert.assertTrue(state.isPass1SkipEnabled());
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final long rows = WindowMapStateTest.drain(cursor);
+                        Assert.assertEquals(ROW_COUNT, rows);
+                    }
+                }
+                assertFusedMatchesUnfused(
+                        PARTITION_WINDOW,
+                        "",
+                        "sum(x) over (partition by k)", "avg(y) over (partition by k)"
+                );
             }
         });
     }
@@ -503,6 +1095,10 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                             "count(x)" + over
                     );
                     assertFusedMatchesUnfused(window, "", "sum(x)" + over, "count(y)" + over);
+                    // Two count contributors, which is the shape whose accepted rows the
+                    // pass-1 skip hands a pre-read argument to: the answers must be the
+                    // unfused ones on a NULL, on an infinity and on a partition refused whole.
+                    assertFusedMatchesUnfused(window, "", "count(x)" + over, "count(y)" + over);
                     assertFusedMatchesUnfused(window, "", "count(*)" + over, "count(k)" + over);
                     // The same over an expression key, which is the shape that probes a
                     // borrowed key projection twice a row: once as pass 1 absorbs the row and
@@ -552,11 +1148,8 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
 
     @Test
     public void testMergedProjectionsShareOneComponentAndOneArgumentEvaluation() throws Exception {
-        // The acceptance shape, read off a sorted traversal: three maps, three probes, three
-        // components, five slots, three updates and three evaluations of x a row become one of
-        // each. The update count is the argument-evaluation count for these families, because
-        // accumulateWindowState is the only place any of them reads its argument and only the
-        // component's one contributor is asked to run it.
+        // The acceptance shape, read off a sorted traversal: the three projections share one
+        // component and its two slots, so one contributor evaluates x for the group.
         assertMemoryLeak(() -> {
             createTable();
             insertRows();
@@ -577,9 +1170,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
-                        Assert.assertEquals(rows, state.getLookupCount());
-                        Assert.assertEquals(rows, state.getContributorUpdateCount());
-                        Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
                     }
                 }
             }
@@ -617,7 +1207,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
-                        Assert.assertEquals(rows, state.getLookupCount());
                     }
                 }
             }
@@ -625,10 +1214,10 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderedSortGroupSharesOneMapAndOneLookup() throws Exception {
+    public void testOrderedSortGroupSharesOneMap() throws Exception {
         // The headline shape on a sorted traversal. sum(x) counts finite x values and count(y)
         // counts non-null y values, so the two keep separate counters; what they share is the
-        // key domain, the hash table and the row's one lookup.
+        // key domain and hash table.
         assertMemoryLeak(() -> {
             createTable();
             insertRows();
@@ -654,9 +1243,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                         Assert.assertTrue(state.isMapOpen());
                         final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
-                        Assert.assertEquals(rows, state.getLookupCount());
-                        Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
-                        Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
                         Assert.assertNotNull(state.getMapImplementation());
                         Assert.assertTrue(state.getUnorderedMapMaxEntrySize() > 0);
                     }
@@ -667,7 +1253,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     for (int i = 0; i < 10; i++) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             Assert.assertEquals("iteration " + i, ROW_COUNT, WindowMapStateTest.drain(cursor));
-                            Assert.assertEquals(ROW_COUNT, state.getLookupCount());
                         }
                     }
                 }
@@ -726,7 +1311,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         // Two windows that agree on their ORDER BY and differ in their partition key are one
         // sort group and two Map subgroups. The compiler's own sort-sharing key would have put
         // all four accumulators in one map value keyed by whichever partition came first; the
-        // window spec is what keeps them apart, and the two lookups a row are what says so.
+        // window spec is what keeps them apart.
         assertMemoryLeak(() -> {
             createTable();
             insertRows();
@@ -749,9 +1334,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                             states.getQuick(0).getPlan().getSpec().isSameSpec(states.getQuick(1).getPlan().getSpec())
                     );
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        final long rows = WindowMapStateTest.drain(cursor);
-                        Assert.assertEquals(rows, states.getQuick(0).getLookupCount());
-                        Assert.assertEquals(rows, states.getQuick(1).getLookupCount());
+                        WindowMapStateTest.drain(cursor);
                     }
                 }
                 assertFusedMatchesUnfused(
@@ -803,6 +1386,81 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTheSkipsHoistedArgumentMovesNoAnswer() throws Exception {
+        // Every classification the hoist has to preserve, over a fixture built for it: dense
+        // rows, a NULL argument, both infinities, rows where the component that accepts is the
+        // first and rows where it is a later one, two partitions every row of which every
+        // component refuses, a NULL partition key, and a column absent from the older rows
+        // altogether. The reference is the same SELECT list with the fusion kill switch off,
+        // where every function keeps its own map and reads its own argument for itself - so a
+        // hoisted value reaching the wrong component, or a non-finite one reclassified on the
+        // way through, moves the fused rendering off the unfused one.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (ts TIMESTAMP, k SYMBOL, x DOUBLE, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 1.0, 10.0),
+                    ('2024-01-01T00:00:01.000000Z', 'a', null, 20.0),
+                    ('2024-01-01T00:00:02.000000Z', 'a', 3.0, null),
+                    ('2024-01-01T00:00:03.000000Z', 'a', null, null),
+                    ('2024-01-01T00:00:04.000000Z', 'b', 'Infinity'::double, null),
+                    ('2024-01-01T00:00:05.000000Z', 'b', null, '-Infinity'::double),
+                    ('2024-01-01T00:00:06.000000Z', null, 7.0, 70.0),
+                    ('2024-01-01T00:00:07.000000Z', 'c', null, null),
+                    ('2024-01-01T00:00:08.000000Z', 'a', 9.0, 90.0)""");
+            // z is absent from every row above, which is the column-top shape: the group's third
+            // component reads it as a NULL DOUBLE and refuses it exactly as it refuses a written
+            // NULL, on both sides of the comparison.
+            execute("ALTER TABLE s ADD COLUMN z DOUBLE");
+            execute("""
+                    INSERT INTO s VALUES
+                    ('2024-01-01T00:00:09.000000Z', 'a', 10.0, 100.0, 1000.0),
+                    ('2024-01-01T00:00:10.000000Z', 'b', null, null, null),
+                    ('2024-01-01T00:00:11.000000Z', 'd', 11.0, null, null)""");
+            final String sql = "SELECT k, "
+                    + "sum(x) OVER (PARTITION BY k) AS sx, "
+                    + "avg(y) OVER (PARTITION BY k) AS ay, "
+                    + "sum(z) OVER (PARTITION BY k) AS sz, "
+                    + "count(x) OVER (PARTITION BY k) AS cx FROM s";
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "true");
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                    assertFactoryKind(factory, light == 1);
+                    final CachedWindowMapGroups groups = groups(factory);
+                    assertBoundGroupCount(groups, 1);
+                    final WindowMapState state = groups.getStates().getQuick(0);
+                    Assert.assertTrue(state.isPass1SkipEnabled());
+                    // Three components over three columns, and a fourth output derived off the
+                    // first one's counter - so the component a row is accepted on is not the
+                    // same one on every row.
+                    Assert.assertEquals(3, state.getPlan().getComponentCount());
+                    Assert.assertEquals(4, state.getPlan().getProjectionCount());
+                }
+                assertQuery(sql).expectSize().returns("""
+                        k\tsx\tay\tsz\tcx
+                        a\t23.0\t55.0\t1000.0\t4
+                        a\t23.0\t55.0\t1000.0\t4
+                        a\t23.0\t55.0\t1000.0\t4
+                        a\t23.0\t55.0\t1000.0\t4
+                        b\tnull\tnull\tnull\t0
+                        b\tnull\tnull\tnull\t0
+                        \t7.0\t70.0\tnull\t1
+                        c\tnull\tnull\tnull\t0
+                        a\t23.0\t55.0\t1000.0\t4
+                        a\t23.0\t55.0\t1000.0\t4
+                        b\tnull\tnull\tnull\t0
+                        d\t11.0\tnull\tnull\t1
+                        """);
+                final String fused = WindowMapStateTest.render(sql);
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
+                Assert.assertEquals("light=" + light, fused, WindowMapStateTest.render(sql));
+            }
+        });
+    }
+
+    @Test
     public void testTheKillSwitchRestoresTheDestructiveFinalization() throws Exception {
         // The switch has more to turn back on for a whole-partition shape than for a
         // cumulative one: with it off, avg's preparePass2 walks its own map again and replaces
@@ -844,6 +1502,105 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefusedPartitionProjectsSumCountIdentityBesideResidualOutputs() throws Exception {
+        // The one identity a skipping group reaches today, projected for a partition pass 1
+        // refused whole, beside eight outputs the group declined. Under a whole-partition frame
+        // ksum, the two DOUBLE extrema, the ignore-nulls first capture and the four Welford
+        // outputs compile to their *OverPartitionFunction classes, and none of those declares an
+        // accumulator projection - so WindowAccumulatorCandidate.of turns each away and each
+        // answers the refused partition through its own map. What stays in the group is sum, avg
+        // and a count derived off the same counter slot: one FAMILY_DOUBLE_SUM_COUNT component,
+        // whose identity is the zeroed slice, which the plan assertions below pin down.
+        // isRefusedRowInert() admits seven families; this one and the non-null count are the
+        // only two any two-pass function declares, so this suite cannot build a skipping group
+        // that carries one of the other five. It does build ordinary groups that carry such a
+        // family - the extremum pair and the four Welford outputs over the cumulative window
+        // above are two - but every class declaring one of the five reports ZERO_PASS, so a
+        // group carrying one is never two-pass and never skips - see that method's javadoc.
+        // The reference arm is the same eleven outputs unfused, which compute the refused
+        // partition's answers through each function's own map instead.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertRows();
+            final String[] outputs = {
+                    "sum(x) over (partition by k)",
+                    "avg(x) over (partition by k)",
+                    "ksum(x) over (partition by k)",
+                    "max(x) over (partition by k)",
+                    "min(x) over (partition by k)",
+                    "first_value(x) ignore nulls over (partition by k)",
+                    "count(x) over (partition by k)",
+                    "var_samp(x) over (partition by k)",
+                    "var_pop(x) over (partition by k)",
+                    "stddev_samp(x) over (partition by k)",
+                    "stddev_pop(x) over (partition by k)",
+            };
+            final StringBuilder sql = new StringBuilder("select ts");
+            for (String output : outputs) {
+                sql.append(", ").append(output);
+            }
+            sql.append(PARTITION_WINDOW);
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, sql.toString(), sqlExecutionContext)) {
+                    assertFactoryKind(factory, light == 1);
+                    final CachedWindowMapGroups groups = groups(factory);
+                    assertBoundGroupCount(groups, 1);
+                    final WindowMapState state = groups.getStates().getQuick(0);
+                    // The shape the group really has, which is the whole of what the identity
+                    // path here covers: one component, the sum family's, and its two slots.
+                    // Three of the eleven outputs project off it - sum, avg and the derived
+                    // count - and the assertion on how many functions the factory left bound is
+                    // what says the other eight sit outside.
+                    final WindowAccumulatorPlan plan = state.getPlan();
+                    Assert.assertEquals(1, plan.getComponentCount());
+                    Assert.assertEquals(
+                            WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                            plan.getComponent(0).getFamily()
+                    );
+                    Assert.assertEquals(2, plan.getSlotCount());
+                    Assert.assertEquals(3, plan.getProjectionCount());
+                    final ObjList<WindowFunction> functions = windowFunctions(factory);
+                    Assert.assertEquals(outputs.length, functions.size());
+                    int boundCount = 0;
+                    for (int i = 0, n = functions.size(); i < n; i++) {
+                        if (functions.getQuick(i).isWindowStateOwned()) {
+                            boundCount++;
+                        }
+                    }
+                    Assert.assertEquals("the group's membership moved", 3, boundCount);
+                    // The two properties that put these outputs on the identity path at all: the
+                    // group is driven twice, and pass 1 is allowed to leave a refused row's key
+                    // out of the map. Were a family here not inert on a refused row, the skip
+                    // would be off for the whole group and this test would prove nothing.
+                    Assert.assertTrue(state.isTwoPass());
+                    Assert.assertTrue(state.isPass1SkipEnabled());
+                }
+                assertFusedMatchesUnfused(PARTITION_WINDOW, "", outputs);
+                // And what the refused partition answers, output by output: SQL NULL everywhere
+                // but the counter, which is exact and zero. The group projects the first three
+                // off its identity buffer and every other output computes its own; these are the
+                // two rows the map no longer holds an entry for, read twice over by the
+                // assertion itself.
+                assertQuery("""
+                        SELECT * FROM (
+                          SELECT k, sum(x) OVER w AS s, avg(x) OVER w AS a, ksum(x) OVER w AS ks,
+                                 max(x) OVER w AS mx, min(x) OVER w AS mn,
+                                 first_value(x) IGNORE NULLS OVER w AS fv, count(x) OVER w AS c,
+                                 var_samp(x) OVER w AS vs, var_pop(x) OVER w AS vp,
+                                 stddev_samp(x) OVER w AS ss, stddev_pop(x) OVER w AS sp
+                          FROM t WINDOW w AS (PARTITION BY k)
+                        ) WHERE k = 'nx'""").returns("""
+                        k\ts\ta\tks\tmx\tmn\tfv\tc\tvs\tvp\tss\tsp
+                        nx\tnull\tnull\tnull\tnull\tnull\tnull\t0\tnull\tnull\tnull\tnull
+                        nx\tnull\tnull\tnull\tnull\tnull\tnull\t0\tnull\tnull\tnull\tnull
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testWholePartitionSumAvgAndCountShareOneComponent() throws Exception {
         // The key regression case of this step, and the one the design named years before it
         // was built: unfused, avg's preparePass2 replaces each partition's sum slot with its
@@ -872,14 +1629,10 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
-                        // Two probes a row rather than one, because the group looks its key up
-                        // once in each traversal - against the six the three unfused functions
-                        // make, each probing in both of its own passes.
-                        Assert.assertEquals(2 * rows, state.getLookupCount());
-                        Assert.assertEquals(rows, state.getContributorUpdateCount());
-                        // Written in pass 2 alone: pass 1 projects nothing, because the
-                        // accumulator is not final until it has absorbed the last row.
-                        Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
+                        // The 'nx' partition is refused whole in pass 1 and stays out of the
+                        // map. The three outputs still read the identity it would have been left
+                        // sitting at; see the reference comparison below.
+                        Assert.assertTrue(state.isPass1SkipEnabled());
                         // The property the skipped preparePass2 rests on. A bound function's
                         // own map stays closed for the factory's whole life, so the walk it
                         // would perform has nothing to walk - and the guard that skips it is

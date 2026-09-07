@@ -911,6 +911,7 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
                     pageFrameFactory,
                     sqlExecutionContext,
                     filter,
+                    null,
                     viewLowerBoundTs,
                     outputLowTs,
                     changeLowTs,

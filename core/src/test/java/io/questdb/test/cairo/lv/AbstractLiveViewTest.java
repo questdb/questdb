@@ -26,8 +26,12 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
+import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -36,6 +40,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.mp.Job;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -272,6 +277,40 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      */
     protected boolean isMillisecondClockSimulated() {
         return true;
+    }
+
+    /**
+     * Every logical timeline entry of {@code instance} as {@code (maxTimestamp, effective row
+     * position)}, ascending - the ladder a resume reads to decide how many live-view rows the
+     * root it selects stands on.
+     * <p>
+     * The position is the effective one, so it carries the suffix corrections later repairs
+     * published into {@code LiveViewCheckpointRowPositionDelta} rather than only what the
+     * entry itself stores.
+     */
+    protected LongList snapshotCheckpointLadder(LiveViewInstance instance) {
+        final LongList ladder = new LongList();
+        try (
+                Path checkpointsDir = new Path().of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(engine.getConfiguration());
+                LiveViewCheckpointTimelineReader reader =
+                        new LiveViewCheckpointTimelineReader(engine.getConfiguration());
+                LiveViewCheckpointRowPositionDeltaReader deltaReader =
+                        new LiveViewCheckpointRowPositionDeltaReader(engine.getConfiguration())
+        ) {
+            store.of(checkpointsDir);
+            reader.of(checkpointsDir);
+            deltaReader.of(checkpointsDir);
+            try (LiveViewCheckpointGenerationPin pin = store.pin()) {
+                reader.iterateAll(pin.getTimelineRootRef(), entry -> {
+                    ladder.add(entry.maxTimestamp);
+                    ladder.add(deltaReader.effectivePosition(pin.getRowPositionDeltaRootRef(), entry));
+                });
+            }
+        }
+        return ladder;
     }
 
     /**
