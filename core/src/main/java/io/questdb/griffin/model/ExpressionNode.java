@@ -52,6 +52,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public static final int OPERATION = MEMBER_ACCESS + 1;
     public static final int QUERY = OPERATION + 1;
     public static final int SET_OPERATION = QUERY + 1;
+    public static final int LIST = SET_OPERATION + 1;
     public static final ExpressionNodeFactory FACTORY = new ExpressionNodeFactory();
     public static final int UNKNOWN = 0;
     public final ObjList<ExpressionNode> args = new ObjList<>(4);
@@ -490,6 +491,17 @@ public class ExpressionNode implements Mutable, Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
+        if (type == LIST) {
+            sink.putAscii('(');
+            for (int i = args.size() - 1; i >= 0; i--) {
+                toSink(sink, args.getQuick(i));
+                if (i > 0) {
+                    sink.putAscii(", ");
+                }
+            }
+            sink.putAscii(')');
+            return;
+        }
         // note: it's safe to take any registry (new or old) because we don't use precedence here
         OperatorRegistry registry = OperatorExpression.getRegistry();
         char openBracket = '(';

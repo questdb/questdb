@@ -800,6 +800,12 @@ public class ExpressionParser {
             node.type = ExpressionNode.FUNCTION;
             argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
             opStack.pop();
+        } else if (localParamCount > 1 && node.type == ExpressionNode.OPERATION && Chars.equals(node.token, ":=")) {
+            // DECLARE @x := (a, b, c): the list items become arguments of the assignment,
+            // SqlParser.parseDeclare folds them into a LIST node
+            node.paramCount = localParamCount + 1;
+            argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
+            opStack.pop();
         }
         return argStackDepth;
     }

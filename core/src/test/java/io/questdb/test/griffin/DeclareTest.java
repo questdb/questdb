@@ -852,7 +852,7 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute(TRADES_DDL);
             assertQuery("DECLARE @symbols := ('ETH-USD', 'BTC-USD') " +
                     "SELECT * FROM trades WHERE @symbols IN @symbols")
-                    .fails(43, "bracket lists");
+                    .fails(70, "list variable can only be used with IN");
 
         });
     }
@@ -1069,7 +1069,149 @@ public class DeclareTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan(plan);
             assertQuery("declare @ts := ('2024-01-01', '2024-08-23') select timestamp, count() from trades where timestamp IN @ts")
-                    .fails(44, "bracket lists are not supported");
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+        });
+    }
+
+    @Test
+    public void testDeclareListInSymbolColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select rnd_symbol('a', 'b', 'c', 'd') s, x from long_sequence(40))");
+            assertSqlCursors(
+                    "select * from t where s in ('a', 'c')",
+                    "declare @l := ('a', 'c') select * from t where s in @l"
+            );
+        });
+    }
+
+    @Test
+    public void testDeclareListInVarcharColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select rnd_varchar('a', 'b', 'c', 'd') v, x from long_sequence(40))");
+            assertSqlCursors(
+                    "select * from t where v in ('a', 'c')",
+                    "declare @l := ('a', 'c') select * from t where v in @l"
+            );
+        });
+    }
+
+    @Test
+    public void testDeclareListInLongColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x from long_sequence(40))");
+            assertSqlCursors(
+                    "select * from t where x in (3, 7, 11)",
+                    "declare @l := (3, 7, 11) select * from t where x in @l"
+            );
+        });
+    }
+
+    @Test
+    public void testDeclareListNotIn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x from long_sequence(40))");
+            assertSqlCursors(
+                    "select * from t where x not in (3, 7, 11)",
+                    "declare @l := (3, 7, 11) select * from t where x not in @l"
+            );
+        });
+    }
+
+    @Test
+    public void testDeclareListMixedWithLiterals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x from long_sequence(40))");
+            assertSqlCursors(
+                    "select * from t where x in (40, 3, 7, 1)",
+                    "declare @l := (3, 7) select * from t where x in (40, @l, 1)"
+            );
+        });
+    }
+
+    @Test
+    public void testDeclareListReferencingScalarVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x from long_sequence(40))");
+            assertSqlCursors(
+                    "select * from t where x in (3, 7)",
+                    "declare @a := 3, @b := 7, @l := (@a, @b) select * from t where x in @l"
+            );
+        });
+    }
+
+    @Test
+    public void testDeclareListUsedTwice() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x, x * 2 y from long_sequence(40))");
+            assertSqlCursors(
+                    "select * from t where x in (2, 4) or y in (2, 4)",
+                    "declare @l := (2, 4) select * from t where x in @l or y in @l"
+            );
+        });
+    }
+
+    @Test
+    public void testDeclareListOutsideInFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x from long_sequence(4))");
+            assertQuery("declare @l := (1, 2) select @l from t")
+                    .fails(28, "list variable can only be used with IN");
+            assertQuery("declare @l := (1, 2) select * from t where x = @l")
+                    .fails(47, "list variable can only be used with IN");
+            assertQuery("declare @l := (1, 2) select * from t where @l in (1, 2)")
+                    .fails(43, "list variable can only be used with IN");
+            assertQuery("declare @l := (1, 2) select * from @l")
+                    .fails(35, "list variable can only be used with IN");
+            assertQuery("declare @l := (1, 2), @m := (@l, 3) select * from t where x in @m")
+                    .fails(29, "list variable can only be used with IN");
+        });
+    }
+
+    @Test
+    public void testDeclareListEmptyFails() throws Exception {
+        assertMemoryLeak(() -> assertQuery("declare @l := () select 1")
+                .failsWith("too few arguments for ':='"));
+    }
+
+    @Test
+    public void testDeclareListWithOneItemIsScalar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select rnd_symbol('a', 'b', 'c', 'd') s, x from long_sequence(40))");
+            assertSqlCursors(
+                    "select * from t where s in ('a')",
+                    "declare @l := ('a') select * from t where s in @l"
+            );
+            assertSqlCursors(
+                    "select * from t where s = 'a'",
+                    "declare @l := ('a') select * from t where s = @l"
+            );
+        });
+    }
+
+    @Test
+    public void testDeclareListWithBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x from long_sequence(40))");
+            bindVariableService.setLong(0, 3);
+            bindVariableService.setLong(1, 7);
+            assertSqlCursors(
+                    "select * from t where x in (3, 7)",
+                    "declare @l := ($1, $2) select * from t where x in @l"
+            );
+        });
+    }
+
+    @Test
+    public void testDeclareListOverridableInView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into t select x, timestamp_sequence('2024-01-01', 1000000) from long_sequence(10)");
+            drainWalQueue();
+            execute("create view v as (declare overridable @l := (1, 2) select x from t where x in @l)");
+            drainWalAndViewQueues();
+            assertSqlCursors("select x from t where x in (1, 2)", "select * from v");
+            assertSqlCursors("select x from t where x in (3, 4, 5)", "declare @l := (3, 4, 5) select * from v");
         });
     }
 

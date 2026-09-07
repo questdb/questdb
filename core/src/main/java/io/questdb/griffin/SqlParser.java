@@ -430,7 +430,81 @@ public class SqlParser {
             }
         }
 
+        spliceDeclaredLists(node);
         return visitor.visit(node);
+    }
+
+    private static boolean isDeclaredList(ExpressionNode node) {
+        return node != null && node.type == ExpressionNode.LIST;
+    }
+
+    private static SqlException listMisuse(int position) {
+        return SqlException.$(position, "list variable can only be used with IN");
+    }
+
+    private static void spliceDeclaredLists(ExpressionNode node) throws SqlException {
+        final boolean isIn = node.token != null && isInKeyword(node.token);
+        switch (node.paramCount) {
+            case 0:
+                break;
+            case 1:
+                if (isDeclaredList(node.rhs)) {
+                    throw listMisuse(node.rhs.position);
+                }
+                break;
+            case 2:
+                if (isDeclaredList(node.lhs)) {
+                    throw listMisuse(node.lhs.position);
+                }
+                if (isDeclaredList(node.rhs)) {
+                    if (!isIn) {
+                        throw listMisuse(node.rhs.position);
+                    }
+                    final ExpressionNode list = node.rhs;
+                    final ExpressionNode column = node.lhs;
+                    node.args.clear();
+                    for (int i = 0, n = list.args.size(); i < n; i++) {
+                        node.args.add(list.args.getQuick(i));
+                    }
+                    node.args.add(column);
+                    node.paramCount = node.args.size();
+                    node.lhs = null;
+                    node.rhs = null;
+                    node.type = ExpressionNode.FUNCTION;
+                }
+                break;
+            default:
+                final int last = node.paramCount - 1;
+                boolean hasList = false;
+                for (int i = 0; i <= last; i++) {
+                    final ExpressionNode arg = node.args.getQuick(i);
+                    if (isDeclaredList(arg)) {
+                        if (!isIn || i == last) {
+                            throw listMisuse(arg.position);
+                        }
+                        hasList = true;
+                    }
+                }
+                if (hasList) {
+                    final ObjList<ExpressionNode> spliced = new ObjList<>();
+                    for (int i = 0; i <= last; i++) {
+                        final ExpressionNode arg = node.args.getQuick(i);
+                        if (isDeclaredList(arg)) {
+                            for (int j = 0, n = arg.args.size(); j < n; j++) {
+                                spliced.add(arg.args.getQuick(j));
+                            }
+                        } else {
+                            spliced.add(arg);
+                        }
+                    }
+                    node.args.clear();
+                    for (int i = 0, n = spliced.size(); i < n; i++) {
+                        node.args.add(spliced.getQuick(i));
+                    }
+                    node.paramCount = node.args.size();
+                }
+                break;
+        }
     }
 
     public static void validateMatViewEveryUnit(char unit, int pos) throws SqlException {
@@ -3586,6 +3660,24 @@ public class SqlParser {
         return parseCreateViewExt(lexer, executionContext, sqlParserCallback, tok, vOpBuilder);
     }
 
+    private void foldDeclaredList(ExpressionNode assignment, CharSequence name, GenericLexer lexer) throws SqlException {
+        // the expression parser emits arguments in reverse order: [itemN, ..., item1, @name]
+        final int last = assignment.args.size() - 1;
+        final ExpressionNode nameNode = assignment.args.getQuick(last);
+        if (nameNode.type != ExpressionNode.LITERAL || !Chars.equalsIgnoreCase(nameNode.token, name)) {
+            throw errUnexpected(lexer, name, "unexpected bind expression");
+        }
+        final ExpressionNode list = expressionNodePool.next().of(ExpressionNode.LIST, "list", 0, assignment.position);
+        for (int i = 0; i < last; i++) {
+            list.args.add(assignment.args.getQuick(i));
+        }
+        list.paramCount = last;
+        assignment.args.clear();
+        assignment.paramCount = 2;
+        assignment.lhs = nameNode;
+        assignment.rhs = list;
+    }
+
     private void parseDeclare(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         int contentLength = lexer.getContent().length();
         while (lexer.getPosition() < contentLength) {
@@ -3638,9 +3730,10 @@ public class SqlParser {
                 throw errUnexpected(lexer, tok, "declaration was empty or could not be parsed");
             }
 
-            if (!Chars.equalsIgnoreCase(expr.lhs.token, tok)) {
-                // could be a `DECLARE @x := (1,2,3)` situation
-                throw errUnexpected(lexer, tok, "unexpected bind expression - bracket lists are not supported");
+            if (expr.paramCount > 2) {
+                foldDeclaredList(expr, tok, lexer);
+            } else if (expr.lhs == null || !Chars.equalsIgnoreCase(expr.lhs.token, tok)) {
+                throw errUnexpected(lexer, tok, "unexpected bind expression");
             }
 
             model.getDecls().put(tok, expr);
@@ -5626,7 +5719,11 @@ public class SqlParser {
         if (model.getDecls().contains(expr.token)) {
             if (expr.type == ExpressionNode.LITERAL) {
                 // replace it if so
-                expr = model.getDecls().get(expr.token).rhs;
+                final ExpressionNode value = model.getDecls().get(expr.token).rhs;
+                if (isDeclaredList(value)) {
+                    throw listMisuse(expr.position);
+                }
+                expr = value;
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "expected literal table name or subquery");
             }
@@ -6230,10 +6327,14 @@ public class SqlParser {
         if (decls == null || decls.size() == 0) { // short circuit null case
             return expr;
         }
-        return recursiveReplace(
+        final ExpressionNode rewritten = recursiveReplace(
                 expr,
-                rewriteDeclaredVariablesInExpressionVisitor.of(decls, exprTargetVariableName)
+                rewriteDeclaredVariablesInExpressionVisitor.of(decls, exprTargetVariableName, expressionNodePool)
         );
+        if (isDeclaredList(rewritten)) {
+            throw listMisuse(rewritten.position);
+        }
+        return rewritten;
     }
 
     /**
@@ -6981,6 +7082,7 @@ public class SqlParser {
         public LowerCaseCharSequenceObjHashMap<ExpressionNode> decls;
         public CharSequence exprTargetVariableName;
         public boolean hasAtChar;
+        public ObjectPool<ExpressionNode> pool;
 
         @Override
         public ExpressionNode visit(ExpressionNode node) throws SqlException {
@@ -6993,7 +7095,8 @@ public class SqlParser {
             }
 
             if (node.token != null && node.type == ExpressionNode.LITERAL && decls.contains(node.token)) {
-                return decls.get(node.token).rhs;
+                final ExpressionNode value = decls.get(node.token).rhs;
+                return isDeclaredList(value) ? positionedListCopy(value, node.position) : value;
             } else if (hasAtChar) {
                 throw SqlException.$(node.position, "tried to use undeclared variable `" + node.token + '`');
             }
@@ -7001,12 +7104,21 @@ public class SqlParser {
             return node;
         }
 
+        private ExpressionNode positionedListCopy(ExpressionNode list, int position) {
+            final ExpressionNode copy = pool.next().of(ExpressionNode.LIST, list.token, 0, position);
+            copy.args.addAll(list.args);
+            copy.paramCount = list.paramCount;
+            return copy;
+        }
+
         ReplacingVisitor of(
                 @NotNull LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
-                @Nullable CharSequence exprTargetVariableName
+                @Nullable CharSequence exprTargetVariableName,
+                @NotNull ObjectPool<ExpressionNode> pool
         ) {
             this.decls = decls;
             this.exprTargetVariableName = exprTargetVariableName;
+            this.pool = pool;
             return this;
         }
     }
