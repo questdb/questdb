@@ -399,6 +399,80 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDurableAckPollMustNotCommitDeferredGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            byte[] deferred = createMaskedFrame(
+                    WebSocketOpcode.BINARY,
+                    deferred(oneRowMessage(100L, 1_000_000L))
+            );
+            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, durableAckPollMessage());
+            byte[] commit = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L));
+            byte[] wire = concat(deferred, poll, commit);
+
+            PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = new QwpIngressProcessorState(
+                        RECV_BUFFER_SIZE,
+                        httpConfig.getSendBufferSize(),
+                        engine,
+                        httpConfig.getLineHttpProcessorConfiguration()
+                );
+                state.of(-1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+                getLV().set(context, state);
+
+                drive(processor, context, nf, deferred.length);
+                Assert.assertEquals("deferred rows must remain unacknowledged", -1, maxCumulativeOkAck(rawSocket.sentFrames));
+
+                drive(processor, context, nf, poll.length);
+                Assert.assertEquals(
+                        "a durable ACK poll must not commit or acknowledge an in-progress deferred group",
+                        -1,
+                        maxCumulativeOkAck(rawSocket.sentFrames)
+                );
+
+                drive(processor, context, nf, commit.length);
+                Assert.assertEquals("the real commit frame must cover the deferred group and poll", 2,
+                        maxCumulativeOkAck(rawSocket.sentFrames));
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("tab")) {
+                Assert.assertEquals("both real data frames must commit exactly once", 2, reader.size());
+            }
+        });
+    }
+
+    @Test
+    public void testDurableAckPollRequiresNegotiation() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+
+            ObjList<byte[]> sent = ingestOnFreshConnection(
+                    processor,
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, durableAckPollMessage())
+            );
+
+            Assert.assertTrue(
+                    "an unnegotiated durable ACK poll must receive STATUS_PARSE_ERROR",
+                    hasResponseForSeqAndStatus(sent, 0, QwpConstants.STATUS_PARSE_ERROR)
+            );
+        });
+    }
+
     private static void drive(
             QwpIngressUpgradeProcessor processor,
             HttpConnectionContext context,
@@ -432,6 +506,16 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                 continue;
             }
             if (f[2] != QwpConstants.STATUS_OK && readLeLong(f, 3) == seq) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasResponseForSeqAndStatus(ObjList<byte[]> frames, long seq, byte status) {
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            if (isBinaryFrame(f) && f[2] == status && readLeLong(f, 3) == seq) {
                 return true;
             }
         }
@@ -496,6 +580,17 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         byte[] copy = message.clone();
         copy[5] |= QwpConstants.FLAG_DEFER_COMMIT;
         return copy;
+    }
+
+    private static byte[] durableAckPollMessage() {
+        byte[] message = new byte[QwpConstants.HEADER_SIZE];
+        message[0] = 'Q';
+        message[1] = 'W';
+        message[2] = 'P';
+        message[3] = '1';
+        message[4] = QwpConstants.VERSION;
+        message[5] = QwpConstants.FLAG_DURABLE_ACK_POLL;
+        return message;
     }
 
     private static byte[] oneRowMessage(long value, long tsMicros) {
