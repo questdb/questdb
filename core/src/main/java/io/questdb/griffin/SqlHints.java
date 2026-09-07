@@ -95,19 +95,23 @@ public final class SqlHints {
     }
 
     /**
-     * Whether the query promises that its covering-index key will not resolve to NULL, so the
-     * covering factory needs no backup plan for a partition carrying a column top.
+     * Whether the query promises that the indexed column carries no column top on any partition
+     * it will read, so a covering scan can answer the NULL key too and the factory needs no
+     * backup plan.
      * <p>
-     * The promise is only ever needed where the compiler cannot see the answer: a bind variable
-     * or other runtime constant is null-capable-but-unknown, so it would otherwise always get a
-     * backup and always lose the page-frame cursor -- parallel filter and vectorized GROUP BY --
-     * even on a table with no column top anywhere. A literal {@code null} resolves at compile
-     * time, so the callers ignore the hint there rather than act on a promise they can already
-     * see is false.
+     * Without it, any key that MIGHT be NULL -- a literal {@code null}, or a bind variable whose
+     * value is not known until it is bound -- gets a backup, and a covering factory that carries
+     * one reports no page-frame cursor, so the query loses parallel filter and vectorized GROUP
+     * BY. On a table whose indexed column has existed since its first partition there is nothing
+     * to defer to and that cost buys nothing. This hint is how a query says so.
+     * <p>
+     * Whether a column top exists is runtime state -- {@code _cv} changes without a
+     * metadata-version bump that would invalidate a cached plan -- which is why the planner
+     * cannot check the promise itself and takes the query's word for it here.
      * <p>
      * The promise is checked, not trusted: an open whose key does resolve to NULL over a table
-     * that carries a column top throws rather than answer from a sidecar that holds no value
-     * for those rows. See {@code CoveringIndexRecordCursorFactory.mustUseBackup}.
+     * that does carry a column top throws rather than answer from a sidecar that holds no value
+     * for those rows. See {@code CoveringIndexRecordCursorFactory.checkHintPromise}.
      */
     public static boolean hasForceUseCoveringHint(@NotNull IQueryModel queryModel) {
         return queryModel.getHints().keyIndex(FORCE_USE_COVERING_HINT) < 0;

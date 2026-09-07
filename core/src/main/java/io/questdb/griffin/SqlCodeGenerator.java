@@ -1130,42 +1130,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * carries a column top has no posting and so no sidecar entry to decode, and only the key's
      * nullability is a compile-time fact -- see {@link #canKeyBeNull}.
      * <p>
-     * {@code /*+ force_use_covering *}{@code /} suppresses the backup, but only where the key's
-     * nullness is genuinely unknown here: a literal {@code null} has already resolved to
-     * {@code VALUE_IS_NULL}, so the hint would be a promise the compiler can see is false and
-     * the backup is built anyway. {@link CoveringIndexRecordCursorFactory} re-checks the
-     * suppressed promise per open and throws if it was broken.
+     * {@code /*+ force_use_covering *}{@code /} suppresses the backup outright. It is a promise
+     * about the COLUMN, not the key: that no partition the scan reads carries a top for it, so
+     * the covering scan can answer the NULL key too. That is runtime state the planner cannot
+     * check, which is why it takes the query's word for it here --
+     * {@link CoveringIndexRecordCursorFactory} re-checks the promise per open and throws if it
+     * was broken.
      */
     private static boolean isBackupNeeded(int symbolKey, Function symbolFunc, IQueryModel model) {
-        if (!canKeyBeNull(symbolKey, symbolFunc)) {
-            return false;
-        }
-        return symbolKey == SymbolTable.VALUE_IS_NULL || !SqlHints.hasForceUseCoveringHint(model);
+        return canKeyBeNull(symbolKey, symbolFunc) && !SqlHints.hasForceUseCoveringHint(model);
     }
 
     /**
-     * The IN-list twin of {@link #isBackupNeeded}. One literal {@code null} anywhere in the list
-     * is enough to make the hint a promise the compiler can see is false, so the whole list
-     * keeps its backup.
+     * The IN-list twin of {@link #isBackupNeeded}.
      */
     private static boolean isBackupNeededForList(
             ObjList<Function> keyValueFuncs,
             SymbolMapReader symbolMapReader,
             IQueryModel model
     ) {
-        if (!canAnyKeyBeNull(keyValueFuncs, symbolMapReader)) {
-            return false;
-        }
-        if (!SqlHints.hasForceUseCoveringHint(model)) {
-            return true;
-        }
-        for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
-            final Function f = keyValueFuncs.getQuick(i);
-            if (!f.isRuntimeConstant() && symbolMapReader.keyOf(f.getStrA(null)) == SymbolTable.VALUE_IS_NULL) {
-                return true;
-            }
-        }
-        return false;
+        return canAnyKeyBeNull(keyValueFuncs, symbolMapReader) && !SqlHints.hasForceUseCoveringHint(model);
     }
 
     /**

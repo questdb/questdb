@@ -33,59 +33,53 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * The {@code /*+ force_use_covering *}{@code /} hint. A bind-variable key is
- * null-capable-but-unknown at compile time, so it always gets a backup plan and a factory that
- * carries one reports no page-frame cursor -- costing parallel filter and vectorized GROUP BY
- * even on a table with no column top anywhere. The hint suppresses the backup for that case
- * only.
+ * The {@code /*+ force_use_covering *}{@code /} hint. Any key that might be NULL -- a literal
+ * {@code null}, or a bind variable whose value is not known until it is bound -- gets a backup
+ * plan, and a covering factory that carries one reports no page-frame cursor, costing parallel
+ * filter and vectorized GROUP BY. On a table whose indexed column has existed since its first
+ * partition there is nothing to defer to and that cost buys nothing. The hint is how a query
+ * says so.
  * <p>
- * Two things it deliberately does not do. It does not act on a literal {@code null}, whose
- * nullness the compiler can already see, so the promise would be visibly false. And it is not
- * trusted: an open whose bound key does resolve to NULL over a table carrying a column top
- * throws rather than answer from a sidecar that holds no value for those rows.
+ * It is a promise about the COLUMN, not the key: no partition carries a top for it. Whether that
+ * holds is runtime state the planner cannot check, so it takes the query's word for it -- and
+ * then checks it per open. A key that does resolve to NULL over a table that does carry a top
+ * throws, rather than answer from a sidecar that holds no value for those rows.
  */
 public class CoveringIndexForceHintTest extends AbstractCairoTest {
 
     @Test
-    public void testHintIgnoredForLiteralNullKey() throws Exception {
-        // The compiler resolves 'null' to VALUE_IS_NULL right here, so the hint is a promise it
-        // can already see is false. The backup is built anyway and the rows come back.
+    public void testHintAppliesToLiteralNullKey() throws Exception {
+        // The hint speaks about the column, not the key, so a literal null takes it too: no
+        // backup is built. Here the promise is false -- the table does carry a top -- so the
+        // open throws instead of answering from a sidecar that holds nothing for those rows.
         assertMemoryLeak(() -> {
             createTopTable("t_fc_lit");
-            assertQuery("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_lit WHERE sym = null ORDER BY ts")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    // The backup's cursor implements getRecordB() though its factory declares none.
-                    .skipRandomAccessProbe()
-                    .timestamp("ts")
-                    .withPlanContaining("CoveringIndex backup: true on: sym with: ts, val")
-                    .returns("""
-                            ts\tsym\tval
-                            2024-01-01T00:00:00.000000Z\t\t10.0
-                            2024-01-01T01:00:00.000000Z\t\t20.0
-                            """);
+            // No plan assertion here: EXPLAIN opens the cursor, so it trips the same throw.
+            assertThrowsForcedNullKey("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_lit WHERE sym = null");
+            assertThrowsForcedNullKey("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_lit WHERE sym IN (null, 'A')");
         });
     }
 
     @Test
-    public void testHintIgnoredForLiteralNullInList() throws Exception {
-        // One literal null anywhere in the IN-list is enough: the whole list keeps its backup,
-        // even though the other element is a bind variable the hint would otherwise cover.
+    public void testHintServesLiteralNullKeyWithoutColumnTop() throws Exception {
+        // The same literal null where the promise holds: sym has existed since the table's first
+        // partition, so every NULL row has a posting and the covering scan answers it with no
+        // backup and no throw.
         assertMemoryLeak(() -> {
-            createTopTable("t_fc_lit_in");
-            bindVariableService.setStr(0, "A");
-            assertQuery("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_lit_in WHERE sym IN (null, $1) ORDER BY ts")
+            createFlatTable("t_fc_lit_flat");
+            final String sql = "SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_lit_flat WHERE sym = null ORDER BY ts";
+            assertQuery(sql)
                     .noLeakCheck()
                     .noRandomAccess()
-                    .skipRandomAccessProbe()
+                    .expectSize()
                     .timestamp("ts")
-                    .withPlanContaining("backup: true")
+                    .withPlanNotContaining("backup: true")
                     .returns("""
                             ts\tsym\tval
                             2024-01-01T00:00:00.000000Z\t\t10.0
-                            2024-01-01T01:00:00.000000Z\t\t20.0
-                            2024-01-01T02:00:00.000000Z\tA\t30.0
+                            2024-01-01T02:00:00.000000Z\t\t30.0
                             """);
+            assertSqlCursors(sql, sql.replace("/*+ force_use_covering */", "/*+ no_covering */"));
         });
     }
 
@@ -152,18 +146,7 @@ public class CoveringIndexForceHintTest extends AbstractCairoTest {
         // every matching row has a posting and the covering scan answers it. No throw, no
         // backup, and the same rows the plain plan returns.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_fc_flat (ts TIMESTAMP, val DOUBLE,"
-                    + " sym SYMBOL INDEX TYPE POSTING INCLUDE (ts, val))"
-                    + " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("""
-                    INSERT INTO t_fc_flat VALUES
-                    ('2024-01-01T00:00:00', 10.0, NULL),
-                    ('2024-01-01T01:00:00', 20.0, 'A'),
-                    ('2024-01-01T02:00:00', 30.0, NULL)
-                    """);
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-
+            createFlatTable("t_fc_flat");
             bindVariableService.setStr(0, null);
             final String sql = "SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_flat WHERE sym = $1 ORDER BY ts";
             assertQuery(sql)
@@ -194,6 +177,24 @@ public class CoveringIndexForceHintTest extends AbstractCairoTest {
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "force_use_covering");
         }
+    }
+
+    /**
+     * The same shape with no column top at all: {@code sym} has existed since the table's first
+     * partition, so every row -- NULL or not -- has a posting.
+     */
+    private static void createFlatTable(String name) throws Exception {
+        execute("CREATE TABLE " + name + " (ts TIMESTAMP, val DOUBLE,"
+                + " sym SYMBOL INDEX TYPE POSTING INCLUDE (ts, val))"
+                + " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("""
+                INSERT INTO %s VALUES
+                ('2024-01-01T00:00:00', 10.0, NULL),
+                ('2024-01-01T01:00:00', 20.0, 'A'),
+                ('2024-01-01T02:00:00', 30.0, NULL)
+                """.formatted(name));
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
     }
 
     /**

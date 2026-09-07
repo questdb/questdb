@@ -122,8 +122,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final PartitionFrameCursorFactory dfcFactory;
     private final int indexColumnIndex;
     // Set when /*+ force_use_covering *//* suppressed a backup this factory would otherwise
-    // carry -- the key is a bind variable, null-capable but unknown at compile time. The
-    // promise is checked per open in checkHintPromise(), never trusted.
+    // carry. The hint promises the indexed column has no column top anywhere, which is runtime
+    // state the planner cannot check. checkHintPromise() checks it per open, never trusts it.
     private final boolean isBackupSuppressedByHint;
     // Whether this factory frees symbolFunction / keyValueFuncs itself. False when the backup
     // was built from them and so already owns them; see the constructor parameter.
@@ -350,10 +350,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     /**
      * Enforces the {@code force_use_covering} promise: the resolved key is not NULL, or the table
      * carries no column top. The hint buys back the page-frame cursor -- parallel filter and
-     * vectorized GROUP BY -- for a bind-variable key, which is null-capable but unknown at compile
-     * time. When the bound value turns out to be NULL over a table that does carry a top, the
-     * covering scan has no posting to decode and would answer with dropped rows or fabricated
-     * NULLs. Throw instead.
+     * vectorized GROUP BY -- for any key that might be NULL, on the query's word that the indexed
+     * column has no top anywhere. When the key does resolve to NULL over a table that does carry
+     * one, the covering scan has no posting to decode and would answer with dropped rows or
+     * fabricated NULLs. Throw instead.
      * <p>
      * This is a real exception, not an {@code assert}: it has to fire with {@code -ea} off,
      * because the alternative is exactly the silent wrong answer the backup plan exists to
@@ -367,10 +367,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         final TableReaderMetadata readerMetadata = reader.getMetadata();
         if (hasAnyColumnTop(reader, readerMetadata.getWriterIndex(indexColumnIndex))) {
             throw CairoException.nonCritical()
-                    .put("bound key resolved to NULL over a column top, which the covering index cannot serve [hint=")
+                    .put("key resolved to NULL over a column top, which the covering index cannot serve [hint=")
                     .put(SqlHints.FORCE_USE_COVERING_HINT)
                     .put(", column=").put(readerMetadata.getColumnName(indexColumnIndex))
-                    .put("]; drop the hint or bind a non-NULL value");
+                    .put("]; drop the hint, or keep the key non-NULL");
         }
     }
 
