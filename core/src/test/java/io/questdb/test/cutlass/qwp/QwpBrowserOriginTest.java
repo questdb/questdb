@@ -57,6 +57,29 @@ public class QwpBrowserOriginTest {
                 new Utf8String("questdb.example.com"),
                 false
         ));
+        // Same authority length, different bytes. Every other rejected case
+        // here returns on the scheme or the length check, so this is the only
+        // assertion that exercises the authority comparison itself -- without
+        // it, a loop that accepted every equal-length authority would pass.
+        Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("http://aaaa.example.com"),
+                new Utf8String("bbbb.example.com"),
+                false
+        ));
+        // A forged Host that reproduces a path-bearing Origin byte for byte:
+        // only the explicit '/' rejection separates the two.
+        Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("http://questdb.example.com/x"),
+                new Utf8String("questdb.example.com/x"),
+                false
+        ));
+        // HTTP/1.1 requires Host, but the parser does not, and byteAt on the
+        // production DirectUtf8String is unchecked.
+        Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("http://questdb.example.com"),
+                null,
+                false
+        ));
         Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
                 new Utf8String("null"),
                 new Utf8String("questdb.example.com"),
