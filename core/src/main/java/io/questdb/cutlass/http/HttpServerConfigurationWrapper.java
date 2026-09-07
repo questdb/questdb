@@ -346,6 +346,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
+    public boolean isQwpBrowserTlsTerminationEnabled() {
+        return getDelegate().isQwpBrowserTlsTerminationEnabled();
+    }
+
+    @Override
     public boolean isSettingsReadOnly() {
         return getDelegate().isSettingsReadOnly();
     }

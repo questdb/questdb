@@ -198,6 +198,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     }
 
     @Override
+    public boolean isQwpBrowserTlsTerminationEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isSettingsReadOnly() {
         return false;
     }

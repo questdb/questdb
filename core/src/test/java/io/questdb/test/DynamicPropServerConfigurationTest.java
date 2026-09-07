@@ -247,6 +247,27 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testQwpBrowserTlsTerminationEnabled() throws Exception {
+        // The QWP upgrade processors read this flag off the object
+        // ServerConfiguration.getHttpServerConfiguration() returns, which is
+        // HttpServerConfigurationWrapper and not the PropServerConfiguration
+        // behind it. Asserting through PropServerConfiguration alone passes
+        // even when the wrapper drops the property on the floor.
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath() + "=true\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                Assert.assertTrue(
+                        serverMain.getConfiguration().getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled()
+                );
+            }
+        });
+    }
+
+    @Test
     public void testConfigChangeListener() throws Exception {
         assertMemoryLeak(() -> {
             final AtomicLong configChangedCalledCounter = new AtomicLong(0);
