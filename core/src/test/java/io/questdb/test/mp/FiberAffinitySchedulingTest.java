@@ -1107,7 +1107,9 @@ public class FiberAffinitySchedulingTest {
                 Assert.assertEquals(1, runtime.getOrphanedShardTransitionCount());
                 Assert.assertEquals(2, runtime.getOrphanedEntryRecoveryCount());
                 Assert.assertEquals(2, runtime.getStolenSelectionCount());
-                Assert.assertEquals(1, runtime.getWakeClaimCount());
+                // The exiting owner counts the claim after the unpark, so the recovered latch
+                // does not order it.
+                awaitWakeClaimCount(runtime, 1);
                 awaitOutstanding(runtime, 0);
 
                 try (DirectUtf8Sink sink = new DirectUtf8Sink(2048)) {
@@ -1544,6 +1546,14 @@ public class FiberAffinitySchedulingTest {
             Os.pause();
         }
         Assert.assertEquals(expected, queue.size());
+    }
+
+    private static void awaitWakeClaimCount(FiberRuntime runtime, long expected) {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(AWAIT_SECONDS);
+        while (runtime.getWakeClaimCount() != expected && System.nanoTime() < deadline) {
+            Os.pause();
+        }
+        Assert.assertEquals(expected, runtime.getWakeClaimCount());
     }
 
     private static void awaitWorkerReady(WorkerPool pool, int workerId) {
