@@ -27,8 +27,12 @@ package io.questdb.griffin.engine.functions.window;
 /**
  * Pure Swinging Door Trending (SDT) state machine. No engine dependencies.
  * <p>
- * Feed points in non-decreasing timestamp order via {@link #accept}. The first
- * point of a series and the last point still pending when the series ends are
+ * Feed points in traversal order via {@link #accept}; timestamps need not be
+ * monotonic. Corridor math only ever runs on a strictly forward step from the
+ * last-seen (pending) point: any other step - backward, equal, or wrapping a
+ * long in either direction - is a series boundary that keeps the pending point
+ * (like end-of-series) and re-anchors at the offending point. The first point
+ * of a series and the last point still pending when the series ends are
  * always kept. The sink is invoked for the current index and, when a tentative
  * point turns out to be interior (or the doors cross), for a previously-seen
  * index (back-patch). Callers must therefore use a random-access output slot.
@@ -79,13 +83,18 @@ public class SwingingDoor {
         }
 
         long dt = ts - anchorTs;
-        // Two tests, because ts - anchorTs can wrap and each direction wraps the other way.
-        // ts <= anchorTs states the ordering rule, and catches a backward span wider than
-        // Long.MAX, which always wraps positive and so reads as a forward step to dt alone:
-        // a NULL timestamp arrives as Long.MIN_VALUE, and a nanosecond column spans only 292
-        // years. dt <= 0 then catches the opposite wrap, since a forward span over Long.MAX
-        // always wraps negative. No corridor spans any of these, so restart the series here.
-        if (ts <= anchorTs || dt <= 0) {
+        // The corridor is only meaningful for a strictly forward step from the LAST-SEEN point,
+        // so ts <= pendingTs is a series boundary: the pending point stays flushed (kept) like
+        // end-of-series and the current point re-anchors. Comparing against anchorTs alone is
+        // not enough - a backward step that stays above the anchor (0, 5, 3) reads as forward
+        // and discards the pending endpoint at 5 as interior. The comparison cannot wrap, so
+        // it also catches backward spans wider than Long.MAX, which wrap ts - anchorTs positive
+        // and read as forward to dt alone: a NULL timestamp arrives as Long.MIN_VALUE, and a
+        // nanosecond column spans only 292 years. ts <= anchorTs is subsumed while
+        // pendingTs >= anchorTs holds (anchor() always re-seats pending) and stays as armor for
+        // a loaded state that violates it. dt <= 0 catches the opposite wrap - a forward span
+        // over Long.MAX always wraps negative - and dt is the slope divisor below.
+        if (ts <= pendingTs || ts <= anchorTs || dt <= 0) {
             anchor(index, ts, value);
             sink.mark(index, true);
             return;
@@ -107,10 +116,10 @@ public class SwingingDoor {
 
         if (hasInterval && nLo > nHi) {
             // doors crossed: the pending point is archived (kept) and becomes the new anchor.
-            // dt2 cannot wrap: the guard above leaves ts - anchorTs positive and representable,
-            // and pending() only ever runs on a ts that cleared that same guard, so
-            // anchorTs <= pendingTs and dt2 is bounded by dt. It can still go non-positive when
-            // the ts argument itself moves backwards (1, 5, 3), which the check below handles.
+            // dt2 cannot wrap or go non-positive: the guard above admits only ts > pendingTs,
+            // and dt2 is bounded by dt, which is positive and representable, since
+            // anchorTs <= pendingTs. The degenerate check below stays as armor for a loaded
+            // state that breaks that invariant.
             long dt2 = ts - pendingTs;
             anchorIndex = pendingIndex;
             anchorTs = pendingTs;

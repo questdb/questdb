@@ -210,6 +210,38 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedBackwardTsArgAboveAnchorIsABoundary() throws Exception {
+        // Regression: a backward step in the ts argument that stays ABOVE the partition's
+        // current anchor is a series boundary (endpoint before it stays flushed, boundary row
+        // re-anchors), same as the below-anchor step. Partitions interleave so the swinging-door
+        // state - including pendingTs, which the boundary guard reads - round-trips through the
+        // per-partition map between the rows of each series. Partition 'a' takes the backward
+        // step (all four rows are two-point-segment endpoints); flat monotonic partition 'b'
+        // keeps only its endpoints, proving interior compression still works alongside.
+        assertQuery("select id from (select id, sdt(ats, val, 0.5) over (partition by sym order by ts) keep from tab) where keep order by id")
+                .ddl("create table tab (id int, sym symbol, ats timestamp, val double, ts timestamp) timestamp(ts)",
+                        """
+                                insert into tab values
+                                (0, 'a', 0::timestamp, 0.0, 1::timestamp),
+                                (1, 'b', 0::timestamp, 0.0, 2::timestamp),
+                                (2, 'a', 5000::timestamp, 0.0, 3::timestamp),
+                                (3, 'b', 1000::timestamp, 0.0, 4::timestamp),
+                                (4, 'a', 3000::timestamp, 0.0, 5::timestamp),
+                                (5, 'b', 2000::timestamp, 0.0, 6::timestamp),
+                                (6, 'a', 4000::timestamp, 0.0, 7::timestamp),
+                                (7, 'b', 3000::timestamp, 0.0, 8::timestamp)""")
+                .returns("""
+                        id
+                        0
+                        1
+                        2
+                        4
+                        6
+                        7
+                        """);
+    }
+
+    @Test
     public void testStatefulTimestampArgInitializedAndClosed() throws Exception {
         // Regression: BaseWindowFunction inits/frees only the value arg, so sdt must handle tsArg
         // itself. json_extract builds its native JSON pointer in init() and frees it in close();

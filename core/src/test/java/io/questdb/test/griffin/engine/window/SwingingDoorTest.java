@@ -166,6 +166,34 @@ public class SwingingDoorTest {
         Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
     }
 
+    @Test
+    public void testBackwardStepAboveAnchorIsABoundary() {
+        // 5M -> 3M steps backward but stays above the 0 anchor, so an anchor-only guard reads
+        // it as forward and, with a flat corridor that never crosses, discards the pending
+        // endpoint at 5M as interior. It is a series boundary: 5M ends the first segment and
+        // stays flushed, 3M re-anchors, 4M is the last pending point. All four are endpoints.
+        boolean[] k = run(new long[]{0, 5_000_000, 3_000_000, 4_000_000}, new double[]{0, 0, 0, 0}, 0.5);
+        Assert.assertArrayEquals(new boolean[]{true, true, true, true}, k);
+    }
+
+    @Test
+    public void testBackwardStepAboveAnchorAgreesAcrossValueShapes() {
+        // Same timestamps with values that cross the doors: pre-fix this shape was already kept
+        // whole via the dt2 degenerate branch while the flat shape above lost two endpoints.
+        // Whether a step is a boundary must depend on the timestamps alone, never the values.
+        boolean[] k = run(new long[]{0, 5_000_000, 3_000_000, 4_000_000}, new double[]{0, 0, 10, 10}, 0.5);
+        Assert.assertArrayEquals(new boolean[]{true, true, true, true}, k);
+    }
+
+    @Test
+    public void testEqualTimestampAgainstPendingIsABoundary() {
+        // duplicate timestamp against a NON-anchor pending: same series-reset contract as the
+        // duplicate-against-anchor case above (and as SubsampleFuzzTest documents). Two samples
+        // at one timestamp cannot lie on one corridor, so both stay kept regardless of value.
+        boolean[] k = run(new long[]{1, 5, 5}, new double[]{0, 0, 0}, 0.5);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
     // ---- F3-SDT-OVERFLOW: corridor slope terms overflowing to +/-Inf on finite input ----
 
     @Test

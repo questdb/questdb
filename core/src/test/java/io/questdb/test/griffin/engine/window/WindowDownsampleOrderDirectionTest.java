@@ -179,6 +179,23 @@ public class WindowDownsampleOrderDirectionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSdtBackwardStepAboveAnchorKeepsBoundarySemantics() throws Exception {
+        // Twin of the test above with the backward step landing ABOVE the still-current anchor:
+        // ats runs 0, 5000, back to 3000, then 4000. The step ends the first segment, so its
+        // pending endpoint (id 2) must stay flushed and id 3 re-anchors - the same documented
+        // boundary contract, previously missed because the guard compared against the anchor
+        // only and the flat corridor never crossed. Every row is a two-point-segment endpoint.
+        assertQuery("select id from (select id, sdt(ats, val, 0.5) over (order by ts) keep from m) where keep order by id")
+                .ddl("create table m (id int, ats timestamp, val double, ts timestamp) timestamp(ts)",
+                        "insert into m values " +
+                                "(1, 0::timestamp, 0.0, 1::timestamp)," +
+                                "(2, 5000::timestamp, 0.0, 2::timestamp)," +
+                                "(3, 3000::timestamp, 0.0, 3::timestamp)," +
+                                "(4, 4000::timestamp, 0.0, 4::timestamp)")
+                .returns("id\n1\n2\n3\n4\n");
+    }
+
+    @Test
     public void testM4AlignedNonTimestampOrderKeyStaysAccepted() throws Exception {
         // Precision check on the runtime guard: an ascending ORDER BY on a key that is not the
         // timestamp argument stays legal as long as the timestamps actually arrive ascending -
