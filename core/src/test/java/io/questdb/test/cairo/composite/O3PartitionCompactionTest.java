@@ -26,6 +26,7 @@ package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.PartitionCompactionPolicy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxReader;
@@ -182,6 +183,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             // with no flat floor any more, so a small fixture could otherwise trip it well before the
             // explicit trigger set after the buildup.
             enableCompaction();
+            // The fixture below needs a partition of several pieces, which only the pre-split makes.
+            letPreSplitCut();
             // Same fixture shape as testMoveTailCopiesTheTailNotTheWholePartition: a huge clean front
             // with a small, repeatedly-relocated stride pre-split into its own tail pieces, so MOVE-TAIL
             // (not REWRITE) is what the piece-count rule triggers.
@@ -199,7 +202,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             final long frontNameTxnBefore = frontNameTxnOfDay("x", "2024-01-01");
             final long diskBefore = diskSizeOfDay("x", "2024-01-01");
 
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, "2");
+            pinPieceCap(2);
             runCompactionPasses("x");
 
             Assert.assertFalse(
@@ -241,6 +244,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             // with no flat floor any more, so a small fixture could otherwise trip it well before the
             // explicit trigger set after the buildup.
             enableCompaction();
+            // The fixture below needs a partition of several pieces, which only the pre-split makes.
+            letPreSplitCut();
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
             node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
@@ -259,7 +264,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             final String expected = fingerprintOfDayVarSize("y", "2024-01-01");
             final long diskBefore = diskSizeOfDay("y", "2024-01-01");
 
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, "2");
+            pinPieceCap(2);
             for (int i = 0; i < 6; i++) {
                 execute("insert into y (i, s, ts) select cast(x as int) + 800000, null," +
                         " timestamp_sequence('" + nextPassDay() + "', 60*1000000L) from long_sequence(2)");
@@ -309,6 +314,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             // with no flat floor any more, so a small fixture could otherwise trip it well before the
             // explicit trigger set after the buildup.
             enableCompaction();
+            // The fixture below needs a partition of several pieces, which only the pre-split makes.
+            letPreSplitCut();
             setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
@@ -319,7 +326,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             backdate("x", "2024-01-01T05:00:00", 200);
             backdate("x", "2024-01-01T05:00:00", 200);
             backdate("x", "2024-01-01T05:00:00", 200);
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, "2");
+            pinPieceCap(2);
 
             final TableToken tt = engine.verifyTableName("x");
             final String before = fingerprintOfDay("x", "2024-01-01");
@@ -393,6 +400,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             // with no flat floor any more, so a small fixture could otherwise trip it well before the
             // explicit trigger set after the buildup.
             enableCompaction();
+            // The fixture below needs a partition of several pieces, which only the pre-split makes.
+            letPreSplitCut();
             // The clean front is deliberately huge relative to the dead space one relocated 200-row
             // stride leaves behind, so the waste-ratio rule (dead > ratio*live) never fires here - the
             // piece-count rule is what selects this partition instead.
@@ -420,7 +429,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             final long partitionsBefore = partitionCountOfDay("x", "2024-01-01");
             final long frontNameTxnBefore = frontNameTxnOfDay("x", "2024-01-01");
 
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, "2");
+            pinPieceCap(2);
             final long writtenBefore = physicallyWrittenRows();
             final long insertedByPasses = runCompactionPasses("x");
             // Net of the rows the housekeeping commits wrote themselves.
@@ -469,6 +478,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             // with no flat floor any more, so a small fixture could otherwise trip it well before the
             // explicit trigger set after the buildup.
             enableCompaction();
+            // The fixture below needs a partition of several pieces, which only the pre-split makes.
+            letPreSplitCut();
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
             node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
@@ -492,7 +503,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                     piecesBefore > 4
             );
 
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, "4");
+            pinPieceCap(4);
             runCompactionPasses("x");
             Assert.assertTrue(
                     "the piece-count rule left the partition above its limit" +
@@ -807,13 +818,37 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     // Compaction is always on now; kept as a no-op so call sites still document intent.
+    /**
+     * Housekeeping on, with the piece-count rule's SCALED cap out of the way. The cap is
+     * max(configured floor, liveRows / avg.rows.piece.lim) - see
+     * {@link PartitionCompactionPolicy#effectiveMaxPieces} - so a fixture of more than a few thousand rows
+     * and a deliberately small floor would silently stop triggering at that exact count. This suite tests
+     * the mechanism at small, exact numbers, so the divisor is pinned above any fixture's row count and the
+     * flat floor is the only threshold in play.
+     * <p>
+     * The same divisor sets the PRE-SPLIT's piece floor at twice its value, so this also stops the pre-split
+     * cutting anything. Call {@link #letPreSplitCut()} where a fixture needs a partition of several pieces
+     * to work on, and {@link #pinPieceCap(int)} to put the piece-count rule back in play afterwards.
+     */
     private static void enableCompaction() {
-        // The piece-count rule's cap scales with a folder's own live rows (max(configured floor,
-        // liveRows / avg.rows.piece.lim) - see PartitionCompactionPolicy.effectiveMaxPieces), so a test
-        // fixture with more than a few thousand rows and a deliberately small max.pieces would silently
-        // stop triggering at that exact count. This suite tests the mechanism at small, exact numbers, so
-        // pin the divisor absurdly high to keep the flat floor the only threshold in play.
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
+    }
+
+    /**
+     * A 32-row piece floor, so the pre-split cuts these small fixtures into several pieces instead of
+     * rewriting them whole.
+     */
+    private static void letPreSplitCut() {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
+    }
+
+    /**
+     * Puts the piece-count rule in play at exactly {@code pieces}: the divisor goes back above any fixture's
+     * row count, so the scaled cap is zero and the flat floor is what fires.
+     */
+    private static void pinPieceCap(int pieces) {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, pieces);
     }
 
     private static void enableMergeAppend() {

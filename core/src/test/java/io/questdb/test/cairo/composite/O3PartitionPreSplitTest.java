@@ -2873,6 +2873,84 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * range sits below the partition's shared column top, so the reader takes the "column absent" path
      * for it.
      */
+    /**
+     * A wide, sparse commit into a big partition must be cut around, not merged through.
+     * <p>
+     * 500k rows on the day and ONE commit of 500 rows scattered evenly across all of it. The commit's own span
+     * is the whole partition, so there is no slack at its edges to spare, and its transaction range covers
+     * every bin, so the clusterer finds no cold gap either - yet between any two incoming rows sit ~1000
+     * untouched existing rows, well over the 64 a cut has to spare here. Each row is carved out on its own and
+     * the commit copies nothing, and the piece budget has room for it:
+     * {@code liveRows / cairo.partition.compaction.avg.rows.piece.lim} is ~31k against 500 rows.
+     * <p>
+     * Merging instead rewrites the partition: 500k rows moved to place 500, which is the write amplification
+     * merge-append exists to remove.
+     */
+    @Test
+    public void testScatteredCommitIsCutAroundRatherThanMergedThrough() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // ~32-row piece floor, so a cut needs 64 existing rows to spare and the ~1000 between two
+            // incoming rows clear it easily.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
+
+            final int partitionRows = 500_000;
+            final int incomingRows = 500;
+            final long incomingStep = 86_400_000_000L / incomingRows;
+
+            // 500k rows over 2020-02-03, one every 172.8ms.
+            final String lower = "SELECT x::INT i, timestamp_sequence('2020-02-03', 172800) ts" +
+                    " FROM long_sequence(" + partitionRows + ')';
+            // A later day, so 2020-02-03 is never the active partition and the commit below is O3.
+            final String nextDay = "SELECT x::INT + 900000000 i," +
+                    " timestamp_sequence('2020-02-05', 60000000L) ts FROM long_sequence(50)";
+            // One commit, 500 rows, each landing between two existing rows.
+            final String scattered = "SELECT x::INT + 100000000 i," +
+                    " (" + (DAY_03 + incomingStep + 86_400) + " + (x - 1) * " + incomingStep + ")::TIMESTAMP ts" +
+                    " FROM long_sequence(" + incomingRows + ')';
+
+            execute("CREATE TABLE x AS (" + lower + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE x0 AS (" + lower + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x " + nextDay);
+            execute("CREATE TABLE w AS (" + nextDay + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            drainWalQueue();
+
+            final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+            execute("INSERT INTO x " + scattered);
+            execute("CREATE TABLE z AS (" + scattered + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            drainWalQueue();
+
+            final long written = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore;
+            final int pieces = piecesOfDay("x");
+
+            // The whole point: the commit costs its own rows, not the partition's.
+            Assert.assertTrue(
+                    "the commit rewrote the partition instead of cutting around it"
+                            + " [physicallyWritten=" + written + ", incomingRows=" + incomingRows
+                            + ", partitionRows=" + partitionRows + ']',
+                    written < 10L * incomingRows
+            );
+            // And it paid for that with pieces, which the budget has room for.
+            final long pieceBudget = (partitionRows + incomingRows)
+                    / configuration.getPartitionCompactionAvgRowsPieceLim();
+            Assert.assertTrue(
+                    "the cuts were not made: " + describePieces("x"),
+                    pieces > incomingRows / 2
+            );
+            Assert.assertTrue(
+                    "the cuts blew the piece budget [pieces=" + pieces + ", budget=" + pieceBudget + ']',
+                    pieces <= pieceBudget
+            );
+
+            assertNoOverlappingPieces("x");
+            assertRowsInTimestampOrder("x");
+
+            final String expected = "(SELECT * FROM x0 UNION ALL SELECT * FROM w UNION ALL SELECT * FROM z)" +
+                    " ORDER BY ts";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+        });
+    }
+
     private static void assertHasPieceBelowColumnTop(String tableName, String columnName) {
         try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
             final int columnIndex = reader.getMetadata().getColumnIndex(columnName);

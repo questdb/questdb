@@ -690,7 +690,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.o3.min.lag\tQDB_CAIRO_O3_MIN_LAG\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.open.column.queue.capacity\tQDB_CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.partition.merge.append.enabled\tQDB_CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "cairo.o3.partition.presplit.max.cuts\tQDB_CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS\t7\tdefault\tfalse\tfalse\n" +
+                                    "cairo.o3.partition.presplit.max.cuts\tQDB_CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.partition.purge.list.initial.capacity\tQDB_CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY\t1\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.partition.queue.capacity\tQDB_CAIRO_O3_PARTITION_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.partition.split.min.size\tQDB_CAIRO_O3_PARTITION_SPLIT_MIN_SIZE\t52428800\tdefault\tfalse\tfalse\n" +

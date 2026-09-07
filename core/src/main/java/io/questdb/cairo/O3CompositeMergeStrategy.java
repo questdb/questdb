@@ -38,6 +38,11 @@ public class O3CompositeMergeStrategy {
      * Stride of the piece bounds list: {@code tsLo}, {@code tsHi}, {@code rowOffset}, {@code rowCount}.
      */
     public static final int LONGS_PER_BOUND = 4;
+    /**
+     * Stride of the cut list {@link #computeCuts} fills: {@code pieceIndex}, {@code cutTimestamp}, and the rows the cut
+     * must leave below and above it once resolved against the real timestamp column.
+     */
+    public static final int LONGS_PER_CUT = 4;
     private static final int BOUND_ROW_COUNT = 3;
     private static final int BOUND_ROW_OFFSET = 2;
     private static final int BOUND_TS_HI = 1;
@@ -158,9 +163,16 @@ public class O3CompositeMergeStrategy {
     }
 
     /**
-     * PRE-SPLIT. Chooses where to cut existing pieces so the batch lands on as little data as possible, and returns the
-     * cuts as {@code (pieceIndex, cutTimestamp)} pairs in {@code cutsOut}.
-     * @param cutsOut output, cleared first: pairs of (pieceIndex, cutTimestamp)
+     * PRE-SPLIT. Chooses where to cut existing pieces so the batch lands on as little data as possible.
+     * <p>
+     * The batch inside a piece is first broken into CLUSTERS: two incoming rows belong to different clusters when the
+     * existing rows between them outweigh the piece a cut costs. Each cluster is then carved out by a cut at its first
+     * row and one just above its last. A piece's bounds describe the rows it holds, so the cluster belongs to neither
+     * side and lands in the gap between them as a piece of its own - the existing rows around it are never read. A
+     * batch that spans the whole piece, which has no outer edge to spare, is cut around all the same.
+     * @param minPieceRows the existing rows a cut has to spare to be worth the piece it makes
+     * @param maxCuts hard cap on the cuts one commit makes, a safety valve above the size rule
+     * @param cutsOut output, cleared first: {@link #LONGS_PER_CUT} longs per cut, ascending
      * @return the number of cuts proposed
      */
     public static int computeCuts(
@@ -173,6 +185,8 @@ public class O3CompositeMergeStrategy {
             LongList cutsOut
     ) {
         cutsOut.clear();
+        // A cut costs a piece on each side of the cluster, so the gap between two clusters has to pay for both.
+        final long minGapRows = 2 * minPieceRows;
         final int pieceCount = bounds.size() / LONGS_PER_BOUND;
         int cuts = 0;
         for (int p = 0; p < pieceCount && cuts < maxCuts; p++) {
@@ -191,19 +205,36 @@ public class O3CompositeMergeStrategy {
                 continue; // the batch does not reach this piece
             }
             final long lastInside = lastAtOrBelow(sortedTimestampsAddr, firstInside, srcOooHi, tsHi);
-            final long batchHi = TableWriter.getTimestampIndexValue(sortedTimestampsAddr, lastInside);
 
-            // Spare the rows below the batch.
-            if (batchLo > tsLo && rowsBelow(tsLo, tsHi, rows, batchLo) >= minPieceRows && cuts < maxCuts) {
-                cutsOut.add(p);
-                cutsOut.add(batchLo);
-                cuts++;
-            }
-            // Spare the rows above the batch.
-            if (batchHi < tsHi && rows - rowsBelow(tsLo, tsHi, rows, batchHi + 1) >= minPieceRows && cuts < maxCuts) {
-                cutsOut.add(p);
-                cutsOut.add(batchHi + 1);
-                cuts++;
+            long clusterLo = batchLo;
+            long clusterHi = batchLo;
+            // Rows of the piece below the last cut taken, so a cluster is measured from the cut before it rather
+            // than from the piece's start.
+            long lastCutBelow = 0;
+            for (long o3 = firstInside + 1; o3 <= lastInside + 1 && cuts < maxCuts; o3++) {
+                final boolean isLastCluster = o3 > lastInside;
+                final long ts = isLastCluster ? tsHi : TableWriter.getTimestampIndexValue(sortedTimestampsAddr, o3);
+                final long above = rowsBelow(tsLo, tsHi, rows, clusterHi + 1);
+                if (!isLastCluster && rowsBelow(tsLo, tsHi, rows, ts) - above < minGapRows) {
+                    clusterHi = ts;
+                    continue;
+                }
+                // Spare the rows below the cluster.
+                final long below = rowsBelow(tsLo, tsHi, rows, clusterLo);
+                if (clusterLo > tsLo && below - lastCutBelow >= minPieceRows) {
+                    addCut(cutsOut, p, clusterLo, minPieceRows, 0);
+                    cuts++;
+                    lastCutBelow = below;
+                }
+                // Spare the rows above it. Only the LAST cluster needs its own test here: every other one has the
+                // gap that ended it, which already cleared twice this bar.
+                if (clusterHi < tsHi && (!isLastCluster || rows - above >= minPieceRows) && cuts < maxCuts) {
+                    addCut(cutsOut, p, clusterHi + 1, 0, minPieceRows);
+                    cuts++;
+                    lastCutBelow = above;
+                }
+                clusterLo = ts;
+                clusterHi = ts;
             }
         }
         return cuts;
@@ -262,6 +293,10 @@ public class O3CompositeMergeStrategy {
             }
         }
         return result;
+    }
+
+    private static void addCut(LongList cutsOut, int piece, long cutTs, long minRowsBelow, long minRowsAbove) {
+        cutsOut.add((long) piece, cutTs, minRowsBelow, minRowsAbove);
     }
 
     /**

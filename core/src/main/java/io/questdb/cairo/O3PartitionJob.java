@@ -140,8 +140,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
         final long srcNameTxn = txReader.getPartitionNameTxn(partitionIndex);
         // Twice the piece-count rule's target average piece size, so a pre-split cannot on its own drive the
-        // partition past the piece cap effectiveMaxPieces() derives from that same number.
-        final long minPieceRows = 2 * tableWriter.getConfiguration().getPartitionCompactionAvgRowsPieceLim();
+        // partition past the piece cap effectiveMaxPieces() derives from that same number. Saturated, because
+        // the knob is allowed to be set high enough to turn the piece-count rule off entirely, and doubling
+        // that would wrap negative and turn the floor off with it.
+        final long minPieceRows = 2 * Math.min(
+                tableWriter.getConfiguration().getPartitionCompactionAvgRowsPieceLim(),
+                Long.MAX_VALUE / 8
+        );
         final FilesFacade ff = tableWriter.getFilesFacade();
 
         // Steps 1 and 2 both read the designated-timestamp column, so it is mapped ONCE over the whole physical extent.
@@ -190,7 +195,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final long cutTs = clusterCuts.getQuick(i);
                     final int piece = O3CompositeMergeStrategy.findPieceContaining(boundsOut, cutTs);
                     if (piece > -1) {
-                        applyCutResolved(boundsOut, piece, cutTs, tsAddr, e);
+                        applyCutResolved(boundsOut, piece, cutTs, tsAddr, e, 0, 0);
                     }
                 }
             }
@@ -204,9 +209,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     cutsOut
             );
             // Right to left: a cut inserts a piece and shifts every index above it, so applying the highest
-            // first leaves the lower cuts' indices valid.
-            for (int c = cutsOut.size() - 2; c >= 0; c -= 2) {
-                applyCutResolved(boundsOut, (int) cutsOut.getQuick(c), cutsOut.getQuick(c + 1), tsAddr, e);
+            // first leaves the lower cuts' indices valid. It also puts the real rows a cut spares in front of
+            // the cut that promised them - the rows above it are bounded by the cut already applied - so a
+            // promise the uniform-density estimate could not keep is dropped here rather than published.
+            for (int c = cutsOut.size() - O3CompositeMergeStrategy.LONGS_PER_CUT;
+                 c >= 0;
+                 c -= O3CompositeMergeStrategy.LONGS_PER_CUT) {
+                applyCutResolved(
+                        boundsOut,
+                        (int) cutsOut.getQuick(c),
+                        cutsOut.getQuick(c + 1),
+                        tsAddr,
+                        e,
+                        cutsOut.getQuick(c + 2),
+                        cutsOut.getQuick(c + 3)
+                );
             }
 
             // A replace-range commit needs every piece fully inside or fully outside its declared range,
@@ -215,11 +232,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             if (tableWriter.isCommitReplaceMode() && replaceRangeTsLo <= replaceRangeTsHi) {
                 final int loPiece = O3CompositeMergeStrategy.findPieceContaining(boundsOut, replaceRangeTsLo);
                 if (loPiece > -1) {
-                    applyCutResolved(boundsOut, loPiece, replaceRangeTsLo, tsAddr, e);
+                    applyCutResolved(boundsOut, loPiece, replaceRangeTsLo, tsAddr, e, 0, 0);
                 }
                 final int hiPiece = O3CompositeMergeStrategy.findPieceContaining(boundsOut, replaceRangeTsHi);
                 if (hiPiece > -1) {
-                    applyCutResolved(boundsOut, hiPiece, replaceRangeTsHi + 1, tsAddr, e);
+                    applyCutResolved(boundsOut, hiPiece, replaceRangeTsHi + 1, tsAddr, e, 0, 0);
                 }
             }
         } finally {
@@ -1203,9 +1220,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     /**
      * Resolves {@code cutTs} to a row of the piece by searching its own slice of the designated-timestamp column, then
      * cuts there.
+     * @param minRowsBelow drop the cut when fewer real rows than this sit below it, whatever the estimate promised
+     * @param minRowsAbove drop the cut when fewer real rows than this sit above it
      * @return true when the cut was applied
      */
-    private static boolean applyCutResolved(LongList bounds, int piece, long cutTs, long tsAddr, long e) {
+    private static boolean applyCutResolved(
+            LongList bounds,
+            int piece,
+            long cutTs,
+            long tsAddr,
+            long e,
+            long minRowsBelow,
+            long minRowsAbove
+    ) {
         final long rowOffset = O3CompositeMergeStrategy.getRowOffset(bounds, piece);
         final long rowCount = O3CompositeMergeStrategy.getRowCount(bounds, piece);
         if (rowCount < 2) {
@@ -1232,11 +1259,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         if (row <= rowOffset || row >= rowOffset + rowCount) {
             return false;
         }
+        final long below = row - rowOffset;
+        if (below < minRowsBelow || rowCount - below < minRowsAbove) {
+            return false;
+        }
         // Each half is bounded by its OWN rows, so a cut across a data gap leaves the gap owned by neither.
         return O3CompositeMergeStrategy.applyCut(
                 bounds,
                 piece,
-                row - rowOffset,
+                below,
                 Unsafe.getLong(tsAddr + (row - 1) * Long.BYTES),
                 Unsafe.getLong(tsAddr + row * Long.BYTES)
         );

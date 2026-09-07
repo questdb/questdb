@@ -772,7 +772,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getO3PartitionPreSplitMaxCuts() {
-        return 7;
+        return 10_000;
     }
 
     @Override

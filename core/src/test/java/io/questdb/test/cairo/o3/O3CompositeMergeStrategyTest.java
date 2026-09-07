@@ -306,7 +306,8 @@ public class O3CompositeMergeStrategyTest {
             final LongList cuts = new LongList();
             final int cutCount = O3CompositeMergeStrategy.computeCuts(bounds, addr, 0, 1, 50, 8, cuts);
             for (int c = cutCount - 1; c >= 0; c--) {
-                applyCut(bounds, (int) cuts.getQuick(c * 2), cuts.getQuick(c * 2 + 1));
+                final int at = c * O3CompositeMergeStrategy.LONGS_PER_CUT;
+                applyCut(bounds, (int) cuts.getQuick(at), cuts.getQuick(at + 1));
             }
             Assert.assertEquals(
                     "P0(tsLo=0,tsHi=99,rows=100) P1(tsLo=100,tsHi=110,rows=11) P2(tsLo=111,tsHi=299,rows=189)"
@@ -370,13 +371,46 @@ public class O3CompositeMergeStrategyTest {
 
     @Test
     public void testCutsAreNotProposedForASliver() {
-        // A cut that spares fewer than minPieceRows costs a record and saves nothing.
+        // A cut that spares fewer than minPieceRows costs a record and saves nothing. Both rows sit within a
+        // sliver of an edge, and the 990 rows between them are under the 1200 two clusters would have to have,
+        // so there is nothing here worth a cut.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 0, 1000);
+        withTimestamps(new long[]{5, 995}, addr -> {
+            final LongList cuts = new LongList();
+            final int n = O3CompositeMergeStrategy.computeCuts(bounds, addr, 0, 1, 600, 8, cuts);
+            Assert.assertEquals(0, n);
+        });
+    }
+
+    @Test
+    public void testCutsSplitTheBatchIntoClusters() {
+        // Two rows at either end of the piece with 690 rows between them. The batch's own edges spare almost
+        // nothing, but the stretch BETWEEN the rows is worth two pieces, so each row is carved out on its own
+        // and the middle is left where it is.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 0, 1000);
+        withTimestamps(new long[]{150, 840}, addr -> {
+            final LongList cuts = new LongList();
+            final int n = O3CompositeMergeStrategy.computeCuts(bounds, addr, 0, 1, 100, 8, cuts);
+            Assert.assertEquals(
+                    "cut(piece=0,ts=150) cut(piece=0,ts=151) cut(piece=0,ts=840) cut(piece=0,ts=841)",
+                    formatCuts(cuts, n)
+            );
+        });
+    }
+
+    @Test
+    public void testASliverAtThePieceEdgeIsStillCutAround() {
+        // The same two rows, and now the 990 rows between them do clear the bar. Neither row has enough under
+        // or over it to spare on its own, but the stretch between them pays for both cuts, so the piece is cut
+        // there rather than merged whole - the 6-row head is what the row at 5 merges into.
         final LongList bounds = new LongList();
         O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 0, 1000);
         withTimestamps(new long[]{5, 995}, addr -> {
             final LongList cuts = new LongList();
             final int n = O3CompositeMergeStrategy.computeCuts(bounds, addr, 0, 1, 100, 8, cuts);
-            Assert.assertEquals(0, n);
+            Assert.assertEquals("cut(piece=0,ts=6) cut(piece=0,ts=995)", formatCuts(cuts, n));
         });
     }
 
@@ -416,7 +450,8 @@ public class O3CompositeMergeStrategyTest {
             final int cutCount = O3CompositeMergeStrategy.computeCuts(bounds, addr, 0, 1, 100, 8, cuts);
             // Right to left: a cut inserts a piece and shifts every index above it.
             for (int c = cutCount - 1; c >= 0; c--) {
-                Assert.assertTrue(applyCut(bounds, (int) cuts.getQuick(c * 2), cuts.getQuick(c * 2 + 1)));
+                final int at = c * O3CompositeMergeStrategy.LONGS_PER_CUT;
+                Assert.assertTrue(applyCut(bounds, (int) cuts.getQuick(at), cuts.getQuick(at + 1)));
             }
             Assert.assertEquals(
                     "P0(tsLo=0,tsHi=499,rows=500) P1(tsLo=500,tsHi=510,rows=11) P2(tsLo=511,tsHi=999,rows=489)",
@@ -595,8 +630,9 @@ public class O3CompositeMergeStrategyTest {
             if (i > 0) {
                 sb.append(' ');
             }
-            sb.append("cut(piece=").append(cuts.getQuick(i * 2))
-                    .append(",ts=").append(cuts.getQuick(i * 2 + 1)).append(')');
+            final int at = i * O3CompositeMergeStrategy.LONGS_PER_CUT;
+            sb.append("cut(piece=").append(cuts.getQuick(at))
+                    .append(",ts=").append(cuts.getQuick(at + 1)).append(')');
         }
         return sb.toString();
     }
