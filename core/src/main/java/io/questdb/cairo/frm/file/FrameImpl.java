@@ -62,9 +62,6 @@ import static io.questdb.cairo.frm.FrameColumn.COLUMN_CONTIGUOUS_FILE;
 import static io.questdb.cairo.frm.FrameColumn.COLUMN_MEMORY;
 
 public class FrameImpl implements Frame {
-    /**
-     * How many columns an operation holds open at once.
-     */
     private static final int MAX_OPEN_COLUMNS = 64;
     // A task slot an operation has no use for, matching TableWriter#IGNORE.
     private static final long IGNORE = -1L;
@@ -78,13 +75,7 @@ public class FrameImpl implements Frame {
     private boolean canWrite = false;
     private ReadOnlyObjList<? extends MemoryCR> columnsMemory;
     private ColumnTopSink columnTopSink;
-    /**
-     * Per-column tracked top, index = column index, -1 = untouched this open.
-     */
     private final LongList columnTops = new LongList();
-    /**
-     * The columns one operation has open, index = column index, empty between operations.
-     */
     private final ObjList<FrameColumn> source1Columns = new ObjList<>();
     private final ObjList<FrameColumn> source2Columns = new ObjList<>();
     private final ObjList<FrameColumn> targetColumns = new ObjList<>();
@@ -342,7 +333,7 @@ public class FrameImpl implements Frame {
             throw CairoException.critical(0).put("cannot save column top, partition frame is read-only [path=").put(partitionPath).put(']');
         }
         // Tracked internally whether or not there is an external sink: createColumn reads this list back for the NEXT
-        // piece written to this frame, and only a tracked value stops it re-resolving the source directory's own - by.
+        // piece written to this frame, and only a tracked value stops it re-resolving the source directory's own.
         final int columnIndex = frameColumn.getColumnIndex();
         final long columnTop = Math.max(frameColumn.getColumnTop(), columnTops.getQuick(columnIndex));
         columnTops.setQuick(columnIndex, columnTop);
@@ -433,9 +424,6 @@ public class FrameImpl implements Frame {
         }
     }
 
-    /**
-     * Runs one batch's columns and returns once every one of them has finished.
-     */
     private void dispatchColumns(
             TableWriter.ColumnTaskHandler taskHandler,
             boolean isParallel,
@@ -499,9 +487,6 @@ public class FrameImpl implements Frame {
         TableWriter.consumeColumnTasks0(queue, queuedCount, messageBus.getColumnTaskSubSeq(), doneLatch);
     }
 
-    /**
-     * Drives one operation's per-column work.
-     */
     private void execute(
             Frame source1,
             @Nullable Frame source2,

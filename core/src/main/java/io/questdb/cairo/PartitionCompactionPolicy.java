@@ -97,16 +97,10 @@ public class PartitionCompactionPolicy implements Mutable {
         return selectedReason;
     }
 
-    /**
-     * Records that the partition was compacted, clearing any decline backoff a prior attempt left behind.
-     */
     public void onCompacted(long partitionTimestamp) {
         clearBackoff(partitionTimestamp);
     }
 
-    /**
-     * Records that the partition could not be compacted this time, and doubles how long to wait before trying again.
-     */
     public void onDeclined(long partitionTimestamp, long nowMicros) {
         final long max = configuration.getPartitionCompactionDeclineBackoffMax();
         for (int i = 0, n = backoff.size(); i < n; i += BACKOFF_LONGS) {
@@ -124,9 +118,6 @@ public class PartitionCompactionPolicy implements Mutable {
         backoff.add(Micros.MINUTE_MICROS);
     }
 
-    /**
-     * The partition index to compact next, or -1.
-     */
     public int selectPartition(TxWriter txWriter, PartitionGeometry geometry, long avgRecordSize, long nowMicros) {
         selectedReason = REASON_NONE;
         selectedPartitionIndex = -1;

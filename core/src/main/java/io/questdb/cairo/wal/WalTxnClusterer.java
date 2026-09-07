@@ -42,9 +42,6 @@ public class WalTxnClusterer implements Mutable {
     private final LongList txnRanges = new LongList();
     private int[] cover = new int[0];
 
-    /**
-     * Buffers one incoming transaction's timestamp range.
-     */
     public void addTxnRange(long minTs, long maxTs) {
         txnRanges.add(minTs, maxTs);
     }

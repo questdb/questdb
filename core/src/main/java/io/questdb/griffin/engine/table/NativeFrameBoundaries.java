@@ -40,9 +40,6 @@ final class NativeFrameBoundaries {
     // Exclusive high row of each frame, in order. A frame's low row is the previous entry, or 0.
     private final LongList frameHis = new LongList();
 
-    /**
-     * Rows per page frame, before any cut at a piece boundary or a column top.
-     */
     static long calculatePageFrameRowLimit(
             long partitionLo,
             long partitionHi,
@@ -65,9 +62,6 @@ final class NativeFrameBoundaries {
         return frameHis.getQuick(index);
     }
 
-    /**
-     * Computes the boundaries for one partition, replacing whatever the previous call left.
-     */
     public void of(
             TableReader tableReader,
             ColumnVersionReader columnVersionReader,

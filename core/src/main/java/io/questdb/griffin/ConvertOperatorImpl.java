@@ -487,9 +487,6 @@ public class ConvertOperatorImpl implements Closeable {
         sortPiecesByRowOffset(pieceRowOffsets, pieceRowCounts);
     }
 
-    /**
-     * Piece walk into a FIXED destination, from either a fixed or a STRING/VARCHAR source.
-     */
     private void convertToFixedDestByPieces(
             int partitionIndex,
             int pieceCount,
@@ -528,9 +525,6 @@ public class ConvertOperatorImpl implements Closeable {
         }
     }
 
-    /**
-     * Piece walk into a STRING/VARCHAR destination, from either a fixed or a STRING/VARCHAR source.
-     */
     private void convertToVarDestByPieces(
             int partitionIndex,
             int pieceCount,

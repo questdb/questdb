@@ -394,9 +394,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return parquetRowGroupLos.getQuick(frameIndex);
     }
 
-    /**
-     * The INDEX row the frame's first row sits at, i.e.
-     */
     public long getIndexRowLo(int frameIndex) {
         return indexRowLos.getQuick(frameIndex);
     }

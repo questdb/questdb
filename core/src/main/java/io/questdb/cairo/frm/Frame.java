@@ -49,9 +49,6 @@ public interface Frame extends Closeable {
 
     FrameColumn createColumn(int columnIndex);
 
-    /**
-     * Opens a COVERING posting-indexed column as a plain one, so this frame writes its data but adds no index entries.
-     */
     default void setDeferCoveredIndexing(boolean deferCoveredIndexing) {
     }
 

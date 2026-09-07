@@ -38,9 +38,6 @@ import java.io.Closeable;
  * have more than one.
  */
 public class PartitionGeometry implements Closeable, Mutable {
-    /**
-     * A partition index that resolves to nothing.
-     */
     public static final int NO_PARTITION = -1;
     private static final long FLAG_DIRTY = 1L;
     /**
@@ -48,9 +45,6 @@ public class PartitionGeometry implements Closeable, Mutable {
      * running sum of the row counts before it.
      */
     private static final int LONGS_PER_PIECE = 5;
-    /**
-     * Floors below which reclaiming is not worth the walk. A cache this small costs nothing to carry.
-     */
     private static final int MIN_PIECE_HOLES = 1024;
     private static final int MIN_RESOLVED_BEFORE_EVICT = 256;
     /**
@@ -171,9 +165,6 @@ public class PartitionGeometry implements Closeable, Mutable {
         return found;
     }
 
-    /**
-     * The byte size of the geometry record currently COMMITTED for this directory.
-     */
     public long getCommittedRecordSize(int partitionIndex) {
         final int res = resolveInternal(partitionIndex);
         return res < 0 ? 0 : resolved.getQuick(res + RES_COMMITTED_RECORD_SIZE);
@@ -192,9 +183,6 @@ public class PartitionGeometry implements Closeable, Mutable {
         return res < 0 ? 0 : resolved.getQuick(res + RES_LAST_WRITE_MICROS);
     }
 
-    /**
-     * Live rows summed over the directory's pieces.
-     */
     public long getLiveRows(int partitionIndex) {
         return txReader.getPartitionSize(partitionIndex);
     }
@@ -297,9 +285,6 @@ public class PartitionGeometry implements Closeable, Mutable {
         return dirtyCount > 0;
     }
 
-    /**
-     * Exact: more than one piece, or dead space above the live rows, or rows starting above file row 0.
-     */
     public boolean isComposite(int partitionIndex) {
         final int res = resolveInternal(partitionIndex);
         if (res < 0) {
@@ -333,9 +318,6 @@ public class PartitionGeometry implements Closeable, Mutable {
         resolveInternal(partitionIndex);
     }
 
-    /**
-     * Starts building the partition's new piece array.
-     */
     public void beginUpdate(int partitionIndex) {
         resolveInternal(partitionIndex);
         pending.clear();
@@ -473,9 +455,6 @@ public class PartitionGeometry implements Closeable, Mutable {
         return ref;
     }
 
-    /**
-     * Reclaims the holes left by in-place directory updates.
-     */
     private void compactPieces() {
         scratch.clear();
         for (int i = 0, n = resolved.size(); i < n; i += LONGS_PER_RESOLVED) {

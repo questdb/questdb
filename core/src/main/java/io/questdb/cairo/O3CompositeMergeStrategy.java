@@ -233,9 +233,6 @@ public class O3CompositeMergeStrategy {
         return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_ROW_COUNT);
     }
 
-    /**
-     * The FILE row this piece's first row sits at.
-     */
     public static long getRowOffset(LongList bounds, int piece) {
         return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_ROW_OFFSET);
     }
@@ -301,21 +298,9 @@ public class O3CompositeMergeStrategy {
     }
 
     public enum ActionType {
-        /**
-         * The piece is untouched: its bytes stay, only its extent is carried forward. Copies NOTHING.
-         */
         KEEP,
-        /**
-         * The batch slice overlaps the piece; the two go out as one image at the shared files' tail.
-         */
         MERGE,
-        /**
-         * The batch slice falls in a gap and becomes a new piece at the shared files' tail.
-         */
         NEW_PIECE,
-        /**
-         * The batch slice falls above the last piece, which already owns the shared files' tail and claims none of it.
-         */
         APPEND,
         /**
          * The piece falls entirely inside a replace-range commit's declared range and carries no O3 rows of its own: it

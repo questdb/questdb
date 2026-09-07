@@ -586,9 +586,6 @@ public class TxReader implements Closeable, Mutable {
         return (int) ((geometryRef & PARTITION_GEOMETRY_GENERATION_MASK) >>> PARTITION_GEOMETRY_GENERATION_BIT_OFFSET);
     }
 
-    /**
-     * The byte offset inside that file at which the partition's committed geometry record starts.
-     */
     public static long geometryOffset(long geometryRef) {
         return (geometryRef & PARTITION_GEOMETRY_OFFSET_MASK) << PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT;
     }
@@ -608,9 +605,6 @@ public class TxReader implements Closeable, Mutable {
                 | packedOffset;
     }
 
-    /**
-     * Slot 3 of the partition's record, verbatim, when it is a geometry pointer.
-     */
     public long getGeometryRef(int partitionIndex) {
         final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
         if (!isPartitionCompositeByRawIndex(rawIndex)) {

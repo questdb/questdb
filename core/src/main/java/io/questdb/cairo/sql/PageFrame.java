@@ -150,9 +150,6 @@ public interface PageFrame {
         return getPartitionHi();
     }
 
-    /**
-     * Returns the low row, inclusive, to ask this frame's INDEX for.
-     */
     default long getIndexRowLo() {
         return getPartitionLo();
     }

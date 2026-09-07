@@ -230,9 +230,6 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         }
     }
 
-    /**
-     * The address the source's row 0 WOULD be at, which is what the merge index's absolute row ids address.
-     */
     private long rowZeroAddr(FrameColumn column, long lo, long hi) {
         if (lo >= hi) {
             return 0;
@@ -247,9 +244,6 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         return column.getContiguousDataAddr(hi) - (top << shl);
     }
 
-    /**
-     * The O3 merge kernels, picked by column width.
-     */
     private static void mergeShuffle(long src1, long src2, long dst, long mergeIndexAddr, long rows, int shl) {
         switch (shl) {
             case 0 -> Vect.mergeShuffle8Bit(src1, src2, dst, mergeIndexAddr, rows);

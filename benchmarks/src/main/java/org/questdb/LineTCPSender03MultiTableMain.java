@@ -48,9 +48,6 @@ public class LineTCPSender03MultiTableMain {
         haltLatch.await();
     }
 
-    /**
-     * One stream into the shared table.
-     */
     private static void doSend(long streamOffsetMicros, SOCountDownLatch haltLatch) {
         String hostIPv4 = "127.0.0.1";
         int port = 9009; // 8089 influx

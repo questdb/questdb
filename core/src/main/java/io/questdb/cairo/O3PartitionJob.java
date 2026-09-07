@@ -1241,9 +1241,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         );
     }
 
-    /**
-     * Opens a partition's designated-timestamp column for reading.
-     */
     private static long openTimestampColumnRO(
             Path pathToTable,
             long partitionTimestamp,

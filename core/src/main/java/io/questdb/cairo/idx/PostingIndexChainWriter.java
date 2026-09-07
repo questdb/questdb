@@ -680,9 +680,6 @@ public final class PostingIndexChainWriter {
         }
     }
 
-    /**
-     * The region limit the on-disk chain header currently publishes, or -1 when the header cannot be read.
-     */
     public long readPublishedRegionLimit(MemoryR keyMem) {
         if (!PostingIndexChainHeader.readUnderSeqlock(keyMem, headerScratch)
                 || headerScratch.formatVersion != PostingIndexUtils.V2_FORMAT_VERSION) {

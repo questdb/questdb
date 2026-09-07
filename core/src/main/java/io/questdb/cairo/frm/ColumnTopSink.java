@@ -51,8 +51,5 @@ public interface ColumnTopSink {
     default void ofColumnCount(int columnCount) {
     }
 
-    /**
-     * Reports one column's top.
-     */
     void setColumnTop(int columnIndex, long columnTop);
 }

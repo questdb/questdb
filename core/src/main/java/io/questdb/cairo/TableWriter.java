@@ -1852,7 +1852,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean rewritten = compactPartition0(partitionIndex);
         if (rewritten && isActivePartition) {
             // A REWRITE retires the directory columns[] is mapped against, and the reopen frees every posting indexer,
-            // discarding the chain compactPartition0's seal just staged on the old objects - so reseal below against.
+            // discarding the chain compactPartition0's seal staged on the old objects - hence the reseal below.
             o3FinishInFlight = true;
             try {
                 closeActivePartition(false);
@@ -5622,9 +5622,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /**
-     * Estimated bytes per row, used to turn the byte-valued compaction settings into row counts.
-     */
     private long avgRecordSize() {
         return avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = estimateAvgRecordSize(metadata));
     }
@@ -5901,9 +5898,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         deferredPostingSealPurges.clear();
     }
 
-    /**
-     * The upper edge of the timestamp range a WAL transaction makes HOT for clustering.
-     */
     private long clusterTxnRangeHi(long seqTxn) {
         if (walTxnDetails.getDedupMode(seqTxn) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
                 && walTxnDetails.getReplaceRangeTsHi(seqTxn) > walTxnDetails.getReplaceRangeTsLow(seqTxn)) {
@@ -8249,9 +8243,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         processPartitionRemoveCandidates();
     }
 
-    /**
-     * Folds whatever can be folded when no partition crossed a compaction threshold.
-     */
     private void foldFoldableFolders(long wallClockMicros) {
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
         final PartitionGeometry geometry = getGeometry();
@@ -10514,9 +10505,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /**
-     * A native partition's last-modifying seqTxn, or -1 when unknown.
-     */
     private long nativePartitionSeqTxn(int partitionIndex) {
         if (txWriter.isPartitionComposite(partitionIndex)) {
             return getGeometry().getSeqTxn(partitionIndex);
@@ -14552,9 +14540,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /**
-     * Reclaims a partition compaction's staging directory once no swap can accept it any more.
-     */
     private void removeCompactingPartitionDirIfStale(long pUtf8NameZ) {
         final int markerLo = Utf8s.indexOfAscii(utf8Sink, 0, utf8Sink.size(), COMPACTING_DIR_MARKER);
         final boolean stale;

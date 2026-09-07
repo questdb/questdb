@@ -405,9 +405,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         }
     }
 
-    /**
-     * Drops pending entries nothing will ever claim.
-     */
     private void expirePendingSwaps(long nowMicros) {
         for (int i = pendingSwaps.size() - 2; i >= 0; i -= 2) {
             if (pendingSwaps.getQuick(i + 1) < nowMicros - PENDING_SWAP_MEMO_TTL_MICROS) {

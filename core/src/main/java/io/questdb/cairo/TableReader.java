@@ -590,9 +590,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txFile.getTransientRowCount();
     }
 
-    /**
-     * The level-2 resolver for this table's COMPOSITE partitions, created on first use.
-     */
     public PartitionGeometry getGeometry() {
         if (partitionGeometry == null) {
             // The root is built afresh rather than trimmed out of `path`.

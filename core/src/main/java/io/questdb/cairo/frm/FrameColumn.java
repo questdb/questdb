@@ -89,9 +89,6 @@ public interface FrameColumn extends Closeable {
 
     int getStorageType();
 
-    /**
-     * Whether this column's data is the 16-bytes-per-row SORTED TIMESTAMP INDEX rather than a column of timestamps.
-     */
     default boolean isTimestampIndex() {
         return false;
     }
