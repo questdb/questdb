@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -1055,6 +1057,23 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
      */
     @Test
     public void testScanDoesNotRebuildAStagingCopyWhileItsSwapIsStillQueued() throws Exception {
+        assertNoRebuildWhileSwapQueued("1h");
+    }
+
+    /**
+     * The same guard, under an idle timeout short enough to have expired the record that carries it. The
+     * timeout says how long a partition must sit still before compacting it is worth it, and a fuzz run
+     * sets it sub-millisecond; using it as the pending-swap window too dropped the record on the sweep
+     * right after the one that queued it, and the rebuild then re-created the exact directory the queued
+     * command was about to rename and reseal - taking the files out from under a copy still appending to
+     * them, which surfaced as a SIGBUS in PostingIndexWriter rather than as a wasted copy.
+     */
+    @Test
+    public void testScanDoesNotRebuildAStagingCopyWhileItsSwapIsStillQueuedUnderATinyIdleTimeout() throws Exception {
+        assertNoRebuildWhileSwapQueued("1us");
+    }
+
+    private void assertNoRebuildWhileSwapQueued(String idleTimeout) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
@@ -1087,7 +1106,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             }
             engine.releaseAllReaders();
 
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, idleTimeout);
             final long interval = engine.getConfiguration().getPartitionCompactionCheckInterval() * 1000;
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
 
@@ -1112,6 +1131,66 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             engine.releaseAllReaders();
             assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n6010\n");
+        });
+    }
+
+    /**
+     * A swap queued onto a busy writer applies later, on the writer's own thread, and an
+     * {@code ALTER TABLE ... ALTER COLUMN ... TYPE} can land in between - this is the ordinary WAL
+     * ordering, since the sweep runs while {@code ApplyWal2TableJob} holds the writer and that job ticks
+     * the writer right after applying the ALTER.
+     * <p>
+     * {@code ConvertOperatorImpl} rewrites the column IN PLACE: same directory, same partition name txn,
+     * a new column name txn, and no {@code PartitionGeometry.publish}. So none of the generation terms
+     * the swap tests moves, and a swap staged BEFORE the ALTER used to pass the staleness test after it -
+     * renaming in a directory that predates the conversion and deleting the only directory holding the
+     * converted column's files, which made every query on that partition fail with
+     * "could not open, file does not exist". The metadata version is the term that catches it.
+     */
+    @Test
+    public void testQueuedSwapIsDiscardedWhenAColumnTypeChangesBeforeItApplies() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE cx AS (SELECT x::INT i," +
+                    " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later, plain day, so 2020-01-01 is never the active partition and the backfill is O3.
+            execute("INSERT INTO cx SELECT x::INT + 90000 i," +
+                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)");
+            drainWalQueue();
+            execute("INSERT INTO cx SELECT x::INT + 70000 i," +
+                    " timestamp_sequence('2020-01-01T04:00:07', 5*1000000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("cx");
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertTrue("2020-01-01 should be composite", reader.getTxFile().isPartitionComposite(0));
+            }
+            engine.releaseAllReaders();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+
+            // Holding the writer makes getWriterOrPublishCommand queue the swap instead of applying it.
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                    job.run();
+                }
+                // The ALTER lands between the build and the swap, exactly as the WAL apply loop orders it.
+                writer.changeColumnType("i", ColumnType.LONG, 0, false, IndexType.NONE, 0, false, null);
+                writer.tick();
+            }
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // The converted column must still be readable, and hold what it held before the ALTER.
+            assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n6010\n");
+            assertQuery("SELECT count() c, sum(i) s FROM cx WHERE ts IN '2020-01-01'")
+                    .noRandomAccess().expectSize().returns("c\ts\n5960\t30611780\n");
         });
     }
 

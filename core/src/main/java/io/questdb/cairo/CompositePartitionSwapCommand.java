@@ -47,6 +47,7 @@ import io.questdb.tasks.TableWriterTask;
 public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     private final ColumnTopRecorder columnTops = new ColumnTopRecorder();
     private long correlationId = -1L;
+    private long expectedMetadataVersion;
     private long expectedSrcNameTxn;
     private long expectedWriterTxn;
     private long liveRows;
@@ -60,6 +61,7 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
                 partitionTimestamp,
                 expectedSrcNameTxn,
                 expectedWriterTxn,
+                expectedMetadataVersion,
                 liveRows,
                 columnTops
         );
@@ -95,6 +97,10 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     @Override
     public long getCorrelationId() {
         return correlationId;
+    }
+
+    public long getExpectedMetadataVersion() {
+        return expectedMetadataVersion;
     }
 
     public long getExpectedSrcNameTxn() {
@@ -144,6 +150,7 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
             long partitionTimestamp,
             long expectedSrcNameTxn,
             long expectedWriterTxn,
+            long expectedMetadataVersion,
             long liveRows
     ) {
         this.tableToken = tableToken;
@@ -151,6 +158,7 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         this.partitionTimestamp = partitionTimestamp;
         this.expectedSrcNameTxn = expectedSrcNameTxn;
         this.expectedWriterTxn = expectedWriterTxn;
+        this.expectedMetadataVersion = expectedMetadataVersion;
         this.liveRows = liveRows;
         this.columnTops.clear();
     }

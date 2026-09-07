@@ -34,10 +34,8 @@ public interface Frame extends Closeable {
     /**
      * Appends {@code [sourceLo, sourceHi)} of {@code source} to this frame's tail, one column at a time.
      * <p>
-     * The frame drives its own per-column work: it opens each column pair, runs the copy - on the shared
-     * column-task pool when it has one, otherwise on the calling thread - reports the result through
-     * {@link #saveChanges} and closes the pair again. It moves no row count and commits no tops; that is
-     * {@link FrameAlgebra#append}'s part, which is the only caller.
+     * The frame drives its own per-column work, on the shared column-task pool when it has one. It moves
+     * no row count and commits no tops; that is {@link FrameAlgebra#append}'s part, its only caller.
      *
      * @param upcomingTableTxn tags posting-index chain entries published during this append, so a partial
      *                         publish is droppable by recovery. See {@link FrameColumn#setUpcomingTableTxn}.
@@ -49,9 +47,8 @@ public interface Frame extends Closeable {
     int columnCount();
 
     /**
-     * Forwards {@link ColumnTopSink#commitColumnTops()} to this frame's sink, if it has one. A frame
-     * that tracks its own tops has nothing to commit - {@link #saveChanges} already lands the final
-     * value - so this is a no-op there.
+     * Forwards {@link ColumnTopSink#commitColumnTops()} to this frame's sink, if it has one. A no-op for
+     * a frame that tracks its own tops.
      */
     void commitColumnTops();
 
@@ -70,9 +67,8 @@ public interface Frame extends Closeable {
     long getRowCount();
 
     /**
-     * Appends the MERGE of two sources to this frame's tail, interleaved by {@code mergeIndexAddr}, one
-     * column at a time. The per-column counterpart of {@link #appendColumns}, and it drives the columns
-     * the same way; only {@link FrameAlgebra#merge} calls it.
+     * Appends the MERGE of two sources to this frame's tail, interleaved by {@code mergeIndexAddr}. The
+     * counterpart of {@link #appendColumns}; only {@link FrameAlgebra#merge} calls it.
      */
     void mergeColumns(
             Frame source1,

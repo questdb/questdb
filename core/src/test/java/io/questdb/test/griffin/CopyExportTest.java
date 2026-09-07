@@ -4093,6 +4093,60 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A composite partition keeps dead rows between (or before) its live pieces, so its live row count is
+     * no longer its file extent. {@code COPY <table> TO ... FORMAT PARQUET} used to take the
+     * {@code TABLE_READER} path, which hands {@code PartitionEncoder} file rows {@code [0, liveRows)} -
+     * the right NUMBER of rows read from the wrong PLACE, so the export silently held stale data while
+     * its row count still matched. The export now routes a composite table through a SELECT, whose
+     * page-frame cursors walk the partition piece by piece.
+     */
+    @Test
+    public void testCopyToParquetExportsCompositePartitionCorrectly() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ct AS (SELECT x::INT i," +
+                    " timestamp_sequence('2024-01-01', 1_000_000L) ts FROM long_sequence(2000))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later, plain day, so 2024-01-01 is never the active partition and the backfill is O3.
+            execute("INSERT INTO ct VALUES (999_999, '2024-01-03T00:00:00.000000Z')");
+            drainWalQueue();
+            // Lands only inside 2024-01-01 and makes it composite.
+            execute("INSERT INTO ct SELECT x::INT + 70_000 i," +
+                    " timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L) ts FROM long_sequence(40)");
+            drainWalQueue();
+
+            try (TableReader reader = engine.getReader(engine.verifyTableName("ct"))) {
+                Assert.assertTrue("2024-01-01 must be composite for this test to mean anything",
+                        reader.getTxFile().isPartitionComposite(0));
+            }
+            engine.releaseAllReaders();
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("COPY ct TO 'composite_export' WITH FORMAT parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("status\nfinished\n");
+                        assertParquetMatchesQuery(
+                                "SELECT * FROM ct WHERE ts IN '2024-01-01'",
+                                exportRoot + File.separator + "composite_export" + File.separator + "2024-01-01.parquet"
+                        );
+                        assertParquetMatchesQuery(
+                                "SELECT * FROM ct WHERE ts IN '2024-01-03'",
+                                exportRoot + File.separator + "composite_export" + File.separator + "2024-01-03.parquet"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
     private static Thread createJobThread(Job job, CountDownLatch workCount, AtomicBoolean stop, int workerId) {
         return new Thread(() -> {
             try {

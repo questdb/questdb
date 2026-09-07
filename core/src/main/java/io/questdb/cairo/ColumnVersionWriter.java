@@ -60,11 +60,8 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     /**
-     * Arms this writer's {@link ColumnTopSink} view for one partition and returns it: every
-     * {@link ColumnTopSink#setColumnTop} call the caller makes on the returned reference merges into
-     * {@code partitionTimestamp}'s own record, until the next {@code asColumnTopSink} call re-arms it
-     * for a different partition. Always the same reused instance, so passing it straight to
-     * {@link Frame#publishColumnTops} costs no per-call allocation.
+     * Arms this writer's {@link ColumnTopSink} view for one partition and returns it, until the next
+     * {@code asColumnTopSink} call re-arms it. Always the same reused instance.
      */
     public ColumnTopSink asColumnTopSink(long partitionTimestamp) {
         columnTopSink.partitionTimestamp = partitionTimestamp;
@@ -124,13 +121,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
      * resolves for {@code (partitionTimestamp, columnIndex)} instead of blindly recorded like {@link
      * #upsertColumnTop} does.
      * <p>
-     * A non-zero top always goes straight through - {@link #upsertColumnTop} already records those
-     * outright. Zero is the one value that needs the check first: it is what BOTH "confirmed, no top"
-     * and "nothing recorded yet, resolved from a default that may not apply here" collapse to, and only
-     * comparing against what is already on record can tell those two apart. Already 0 here (an explicit
-     * record, or this writer's own added-before-this-partition default): nothing changed, skip the
-     * write. Anything else - most commonly -1, "column does not exist in the partition" - is a real
-     * partition this column has data in contradicting that, and gets corrected with an explicit 0.
+     * A non-zero top goes straight through. Zero is the one value needing a check first: both "confirmed,
+     * no top" and "nothing recorded yet, resolved from a default" collapse to it. Already 0 here means
+     * nothing changed; anything else - most often -1, "column absent" - gets corrected to an explicit 0.
      */
     public void mergeColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
         if (colTop != 0 || getColumnTop(partitionTimestamp, columnIndex) != 0) {
@@ -218,10 +211,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
                 if (defaultPartitionTimestamp == sourcePartitionTimestamp) {
                     // replace with target block
                     cachedColumnVersionList.set(i + TIMESTAMP_ADDED_PARTITION_OFFSET, targetPartitionTimestamp);
-                    // removePartition() above only flags a change when the source had explicit records.
-                    // A source that carried nothing but this marker would otherwise leave hasChanges
-                    // false, commit() would return without writing, and on the next open the marker
-                    // would still name a partition that no longer exists - reading as "column absent".
+                    // removePartition() above only flags a change when the source had explicit records, so
+                    // a source carrying nothing but this marker would leave it on disk naming a partition
+                    // that no longer exists - reading as "column absent".
                     hasChanges = true;
                 }
             } else {
@@ -465,15 +457,10 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     /**
-     * The {@link ColumnTopSink} view {@link #asColumnTopSink} hands out - one reused instance rather
-     * than a lambda, so a {@link Frame} publishing its column tops through it costs no per-call
-     * allocation. {@link #setColumnTop} forwards to the outer writer's own {@link #mergeColumnTop}
-     * against whichever partition was last armed.
-     * <p>
-     * Keeps {@link ColumnTopSink#isThreadSafe}'s default {@code false}: every report goes straight into
-     * the outer writer's record list, which a single upsert can insert into the middle of. Callers only
-     * ever drive it from the writer thread, after a frame has already joined - see
-     * {@link Frame#publishColumnTops}.
+     * The {@link ColumnTopSink} view {@link #asColumnTopSink} hands out - one reused instance, forwarding
+     * to {@link #mergeColumnTop} against whichever partition was last armed. Keeps
+     * {@link ColumnTopSink#isThreadSafe}'s default {@code false}: every report goes straight into the
+     * outer writer's record list, which an upsert can insert into the middle of.
      */
     private final class ColumnTopSinkImpl implements ColumnTopSink {
         private long partitionTimestamp = Long.MIN_VALUE;

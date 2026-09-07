@@ -51,57 +51,39 @@ import java.io.Closeable;
 
 /**
  * Periodically scans every table for idle composite (multi-piece) or Parquet-format partitions and
- * dispatches the appropriate compaction entry point, the way Enterprise's storage-policy job swaps in a
- * recompacted partition.
+ * dispatches the appropriate compaction entry point.
  * <p>
  * Styled on {@link io.questdb.cairo.wal.WalPurgeJob}'s interval gate: {@link #runSerially()} does nothing
- * until {@link #checkInterval} has elapsed since the last sweep, then walks every table exactly like
- * {@link CairoEngine#hydrateRecentWriteTracker()} does - a standalone {@link TxReader} opened straight over
- * each table's {@code _txn} file, no writer or reader lock, closed (well, {@link TxReader#clear()}-ed) right
- * after.
+ * until {@link #checkInterval} has elapsed, then walks every table through a standalone {@link TxReader}
+ * over its {@code _txn} file, taking no writer or reader lock.
  * <p>
- * Per partition, the sweep applies four gates before it does anything expensive:
+ * Per partition, four gates run before anything expensive:
  * <ol>
- *     <li>cheapest first - skip unless the {@code _txn} record already says the partition is composite or
- *     Parquet-format; a plain single-piece native partition has no dead space to reclaim and is never
- *     touched again;</li>
- *     <li>a recency check against the partition's own upper timestamp bound, using only fields already in
- *     {@code _txn} - for time-partitioned data this alone rules out anything that could plausibly still be
- *     taking O3 writes;</li>
- *     <li>a write-recency check for the survivors only - {@code _geometry}'s {@code lastWriteMicros} for a
- *     composite candidate, the {@code .parquet} file's modification time for a Parquet candidate - since
- *     for time-partitioned data an OLD partition is not an IDLE one: yesterday's partition keeps taking
- *     late-arriving rows for as long as they arrive, and rewriting it after each of them would be one
- *     full copy of the partition per write;</li>
- *     <li>one targeted read for what is left - {@code _pm}'s {@code unusedBytes}/parquet file size for a
- *     Parquet candidate, so a partition with no dead space is never dispatched.</li>
+ *     <li>skip unless the {@code _txn} record already says the partition is composite or Parquet;</li>
+ *     <li>a recency check against the partition's own upper timestamp bound, from {@code _txn} alone;</li>
+ *     <li>a write-recency check for the survivors - {@code _geometry}'s {@code lastWriteMicros}, or the
+ *     {@code .parquet} file's mtime - since an OLD partition is not an IDLE one: yesterday's keeps taking
+ *     late rows, and rewriting after each would cost one full copy per write;</li>
+ *     <li>one targeted read for what is left - {@code _pm}'s dead-space figures for a Parquet candidate.</li>
  * </ol>
- * Both candidate kinds are dispatched via {@link CairoEngine#getWriterOrPublishCommand}: an idle writer
- * applies the swap command in-process, right here on this job's thread; a busy writer gets it queued onto
- * its own {@link io.questdb.tasks.TableWriterTask} command queue and applies it later, on its own thread,
- * via {@link TableWriter#tick()}. Cheap either way, since the command is only the metadata swap: the copy
- * itself - a composite REWRITE or a parquet compaction - is built off a {@link TableReader} snapshot
- * before the command is published, on this job's own thread, and no writer is held for it.
- * <p>
- * A composite candidate's REWRITE is built off a {@link TableReader} snapshot - see
- * {@link #buildCompactedComposite} - so this job never holds the target table's writer for the copy
- * itself, only for the swap that follows ({@link TableWriter#swapCompactedCompositePartition}), which is
- * metadata-only and cheap regardless of how much data the partition holds. If the source partition's
- * generation moved between snapshot and swap - another commit landed on it in between - the swap is
- * rejected as stale and the staged directory discarded; the next sweep interval simply tries again from a
- * fresh snapshot. This is why {@link #dispatchComposite} is safe to retry unconditionally, unlike a
- * PUBLIC entry point a caller might invoke expecting an authoritative answer.
+ * Both kinds are dispatched via {@link CairoEngine#getWriterOrPublishCommand}, which applies the command
+ * on an idle writer or queues it onto a busy one. Cheap either way: the command is only the metadata swap,
+ * and the copy is built off a {@link TableReader} snapshot beforehand, holding no writer. A swap whose
+ * source generation moved in between is rejected as stale and the staged directory discarded, so the next
+ * sweep simply tries again from a fresh snapshot.
  */
 public class PartitionCompactionScanJob extends SynchronizedJob implements Closeable {
-    // Caps how many partitions one sweep hands out. The first sweep after an upgrade can find every
-    // qualifying partition of every table at once; without a cap it queues the lot back to back and the
-    // writers spend the next stretch doing nothing else. What the cap does not dispatch this pass, the
-    // next interval picks up.
+    // Caps how many partitions one sweep hands out: the first sweep after an upgrade can find every
+    // qualifying partition of every table at once. The next interval picks up the rest.
     private static final int MAX_DISPATCH_PER_SWEEP = 32;
     // Bounds the clean-parquet memo. Reached only by a database with tens of thousands of parquet
     // partitions; dropping the whole set just costs one more footer read per partition on the next sweep.
     private static final int MAX_MEMO_SIZE = 100_000;
     private static final Log LOG = LogFactory.getLog(PartitionCompactionScanJob.class);
+    // Bounds how long a pending-swap record can sit unclaimed. List hygiene, not the interlock:
+    // isSwapPending decides against the staging directory itself. Deliberately NOT idleTimeoutMicros,
+    // which is configurable down to microseconds.
+    private static final long PENDING_SWAP_MEMO_TTL_MICROS = 60 * Micros.MINUTE_MICROS;
     // Fingerprints of parquet partitions already found to hold no dead space. Any write to a partition
     // changes its nameTxn or its file size, so a changed partition cannot match its own stale entry.
     private final LongHashSet cleanParquetPartitions = new LongHashSet();
@@ -114,12 +96,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final long idleTimeoutMicros;
     private final Path other = new Path();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
-    // (fingerprint, queuedAtMicros) pairs for swaps handed to a BUSY writer's command queue, which
-    // applies them later on its own thread. Nothing else records that a build for that partition is
-    // already staged, so without this the next interval copies the whole partition again to produce a
-    // staging directory only one of the two swaps can ever use. The fingerprint carries the source
-    // generation, so a partition that moved on (a merge-append landed) never matches its own entry and
-    // is rebuilt from the fresh snapshot at once.
+    // (fingerprint, queuedAtMicros) pairs for swaps handed to a BUSY writer's queue. Without them the
+    // next interval copies the whole partition again for a staging directory only one swap can use. The
+    // fingerprint carries the source generation, so a partition that moved on is rebuilt at once.
     private final LongList pendingSwaps = new LongList();
     private final Path path = new Path();
     private final Utf8StringSink sidecarName = new Utf8StringSink();
@@ -138,9 +117,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         this.clock = clock;
         this.configuration = engine.getConfiguration();
         this.checkInterval = configuration.getPartitionCompactionCheckInterval() * 1000;
-        // PartitionCompactionPolicy's own AGE rule reads this same key straight in microseconds - see
-        // PartitionCompactionPolicy#selectPartition - so this job's idle gate uses the exact same
-        // threshold the per-commit path would have applied, had a commit come along to run it.
+        // The same key PartitionCompactionPolicy's AGE rule reads, so this job's idle gate matches the
+        // threshold the per-commit path would have applied.
         this.idleTimeoutMicros = configuration.getPartitionCompactionIdleTimeout();
         this.txReader = new TxReader(ff);
     }
@@ -163,9 +141,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     @Override
     protected boolean runSerially() {
         if (checkInterval < 0) {
-            // The operator's off switch: a negative cairo.partition.compaction.check.interval disables
-            // the background sweep entirely. Writer-side compaction (housekeep -> runCompaction) is
-            // unaffected. Zero keeps its meaning of "sweep on every call".
+            // A negative cairo.partition.compaction.check.interval disables the background sweep;
+            // writer-side compaction is unaffected. Zero still means "sweep on every call".
             return false;
         }
         final long t = clock.getTicks();
@@ -177,19 +154,15 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Builds a composite partition's REWRITE off {@code reader}'s own snapshot - never touches or holds
-     * the writer. Mirrors {@link TableWriter#compactPartition0}'s copy loop, sourced from {@code reader}'s
-     * own {@link ColumnVersionReader}/{@link PartitionGeometry} instead of a writer's mutable ones, and
-     * staged into a directory the writer has not agreed to yet - see
-     * {@link TableUtils#COMPACTING_DIR_MARKER}.
+     * Builds a composite partition's REWRITE off {@code reader}'s own snapshot, holding no writer. Mirrors
+     * {@link TableWriter#compactPartition0}'s copy loop but sourced from the reader's own
+     * {@link ColumnVersionReader}/{@link PartitionGeometry}, staged into a directory the writer has not
+     * agreed to yet - see {@link TableUtils#COMPACTING_DIR_MARKER}.
      * <p>
-     * {@code upcomingTableTxn} passed to {@link FrameAlgebra#append} is deliberately left unset
-     * ({@code -1L}): the posting index this copy builds is throwaway anyway -
-     * {@link TableWriter#swapCompactedCompositePartition} unconditionally reseals from the column data at
-     * swap time - and this build holds no writer to know its eventual commit txn by.
+     * {@code upcomingTableTxn} is left unset ({@code -1L}): the posting index this copy builds is
+     * throwaway, since the swap reseals from the column data anyway.
      *
-     * @return a command ready to publish, or {@code null} if the partition holds no live rows to keep -
-     * an all-dead composite partition needs no swap.
+     * @return a command ready to publish, or {@code null} when the partition holds no live rows
      */
     private CompositePartitionSwapCommand buildCompactedComposite(
             TableToken tableToken,
@@ -220,23 +193,19 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         final ColumnVersionReader cvr = reader.getColumnVersionReader();
         final FrameFactory frameFactory = engine.getFrameFactory();
 
-        other.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-        TableUtils.setPathForNativePartition(other, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-        other.put(TableUtils.COMPACTING_DIR_MARKER).put(writerTxn);
+        setStagingPath(other, tableToken, timestampType, partitionBy, partitionTimestamp, srcNameTxn, writerTxn);
 
         final CompositePartitionSwapCommand command = new CompositePartitionSwapCommand();
-        // Strictly before the build: of() resets the command, the recorder included, so arming it here
-        // instead of after the copy is what keeps the tops the build is about to record.
-        command.of(tableToken, tableToken.getTableId(), partitionTimestamp, srcNameTxn, writerTxn, liveRows);
+        // Strictly before the build: of() resets the recorder, so arming it after the copy would lose the
+        // tops the build recorded.
+        command.of(tableToken, tableToken.getTableId(), partitionTimestamp, srcNameTxn, writerTxn, reader.getMetadataVersion(), liveRows);
         final ColumnTopRecorder columnTops = command.getColumnTops();
         Frame targetFrame = null;
         boolean built = false;
         try {
             if (ff.exists(other.$())) {
-                // A build that never reached its swap - a crash between the two leaves one behind, and
-                // the writer's purge keeps it while the source generation still matches. Rebuild rather
-                // than append this copy on top of a directory of unknown completeness. Same reasoning,
-                // and same treatment, as buildCompactedParquet gives its own staging directory.
+                // A build that never reached its swap. Rebuild rather than append onto a directory of
+                // unknown completeness.
                 ff.rmdir(other, false);
             }
             TableUtils.createDirsOrFail(ff, other, configuration.getMkDirMode());
@@ -260,10 +229,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         } finally {
             Misc.free(targetFrame);
             if (!built) {
-                // Best-effort: a partial build must not leave a half-written staging directory behind for
-                // the next sweep to trip over. TableWriter#swapCompactedCompositePartition only ever
-                // cleans up a staging directory it was actually handed via a command; one that never
-                // finished building never produced one.
+                // Best-effort: the swap only cleans up a directory it was actually handed via a command,
+                // so a partial build has to remove its own.
                 if (ff.exists(other.$())) {
                     ff.rmdir(other, false);
                 }
@@ -274,9 +241,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Builds the table's root directory path as a {@link String}, the shape {@link PartitionGeometry#of}
-     * needs to resolve {@code _geometry} paths later - see {@link TableWriter#getGeometry()} for the exact
-     * same idiom on the writer side.
+     * The table's root directory as a {@link String}, the shape {@link PartitionGeometry#of} needs.
      */
     private String buildTableRoot(TableToken tableToken) {
         try (Path root = new Path()) {
@@ -286,18 +251,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Builds the REWRITE off a {@link TableReader} snapshot - see {@link #buildCompactedComposite} - then
-     * publishes a {@link CompositePartitionSwapCommand} the same way {@link #dispatchParquet} publishes
-     * its own command: {@link CairoEngine#getWriterOrPublishCommand} applies it directly on an idle
-     * writer, or queues it onto a busy one's own {@link io.questdb.tasks.TableWriterTask} command queue,
-     * applied later on the writer's own thread via {@link TableWriter#tick()}.
-     * <p>
-     * Unlike the old {@code compactPartitionNoCommit}-based dispatch this replaced, the writer is never
-     * held for the copy itself - only for the swap, which is metadata-only. A stale swap (the source
-     * partition's generation moved between snapshot and swap - see
-     * {@link TableWriter#swapCompactedCompositePartition}) throws
-     * {@link TableReferenceOutOfDateException}; left uncaught here, {@link #sweep}'s own per-table catch
-     * already handles it - the next sweep interval builds a fresh snapshot and tries again.
+     * Builds the REWRITE off a {@link TableReader} snapshot ({@link #buildCompactedComposite}), then
+     * publishes a {@link CompositePartitionSwapCommand} the way {@link #dispatchParquet} publishes its
+     * own. The writer is held only for the metadata-only swap, never for the copy. A stale swap throws
+     * {@link TableReferenceOutOfDateException}, which {@link #sweep}'s per-table catch already handles.
      */
     private void dispatchComposite(TableToken tableToken, long partitionTimestamp, long nowMicros) {
         final CompositePartitionSwapCommand command;
@@ -308,13 +265,24 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 return;
             }
             reader.getGeometry().resolve(partitionIndex);
+            final long srcNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
+            final long writerTxn = reader.getGeometry().getWriterTxn(partitionIndex);
             fingerprint = Hash.hashLong256_64(
                     tableToken.getTableId(),
                     partitionTimestamp,
-                    reader.getTxFile().getPartitionNameTxn(partitionIndex),
-                    reader.getGeometry().getWriterTxn(partitionIndex)
+                    srcNameTxn,
+                    writerTxn
             );
-            if (isSwapPending(fingerprint)) {
+            setStagingPath(
+                    other,
+                    tableToken,
+                    reader.getMetadata().getTimestampType(),
+                    reader.getPartitionedBy(),
+                    partitionTimestamp,
+                    srcNameTxn,
+                    writerTxn
+            );
+            if (isSwapPending(fingerprint, other)) {
                 // The copy for this exact generation is already staged and its swap already queued.
                 return;
             }
@@ -335,13 +303,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     /**
      * The parquet twin of {@link #buildCompactedComposite}: copies the partition's live row groups off
-     * {@code reader}'s snapshot into a staging directory - {@link O3PartitionJob#compactParquetPartition}
-     * for {@code data.parquet} and {@code _pm}, {@link #copyParquetPartitionSidecar} for the index files
-     * beside them - and returns the swap command that describes the result. Never touches or holds the
-     * writer. The staging directory is {@code <partition>.<nameTxn>.compacting<parquetFileSize>}: the
-     * source's generation in its name is what {@link TableWriter#swapCompactedParquetPartition} and the
-     * writer's stale-directory purge test against, the way a composite staging directory carries its
-     * geometry's writer txn.
+     * {@code reader}'s snapshot into a staging directory, index files included, and returns the swap
+     * command describing the result. Holds no writer. The directory is
+     * {@code <partition>.<nameTxn>.compacting<parquetFileSize>}, the generation in its name being what the
+     * swap and the writer's stale-directory purge test against.
      */
     private ParquetPartitionSwapCommand buildCompactedParquet(
             TableToken tableToken,
@@ -357,18 +322,15 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
         path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
         TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-        other.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-        TableUtils.setPathForNativePartition(other, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-        other.put(TableUtils.COMPACTING_DIR_MARKER).put(parquetFileSize);
+        setStagingPath(other, tableToken, timestampType, partitionBy, partitionTimestamp, srcNameTxn, parquetFileSize);
 
         final ParquetPartitionSwapCommand command = new ParquetPartitionSwapCommand();
         command.of(tableToken, tableToken.getTableId(), partitionTimestamp, srcNameTxn, parquetFileSize, reader.getMetadataVersion());
         symbolTableProvider.of(reader);
         try {
             if (ff.exists(other.$())) {
-                // A build that never reached its swap - a crash between the two leaves one behind, and the
-                // writer's purge keeps it while the source generation still matches. Rebuild rather than
-                // trust a directory of unknown completeness.
+                // A build that never reached its swap. Rebuild rather than trust a directory of unknown
+                // completeness.
                 ff.rmdir(other, false);
             }
             O3PartitionJob.compactParquetPartition(
@@ -395,12 +357,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * One entry of the source partition directory, from {@link #copyParquetPartitionSidecars}'s walk:
-     * everything but {@code data.parquet} and {@code _pm} is an index file (or a posting index's
-     * directory) and is carried over into the staging directory - as a hard link where the file system
-     * allows, a copy otherwise. Valid because the compaction keeps every live row at its row id: the index
-     * that describes the source describes the staged file too. The source directory is deleted after the
-     * swap, leaving the staged directory's link the only one.
+     * One entry of the source partition directory: everything but {@code data.parquet} and {@code _pm} is
+     * an index file and is carried into the staging directory, hard-linked where the file system allows.
+     * Valid because the compaction keeps every live row at its row id.
      */
     private void copyParquetPartitionSidecar(long pUtf8NameZ, int type) {
         if (!Files.notDots(pUtf8NameZ)) {
@@ -443,13 +402,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Compacts the partition off a {@link TableReader} snapshot - see {@link #buildCompactedParquet} - then
-     * publishes a {@link ParquetPartitionSwapCommand} exactly as {@link #dispatchComposite} publishes its
-     * own: applied directly on an idle writer, queued onto a busy one's command queue otherwise. Either
-     * way the writer is held only for the metadata-only swap, never for the copy, so ingestion into the
-     * table is not paused. A stale swap - the partition was written to between snapshot and swap - throws
-     * {@link TableReferenceOutOfDateException}; left uncaught here, {@link #sweep}'s own per-table catch
-     * already handles it, and the next sweep builds a fresh snapshot and tries again.
+     * Compacts the partition off a {@link TableReader} snapshot ({@link #buildCompactedParquet}), then
+     * publishes a {@link ParquetPartitionSwapCommand} exactly as {@link #dispatchComposite} does. The
+     * writer is held only for the metadata-only swap, so ingestion is not paused.
      */
     private void dispatchParquet(TableToken tableToken, long partitionTimestamp, long nowMicros) {
         final ParquetPartitionSwapCommand command;
@@ -460,13 +415,24 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             if (partitionIndex < 0 || !txFile.isPartitionParquet(partitionIndex)) {
                 return;
             }
+            final long srcNameTxn = txFile.getPartitionNameTxn(partitionIndex);
+            final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
             fingerprint = Hash.hashLong256_64(
                     tableToken.getTableId(),
                     partitionTimestamp,
-                    txFile.getPartitionNameTxn(partitionIndex),
-                    txFile.getPartitionParquetFileSize(partitionIndex)
+                    srcNameTxn,
+                    parquetFileSize
             );
-            if (isSwapPending(fingerprint)) {
+            setStagingPath(
+                    other,
+                    tableToken,
+                    reader.getMetadata().getTimestampType(),
+                    reader.getPartitionedBy(),
+                    partitionTimestamp,
+                    srcNameTxn,
+                    parquetFileSize
+            );
+            if (isSwapPending(fingerprint, other)) {
                 return;
             }
             command = buildCompactedParquet(tableToken, reader, partitionIndex, partitionTimestamp);
@@ -481,14 +447,13 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Drops pending entries whose window has passed. A queued swap normally lands on the writer's very
-     * next commit, so an entry that outlives the idle window is one the writer never applied - closed
-     * before its {@code tick()}, say. Letting it expire is what stops a dropped command from stalling
-     * its partition for as long as the source generation happens to stay put.
+     * Drops pending entries nothing will ever claim. {@link #isSwapPending} normally retires an entry the
+     * moment its staging directory is gone, so what reaches this is one whose partition moved on while its
+     * command was in flight. Pure list hygiene - see {@link #PENDING_SWAP_MEMO_TTL_MICROS}.
      */
     private void expirePendingSwaps(long nowMicros) {
         for (int i = pendingSwaps.size() - 2; i >= 0; i -= 2) {
-            if (pendingSwaps.getQuick(i + 1) < nowMicros - idleTimeoutMicros) {
+            if (pendingSwaps.getQuick(i + 1) < nowMicros - PENDING_SWAP_MEMO_TTL_MICROS) {
                 pendingSwaps.removeIndexBlock(i, 2);
             }
         }
@@ -570,19 +535,40 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Opens {@code tableToken}'s {@code _txn} standalone and walks its attached partitions. Mirrors
-     * {@link CairoEngine#hydrateRecentWriteTracker()}'s own per-table body: same lightweight
-     * {@link TxReader#ofRO} snapshot, same {@link TableUtils#safeReadTxn} torn-read guard.
+     * Reports whether a swap for this exact generation is already staged and queued on a busy writer, so
+     * this sweep must leave the partition alone.
+     * <p>
+     * The record alone does not settle it: {@code stagingDir} does. That directory is the queued
+     * command's own input - {@link TableWriter#swapCompactedCompositePartition} renames it into place
+     * and reseals the posting indexes inside it - and its name carries the source generation, so a
+     * rebuild here would re-create the very directory that command is about to take. The copy still
+     * writing into it then has its files renamed and truncated underneath it mid-append, which surfaces
+     * as a SIGBUS on a mapped index file, not as a lost copy.
+     * <p>
+     * A missing directory is therefore the signal that the command has resolved - the writer either
+     * renamed it into place or discarded it as stale, both of which remove it - and the record goes with
+     * it, so the next sweep may build again. Deciding this on wall-clock time instead is what let the
+     * defect through: the window was {@code idleTimeoutMicros}, which a fuzz run sets sub-millisecond,
+     * expiring every record on the sweep right after the one that queued it.
      */
-    private boolean isSwapPending(long fingerprint) {
+    private boolean isSwapPending(long fingerprint, Path stagingDir) {
         for (int i = 0, n = pendingSwaps.size(); i < n; i += 2) {
             if (pendingSwaps.getQuick(i) == fingerprint) {
-                return true;
+                if (ff.exists(stagingDir.$())) {
+                    return true;
+                }
+                pendingSwaps.removeIndexBlock(i, 2);
+                return false;
             }
         }
         return false;
     }
 
+    /**
+     * Opens {@code tableToken}'s {@code _txn} standalone and walks its attached partitions. Mirrors
+     * {@link CairoEngine#hydrateRecentWriteTracker()}'s own per-table body: same lightweight
+     * {@link TxReader#ofRO} snapshot, same {@link TableUtils#safeReadTxn} torn-read guard.
+     */
     private void scanTable(TableToken tableToken, long nowMicros) {
         path.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME);
         if (!ff.exists(path.$())) {
@@ -648,6 +634,26 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 }
             }
         }
+    }
+
+    /**
+     * Writes a partition's staging directory path into {@code sink}:
+     * {@code <partition>.<nameTxn>.compacting<generation>}. The generation is the geometry's writer txn
+     * for a composite partition and the parquet file size for a Parquet one - whichever value
+     * {@link TableWriter}'s swap and its stale-directory purge test the source against.
+     */
+    private void setStagingPath(
+            Path sink,
+            TableToken tableToken,
+            int timestampType,
+            int partitionBy,
+            long partitionTimestamp,
+            long srcNameTxn,
+            long generation
+    ) {
+        sink.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+        TableUtils.setPathForNativePartition(sink, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+        sink.put(TableUtils.COMPACTING_DIR_MARKER).put(generation);
     }
 
     private void sweep(long nowMicros) {

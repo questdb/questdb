@@ -33,6 +33,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.BindVariableService;
@@ -117,16 +118,27 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         long copyID = entry.getId();
         RecordCursorFactory selectFactory = null;
         CreateTableOperationImpl createOp = null;
+        int exportPartitionBy = partitionBy;
         try {
             if (this.tableName != null) {
                 TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
                 if (tableToken == null) {
                     throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
                 }
-                if (partitionBy != -1) {
+                // A composite partition keeps dead rows between its live pieces, so its live row count is
+                // no longer its file extent. TABLE_READER mode hands PartitionEncoder file rows
+                // [0, liveRows) and would export the wrong rows with a matching row count. Export the
+                // table as a SELECT instead - the page-frame cursors walk a composite partition piece by
+                // piece - and keep the table's own partitioning so the export still lands one parquet
+                // file per partition.
+                final boolean hasCompositePartitions = hasCompositePartitions(executionContext, tableToken);
+                if (partitionBy != -1 || hasCompositePartitions) {
                     try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
                         int tablePartitionBy = meta.getPartitionBy();
-                        if (tablePartitionBy != partitionBy) {
+                        if (partitionBy == -1) {
+                            exportPartitionBy = tablePartitionBy;
+                            this.selectText = this.tableName;
+                        } else if (tablePartitionBy != partitionBy || hasCompositePartitions) {
                             this.selectText = this.tableName;
                         }
                     }
@@ -153,7 +165,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     }
                     RecordCursorFactory rcf = selectQuery.getRecordCursorFactory();
                     try {
-                        int resolvedPartitionBy = partitionBy == -1 ? PartitionBy.NONE : partitionBy;
+                        int resolvedPartitionBy = exportPartitionBy == -1 ? PartitionBy.NONE : exportPartitionBy;
                         if (resolvedPartitionBy == PartitionBy.NONE) {
                             exportMode = ParquetExportMode.determineExportMode(rcf, false, executionContext);
                         } else {
@@ -302,6 +314,16 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Copy");
+    }
+
+    /**
+     * Whether any of the table's partitions is composite - live rows split into pieces with dead rows
+     * between them, so the partition's live row count no longer spans file rows {@code [0, liveRows)}.
+     */
+    private static boolean hasCompositePartitions(SqlExecutionContext executionContext, TableToken tableToken) {
+        try (TableReader reader = executionContext.getCairoEngine().getReader(tableToken)) {
+            return reader.getTxFile().hasCompositePartitions();
+        }
     }
 
     private void of(

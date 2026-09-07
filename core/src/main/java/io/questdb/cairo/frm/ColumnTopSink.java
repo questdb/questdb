@@ -25,53 +25,35 @@
 package io.questdb.cairo.frm;
 
 /**
- * Where a writable {@link Frame} reports a column's new top, instead of writing straight into a
- * {@code ColumnVersionWriter}. That writer is one instance shared by every worker thread a commit's
- * O3 partition tasks run on, and is not thread safe - a caller reachable from a worker thread must
- * report through a sink like this instead of upserting into it directly.
+ * Where a writable {@link Frame} reports a column's new top, instead of writing straight into the
+ * {@code ColumnVersionWriter} every worker thread shares and which is not thread safe.
  * <p>
- * The interface is also shaped so a frame's per-column work can fan out across threads. An
- * implementation that says so through {@link #isThreadSafe} splits into two halves: {@link #setColumnTop},
- * which every column calls and which may only write its own pre-sized slot, and
- * {@link #commitColumnTops}, which one thread calls once the whole frame operation has joined and which
- * is where anything shared gets touched. {@link #ofColumnCount} sizes the slots up front, so no report
- * ever has to grow a buffer.
+ * Shaped so a frame's per-column work can fan out: {@link #setColumnTop} writes only its own pre-sized
+ * slot, {@link #commitColumnTops} touches anything shared once the frame has joined, and
+ * {@link #ofColumnCount} sizes the slots up front.
  */
 public interface ColumnTopSink {
 
     /**
-     * Applies everything {@link #setColumnTop} staged since the last call, and is the ONLY place a
-     * thread-safe implementation is allowed to touch shared, structurally mutable state - a
-     * {@code ColumnVersionReader}'s record list, say. One frame operation calls this once, on one
-     * thread, after every column of that operation has reported (see
-     * {@link io.questdb.cairo.frm.FrameAlgebra#append}), so it is the join point a per-column fan-out
-     * would publish through.
-     * <p>
-     * A sink that has nothing to stage - one whose {@link #setColumnTop} already lands the final value -
-     * leaves this a no-op.
+     * Applies everything {@link #setColumnTop} staged, and is the ONLY place a thread-safe implementation
+     * may touch shared, structurally mutable state. Called once per frame operation, on one thread, after
+     * every column has reported. A no-op for a sink whose {@link #setColumnTop} lands the final value.
      */
     default void commitColumnTops() {
     }
 
     /**
      * Whether {@link #setColumnTop} may run concurrently, one thread per DISTINCT column index, once
-     * {@link #ofColumnCount} has sized this sink on a single thread. A {@code true} here is a promise
-     * about three things: the write lands in a slot of its own, that slot already exists so nothing
-     * re-scales, and no shared structure is touched until {@link #commitColumnTops}.
-     * <p>
-     * Sinks that write straight into a {@code ColumnVersionWriter} return {@code false}: that writer is
-     * one instance shared by every worker thread, and an upsert into it can insert into the middle of
-     * its record list.
+     * {@link #ofColumnCount} has sized this sink. {@code true} promises the write lands in its own
+     * pre-existing slot and touches nothing shared until {@link #commitColumnTops}.
      */
     default boolean isThreadSafe() {
         return false;
     }
 
     /**
-     * Sizes this sink for a frame of {@code columnCount} columns and drops whatever a previous frame
-     * left in it. A writable {@link io.questdb.cairo.frm.Frame} calls this the moment it is opened
-     * against this sink, so every slot {@link #setColumnTop} can ever address already exists by the
-     * time the first column reports and no write has to grow anything.
+     * Sizes this sink for a frame of {@code columnCount} columns and drops whatever a previous frame left
+     * in it. Called when the frame is opened, so no {@link #setColumnTop} ever has to grow a buffer.
      */
     default void ofColumnCount(int columnCount) {
     }

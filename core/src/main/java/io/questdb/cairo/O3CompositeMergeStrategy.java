@@ -29,36 +29,23 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 /**
- * Plans what a commit does to ONE partition, as a list of actions over its pieces. The direct
- * analogue of {@link O3ParquetMergeStrategy} over a parquet file's row groups, and deliberately the same
- * shape: pure computation over the piece bounds and the sorted O3 timestamps, no I/O, no writer state.
+ * Plans what a commit does to ONE partition, as a list of actions over its pieces - the analogue of
+ * {@link O3ParquetMergeStrategy} over a parquet file's row groups: pure computation over the piece bounds
+ * and the sorted O3 timestamps, no I/O, no writer state.
  * <p>
- * A piece is to a partition what a row group is to a parquet file, with one difference that decides the
- * whole design: a parquet file arrives already divided, because the encoder wrote it in row groups. A
- * native partition arrives as ONE piece covering all of its rows, so before the
- * parquet-style "merge only the affected group" can pay off, the structure has to be manufactured. That
- * is the PRE-SPLIT, and it is free - cutting a piece in two is two entries over the SAME files, no bytes
- * move.
+ * A native partition arrives as ONE piece covering all of its rows, where a parquet file arrives already
+ * divided, so the structure has to be manufactured first. That is the PRE-SPLIT, and it is free.
  * <p>
- * Actions are emitted in timestamp order and each occupies one position in the partition's new piece
- * array:
+ * Actions are emitted in timestamp order, each occupying one position in the new piece array:
  * <ul>
- *     <li>{@link ActionType#KEEP} - the piece is untouched. Unlike parquet's {@code COPY_ROW_GROUP_SLICE}
- *     this copies NOTHING: the piece's bytes stay where they are and only its
- *     {@code (rowOffset, rowCount)} is carried into the new geometry record. Copying here would reinstate
- *     the write amplification the zero-copy design removes.</li>
- *     <li>{@link ActionType#MERGE} - the batch slice overlaps the piece's data, so the two go out as one
- *     image at the shared files' tail and the piece's row offset and row count move.</li>
- *     <li>{@link ActionType#NEW_PIECE} - the batch slice falls in a gap: below the first piece, between
- *     two, or above the last. It is written at the shared files' tail as a new piece under its own
- *     {@code tsLo}. One action type covers all three, which is why the design deletes both
- *     a batch below the first piece and a batch above the last are the same action.</li>
- *     <li>{@link ActionType#APPEND} - the batch slice falls above the last piece, or (outside dedup) only
- *     ties its {@code tsHi}, and that piece already owns the tail of the files and claims no O3 row of its
- *     own. Rather than found a new piece next to it, the batch is written right after it and the piece's
- *     own {@code tsHi} and {@code rowCount} grow
- *     to cover it - the two pieces were always going to be one contiguous run, so nothing distinguished
- *     them to begin with. At most one per plan, since only the last piece can own the tail.</li>
+ *     <li>{@link ActionType#KEEP} - copies NOTHING: the piece's bytes stay and only its
+ *     {@code (rowOffset, rowCount)} is carried into the new geometry record;</li>
+ *     <li>{@link ActionType#MERGE} - the batch slice overlaps the piece, so the two go out as one image
+ *     at the shared files' tail and the piece's offset and count move;</li>
+ *     <li>{@link ActionType#NEW_PIECE} - the batch slice falls in a gap and is written at the tail as a
+ *     new piece under its own {@code tsLo};</li>
+ *     <li>{@link ActionType#APPEND} - the batch extends the last piece in place, when that piece already
+ *     owns the tail of the files and claims no O3 row of its own. At most one per plan.</li>
  * </ul>
  */
 public class O3CompositeMergeStrategy {
@@ -72,9 +59,7 @@ public class O3CompositeMergeStrategy {
     private static final int BOUND_TS_LO = 0;
 
     /**
-     * @param rowOffset the FILE row this piece's first row sits at. Carried through the plan because the
-     *                  executor reads a piece straight out of the partition's files, so it needs to know
-     *                  where the piece is, not merely how big it is.
+     * @param rowOffset the FILE row this piece's first row sits at
      */
     public static void addPieceBounds(LongList bounds, long tsLo, long tsHi, long rowOffset, long rowCount) {
         bounds.add(tsLo, tsHi);
@@ -87,17 +72,11 @@ public class O3CompositeMergeStrategy {
      * empty or the piece's data is unbounded.
      * <p>
      * All three numbers are RESOLVED AGAINST THE DATA by the caller, which searches the piece's own
-     * timestamp column; none can be derived here, because a timestamp range says nothing about where
-     * inside it the rows sit and this class reads no files. {@link #rowsBelow} apportions rows evenly and
-     * is only good enough to decide whether a cut is worth proposing.
+     * timestamp column; this class reads no files, and {@link #rowsBelow} only estimates.
      * <p>
-     * A piece's bounds describe THE ROWS IT HOLDS, not the range it routes: the halves of a cut across a
-     * data gap end up bounded by their own last and first rows, leaving the gap between them owned by
-     * neither. That is what lets a later batch landing in the gap become a piece of its own instead of
-     * merging into a neighbour that holds nothing near it.
-     * <p>
-     * Cutting a piece moves no bytes: both halves address the same column files at the same offsets, so
-     * this is the whole of what a pre-split does to the geometry.
+     * A piece's bounds describe THE ROWS IT HOLDS, not the range it routes, so a cut across a data gap
+     * leaves the gap owned by neither half - which lets a later batch landing there become its own piece.
+     * Cutting moves no bytes: both halves address the same files at the same offsets.
      *
      * @param below     rows of the piece below the cut
      * @param lowerTsHi timestamp of the lower half's LAST row
@@ -111,8 +90,7 @@ public class O3CompositeMergeStrategy {
             return false;
         }
         final int at = piece * LONGS_PER_BOUND;
-        // Both halves address the SAME files at the same places - that is what makes a cut free. The lower
-        // half keeps the row offset it had; the upper half starts that many rows further in.
+        // The lower half keeps the row offset it had; the upper half starts that many rows further in.
         final long rowOffset = getRowOffset(bounds, piece);
         bounds.setQuick(at + BOUND_TS_HI, lowerTsHi);
         bounds.setQuick(at + BOUND_ROW_COUNT, below);
@@ -129,13 +107,8 @@ public class O3CompositeMergeStrategy {
      * list in timestamp order.
      * <p>
      * A row belongs to a piece when it falls inside that piece's DATA range {@code [tsLo, tsHi]}. A piece
-     * whose {@code tsHi} was never recorded ({@link Numbers#LONG_NULL}) claims its whole routing range,
-     * because nothing else bounds it - the caller may narrow that by reading the piece's last timestamp
-     * first, which is what makes a gap above such a piece usable.
-     * <p>
-     * Rows that fall in a gap become a new piece, EXCEPT when the piece on either side of the gap is
-     * small: folding them into a small neighbour is cheaper than founding a piece, and it is the same
-     * trade {@code smallRowGroupThreshold} makes for parquet.
+     * whose {@code tsHi} was never recorded ({@link Numbers#LONG_NULL}) claims its whole routing range.
+     * Rows in a gap become a new piece, except beside a small piece, where folding them in is cheaper.
      *
      * @param bounds               piece bounds, {@link #LONGS_PER_BOUND} longs each, ascending by tsLo
      * @param sortedTimestampsAddr native address of the sorted O3 timestamp index, 16 bytes per entry
@@ -147,25 +120,14 @@ public class O3CompositeMergeStrategy {
      *                             only to test whether the last piece owns the shared files' tail; pass a
      *                             value no piece can reach (e.g. {@link Long#MAX_VALUE}) to disable
      *                             {@link ActionType#APPEND} entirely
-     * @param commitMayDedup       whether this commit's rows can collide with an existing row and need a key
-     *                             comparison to resolve it. When {@code false}, a batch row that only TIES a
-     *                             piece's {@code tsHi} (rounds to the same tick, say the same second, as its
-     *                             last row) needs no such comparison, so it is spared from that piece's claim
-     *                             instead of forcing a {@link ActionType#MERGE} that would rewrite the piece
-     *                             to reorder nothing - EXCEPT when the piece is a single point in time
-     *                             ({@code tsLo == tsHi}): sparing it there would found a second piece at the
-     *                             exact same instant, so it stays claimed and merges, growing that one piece
-     *                             in place instead. A spared tie on the LAST piece is left for
-     *                             {@link ActionType#APPEND}, which extends it in place with no piece founded
-     *                             at all - the {@code tsLo == tsHi} exception does not apply there, so long
-     *                             as that piece still owns the shared files' tail, which is exactly what
-     *                             APPEND needs to grow it. A last piece that has lost the tail to an earlier
-     *                             piece's merge cannot append, so it obeys the exception like any other. A
-     *                             spared tie on an EARLIER piece has nowhere to
-     *                             append to; it is left unclaimed for the next piece's own gap and claim
-     *                             checks to resolve, exactly like ordinary gap data - which is what naturally
-     *                             merges a repeat tie into the single-point piece a first one already founded,
-     *                             rather than founding another next to it
+     * @param commitMayDedup       whether this commit's rows can collide with an existing row. When
+     *                             {@code false}, a batch row that only TIES a piece's {@code tsHi} needs no
+     *                             key comparison and is spared from that piece's claim, rather than forcing
+     *                             a {@link ActionType#MERGE} that reorders nothing - except on a
+     *                             single-point piece ({@code tsLo == tsHi}), where sparing would found a
+     *                             second piece at the same instant. The last piece is exempt from that
+     *                             exception while it still owns the shared files' tail, which is what
+     *                             {@link ActionType#APPEND} needs to grow it in place
      * @param plan                 output, reused across calls: {@code plan.actions} is reset and
      *                             repopulated so its {@code size()} IS the action count, and
      *                             {@code plan.appendActionIndex} is set to the {@link ActionType#APPEND}
@@ -205,16 +167,11 @@ public class O3CompositeMergeStrategy {
                 }
             }
 
-            // Rows inside this piece's data range. A tie at this piece's own tsHi is spared from the claim
-            // under commitMayDedup=false, UNLESS the piece is a single point in time (tsLo == tsHi): sparing
-            // it there would found a second piece at that same exact instant, which nothing distinguishes
-            // from the first - so a single-point piece keeps claiming its own ties and merges them in place
-            // instead. The last piece is exempt from that exception only while it still OWNS the shared
-            // files' tail: that is what lets APPEND below absorb the tie by growing the piece in place,
-            // founding no second piece at all. Once an earlier piece has been merged out past it the piece
-            // no longer owns the tail, APPEND declines, and a spared tie has nowhere to go but the trailing
-            // NEW_PIECE - at the very tsLo the kept piece already starts at. So the exemption tests the
-            // same tail ownership APPEND does; without it, the tsLo == tsHi rule governs and the tie merges.
+            // Rows inside this piece's data range. Under commitMayDedup=false a tie at tsHi is spared from
+            // the claim, unless the piece is a single point in time - sparing there would found a second
+            // piece at the same instant. The last piece is exempt from that exception only while it still
+            // OWNS the tail, which is what lets APPEND absorb the tie by growing it in place; the exemption
+            // therefore tests the same tail ownership APPEND does.
             final boolean isLastPiece = p == pieceCount - 1;
             final boolean ownsTail = getRowOffset(bounds, p) + getRowCount(bounds, p) == physicalRows;
             final boolean spareTie = !commitMayDedup && tsHi != Numbers.LONG_NULL
@@ -226,13 +183,9 @@ public class O3CompositeMergeStrategy {
                 actionAt(plan.actions, actionCount++).setMerge(p, o3, claimHi);
                 o3 = claimHi + 1;
             } else if (isLastPiece && ownsTail && o3 <= srcOooHi) {
-                // This piece claims none of the batch itself: under commitMayDedup, tsHi's use of
-                // lastAtOrBelow already guarantees every remaining O3 row sits strictly above it, which is
-                // what keeps this safe under DEDUP - duplicates need equal timestamps, and there are none.
-                // Under !commitMayDedup, spareTie let a tie at tsHi through unclaimed too, safe because
-                // nothing needs deduplicating against it - either way it owns the shared files' tail, so
-                // everything left in the batch extends it in place instead of founding a new piece next to
-                // it.
+                // This piece claims none of the batch itself, and every remaining O3 row sits at or above
+                // its tsHi with nothing needing deduplication against it - so, owning the tail, it is
+                // extended in place instead of founding a new piece next to it.
                 plan.appendActionIndex = actionCount;
                 actionAt(plan.actions, actionCount++).setAppend(p, o3, srcOooHi);
                 o3 = srcOooHi + 1;
@@ -241,10 +194,8 @@ public class O3CompositeMergeStrategy {
             }
         }
 
-        // Everything above the last piece's data becomes a new piece at the shared tail. When that batch
-        // is a plain append the two pieces end up tiling the files with no hole between them, and the
-        // caller drops the geometry rather than record a boundary that says nothing - see isComposite in
-        // O3PartitionJob. Nothing has to be decided here.
+        // Everything above the last piece's data becomes a new piece at the shared tail. A plain append
+        // leaves the two tiling the files, and the caller then drops the geometry - see O3PartitionJob.
         if (o3 <= srcOooHi) {
             actionAt(plan.actions, actionCount++).setNewPiece(o3, srcOooHi);
         }
@@ -255,22 +206,16 @@ public class O3CompositeMergeStrategy {
      * PRE-SPLIT. Chooses where to cut existing pieces so the batch lands on as little data as possible,
      * and returns the cuts as {@code (pieceIndex, cutTimestamp)} pairs in {@code cutsOut}.
      * <p>
-     * This is the step with no parquet counterpart. A parquet file arrives already divided into row
-     * groups, so {@code computeMergeActions} always has somewhere small to merge into. A native directory
-     * can be ONE piece covering the whole logical partition, and merging the batch into it rewrites the
-     * whole day. Cutting is free - two records over the SAME files, no bytes move - so the structure can
-     * be manufactured lazily, aimed at exactly where this batch lands.
+     * The step with no parquet counterpart: a native directory can be ONE piece covering the whole logical
+     * partition, so merging a batch into it rewrites the whole day. Cutting is free, so the structure is
+     * manufactured lazily, aimed at exactly where this batch lands.
      * <p>
-     * For each piece the batch overlaps, up to two cuts are proposed: at the batch's first timestamp
-     * inside the piece, so everything below it stays untouched, and one past the batch's last timestamp
-     * inside the piece, so everything above stays untouched. A cut is proposed only when it would leave
-     * at least {@code minPieceRows} rows on the side being spared - splitting off a sliver costs a record
-     * and saves nothing.
+     * For each piece the batch overlaps, up to two cuts are proposed - at the batch's first timestamp
+     * inside the piece and one past its last - and only when at least {@code minPieceRows} rows would be
+     * left on the side being spared.
      * <p>
-     * Row counts are apportioned by TIMESTAMP position, which assumes rows are distributed evenly across
-     * the piece's range. That is an estimate and it only decides whether a cut is worth making; the
-     * caller resolves each cut timestamp to an actual row by binary-searching the piece's timestamp
-     * column, and a cut that turns out to fall at row 0 or at the piece's end is simply dropped.
+     * Row counts are apportioned by TIMESTAMP position, an estimate that only decides whether a cut is
+     * worth making; the caller resolves each cut to an actual row and drops one that falls at an edge.
      *
      * @param cutsOut output, cleared first: pairs of (pieceIndex, cutTimestamp)
      * @return the number of cuts proposed
