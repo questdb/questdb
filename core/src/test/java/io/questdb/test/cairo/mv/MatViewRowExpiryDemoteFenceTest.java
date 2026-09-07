@@ -26,13 +26,16 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.ForwardingMatViewStateStore;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStore;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.CairoTestConfiguration;
+import io.questdb.test.tools.LogCapture;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
@@ -40,6 +43,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 /**
  * The demote fence on {@link RowExpiryCleanupJob}. A REPLACE_RANGE reclamation on a materialized view
@@ -63,6 +67,8 @@ public class MatViewRowExpiryDemoteFenceTest extends AbstractCairoTest {
     // Fires the mid-sweep demote. Armed for one sweep at a time; the state-store lookup below consumes it.
     private static final AtomicBoolean demoteOnNextViewStateLookup = new AtomicBoolean();
     private static final AtomicBoolean readOnly = new AtomicBoolean();
+    private static Supplier<CairoException> walWriterFailure;
+    private static int walWriterFailureCount;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -79,6 +85,15 @@ public class MatViewRowExpiryDemoteFenceTest extends AbstractCairoTest {
         // it acquires a WAL writer or scans anything. That makes it the exact point an in-place demote has to
         // be survivable from, so it is where the test flips the role.
         AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
+            @Override
+            public WalWriter getWalWriter(TableToken tableToken) {
+                if (VIEW_NAME.equals(tableToken.getTableName()) && walWriterFailure != null) {
+                    walWriterFailureCount++;
+                    throw walWriterFailure.get();
+                }
+                return super.getWalWriter(tableToken);
+            }
+
             @Override
             protected MatViewStateStore createMatViewStateStore() {
                 return new ForwardingMatViewStateStore(super.createMatViewStateStore()) {
@@ -109,6 +124,8 @@ public class MatViewRowExpiryDemoteFenceTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         readOnly.set(false);
         demoteOnNextViewStateLookup.set(false);
+        walWriterFailure = null;
+        walWriterFailureCount = 0;
     }
 
     @Test
@@ -171,6 +188,103 @@ public class MatViewRowExpiryDemoteFenceTest extends AbstractCairoTest {
                             1970-01-02T00:00:00.000000Z\t2.0
                             1970-01-03T00:00:00.000000Z\t3.0
                             """);
+        });
+    }
+
+    @Test
+    public void testWriterAcquireAuthorizationFailureKeepsFailureBackoff() throws Exception {
+        assertWriterAcquisitionFailure("ts < '1970-01-03T00:00:00.000000Z'", false, false);
+    }
+
+    @Test
+    public void testWriterAcquireReadOnlyRefusalDefersBoundsWipe() throws Exception {
+        assertWriterAcquisitionFailure("ts < '1970-01-03T00:00:00.000000Z'", true, false);
+    }
+
+    @Test
+    public void testWriterAcquireReadOnlyRefusalDefersCountWipe() throws Exception {
+        assertWriterAcquisitionFailure("v < 3", true, false);
+    }
+
+    @Test
+    public void testWriterAcquireReadOnlyRefusalDefersReplacement() throws Exception {
+        assertWriterAcquisitionFailure("v < 3", true, true);
+    }
+
+    private void assertWriterAcquisitionFailure(String predicate, boolean isReadOnlyRefusal, boolean hasSurvivors) throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken viewToken = createPolicedView();
+            if (hasSurvivors) {
+                execute("""
+                        INSERT INTO base VALUES
+                        ('1970-01-01T01:00:00.000000Z', 4.0),
+                        ('1970-01-02T01:00:00.000000Z', 4.0)""");
+            }
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN " + predicate + " CLEANUP EVERY 1s");
+            drainWalAndMatViewQueues();
+            final long seqTxnBeforeSweep = engine.getTableSequencerAPI().lastTxn(viewToken);
+            setCurrentMicros(0);
+
+            final LogCapture logCapture = new LogCapture();
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                logCapture.start();
+                walWriterFailure = () -> {
+                    if (isReadOnlyRefusal) {
+                        final CairoException refusal = CairoException.readOnlyAccess();
+                        // A failed demote can restore PRIMARY before the catch classifies the refusal.
+                        readOnly.set(false);
+                        return refusal;
+                    }
+                    return CairoException.authorization().put("injected cleanup authorization failure");
+                };
+                final int failuresPerSweep = isReadOnlyRefusal ? 1 : 2;
+                for (int i = 0; i < 2; i++) {
+                    setCurrentMicros(i * 1_000_000L);
+                    demoteOnNextViewStateLookup.set(isReadOnlyRefusal);
+                    Assert.assertFalse(job.runNow());
+                    Assert.assertFalse(readOnly.get());
+                    Assert.assertEquals("read-only refusal must stop at the first partition",
+                            (i + 1) * failuresPerSweep, walWriterFailureCount);
+                    Assert.assertEquals(seqTxnBeforeSweep, engine.getTableSequencerAPI().lastTxn(viewToken));
+                    setCurrentMicros(i * 1_000_000L + 999_999L);
+                    Assert.assertFalse(job.runNow());
+                    Assert.assertEquals((i + 1) * failuresPerSweep, walWriterFailureCount);
+                }
+                logCapture.drain();
+                if (isReadOnlyRefusal) {
+                    logCapture.assertNotLogged("row-expiry partition cleanup failed");
+                    logCapture.assertNotLogged("row-expiry cleanup failed");
+                } else {
+                    logCapture.assertLogged("injected cleanup authorization failure");
+                }
+
+                walWriterFailure = null;
+                setCurrentMicros(2_000_000L);
+                if (!isReadOnlyRefusal) {
+                    // Genuine failures double the second retry gap to 2s, beyond CLEANUP EVERY 1s.
+                    Assert.assertFalse(job.runNow());
+                    Assert.assertEquals(seqTxnBeforeSweep, engine.getTableSequencerAPI().lastTxn(viewToken));
+                    setCurrentMicros(3_000_000L);
+                }
+                Assert.assertTrue("read-only deferrals must retry within CLEANUP EVERY", job.runNow());
+                Assert.assertEquals(seqTxnBeforeSweep + 2, engine.getTableSequencerAPI().lastTxn(viewToken));
+            } finally {
+                walWriterFailure = null;
+                readOnly.set(false);
+                logCapture.stop();
+            }
+
+            execute("ALTER MATERIALIZED VIEW mv DROP EXPIRE");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT ts, v FROM mv").noLeakCheck().expectSize().timestamp("ts").returns(hasSurvivors ? """
+                    ts\tv
+                    1970-01-01T01:00:00.000000Z\t4.0
+                    1970-01-02T01:00:00.000000Z\t4.0
+                    1970-01-03T00:00:00.000000Z\t3.0
+                    """ : """
+                    ts\tv
+                    1970-01-03T00:00:00.000000Z\t3.0
+                    """);
         });
     }
 

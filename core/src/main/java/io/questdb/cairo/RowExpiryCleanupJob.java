@@ -615,6 +615,12 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                     }
                     // ACTION_SKIP, or a WAL table not caught up -> defer this partition to a later sweep.
                 } catch (Throwable th) {
+                    if (th instanceof CairoException e && e.isReadOnlyAccessRefusal()) {
+                        // A demote can refuse writer acquisition before the commit fence runs.
+                        // Stop this sweep; the enclosing finally releases its resources.
+                        isLastCleanupDeferred = true;
+                        break;
+                    }
                     // A REPLACE that failed mid-append leaves uncommitted rows in the (reused) writer.
                     // Free it so those rows are rolled back on close and cannot be committed into the
                     // NEXT partition's REPLACE_RANGE (which would resurrect them outside the deleted
