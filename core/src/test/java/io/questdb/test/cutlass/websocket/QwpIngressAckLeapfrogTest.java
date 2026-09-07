@@ -400,6 +400,64 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDurableAckPollAdvancesAckOnCleanConnection() throws Exception {
+        // Counterpart to the deferred-group case below. With nothing deferred,
+        // the poll consumes its own message sequence and the cumulative OK ack
+        // must name it. Without that advance a client's acked watermark falls
+        // one behind the sequence it issued for every keepalive poll it sends,
+        // and its store-and-forward records never retire.
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            byte[] first = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
+            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, durableAckPollMessage());
+            byte[] second = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L));
+            byte[] wire = concat(first, poll, second);
+
+            PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = new QwpIngressProcessorState(
+                        RECV_BUFFER_SIZE,
+                        httpConfig.getSendBufferSize(),
+                        engine,
+                        httpConfig.getLineHttpProcessorConfiguration()
+                );
+                state.of(-1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+                getLV().set(context, state);
+
+                drive(processor, context, nf, first.length);
+                Assert.assertEquals("the first data frame must be acknowledged", 0,
+                        maxCumulativeOkAck(rawSocket.sentFrames));
+
+                drive(processor, context, nf, poll.length);
+                Assert.assertEquals(
+                        "a poll on a clean connection must advance the cumulative ack over its own sequence",
+                        1,
+                        maxCumulativeOkAck(rawSocket.sentFrames)
+                );
+
+                drive(processor, context, nf, second.length);
+                Assert.assertEquals("the trailing data frame must be acknowledged", 2,
+                        maxCumulativeOkAck(rawSocket.sentFrames));
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("tab")) {
+                Assert.assertEquals("the poll must neither add nor drop rows", 2, reader.size());
+            }
+        });
+    }
+
+    @Test
     public void testDurableAckPollMustNotCommitDeferredGroup() throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);

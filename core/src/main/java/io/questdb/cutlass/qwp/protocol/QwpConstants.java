@@ -76,6 +76,17 @@ public final class QwpConstants {
      * Flag bit: side-effect-free durable-ack progress poll. This control frame
      * has zero tables and zero payload and is accepted only on a connection
      * that negotiated durable acknowledgements.
+     * <p>
+     * Side-effect-free refers to the engine only: the poll writes no rows and
+     * closes no deferred-commit group. It is NOT free on the wire. The server
+     * assigns it a message sequence exactly like a data frame, and the next
+     * cumulative {@link #STATUS_OK} ack names that sequence once no deferred
+     * rows remain uncommitted. A client that sends a poll must therefore
+     * allocate a sequence for it in the same space it uses for data frames,
+     * and must not map the resulting ack back onto a data frame's
+     * store-and-forward record -- doing so would trim a record the server has
+     * not committed. Clients that poll with a WebSocket PING instead consume
+     * no sequence and are unaffected.
      */
     public static final byte FLAG_DURABLE_ACK_POLL = 0x02;
     /**
