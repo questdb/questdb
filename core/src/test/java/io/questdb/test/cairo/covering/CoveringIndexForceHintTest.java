@@ -42,10 +42,13 @@ import org.junit.Test;
  * partition there is nothing to defer to and that cost buys nothing. The hint is how a query
  * says so.
  * <p>
- * It is a promise about the COLUMN, not the key: no partition carries a top for it. Whether that
- * holds is runtime state the planner cannot check, so it takes the query's word for it -- and
- * then checks it per open. A key that does resolve to NULL over a table that does carry a top
- * throws, rather than answer from a sidecar that holds no value for those rows.
+ * It is a promise about the COLUMN, not the key: no partition THE SCAN READS carries a top for
+ * it. That is runtime state the planner cannot check, so it takes the query's word and re-checks
+ * per open; a key resolving to NULL over a scanned top throws rather than answer from a sidecar
+ * that holds nothing for those rows.
+ * <p>
+ * "The scan reads", not "the table holds" -- an interval admitting only top-free partitions keeps
+ * the promise; {@link #testHintHoldsOverIntervalAdmittingOnlyTopFreePartitions} pins that.
  */
 public class CoveringIndexForceHintTest extends AbstractCairoTest {
 
@@ -59,6 +62,75 @@ public class CoveringIndexForceHintTest extends AbstractCairoTest {
             // No plan assertion here: EXPLAIN opens the cursor, so it trips the same throw.
             assertThrowsForcedNullKey("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_lit WHERE sym = null");
             assertThrowsForcedNullKey("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_lit WHERE sym IN (null, 'A')");
+        });
+    }
+
+    @Test
+    public void testHintHoldsOverIntervalAdmittingOnlyTopFreePartitions() throws Exception {
+        // 2024-01-01 carries a top, 2024-01-02 and 2024-01-03 do not: an interval confined to the
+        // latter keeps the promise and must be served, while one reaching back over the topped
+        // partition, and the unrestricted query, still throw. mustUseBackup() asks the identical
+        // question, so this pins the no-hint narrowing too.
+        assertMemoryLeak(() -> {
+            createSplitTopTable("t_fc_interval");
+
+            assertQuery("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_interval"
+                    + " WHERE sym = null AND ts IN '2024-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tval
+                            2024-01-02T00:00:00.000000Z\t\t40.0
+                            2024-01-02T02:00:00.000000Z\t\t60.0
+                            """);
+
+            // Two top-free partitions in one interval, and the IN-list site.
+            assertQuery("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_interval"
+                    + " WHERE sym IN (null, 'B') AND ts BETWEEN '2024-01-02T00:00:00' AND '2024-01-03T23:59:59'"
+                    + " ORDER BY ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    // A BETWEEN interval scan reports no concrete size.
+                    .sizeMayVary()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tval
+                            2024-01-02T00:00:00.000000Z\t\t40.0
+                            2024-01-02T01:00:00.000000Z\tB\t50.0
+                            2024-01-02T02:00:00.000000Z\t\t60.0
+                            2024-01-03T00:00:00.000000Z\t\t70.0
+                            """);
+
+            // The interval reaches the topped partition, so the promise is broken again.
+            assertThrowsForcedNullKey("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_interval"
+                    + " WHERE sym = null AND ts BETWEEN '2024-01-01T00:00:00' AND '2024-01-02T23:59:59'");
+            assertThrowsForcedNullKey("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_interval"
+                    + " WHERE sym = null AND ts IN '2024-01-01'");
+            assertThrowsForcedNullKey("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_interval"
+                    + " WHERE sym = null");
+        });
+    }
+
+    @Test
+    public void testIntervalOverTopFreePartitionsKeepsCoveringPlanWithoutHint() throws Exception {
+        // No-hint twin: an interval admitting only top-free partitions must not take the backup,
+        // and must answer what the plain plan answers. "backup: true" is compile-time and cannot
+        // discriminate, so the /*+ no_covering */ cross-check is what carries this.
+        assertMemoryLeak(() -> {
+            createSplitTopTable("t_fc_interval_nohint");
+            for (String where : new String[]{
+                    "sym = null AND ts IN '2024-01-02'",
+                    "sym = null AND ts IN '2024-01-03'",
+                    "sym = null AND ts BETWEEN '2024-01-02T00:00:00' AND '2024-01-03T23:59:59'",
+                    "sym = null AND ts BETWEEN '2024-01-01T00:00:00' AND '2024-01-02T23:59:59'",
+                    "sym = null",
+                    "sym IN (null, 'B') AND ts IN '2024-01-02'"
+            }) {
+                final String sql = "SELECT ts, sym, val FROM t_fc_interval_nohint WHERE " + where + " ORDER BY ts";
+                assertSqlCursors(sql, sql.replace("SELECT ", "SELECT /*+ no_covering */ "));
+            }
         });
     }
 
@@ -224,6 +296,34 @@ public class CoveringIndexForceHintTest extends AbstractCairoTest {
                 ('2024-01-01T01:00:00', 20.0, 'A'),
                 ('2024-01-01T02:00:00', 30.0, NULL)
                 """.formatted(name));
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+    }
+
+    /**
+     * First partition carries a column top, the later two do not: 2024-01-01 is written before
+     * {@code sym} exists, 2024-01-02 and 2024-01-03 entirely after. The shape where "the table
+     * carries a top" and "the scanned partitions carry a top" disagree.
+     */
+    private static void createSplitTopTable(String name) throws Exception {
+        execute("CREATE TABLE " + name + " (ts TIMESTAMP, val DOUBLE)"
+                + " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("""
+                INSERT INTO %s VALUES
+                ('2024-01-01T00:00:00', 10.0),
+                ('2024-01-01T01:00:00', 20.0)
+                """.formatted(name));
+        execute("ALTER TABLE " + name + " ADD COLUMN sym SYMBOL");
+        execute("""
+                INSERT INTO %s VALUES
+                ('2024-01-01T02:00:00', 30.0, 'A'),
+                ('2024-01-02T00:00:00', 40.0, NULL),
+                ('2024-01-02T01:00:00', 50.0, 'B'),
+                ('2024-01-02T02:00:00', 60.0, NULL),
+                ('2024-01-03T00:00:00', 70.0, NULL),
+                ('2024-01-03T01:00:00', 80.0, 'C')
+                """.formatted(name));
+        execute("ALTER TABLE " + name + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (ts, val)");
         engine.releaseAllWriters();
         engine.releaseAllReaders();
     }
