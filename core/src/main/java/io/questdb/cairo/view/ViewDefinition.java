@@ -90,13 +90,27 @@ public class ViewDefinition implements Mutable {
         }
     }
 
+    /**
+     * Writes the definition block, and the extra block only for a view that is actually audited.
+     * <p>
+     * Emitting the extra block unconditionally would change the on-disk shape of every view for a
+     * flag that is false on all but the few that opted in. Writing it only when set keeps a
+     * non-audited view's file byte-identical to what a build without auditing writes, so rolling
+     * back to such a build is a non-event for it. An audited view does carry the extra block; an
+     * older build reads the definition block and stops, so it still loads the view, but if it then
+     * rewrites the definition - a recompile, an ALTER - the flag is dropped, and rolling forward
+     * again reads the view as not audited. That is the one thing a downgrade costs, and it costs it
+     * only for views that opted in.
+     */
     public static void append(@NotNull ViewDefinition viewDefinition, @NotNull BlockFileWriter writer) {
-        AppendableBlock block = writer.append();
+        final AppendableBlock block = writer.append();
         append(viewDefinition, block);
         block.commit(VIEW_DEFINITION_FORMAT_MSG_TYPE);
-        block = writer.append();
-        appendExtra(viewDefinition, block);
-        block.commit(VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE);
+        if (viewDefinition.isAudited()) {
+            final AppendableBlock extra = writer.append();
+            appendExtra(viewDefinition, extra);
+            extra.commit(VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE);
+        }
         writer.commit();
     }
 
@@ -137,9 +151,10 @@ public class ViewDefinition implements Mutable {
                     .put("cannot read view definition, block not found [path=").put(path)
                     .put(']');
         }
-        // Views created before auditing existed carry no extra block. readDefinitionBlock()
-        // has already defaulted the flag to false for them, which is the correct reading:
-        // a view that never opted in is not audited.
+        // A file with no extra block is either a view created before auditing existed or one
+        // that never opted in - append() writes the block only when the flag is set.
+        // readDefinitionBlock() has already defaulted the flag to false, which reads correctly
+        // for both.
     }
 
     @Override
@@ -194,8 +209,10 @@ public class ViewDefinition implements Mutable {
 
     /**
      * Reports whether queries reading this view emit a row into the view audit table.
-     * The flag is set by {@code CREATE VIEW ... WITH AUDIT} and lives in the definition's
-     * extra block, so a view created before auditing existed reads back as not audited.
+     * {@code CREATE VIEW ... WITH AUDIT} sets the flag, and the definition's extra block carries
+     * it. {@link #append(ViewDefinition, BlockFileWriter)} writes that block only when the flag is
+     * set, so a view that never opted in - including any view created before auditing existed -
+     * has no extra block and reads back as not audited.
      */
     public boolean isAudited() {
         return audited;

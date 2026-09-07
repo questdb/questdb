@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.ViewAuditModel;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -84,6 +85,23 @@ public class ViewAuditTest extends AbstractCairoTest {
                 TestUtils.assertEquals("'b'", audit.getParamValue(0).token);
                 TestUtils.assertEquals("'z'", audit.getParamValue(1).token);
             }
+        });
+    }
+
+    @Test
+    public void testAuditedDefinitionAddsTheExtraBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            final TableToken viewToken = engine.getTableTokenIfExists("v");
+
+            final ViewDefinition audited = new ViewDefinition();
+            audited.init(viewToken, "SELECT s FROM t", 0L, true);
+            writeDefinitionFile(viewToken, audited);
+
+            final IntList types = blockTypes(viewToken);
+            assertEquals(2, types.size());
+            assertEquals(ViewDefinition.VIEW_DEFINITION_FORMAT_MSG_TYPE, types.getQuick(0));
+            assertEquals(ViewDefinition.VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE, types.getQuick(1));
         });
     }
 
@@ -184,6 +202,59 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonAuditedViewWritesOnlyTheDefinitionBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            final TableToken viewToken = engine.getTableTokenIfExists("v");
+
+            // A view nobody asked to audit writes exactly what it wrote before auditing existed,
+            // so rolling back to a build without this feature is a non-event for it. Only a view
+            // that opted in carries the extra block, and only that view loses the flag if an
+            // older build rewrites its definition.
+            final IntList types = blockTypes(viewToken);
+            assertEquals(1, types.size());
+            assertEquals(ViewDefinition.VIEW_DEFINITION_FORMAT_MSG_TYPE, types.getQuick(0));
+        });
+    }
+
+    @Test
+    public void testUnknownTrailingBlockIsSkipped() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            final TableToken viewToken = engine.getTableTokenIfExists("v");
+
+            // The property that makes an added block safe in both directions: a reader walks past
+            // block types it does not know rather than failing on them. It is what lets an older
+            // build read a file this one wrote, and what will let this one read whatever a later
+            // build adds.
+            final ViewDefinition definition = new ViewDefinition();
+            definition.init(viewToken, "SELECT s FROM t", 11L, true);
+            try (
+                    BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+                    Path path = new Path()
+            ) {
+                path.of(configuration.getDbRoot()).concat(viewToken.getDirName()).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
+                writer.of(path.$());
+                final AppendableBlock block = writer.append();
+                ViewDefinition.append(definition, block);
+                block.commit(ViewDefinition.VIEW_DEFINITION_FORMAT_MSG_TYPE);
+                final AppendableBlock extra = writer.append();
+                ViewDefinition.appendExtra(definition, extra);
+                extra.commit(ViewDefinition.VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE);
+                final AppendableBlock unknown = writer.append();
+                unknown.putLong(1234L);
+                unknown.commit(ViewDefinition.VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE + 41);
+                writer.commit();
+            }
+
+            final ViewDefinition readBack = readDefinitionFile(viewToken);
+            assertTrue(readBack.isAudited());
+            assertEquals("SELECT s FROM t", readBack.getViewSql());
+            assertEquals(11L, readBack.getSeqTxn());
+        });
+    }
+
+    @Test
     public void testReadOfANonAuditedViewRecordsNothing() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTableAndView();
@@ -222,6 +293,22 @@ public class ViewAuditTest extends AbstractCairoTest {
             final ViewAuditModel audit = queryModel.getViewAudits().getQuick(0);
             TestUtils.assertEquals(viewName, audit.getViewName());
         }
+    }
+
+    /**
+     * The block types the view's {@code _view} file holds, in file order.
+     */
+    private static IntList blockTypes(TableToken viewToken) {
+        final IntList types = new IntList();
+        try (BlockFileReader reader = new BlockFileReader(configuration); Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(viewToken.getDirName()).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
+            reader.of(path.$());
+            final BlockFileReader.BlockCursor cursor = reader.getCursor();
+            while (cursor.hasNext()) {
+                types.add(cursor.next().type());
+            }
+        }
+        return types;
     }
 
     private static void createBaseTableAndView() throws Exception {
