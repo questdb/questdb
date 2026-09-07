@@ -687,7 +687,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
 
                 dispatcher.setBatchSliceNanosForTesting(0);
                 dispatcher.setBatchNanosForTesting(0);
-                Assert.assertEquals(TimeUnit.MILLISECONDS.toNanos(1), dispatcher.getBatchSliceNanos());
+                Assert.assertEquals(TimeUnit.MILLISECONDS.toNanos(2), dispatcher.getBatchSliceNanos());
             } finally {
                 close(runtime);
                 Misc.free(dispatcher);

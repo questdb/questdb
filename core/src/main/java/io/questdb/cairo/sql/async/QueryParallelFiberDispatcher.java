@@ -64,7 +64,6 @@ import java.util.concurrent.atomic.LongAdder;
 
 public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigurationListener, FiberRuntimeQuiesceListener, QuietCloseable {
     public static final long OWNER_YIELD_UNSET = Long.MIN_VALUE;
-    private static final long OWNER_HELP_YIELD_INTERVAL_NANOS = 1_000_000L;
     private static final long PUBLICATION_OPEN = Long.MIN_VALUE;
     private static final long PUBLICATION_PERMIT_MASK = Long.MAX_VALUE;
     private static final int QUIESCE_DRAINED = 3;
@@ -512,7 +511,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         }
         final long elapsedNanos = nanosecondClock.getTicks() - lastOwnerYieldNanos;
         if (elapsedNanos < batchNanos
-                && (elapsedNanos < OWNER_HELP_YIELD_INTERVAL_NANOS
+                && (elapsedNanos < batchSliceNanos
                 || Fiber.isMountedDispatchTimeSliced()
                 || !Fiber.hasQueuedRuntimeWork())) {
             return lastOwnerYieldNanos;

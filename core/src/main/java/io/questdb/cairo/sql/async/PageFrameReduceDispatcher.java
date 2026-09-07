@@ -63,7 +63,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     static final int BATCH_RETURN = 2;
     static final int BATCH_YIELD = 1;
     static final long DEFAULT_BATCH_NANOS = 10_000_000L;
-    static final long DEFAULT_BATCH_SLICE_NANOS = 1_000_000L;
+    static final long DEFAULT_BATCH_SLICE_NANOS = 2_000_000L;
     private static final Log LOG = LogFactory.getLog(PageFrameReduceDispatcher.class);
     private static final long PUBLICATION_OPEN = Long.MIN_VALUE;
     private static final long PUBLICATION_PERMIT_MASK = Long.MAX_VALUE;
