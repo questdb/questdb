@@ -31,6 +31,7 @@ import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -59,6 +60,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlHints;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -119,6 +121,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     private final PartitionFrameCursorFactory dfcFactory;
     private final int indexColumnIndex;
+    // Set when /*+ force_use_covering *//* suppressed a backup this factory would otherwise
+    // carry -- the key is a bind variable, null-capable but unknown at compile time. The
+    // promise is checked per open in checkHintPromise(), never trusted.
+    private final boolean isBackupSuppressedByHint;
     // Whether this factory frees symbolFunction / keyValueFuncs itself. False when the backup
     // was built from them and so already owns them; see the constructor parameter.
     private final boolean isKeyFunctionOwner;
@@ -153,7 +159,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             @Nullable Function latestByFilter,
             @Nullable IntList patternKeys,
             @Nullable RecordCursorFactory backup,
-            boolean backupOwnsKeyFunctions
+            boolean backupOwnsKeyFunctions,
+            boolean isBackupSuppressedByHint
     ) {
         // keyValueFuncs (IN/= key list) and patternKeys (positive pattern's matched key set) are two
         // mutually exclusive ways to drive the multi-key merge; never both.
@@ -161,6 +168,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.metadata = metadata;
         this.backup = backup;
         this.isKeyFunctionOwner = backup == null || !backupOwnsKeyFunctions;
+        this.isBackupSuppressedByHint = isBackupSuppressedByHint;
         this.dfcFactory = dfcFactory;
         this.indexColumnIndex = indexColumnIndex;
         this.keyQueryPosition = findQueryPosition(columnIndexes, indexColumnIndex);
@@ -326,11 +334,44 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * -- so it is answered here, from the reader this open resolved.
      */
     private boolean mustUseBackup(PartitionFrameCursor frameCursor, boolean anyKeyIsNull) {
-        if (backup == null || !anyKeyIsNull) {
+        if (backup == null) {
+            // No backup to defer to. Either none was ever needed, or the hint suppressed one --
+            // and a suppressed one is a promise that has to hold.
+            checkHintPromise(frameCursor, anyKeyIsNull);
+            return false;
+        }
+        if (!anyKeyIsNull) {
             return false;
         }
         final TableReader reader = frameCursor.getTableReader();
         return hasAnyColumnTop(reader, reader.getMetadata().getWriterIndex(indexColumnIndex));
+    }
+
+    /**
+     * Enforces the {@code force_use_covering} promise: the resolved key is not NULL, or the table
+     * carries no column top. The hint buys back the page-frame cursor -- parallel filter and
+     * vectorized GROUP BY -- for a bind-variable key, which is null-capable but unknown at compile
+     * time. When the bound value turns out to be NULL over a table that does carry a top, the
+     * covering scan has no posting to decode and would answer with dropped rows or fabricated
+     * NULLs. Throw instead.
+     * <p>
+     * This is a real exception, not an {@code assert}: it has to fire with {@code -ea} off,
+     * because the alternative is exactly the silent wrong answer the backup plan exists to
+     * remove.
+     */
+    private void checkHintPromise(PartitionFrameCursor frameCursor, boolean anyKeyIsNull) {
+        if (!isBackupSuppressedByHint || !anyKeyIsNull) {
+            return;
+        }
+        final TableReader reader = frameCursor.getTableReader();
+        final TableReaderMetadata readerMetadata = reader.getMetadata();
+        if (hasAnyColumnTop(reader, readerMetadata.getWriterIndex(indexColumnIndex))) {
+            throw CairoException.nonCritical()
+                    .put("bound key resolved to NULL over a column top, which the covering index cannot serve [hint=")
+                    .put(SqlHints.FORCE_USE_COVERING_HINT)
+                    .put(", column=").put(readerMetadata.getColumnName(indexColumnIndex))
+                    .put("]; drop the hint or bind a non-NULL value");
+        }
     }
 
     /**
@@ -510,6 +551,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         multiKeyPageFrameCursor.multiKeys.add(key);
                     }
                 }
+                // A suppressed backup is exactly what leaves this page-frame cursor reachable
+                // for a null-capable key, so the promise is checked here too.
+                checkHintPromise(frameCursor, multiKeyPageFrameCursor.multiKeys.contains(SymbolTable.VALUE_IS_NULL));
                 // Always wire the frame cursor; callers may probe getSymbolTable()
                 // before iteration. Empty multiKeys list yields no frames.
                 multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false, executionContext.getMemoryTracker());
@@ -525,6 +569,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // See getCursor(): keyOf() resolves a null value to the NULL key.
                 resolvedKey = smr.keyOf(symbolFunction.getStrA(null));
             }
+            // See the multi-key branch above.
+            checkHintPromise(frameCursor, resolvedKey == SymbolTable.VALUE_IS_NULL);
             singleKeyPageFrameCursor.resolvedKey = resolvedKey;
             singleKeyPageFrameCursor.of(frameCursor, configMaxRows, descending, executionContext.getMemoryTracker());
             return singleKeyPageFrameCursor;

@@ -1126,6 +1126,49 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * Whether to build a backup plan for a single covering key. A NULL key over a partition that
+     * carries a column top has no posting and so no sidecar entry to decode, and only the key's
+     * nullability is a compile-time fact -- see {@link #canKeyBeNull}.
+     * <p>
+     * {@code /*+ force_use_covering *}{@code /} suppresses the backup, but only where the key's
+     * nullness is genuinely unknown here: a literal {@code null} has already resolved to
+     * {@code VALUE_IS_NULL}, so the hint would be a promise the compiler can see is false and
+     * the backup is built anyway. {@link CoveringIndexRecordCursorFactory} re-checks the
+     * suppressed promise per open and throws if it was broken.
+     */
+    private static boolean isBackupNeeded(int symbolKey, Function symbolFunc, IQueryModel model) {
+        if (!canKeyBeNull(symbolKey, symbolFunc)) {
+            return false;
+        }
+        return symbolKey == SymbolTable.VALUE_IS_NULL || !SqlHints.hasForceUseCoveringHint(model);
+    }
+
+    /**
+     * The IN-list twin of {@link #isBackupNeeded}. One literal {@code null} anywhere in the list
+     * is enough to make the hint a promise the compiler can see is false, so the whole list
+     * keeps its backup.
+     */
+    private static boolean isBackupNeededForList(
+            ObjList<Function> keyValueFuncs,
+            SymbolMapReader symbolMapReader,
+            IQueryModel model
+    ) {
+        if (!canAnyKeyBeNull(keyValueFuncs, symbolMapReader)) {
+            return false;
+        }
+        if (!SqlHints.hasForceUseCoveringHint(model)) {
+            return true;
+        }
+        for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+            final Function f = keyValueFuncs.getQuick(i);
+            if (!f.isRuntimeConstant() && symbolMapReader.keyOf(f.getStrA(null)) == SymbolTable.VALUE_IS_NULL) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * The plain single-key index scan a covering factory falls back to: the same plan this
      * method's caller builds when {@code /*+ no_covering *}{@code /} is set, minus the filter.
      * The filter stays with the wrapper above the covering factory, which applies it to
@@ -7538,7 +7581,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     // one takes an int and leaves it to the covering factory.
                                     final boolean backupOwnsKeyFunc = symbol == SymbolTable.VALUE_NOT_FOUND;
                                     RecordCursorFactory backup = null;
-                                    if (canKeyBeNull(symbol, sharedKeyFunc)) {
+                                    if (isBackupNeeded(symbol, sharedKeyFunc, model)) {
                                         backup = buildLatestByIndexScan(
                                                 configuration,
                                                 metadata,
@@ -7573,7 +7616,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 sharedFilter,
                                                 null,
                                                 backup,
-                                                backupOwnsKeyFunc
+                                                backupOwnsKeyFunc,
+                                                backup == null && canKeyBeNull(symbol, sharedKeyFunc)
                                         );
                                         symbolValueFunc = null;
                                         partitionFrameCursorFactory = null;
@@ -7656,7 +7700,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             final PartitionFrameCursorFactory sharedDfc = partitionFrameCursorFactory;
                             final Function sharedFilter = filter;
                             RecordCursorFactory backup = null;
-                            if (canAnyKeyBeNull(intrinsicModel.keyValueFuncs, symbolMapReader)) {
+                            if (isBackupNeededForList(intrinsicModel.keyValueFuncs, symbolMapReader, model)) {
                                 backup = new LatestByValuesIndexedFilteredRecordCursorFactory(
                                         configuration,
                                         metadata,
@@ -7686,7 +7730,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         sharedFilter,
                                         null,
                                         backup,
-                                        true
+                                        true,
+                                        backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs, symbolMapReader)
                                 );
                                 partitionFrameCursorFactory = null;
                                 filter = null;
@@ -12187,7 +12232,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         final PartitionFrameCursorFactory sharedDfc = dfcFactory;
                                         final Function sharedKeyFunc = symbolFunc;
                                         RecordCursorFactory backup = null;
-                                        if (canKeyBeNull(symbolKey, sharedKeyFunc)) {
+                                        if (isBackupNeeded(symbolKey, sharedKeyFunc, model)) {
                                             backup = buildSingleSymbolIndexScan(
                                                     configuration, queryMeta, sharedDfc, keyColumnIndex,
                                                     symbolKey, sharedKeyFunc, indexDirection,
@@ -12214,7 +12259,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     null,
                                                     null,
                                                     backup,
-                                                    true
+                                                    true,
+                                                    backup == null && canKeyBeNull(symbolKey, sharedKeyFunc)
                                             );
                                         } catch (Throwable th) {
                                             Misc.free(backup);
@@ -12317,7 +12363,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // make this scan ask for the NULL key.
                                 final PartitionFrameCursorFactory sharedDfc = dfcFactory;
                                 RecordCursorFactory backup = null;
-                                if (canAnyKeyBeNull(intrinsicModel.keyValueFuncs, reader.getSymbolMapReader(keyReaderColIdx))) {
+                                if (isBackupNeededForList(intrinsicModel.keyValueFuncs, reader.getSymbolMapReader(keyReaderColIdx), model)) {
                                     backup = new FilterOnValuesRecordCursorFactory(
                                             configuration,
                                             queryMeta,
@@ -12354,7 +12400,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             null,
                                             null,
                                             backup,
-                                            true
+                                            true,
+                                            backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs, reader.getSymbolMapReader(keyReaderColIdx))
                                     );
                                 } catch (Throwable th) {
                                     Misc.free(backup);
@@ -13481,6 +13528,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             null,
                             effectiveKeys,
                             null,
+                            false,
                             false
                     );
                 }

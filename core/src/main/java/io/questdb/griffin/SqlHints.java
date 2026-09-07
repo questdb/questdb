@@ -37,6 +37,7 @@ public final class SqlHints {
     public static final String ASOF_MEMOIZED_DRIVEBY_HINT = "asof_memoized_driveby";
     public static final String ASOF_MEMOIZED_HINT = "asof_memoized";
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
+    public static final String FORCE_USE_COVERING_HINT = "force_use_covering";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
     public static final String MARKOUT_HORIZON_HINT = "markout_horizon";
     public static final String NO_COVERING_HINT = "no_covering";
@@ -91,6 +92,25 @@ public final class SqlHints {
         LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
         CharSequence params = hints.get(ENABLE_PRE_TOUCH_HINT);
         return Chars.containsWordIgnoreCase(params, tableName, HINTS_PARAMS_DELIMITER);
+    }
+
+    /**
+     * Whether the query promises that its covering-index key will not resolve to NULL, so the
+     * covering factory needs no backup plan for a partition carrying a column top.
+     * <p>
+     * The promise is only ever needed where the compiler cannot see the answer: a bind variable
+     * or other runtime constant is null-capable-but-unknown, so it would otherwise always get a
+     * backup and always lose the page-frame cursor -- parallel filter and vectorized GROUP BY --
+     * even on a table with no column top anywhere. A literal {@code null} resolves at compile
+     * time, so the callers ignore the hint there rather than act on a promise they can already
+     * see is false.
+     * <p>
+     * The promise is checked, not trusted: an open whose key does resolve to NULL over a table
+     * that carries a column top throws rather than answer from a sidecar that holds no value
+     * for those rows. See {@code CoveringIndexRecordCursorFactory.mustUseBackup}.
+     */
+    public static boolean hasForceUseCoveringHint(@NotNull IQueryModel queryModel) {
+        return queryModel.getHints().keyIndex(FORCE_USE_COVERING_HINT) < 0;
     }
 
     public static boolean hasMarkoutHorizonHint(
