@@ -538,11 +538,22 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     private TableSequencerImpl openSequencerInstance(CharSequence tableDir, Object tableToken) {
+        TableToken token = (TableToken) tableToken;
+        // The caller's token may be stale: a job or writer holding a pre-rename token can
+        // resurrect a sequencer that was released after the rename. The name registry owns
+        // the current token of a live dir; resurrecting with a stale one would fail the
+        // nextTxn token check for up-to-date writers until the entry is recycled again.
+        // Fall back to the caller's token when the registry has no live mapping for the
+        // dir, e.g. when the sequencer of a dropped table is opened to check its state.
+        TableToken registryToken = engine.getTableTokenByDirName(tableDir);
+        if (registryToken != null && registryToken.getTableId() == token.getTableId()) {
+            token = registryToken;
+        }
         return new TableSequencerImpl(
                 this,
                 this.engine,
-                (TableToken) tableToken,
-                getSeqTxnTracker((TableToken) tableToken),
+                token,
+                getSeqTxnTracker(token),
                 0,
                 null
         );
