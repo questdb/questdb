@@ -47,6 +47,9 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
     private final TimerShards timerShards;
     private @Nullable FiberDispatchContext batchDispatchContext;
     private long batchDispatchOwnerId;
+    private Fiber batchFiber;
+    private long batchMountVersion;
+    private long batchStartNanos;
     private MCSequence batchSubSeq;
     private int batchWorkerId = -1;
     private FiberDispatchContext dispatchContext;
@@ -161,15 +164,15 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
         SuspensionScope.enterTimerShards(timerShards);
         batchDispatchContext = Fiber.captureDispatchContext();
         batchDispatchOwnerId = getQueryRegistryOwnerId(batchDispatchContext);
-        long batchWeight = boundEntryWeight();
+        batchFiber = Fiber.current();
+        batchMountVersion = batchFiber.getMountVersion();
+        batchStartNanos = System.nanoTime();
         if (!runTask()) {
             return false;
         }
         final MCSequence subSeq = batchSubSeq;
         if (subSeq != null) {
-            final int batchLimit = dispatcher.getBatchLimit();
-            final long batchWeightBudget = dispatcher.getBatchRowBudget();
-            for (int i = 1; i < batchLimit && batchWeight < batchWeightBudget; i++) {
+            while (continueBatch()) {
                 final long cursor = claimNext(subSeq);
                 if (cursor < 0) {
                     break;
@@ -181,17 +184,12 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
                 // signal must track the entry, not the mount
                 enterBoundCancellationScope();
                 switchDispatchContext(dispatchContext);
-                batchWeight += boundEntryWeight();
                 if (!runTask()) {
                     return false;
                 }
             }
         }
         return true;
-    }
-
-    protected long boundEntryWeight() {
-        return 0;
     }
 
     protected abstract void cancelOwner();
@@ -240,6 +238,31 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
         return context != null ? context.getQueryRegistryOwnerId() : -1;
     }
 
+    private boolean continueBatch() {
+        refreshBatchClock();
+        return switch (dispatcher.checkBatch(batchStartNanos)) {
+            case PageFrameReduceDispatcher.BATCH_CONTINUE -> true;
+            case PageFrameReduceDispatcher.BATCH_YIELD -> {
+                if (!Fiber.yieldCooperatively()) {
+                    yield false;
+                }
+                batchMountVersion = batchFiber.getMountVersion();
+                batchStartNanos = System.nanoTime();
+                yield true;
+            }
+            default -> false;
+        };
+    }
+
+    private void refreshBatchClock() {
+        final long mountVersion = batchFiber.getMountVersion();
+        if (mountVersion != batchMountVersion) {
+            // time spent unmounted must not count against the batch
+            batchMountVersion = mountVersion;
+            batchStartNanos = System.nanoTime();
+        }
+    }
+
     private void enterBoundCancellationScope() {
         final AtomicBoolean cancelledFlag = cancellationBinding.getFlag();
         if (cancelledFlag instanceof FiberCancellationSignal signal) {
@@ -269,9 +292,11 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
         // Query leases may pool and mutate a context object after its owner finishes. The owner ID
         // snapshot prevents reference-identity ABA from running a later query on the previous grant.
         final long nextOwnerId = getQueryRegistryOwnerId(nextContext);
-        if ((batchDispatchContext != nextContext || batchDispatchOwnerId != nextOwnerId)
-                && !Fiber.yieldForDispatch(nextContext)) {
-            throw new IllegalStateException("query parallel reducer could not switch dispatch context");
+        if (batchDispatchContext != nextContext || batchDispatchOwnerId != nextOwnerId) {
+            if (!Fiber.yieldForDispatch(nextContext)) {
+                throw new IllegalStateException("query parallel reducer could not switch dispatch context");
+            }
+            refreshBatchClock();
         }
         batchDispatchContext = nextContext;
         batchDispatchOwnerId = nextOwnerId;

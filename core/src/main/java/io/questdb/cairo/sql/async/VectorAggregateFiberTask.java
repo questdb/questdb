@@ -69,12 +69,6 @@ final class VectorAggregateFiberTask extends AbstractQueryParallelFiberTask {
     }
 
     @Override
-    protected long boundEntryWeight() {
-        final VectorAggregateEntry boundEntry = entry;
-        return boundEntry != null ? boundEntry.getFrameRowCount() : 0;
-    }
-
-    @Override
     protected void cancelOwner() {
         if (entry != null) {
             entry.getCircuitBreaker().cancel();

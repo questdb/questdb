@@ -1090,6 +1090,44 @@ public class FiberAffinitySchedulingTest {
     }
 
     @Test
+    public void testOwnedDrainReturnsToHostAfterTimeBudget() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(2, 2, 64, 1, FiberWakeSink.NO_OP);
+            runtime.initializeCarrier();
+            final FiberRuntime.OwnerContext owner = runtime.getOwnerContext(0);
+            try {
+                runtime.activateOwner(owner);
+                final OneShotTask first = new OneShotTask();
+                final OneShotTask second = new OneShotTask();
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(first));
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(second));
+                runtime.setAfterProcessForTesting(() -> {
+                    runtime.setAfterProcessForTesting(null);
+                    final long startNanos = System.nanoTime();
+                    while (System.nanoTime() - startNanos < TimeUnit.MILLISECONDS.toNanos(20)) {
+                        Thread.onSpinWait();
+                    }
+                });
+
+                // The first mount exhausts the drain time budget, so the host gets control back
+                // with the second task still queued and no budget exhaustion recorded.
+                Assert.assertEquals(1, runtime.drainOwned(owner, 64));
+                Assert.assertTrue(first.isDone());
+                Assert.assertFalse(second.isDone());
+                Assert.assertEquals(1, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(0, runtime.getBudgetExhaustionCount());
+                Assert.assertEquals(1, runtime.getOwnedDrainTimeoutCount());
+
+                Assert.assertEquals(1, runtime.drainOwned(owner, 64));
+                Assert.assertTrue(second.isDone());
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+            } finally {
+                closeDetached(runtime);
+            }
+        });
+    }
+
+    @Test
     public void testRecoveredOrphanDoesNotRepinPeerStealCursor() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(4, 4, 64, 4, FiberWakeSink.NO_OP);
@@ -1586,6 +1624,13 @@ public class FiberAffinitySchedulingTest {
                 pool.halt();
             }
         });
+    }
+
+    private static final class OneShotTask extends FiberTask {
+        @Override
+        protected boolean runStep() {
+            return true;
+        }
     }
 
     private static final class ResignalOnceTask extends FiberTask {

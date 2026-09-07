@@ -52,9 +52,18 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 
 public final class PageFrameReduceDispatcher implements FiberRuntimeConfigurationListener, FiberRuntimeQuiesceListener, QuietCloseable {
-    static final int DEFAULT_BATCH_LIMIT = 64;
+    // A batch keeps its carrier while nobody else needs it. Once the slice has elapsed it yields at
+    // the next frame boundary to any queued Fiber, and after the batch budget it returns to the host
+    // worker regardless, so the pool's housekeeping Jobs run. Managed reducers poll their dispatch
+    // ticket at every frame boundary either way.
+    static final int BATCH_CONTINUE = 0;
+    static final int BATCH_RETURN = 2;
+    static final int BATCH_YIELD = 1;
+    static final long DEFAULT_BATCH_NANOS = 10_000_000L;
+    static final long DEFAULT_BATCH_SLICE_NANOS = 1_000_000L;
     private static final Log LOG = LogFactory.getLog(PageFrameReduceDispatcher.class);
     private static final long PUBLICATION_OPEN = Long.MIN_VALUE;
     private static final long PUBLICATION_PERMIT_MASK = Long.MAX_VALUE;
@@ -63,7 +72,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private static final int QUIESCE_OPEN = 0;
     private static final int QUIESCE_REQUESTED = 1;
     private static final int REASON_TAIL_PROGRESS_POLL = -1;
-    private final long configuredBatchRowBudget;
+    private final LongAdder batchSliceYieldCount = new LongAdder();
+    private final LongAdder batchTimeoutCount = new LongAdder();
     private final MessageBus messageBus;
     private final AtomicLong progressVersion = new AtomicLong();
     private final FiberEventWaitQueue progressWaitQueue =
@@ -75,16 +85,11 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private final MillisecondClock timerClock;
     private final long timerIntervalMillis;
     private final TimerShards timerShards;
-    private volatile int batchLimit = DEFAULT_BATCH_LIMIT;
-    private volatile long batchRowBudget;
+    private volatile long batchNanos = DEFAULT_BATCH_NANOS;
+    private volatile long batchSliceNanos = DEFAULT_BATCH_SLICE_NANOS;
     private volatile boolean isClosed;
 
     public PageFrameReduceDispatcher(CairoEngine engine, MessageBus messageBus, FiberRuntime runtime) {
-        // Amortize dispatch overhead across two max-sized frames' worth of rows. Managed reducers
-        // still poll their dispatch ticket at every frame boundary; this row budget separately
-        // bounds when a runnable batch returns naturally to the host worker.
-        this.configuredBatchRowBudget = 2L * engine.getConfiguration().getSqlPageFrameMaxRows();
-        this.batchRowBudget = configuredBatchRowBudget;
         this.messageBus = messageBus;
         this.runtime = runtime;
         this.taskPool = new FiberTaskPool<>(
@@ -99,22 +104,11 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         );
         this.timerShards = engine.getTimerShards();
         boolean isConfigurationListenerRegistered = false;
-        boolean isQuiesceListenerRegistered = false;
         try {
             runtime.registerConfigurationListener(this);
             isConfigurationListenerRegistered = true;
             runtime.registerQuiesceListener(this);
-            isQuiesceListenerRegistered = true;
         } catch (Throwable th) {
-            if (isQuiesceListenerRegistered) {
-                try {
-                    runtime.unregisterQuiesceListener(this);
-                } catch (Throwable cleanupFailure) {
-                    if (cleanupFailure != th) {
-                        th.addSuppressed(cleanupFailure);
-                    }
-                }
-            }
             if (isConfigurationListenerRegistered) {
                 try {
                     runtime.unregisterConfigurationListener(this);
@@ -394,12 +388,20 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         }
     }
 
-    public int getBatchLimit() {
-        return batchLimit;
+    public long getBatchNanos() {
+        return batchNanos;
     }
 
-    public long getBatchRowBudget() {
-        return batchRowBudget;
+    public long getBatchSliceNanos() {
+        return batchSliceNanos;
+    }
+
+    public long getBatchSliceYieldCount() {
+        return batchSliceYieldCount.sum();
+    }
+
+    public long getBatchTimeoutCount() {
+        return batchTimeoutCount.sum();
     }
 
     @TestOnly
@@ -470,8 +472,13 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     }
 
     @TestOnly
-    public void setBatchRowBudgetForTesting(long batchRowBudget) {
-        this.batchRowBudget = batchRowBudget > 0 ? batchRowBudget : configuredBatchRowBudget;
+    public void setBatchNanosForTesting(long batchNanos) {
+        this.batchNanos = batchNanos > 0 ? batchNanos : DEFAULT_BATCH_NANOS;
+    }
+
+    @TestOnly
+    public void setBatchSliceNanosForTesting(long batchSliceNanos) {
+        this.batchSliceNanos = batchSliceNanos > 0 ? batchSliceNanos : DEFAULT_BATCH_SLICE_NANOS;
     }
 
     @TestOnly
@@ -505,25 +512,6 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     @TestOnly
     public boolean tryLeaseTaskForTesting() {
         return taskPool.tryLease();
-    }
-
-    @TestOnly
-    public static final class TaskLeaseForTesting {
-        private final AtomicBoolean isReleased = new AtomicBoolean();
-        private final PageFrameFiberTask task;
-        private final FiberTaskPool<PageFrameFiberTask> taskPool;
-
-        private TaskLeaseForTesting(FiberTaskPool<PageFrameFiberTask> taskPool) {
-            this.taskPool = taskPool;
-            this.task = taskPool.acquireLeased();
-        }
-
-        public void release() {
-            if (!isReleased.compareAndSet(false, true)) {
-                throw new IllegalStateException("page frame fiber task lease already released");
-            }
-            taskPool.release(task);
-        }
     }
 
     private static boolean hasNoPendingTasks(MCSequence subSeq) {
@@ -659,6 +647,61 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         }
     }
 
+    private void completeFailedOrderedAcquisition(
+            MCSequence subSeq,
+            long cursor,
+            PageFrameReduceTask reduceTask,
+            PageFrameSequence<?> frameSequence,
+            Throwable failure
+    ) {
+        try {
+            if (frameSequence.isReducerFailureReportable(failure)) {
+                reduceTask.setErrorMsg(failure);
+                frameSequence.cancelOnReducerError(failure);
+            }
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            subSeq.done(cursor);
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            frameSequence.getReduceFinishedCounter().incrementAndGet();
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            signalProgress(frameSequence);
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+    }
+
+    private void completeFailedUnorderedAcquisition(
+            UnorderedPageFrameSequence<?> frameSequence,
+            Throwable failure
+    ) {
+        try {
+            if (frameSequence.isReducerFailureReportable(failure)) {
+                frameSequence.setError(failure);
+            }
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            frameSequence.getDoneLatch().countDown();
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            frameSequence.signalProgress();
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+    }
+
     private boolean drainOrdered(RingQueue<PageFrameReduceTask> queue, MCSequence subSeq) {
         while (true) {
             final long cursor = subSeq.next();
@@ -718,61 +761,6 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             } else {
                 return cursor == -1;
             }
-        }
-    }
-
-    private void completeFailedOrderedAcquisition(
-            MCSequence subSeq,
-            long cursor,
-            PageFrameReduceTask reduceTask,
-            PageFrameSequence<?> frameSequence,
-            Throwable failure
-    ) {
-        try {
-            if (frameSequence.isReducerFailureReportable(failure)) {
-                reduceTask.setErrorMsg(failure);
-                frameSequence.cancelOnReducerError(failure);
-            }
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
-        try {
-            subSeq.done(cursor);
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
-        try {
-            frameSequence.getReduceFinishedCounter().incrementAndGet();
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
-        try {
-            signalProgress(frameSequence);
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
-    }
-
-    private void completeFailedUnorderedAcquisition(
-            UnorderedPageFrameSequence<?> frameSequence,
-            Throwable failure
-    ) {
-        try {
-            if (frameSequence.isReducerFailureReportable(failure)) {
-                frameSequence.setError(failure);
-            }
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
-        try {
-            frameSequence.getDoneLatch().countDown();
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
-        try {
-            frameSequence.signalProgress();
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
         }
     }
 
@@ -844,6 +832,19 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         return isLeased;
     }
 
+    int checkBatch(long batchStartNanos) {
+        final long elapsedNanos = System.nanoTime() - batchStartNanos;
+        if (elapsedNanos >= batchNanos) {
+            batchTimeoutCount.increment();
+            return BATCH_RETURN;
+        }
+        if (elapsedNanos >= batchSliceNanos && !Fiber.isMountedDispatchTimeSliced() && runtime.hasQueuedWork()) {
+            batchSliceYieldCount.increment();
+            return BATCH_YIELD;
+        }
+        return BATCH_CONTINUE;
+    }
+
     boolean isProgressWaitTerminated(
             AbstractPageFrameSequence frameSequence,
             long observedSequenceVersion,
@@ -905,6 +906,25 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     void signalProgress(AbstractPageFrameSequence frameSequence) {
         signalProgress();
         frameSequence.signalProgress();
+    }
+
+    @TestOnly
+    public static final class TaskLeaseForTesting {
+        private final AtomicBoolean isReleased = new AtomicBoolean();
+        private final PageFrameFiberTask task;
+        private final FiberTaskPool<PageFrameFiberTask> taskPool;
+
+        private TaskLeaseForTesting(FiberTaskPool<PageFrameFiberTask> taskPool) {
+            this.taskPool = taskPool;
+            this.task = taskPool.acquireLeased();
+        }
+
+        public void release() {
+            if (!isReleased.compareAndSet(false, true)) {
+                throw new IllegalStateException("page frame fiber task lease already released");
+            }
+            taskPool.release(task);
+        }
     }
 
 }

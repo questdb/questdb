@@ -49,6 +49,9 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(PageFrameFiberTask.class);
     private @Nullable FiberDispatchContext batchDispatchContext;
     private long batchDispatchOwnerId;
+    private Fiber batchFiber;
+    private long batchMountVersion;
+    private long batchStartNanos;
     private final SqlExecutionCircuitBreakerWrapper circuitBreaker;
     private final PageFrameReduceDispatcher dispatcher;
     private long orderedCursor = -1;
@@ -198,20 +201,15 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         SuspensionScope.enterTimerShards(timerShards);
         batchDispatchContext = Fiber.captureDispatchContext();
         batchDispatchOwnerId = getQueryRegistryOwnerId(batchDispatchContext);
+        batchFiber = Fiber.current();
+        batchMountVersion = batchFiber.getMountVersion();
+        batchStartNanos = System.nanoTime();
         if (orderedFrameSequence != null) {
             final RingQueue<PageFrameReduceTask> queue = orderedQueue;
             final MCSequence subSeq = orderedSubSeq;
-            // row counts must be read before done() releases the queue slot for reuse
-            long batchRows = orderedReduceTask.getFrameRowCount();
             orderedFrameSequence.enterReducerCancellationScope();
             reduceOrderedFrame(subSeq, orderedCursor, orderedReduceTask, orderedFrameSequence);
-            final int batchLimit = dispatcher.getBatchLimit();
-            // The last claimed frame may take the total above the configured row budget.
-            final long batchRowBudget = dispatcher.getBatchRowBudget();
-            for (int i = 1; i < batchLimit && batchRows < batchRowBudget; i++) {
-                if (hasNoPendingTasks(subSeq)) {
-                    break;
-                }
+            while (!hasNoPendingTasks(subSeq) && continueBatch()) {
                 final long cursor;
                 while (true) {
                     final long next = subSeq.next();
@@ -231,21 +229,14 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 orderedFrameSequence = frameSequence;
                 frameSequence.enterReducerCancellationScope();
                 pollOrSwitchDispatchContext(frameSequence.getDispatchContext());
-                batchRows += reduceTask.getFrameRowCount();
                 reduceOrderedFrame(subSeq, cursor, reduceTask, frameSequence);
             }
         } else if (unorderedFrameSequence != null) {
             final RingQueue<UnorderedPageFrameReduceTask> queue = unorderedQueue;
             final MCSequence subSeq = unorderedSubSeq;
-            long batchRows = unorderedFrameSequence.getFrameRowCount(unorderedFrameIndex);
             unorderedFrameSequence.enterReducerCancellationScope();
             reduceUnorderedFrame(unorderedFrameIndex, unorderedFrameSequence);
-            final int batchLimit = dispatcher.getBatchLimit();
-            final long batchRowBudget = dispatcher.getBatchRowBudget();
-            for (int i = 1; i < batchLimit && batchRows < batchRowBudget; i++) {
-                if (hasNoPendingTasks(subSeq)) {
-                    break;
-                }
+            while (!hasNoPendingTasks(subSeq) && continueBatch()) {
                 final long cursor;
                 while (true) {
                     final long next = subSeq.next();
@@ -276,7 +267,6 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 unorderedFrameSequence = frameSequence;
                 frameSequence.enterReducerCancellationScope();
                 pollOrSwitchDispatchContext(frameSequence.getDispatchContext());
-                batchRows += frameSequence.getFrameRowCount(frameIndex);
                 reduceUnorderedFrame(frameIndex, frameSequence);
             }
         }
@@ -343,6 +333,31 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         }
     }
 
+    private boolean continueBatch() {
+        refreshBatchClock();
+        return switch (dispatcher.checkBatch(batchStartNanos)) {
+            case PageFrameReduceDispatcher.BATCH_CONTINUE -> true;
+            case PageFrameReduceDispatcher.BATCH_YIELD -> {
+                if (!Fiber.yieldCooperatively()) {
+                    yield false;
+                }
+                batchMountVersion = batchFiber.getMountVersion();
+                batchStartNanos = System.nanoTime();
+                yield true;
+            }
+            default -> false;
+        };
+    }
+
+    private void refreshBatchClock() {
+        final long mountVersion = batchFiber.getMountVersion();
+        if (mountVersion != batchMountVersion) {
+            // time spent unmounted must not count against the batch
+            batchMountVersion = mountVersion;
+            batchStartNanos = System.nanoTime();
+        }
+    }
+
     private void pollOrSwitchDispatchContext(@Nullable FiberDispatchContext nextContext) {
         // Query leases may pool and mutate a context object after its owner finishes. The owner ID
         // snapshot prevents reference-identity ABA from running a later query on the previous grant.
@@ -352,6 +367,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         } else if (!Fiber.yieldForDispatch(nextContext)) {
             throw new IllegalStateException("page frame reducer could not switch dispatch context");
         }
+        refreshBatchClock();
         batchDispatchContext = nextContext;
         batchDispatchOwnerId = nextOwnerId;
     }

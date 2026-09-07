@@ -38,7 +38,31 @@ public interface FiberDispatchTicket {
     default void onCooperativePoll() {
     }
 
+    /**
+     * Whether {@link #onCooperativePoll()} ends the mounted segment on the ticket's own time
+     * slice. Batching loops then leave slice fairness to the ticket.
+     */
+    default boolean isTimeSliced() {
+        return false;
+    }
+
     void onMount(FiberDispatchRequest request);
 
     void onUnmount(FiberDispatchRequest request, boolean wasMounted);
+
+    /**
+     * Replaces {@link #onUnmount} when the mounted Fiber yielded for dispatch and the runtime
+     * re-submits its request to the same session right after. A session may settle this unmount
+     * inside that request instead of separately.
+     */
+    default void onUnmountBeforeRedispatch(FiberDispatchRequest request) {
+        onUnmount(request, true);
+    }
+
+    /**
+     * Replaces the re-submission promised by {@link #onUnmountBeforeRedispatch} when a driver
+     * failure retires the Fiber before the runtime re-submits its request.
+     */
+    default void onRedispatchAbandoned(FiberDispatchRequest request) {
+    }
 }
