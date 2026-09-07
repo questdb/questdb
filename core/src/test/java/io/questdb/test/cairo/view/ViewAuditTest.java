@@ -132,6 +132,38 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRedefiningAnAuditedViewKeepsTheFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            final TableToken viewToken = engine.getTableTokenIfExists("v");
+            final ViewDefinition audited = new ViewDefinition();
+            audited.init(viewToken, "SELECT s FROM t", 0L, true);
+            writeDefinitionFile(viewToken, audited);
+            markViewAudited("v");
+
+            // The marking has to survive a redefinition, because losing it is a compliance event
+            // and neither statement asks for one. Both routes land in ViewGraph.updateView, which
+            // carries the current flag rather than taking one from the statement - CREATE OR
+            // REPLACE over an existing view is intercepted by compileCreate and executed as an
+            // alter, so it is the same route under a different spelling. That is what makes DROP
+            // the only way to remove the marking, and therefore the only place it has to be gated.
+            execute("CREATE OR REPLACE VIEW v AS (SELECT s FROM t WHERE s != 'z')");
+            drainWalAndViewQueues();
+            assertTrue("CREATE OR REPLACE must not clear the audited flag",
+                    engine.getViewGraph().getViewDefinition(engine.getTableTokenIfExists("v")).isAudited());
+            assertTrue("...and it has to survive on disk too",
+                    readDefinitionFile(engine.getTableTokenIfExists("v")).isAudited());
+
+            execute("ALTER VIEW v AS (SELECT s FROM t)");
+            drainWalAndViewQueues();
+            assertTrue("ALTER VIEW must not clear the audited flag",
+                    engine.getViewGraph().getViewDefinition(engine.getTableTokenIfExists("v")).isAudited());
+            assertTrue("...and it has to survive on disk too",
+                    readDefinitionFile(engine.getTableTokenIfExists("v")).isAudited());
+        });
+    }
+
+    @Test
     public void testCreateViewOverAuditedViewRecordsTheRead() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTableAndView();
