@@ -1772,9 +1772,15 @@ public final class FiberRuntime {
             mountFailure = th;
             throw th;
         } finally {
+            FiberDispatchTicket settledTicket = ticket;
+            long settledEpoch = dispatchEpoch;
             if (wasMounted) {
                 mountedCount.decrement();
-                fiber.clearMountedDispatchTicket(ticket);
+                settledTicket = fiber.getMountedDispatchTicket();
+                settledEpoch = request.getDispatchEpoch();
+                if (settledTicket != null) {
+                    fiber.clearMountedDispatchTicket(settledTicket);
+                }
             }
             Throwable cleanupFailure = null;
             try {
@@ -1782,22 +1788,24 @@ public final class FiberRuntime {
             } catch (Throwable th) {
                 cleanupFailure = th;
             }
-            try {
-                ticket.onUnmount(request, wasMounted);
-            } catch (Throwable th) {
-                if (cleanupFailure == null) {
-                    cleanupFailure = th;
-                } else if (cleanupFailure != th) {
-                    cleanupFailure.addSuppressed(th);
+            if (settledTicket != null) {
+                try {
+                    settledTicket.onUnmount(request, wasMounted);
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
                 }
-            }
-            try {
-                request.complete(dispatchEpoch, ticket);
-            } catch (Throwable th) {
-                if (cleanupFailure == null) {
-                    cleanupFailure = th;
-                } else if (cleanupFailure != th) {
-                    cleanupFailure.addSuppressed(th);
+                try {
+                    request.complete(settledEpoch, settledTicket);
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
                 }
             }
             if (cleanupFailure != null) {
@@ -2223,6 +2231,80 @@ public final class FiberRuntime {
         if (state == FiberRuntimeState.OPEN) {
             capacityWaitQueue.fire();
         }
+    }
+
+    // 0: switched in place; negative: no mounted ticket; otherwise the epoch left DIRECT_PENDING
+    long trySwitchMountedDispatch(Fiber fiber) {
+        final FiberDispatchSession dispatchSession = this.dispatchSession;
+        final FiberDispatchTicket mountedTicket = fiber.getMountedDispatchTicket();
+        if (dispatchSession == null || mountedTicket == null) {
+            return -1;
+        }
+        final FiberDispatchRequest request = requireDispatchRequest(fiber);
+        final long mountedEpoch = request.getDispatchEpoch();
+        fiber.clearMountedDispatchTicket(mountedTicket);
+        MemoryTracker.publishResourceMemoryCurrentThread();
+        mountedTicket.onUnmount(request, true);
+        request.complete(mountedEpoch, mountedTicket);
+        final long dispatchEpoch = request.begin(FiberDispatchRoute.DIRECT, currentOwnerContext());
+        final FiberDispatchTicket ticket;
+        try {
+            ticket = dispatchSession.tryDispatchDirect(request);
+        } catch (Throwable th) {
+            if (!request.grantFailure(dispatchEpoch, th, FAILED_DISPATCH_TICKET)) {
+                throw new IllegalStateException("Fiber direct dispatch failure could not be recorded", th);
+            }
+            mountInPlace(fiber, request, dispatchEpoch);
+            return 0;
+        }
+        if (ticket == null) {
+            request.markDirectPending(dispatchEpoch);
+            return dispatchEpoch;
+        }
+        if (!request.grantDirect(dispatchEpoch, ticket)) {
+            throw new IllegalStateException("Fiber direct dispatch request was resolved concurrently");
+        }
+        mountInPlace(fiber, request, dispatchEpoch);
+        return 0;
+    }
+
+    void abandonPendingSwitch(Fiber fiber, long dispatchEpoch) {
+        if (!requireDispatchRequest(fiber).abort(dispatchEpoch)) {
+            throw new IllegalStateException("pending Fiber dispatch switch could not be abandoned");
+        }
+    }
+
+    private void mountInPlace(Fiber fiber, FiberDispatchRequest request, long dispatchEpoch) {
+        final FiberDispatchTicket ticket = request.consume();
+        boolean isMounted = false;
+        try {
+            request.validateForMount();
+            ticket.onMount(request);
+            isMounted = true;
+        } finally {
+            if (!isMounted) {
+                Throwable cleanupFailure = null;
+                try {
+                    ticket.onUnmount(request, false);
+                } catch (Throwable th) {
+                    cleanupFailure = th;
+                }
+                try {
+                    request.complete(dispatchEpoch, ticket);
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
+                if (cleanupFailure != null) {
+                    LOG.critical().$("in-place Fiber dispatch cleanup failed [error=").$(cleanupFailure).I$();
+                }
+            }
+        }
+        fiber.installMountedDispatchTicket(ticket);
+        mountCount.increment();
     }
 
     private enum BindingRole {

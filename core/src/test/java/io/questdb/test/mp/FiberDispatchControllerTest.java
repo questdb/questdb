@@ -637,6 +637,96 @@ public class FiberDispatchControllerTest {
         });
     }
 
+    @Test
+    public void testSwitchDispatchContextFallsBackToYieldWhenDirectGrantIsDenied() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestController controller = new TestController();
+            final FiberRuntime runtime = newRuntime(1, controller);
+            final ContextSwitchTask task = new ContextSwitchTask();
+
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+
+            Assert.assertFalse(task.hasObservedNewContext);
+            Assert.assertEquals(1, controller.ticket.unmountCount);
+            Assert.assertEquals(FiberDispatchRoute.DIRECT_PENDING, controller.session.peekRoute());
+            Assert.assertSame(TestDispatchContext.INSTANCE, controller.session.pending.element().request.getDispatchContext());
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+
+            Assert.assertTrue(task.hasObservedNewContext);
+            Assert.assertFalse(task.hasObservedRestoredContext);
+            Assert.assertEquals(FiberDispatchRoute.DIRECT_PENDING, controller.session.peekRoute());
+            Assert.assertNull(controller.session.pending.element().request.getDispatchContext());
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+
+            Assert.assertTrue(task.isDone());
+            Assert.assertNull(task.error);
+            Assert.assertTrue(task.hasObservedRestoredContext);
+            Assert.assertEquals(3, controller.ticket.mountCount);
+            Assert.assertEquals(3, controller.ticket.unmountCount);
+            Assert.assertNull(controller.ticket.mountContexts.get(0));
+            Assert.assertSame(TestDispatchContext.INSTANCE, controller.ticket.mountContexts.get(1));
+            Assert.assertNull(controller.ticket.mountContexts.get(2));
+            close(runtime);
+        });
+    }
+
+    @Test
+    public void testSwitchDispatchContextInPlaceWhenDirectGrantIsAvailable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestController controller = new TestController();
+            final FiberRuntime runtime = newRuntime(1, controller);
+            final ContextSwitchTask task = new ContextSwitchTask();
+
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            controller.session.allowDirect = true;
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+
+            Assert.assertTrue(task.isDone());
+            Assert.assertNull(task.error);
+            Assert.assertTrue(task.hasObservedNewContext);
+            Assert.assertTrue(task.hasObservedRestoredContext);
+            Assert.assertTrue(controller.session.pending.isEmpty());
+            Assert.assertEquals(0, runtime.getQueuedCount());
+            Assert.assertEquals(3, controller.ticket.mountCount);
+            Assert.assertEquals(3, controller.ticket.unmountCount);
+            Assert.assertEquals(3, controller.ticket.mountContexts.size());
+            Assert.assertNull(controller.ticket.mountContexts.get(0));
+            Assert.assertSame(TestDispatchContext.INSTANCE, controller.ticket.mountContexts.get(1));
+            Assert.assertNull(controller.ticket.mountContexts.get(2));
+            Assert.assertEquals(3, runtime.getMountCount());
+            close(runtime);
+        });
+    }
+
+    @Test
+    public void testSwitchDispatchContextRefusedWhilePinnedRestoresContext() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestController controller = new TestController();
+            final FiberRuntime runtime = newRuntime(1, controller);
+            final PinnedContextSwitchTask task = new PinnedContextSwitchTask();
+
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertTrue(task.hasObservedRefusal);
+            Assert.assertEquals(1, controller.ticket.unmountCount);
+            Assert.assertEquals(FiberDispatchRoute.DISPATCH_YIELD, controller.session.peekRoute());
+            Assert.assertNull(controller.session.pending.element().request.getDispatchContext());
+
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertTrue(task.hasResumedAfterRefusal);
+            Assert.assertEquals(2, controller.ticket.mountCount);
+            Assert.assertEquals(2, controller.ticket.unmountCount);
+            close(runtime, 1);
+        });
+    }
+
     private static void close(FiberRuntime runtime) {
         close(runtime, 0);
     }
@@ -769,6 +859,27 @@ public class FiberDispatchControllerTest {
         }
     }
 
+    private static class ContextSwitchTask extends FiberTask {
+        private Throwable error;
+        private boolean hasObservedNewContext;
+        private boolean hasObservedRestoredContext;
+
+        @Override
+        protected void onError(Throwable th) {
+            error = th;
+        }
+
+        @Override
+        protected boolean runStep() {
+            Assert.assertNull(Fiber.getDispatchContext());
+            Assert.assertTrue(Fiber.switchDispatchContext(TestDispatchContext.INSTANCE));
+            hasObservedNewContext = Fiber.getDispatchContext() == TestDispatchContext.INSTANCE;
+            Assert.assertTrue(Fiber.switchDispatchContext(null));
+            hasObservedRestoredContext = Fiber.getDispatchContext() == null;
+            return true;
+        }
+    }
+
     private static class ContextYieldTask extends FiberTask {
         private boolean observedNewContext;
         private boolean observedRestoredContext;
@@ -851,6 +962,26 @@ public class FiberDispatchControllerTest {
         @Override
         protected boolean runStep() {
             capturedContext = Fiber.captureParallelDispatchContext();
+            return true;
+        }
+    }
+
+    private static class PinnedContextSwitchTask extends FiberTask {
+        private boolean hasObservedRefusal;
+        private boolean hasResumedAfterRefusal;
+
+        @Override
+        protected boolean runStep() {
+            Continuation.pin();
+            try {
+                Assert.assertFalse(Fiber.switchDispatchContext(TestDispatchContext.INSTANCE));
+                hasObservedRefusal = true;
+                Assert.assertNull(Fiber.getDispatchContext());
+            } finally {
+                Continuation.unpin();
+            }
+            Assert.assertTrue(Fiber.yieldForDispatch());
+            hasResumedAfterRefusal = true;
             return true;
         }
     }

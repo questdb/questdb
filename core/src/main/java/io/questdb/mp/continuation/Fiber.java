@@ -207,6 +207,37 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return yieldForDispatch(requireControlledMountedFiber(), nextDispatchContext);
     }
 
+    /**
+     * Like {@link #yieldForDispatch(FiberDispatchContext)}, but settles the mounted ticket on the
+     * carrier and only suspends when the controller refuses a direct grant for the new context.
+     */
+    public static boolean switchDispatchContext(@Nullable FiberDispatchContext nextDispatchContext) {
+        final Fiber fiber = requireControlledMountedFiber();
+        final FiberRuntime runtime = fiber.pool.getRuntime();
+        final FiberDispatchContext previousDispatchContext = fiber.dispatchContext;
+        fiber.dispatchContext = nextDispatchContext;
+        final long pendingEpoch;
+        try {
+            pendingEpoch = runtime.trySwitchMountedDispatch(fiber);
+        } catch (Throwable th) {
+            fiber.dispatchContext = previousDispatchContext;
+            throw th;
+        }
+        if (pendingEpoch == 0) {
+            return true;
+        }
+        if (pendingEpoch < 0) {
+            fiber.dispatchContext = previousDispatchContext;
+            return yieldForDispatch(fiber, nextDispatchContext);
+        }
+        if (yieldForDispatch(fiber, nextDispatchContext)) {
+            return true;
+        }
+        runtime.abandonPendingSwitch(fiber, pendingEpoch);
+        fiber.dispatchContext = previousDispatchContext;
+        return false;
+    }
+
     private static Fiber requireControlledMountedFiber() {
         final Fiber fiber = requireMountedFiber();
         if (fiber.dispatchRequest == null) {
@@ -722,6 +753,11 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     int getLastMountWorkerId() {
         return lastMountWorkerId;
+    }
+
+    @Nullable
+    FiberDispatchTicket getMountedDispatchTicket() {
+        return mountedDispatchTicket;
     }
 
     int getNotificationState() {

@@ -45,6 +45,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
+import io.questdb.cairo.sql.async.QueryParallelOwnerLoop;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.cairo.sql.async.WorkStealingStrategyFactory;
 import io.questdb.griffin.PlanSink;
@@ -91,6 +92,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final PageFrameAddressCache frameAddressCache;
     private final int keyColumnIndex;
     private final AtomicInteger oomCounter = new AtomicInteger();
+    private final QueryParallelOwnerLoop ownerLoop = new QueryParallelOwnerLoop();
     private final PerWorkerLocks perWorkerLocks; // used to protect pRosti and VAF's internal slots
     private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final RostiAllocFacade raf;
@@ -316,7 +318,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             MCSequence subSeq,
             RingQueue<VectorAggregateTask> queue,
             @Nullable QueryParallelFiberDispatcher dispatcher,
-            AsyncQueryProgressState progressState,
+            QueryParallelOwnerLoop ownerLoop,
             AsyncQueryErrorState aggregateError,
             int queuedCount,
             int reclaimed,
@@ -328,9 +330,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             WorkStealingStrategy workStealingStrategy
     ) {
         while (true) {
-            final long observedProgress = progressState.getVersion();
-            final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
-            final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
+            ownerLoop.observeProgress();
             if (doneLatch.done(queuedCount)) {
                 break;
             }
@@ -339,7 +339,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 sharedCB.cancel();
             }
 
-            if (!isOwnerParkable && workStealingStrategy.shouldSteal(mergedCount)) {
+            if (!ownerLoop.isOwnerParkable() && workStealingStrategy.shouldSteal(mergedCount)) {
                 long cursor = subSeq.next();
                 if (cursor > -1) {
                     VectorAggregateTask task = queue.get(cursor);
@@ -362,16 +362,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 } else {
                     Os.pause();
                 }
-            } else if (isOwnerParkable) {
-                if (!dispatcher.awaitProgressWhileDraining(
-                        progressState,
-                        observedProgress,
-                        observedGlobalProgress,
-                        isOwnerTripped ? null : circuitBreaker
-                )) {
-                    Os.pause();
-                }
-            } else {
+            } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
                 Os.pause();
             }
             mergedCount = doneLatch.getCount();
@@ -588,7 +579,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
             final MPSequence pubSeq = bus.getVectorAggregatePubSeq();
             final QueryParallelFiberDispatcher dispatcher = bus.getQueryParallelFiberDispatcher();
-            final boolean publicationPermit = dispatcher != null && dispatcher.tryAcquirePublication();
+            ownerLoop.of(dispatcher, circuitBreaker, progressState);
+            ownerLoop.tryAcquirePublication();
 
             sharedCircuitBreaker.reset();
             startedCounter.set(0);
@@ -603,10 +595,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             final Worker worker = Worker.current();
             final int workerId = worker != null ? worker.getWorkerId() % workerCount : -1;
-            final boolean isFiberOwner = dispatcher != null
-                    && !publicationPermit
-                    && QueryParallelFiberDispatcher.isFiberOwner();
-            long lastOwnerYieldNanos = QueryParallelFiberDispatcher.OWNER_YIELD_UNSET;
 
             try {
                 PageFrame frame;
@@ -632,13 +620,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         // argument, and it can only derive count via memory size
                         final int valueColumnIndex = vaf.getColumnIndex();
 
-                        if (dispatcher != null && !publicationPermit) {
-                            if (isFiberOwner) {
-                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-                                lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
-                            } else {
-                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-                            }
+                        if (!ownerLoop.hasPublication()) {
+                            ownerLoop.checkBeforeHelping();
                             VectorAggregateEntry.aggregateUnsafe(
                                     workerId,
                                     oomCounter,
@@ -662,18 +645,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             if (aggregateError.hasError()) {
                                 break dispatch;
                             }
-                            final long observedProgress = progressState.getVersion();
-                            final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
-                            final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
+                            ownerLoop.observeProgress();
                             long cursor = pubSeq.next();
                             if (cursor < 0) {
                                 if (workStealingStrategy.shouldSteal(mergedCount)) {
-                                    if (isOwnerParkable) {
-                                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-                                        lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
-                                    } else {
-                                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-                                    }
+                                    ownerLoop.checkBeforeHelping();
                                     VectorAggregateEntry.aggregateUnsafe(
                                             workerId,
                                             oomCounter,
@@ -693,12 +669,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     mergedCount = doneLatch.getCount();
                                     break;
                                 }
-                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-                                if (isOwnerParkable) {
-                                    if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
-                                        Os.pause();
-                                    }
-                                } else {
+                                if (!ownerLoop.awaitProgress()) {
                                     Os.pause();
                                 }
                                 mergedCount = doneLatch.getCount();
@@ -735,15 +706,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 throw th;
             } finally {
                 try {
-                    if (dispatcher != null && publicationPermit) {
-                        dispatcher.releasePublication();
-                    }
+                    ownerLoop.releasePublication();
                 } finally {
                     reclaimed = runWhatsLeft(
                             bus.getVectorAggregateSubSeq(),
                             queue,
                             dispatcher,
-                            progressState,
+                            ownerLoop,
                             aggregateError,
                             queuedCount,
                             reclaimed,

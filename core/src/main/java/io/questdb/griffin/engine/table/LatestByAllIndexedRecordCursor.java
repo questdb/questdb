@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
+import io.questdb.cairo.sql.async.QueryParallelOwnerLoop;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
@@ -57,6 +58,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private final int columnIndex;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final long indexShift = 0;
+    private final QueryParallelOwnerLoop ownerLoop = new QueryParallelOwnerLoop();
     private final DirectLongList prefixes;
     private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final DirectLongList rows;
@@ -224,8 +226,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         final Sequence pubSeq = bus.getLatestByPubSeq();
         final Sequence subSeq = bus.getLatestBySubSeq();
         final QueryParallelFiberDispatcher dispatcher = bus.getQueryParallelFiberDispatcher();
-        final boolean isFiberOwner = dispatcher != null && QueryParallelFiberDispatcher.isFiberOwner();
-        long lastOwnerYieldNanos = QueryParallelFiberDispatcher.OWNER_YIELD_UNSET;
+        ownerLoop.of(dispatcher, circuitBreaker, progressState);
 
         int queuedCount = 0;
         long foundRowCount = 0;
@@ -256,7 +257,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 doneLatch.reset();
 
                 queuedCount = 0;
-                final boolean publicationPermit = dispatcher != null && dispatcher.tryAcquirePublication();
+                ownerLoop.tryAcquirePublication();
                 try {
                     for (long i = 0; i < taskCount; i++) {
                         final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
@@ -268,15 +269,9 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                             continue;
                         }
 
-                        final long seq = dispatcher != null && !publicationPermit ? -1 : pubSeq.next();
+                        final long seq = ownerLoop.hasPublication() ? pubSeq.next() : -1;
                         if (seq < 0) {
-                            if (isFiberOwner) {
-                                assert dispatcher != null;
-                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                                lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
-                            } else {
-                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
-                            }
+                            ownerLoop.checkBeforeHelpingNoThrottle();
                             GeoHashNative.latestByAndFilterPrefix(
                                     frameMemoryPool,
                                     keyBaseAddress,
@@ -321,24 +316,15 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                         }
                     }
                 } finally {
-                    if (dispatcher != null && publicationPermit) {
-                        dispatcher.releasePublication();
-                    }
+                    ownerLoop.releasePublication();
                 }
 
                 while (true) {
-                    final long observedProgress = progressState.getVersion();
-                    final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
-                    final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
+                    ownerLoop.observeProgress();
                     if (doneLatch.done(queuedCount)) {
                         break;
                     }
-                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-                    if (isOwnerParkable) {
-                        if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
-                            Os.pause();
-                        }
-                    } else {
+                    if (!ownerLoop.awaitProgress()) {
                         long seq = subSeq.next();
                         if (seq > -1) {
                             runStolenTask(queue, subSeq, seq, dispatcher);
@@ -433,9 +419,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         final Sequence subSeq = bus.getLatestBySubSeq();
         final QueryParallelFiberDispatcher dispatcher = bus.getQueryParallelFiberDispatcher();
         while (true) {
-            final long observedProgress = progressState.getVersion();
-            final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
-            final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
+            ownerLoop.observeProgress();
             if (doneLatch.done(queuedCount)) {
                 break;
             }
@@ -443,16 +427,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             if (isOwnerTripped) {
                 sharedCircuitBreaker.cancel();
             }
-            if (isOwnerParkable) {
-                if (!dispatcher.awaitProgressWhileDraining(
-                        progressState,
-                        observedProgress,
-                        observedGlobalProgress,
-                        isOwnerTripped ? null : circuitBreaker
-                )) {
-                    Os.pause();
-                }
-            } else {
+            if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
                 long seq = subSeq.next();
                 if (seq > -1) {
                     runStolenTask(queue, subSeq, seq, dispatcher);
