@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionRemovalEvents;
 import io.questdb.cairo.SymbolMapReader;
@@ -43,16 +44,19 @@ import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.RepairPublicationStage;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
@@ -82,6 +86,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
@@ -308,6 +314,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // this thread and its time is otherwise indistinguishable from the replay's.
     private long liveViewApplyNanos;
     private final PageFrameMemoryPool memoryPool;
+    // Parquet decode trio for the in-memory tier's restage from disk, allocated on the
+    // first Parquet partition this worker meets inside an IN MEMORY window and reused
+    // from then on. A worker whose views keep their windows native never allocates them.
+    // See stageParquetPartitionToStaging.
+    private PageFrameAddressCache parquetStageAddressCache;
+    // True while the trio is bound to the reader of the staging pass that is running.
+    // stageInMemoryWindowFromDisk unbinds it in a finally, because the decoders the
+    // address cache holds belong to that reader.
+    private boolean parquetStageBound;
+    private final ColumnMapping parquetStageColumnMapping = new ColumnMapping();
+    private final ParquetStagePageFrame parquetStageFrame = new ParquetStagePageFrame();
+    // Frames the running staging pass has registered, which is also the index the next
+    // one takes: PageFrameAddressCache.add() only appends.
+    private int parquetStageFrameCount;
+    private PageFrameMemoryPool parquetStageMemoryPool;
+    private PageFrameMemoryRecord parquetStageRecord;
     private final Path path = new Path();
     private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
     // Coordinates of the out-of-order repair currently executing: the pinned base
@@ -695,6 +717,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(walRecordCursor);
         Misc.free(addressCache);
         Misc.free(memoryPool);
+        // Record, then pool, then cache: the pool reads the cache and the record aliases
+        // the pool's decoded buffers.
+        parquetStageRecord = Misc.free(parquetStageRecord);
+        parquetStageMemoryPool = Misc.free(parquetStageMemoryPool);
+        parquetStageAddressCache = Misc.free(parquetStageAddressCache);
         Misc.free(applyJob);
         checkpointTimelineStoreReader = Misc.free(checkpointTimelineStoreReader);
         checkpointTimelineStoreWriter = Misc.free(checkpointTimelineStoreWriter);
@@ -12953,6 +12980,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * boundary row so the copy starts exactly at the window's lower edge. The
      * staging buffer's {@code seamTs} is set to the lowest copied timestamp (or
      * {@code LONG_NULL} when the table is empty).
+     * <p>
+     * A Parquet partition inside the window carries no mapped native columns, so
+     * {@link #stageParquetPartitionToStaging} decodes it instead of memcpy'ing it. Both
+     * branches append onto the same staging tail, so a window that spans both storage
+     * formats stays one dense ts-ascending run.
      */
     private void stageInMemoryWindowFromDisk(LiveViewInstance instance, TableReader lvReader) {
         stagingBuffer.reset();
@@ -12974,31 +13006,204 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         long dstRow = 0;
         long seamTs = Numbers.LONG_NULL;
-        for (int p = partitionLo; p < pc; p++) {
-            final long size = lvReader.openPartition(p);
-            if (size <= 0) {
-                continue;
+        try {
+            for (int p = partitionLo; p < pc; p++) {
+                final long size = lvReader.openPartition(p);
+                if (size <= 0) {
+                    continue;
+                }
+                if (lvReader.getPartitionFormat(p) != PartitionFormat.NATIVE) {
+                    final long copied = stageParquetPartitionToStaging(lvReader, p, size, tsIdx, retainThreshold, dstRow);
+                    if (copied > 0 && seamTs == Numbers.LONG_NULL) {
+                        // The decode wrote the window's first row at dstRow, so the staging
+                        // buffer carries the seam the native branch reads off the column file.
+                        seamTs = stagingBuffer.getLong(dstRow, tsIdx);
+                    }
+                    dstRow += copied;
+                    continue;
+                }
+                final int columnBase = lvReader.getColumnBase(p);
+                final MemoryCR tsCol = lvReader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, tsIdx));
+                // Skip whole partitions whose newest row is still below the window.
+                if (tsCol.getLong((size - 1) << 3) < retainThreshold) {
+                    continue;
+                }
+                // Rows within a partition are ts-ascending: find the first one at or
+                // above the threshold, then copy the suffix.
+                final long rowLo = firstRowAtOrAbove(tsCol, size, retainThreshold);
+                if (rowLo >= size) {
+                    continue;
+                }
+                if (seamTs == Numbers.LONG_NULL) {
+                    seamTs = tsCol.getLong(rowLo << 3);
+                }
+                copyReaderRowsToStaging(lvReader, columnBase, rowLo, size, dstRow);
+                dstRow += size - rowLo;
             }
-            final int columnBase = lvReader.getColumnBase(p);
-            final MemoryCR tsCol = lvReader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, tsIdx));
-            // Skip whole partitions whose newest row is still below the window.
-            if (tsCol.getLong((size - 1) << 3) < retainThreshold) {
-                continue;
+        } finally {
+            // The address cache holds decoders the caller's reader owns, so the bind
+            // cannot outlive this pass - on the failure path either.
+            if (parquetStageBound) {
+                releaseParquetStageResources();
             }
-            // Rows within a partition are ts-ascending: find the first one at or
-            // above the threshold, then copy the suffix.
-            final long rowLo = firstRowAtOrAbove(tsCol, size, retainThreshold);
-            if (rowLo >= size) {
-                continue;
-            }
-            if (seamTs == Numbers.LONG_NULL) {
-                seamTs = tsCol.getLong(rowLo << 3);
-            }
-            copyReaderRowsToStaging(lvReader, columnBase, rowLo, size, dstRow);
-            dstRow += size - rowLo;
         }
         stagingBuffer.setRowCount(dstRow);
         stagingBuffer.setSeamTs(seamTs);
+    }
+
+    /**
+     * Copies a Parquet partition's {@code IN MEMORY} window suffix into
+     * {@code stagingBuffer} starting at {@code dstRow}, and returns how many rows it
+     * copied.
+     * <p>
+     * {@link #copyReaderRowsToStaging} cannot read such a partition: a Parquet partition
+     * publishes no per-column native files, and {@code TableReader.reloadColumnAt} leaves
+     * its column slots {@code null} rather than the null stub, so the memcpy path
+     * dereferences null on the timestamp column and the refresh cycle faults. This decodes
+     * the partition through the same {@link PageFrameAddressCache} /
+     * {@link PageFrameMemoryPool} pair a query decodes it with, one row group per page
+     * frame, and copies each row with {@link LiveViewInMemoryBuffer#copyRowFromRecord} -
+     * the same per-row copier the drain uses, so a SYMBOL column lands as the raw id the
+     * tier stores and the var-size types go through the record's own decoders.
+     * <p>
+     * The cost is bounded by the window rather than by the partition: a row group whose
+     * recorded maximum timestamp is below {@code retainThreshold} is skipped from the
+     * {@code _pm} sidecar with nothing decoded, and the one row group the window's lower
+     * edge falls inside is binary-searched for that edge before the copy starts.
+     * <p>
+     * The copy is row-major where the native path is column-major. Both leave every
+     * var-size column's payload appended in ascending row order - what the staging
+     * buffer's per-column append cursor requires - so the two fill one window between
+     * them without either having to know the other ran.
+     */
+    private long stageParquetPartitionToStaging(
+            TableReader lvReader,
+            int partitionIndex,
+            long partitionSize,
+            int tsIdx,
+            long retainThreshold,
+            long dstRow
+    ) {
+        final ParquetPartitionDecoder decoder = lvReader.getAndInitParquetPartitionDecoder(partitionIndex);
+        final ParquetMetaFileReader parquetMeta = decoder.metadata();
+        final int rowGroupCount = parquetMeta.getRowGroupCount();
+        if (rowGroupCount == 0) {
+            return 0;
+        }
+        final int tsParquetIdx = parquetMeta.getDesignatedTimestampColumnIndex();
+        ensureParquetStageResources(lvReader);
+        long copied = 0;
+        long rowGroupStart = 0;
+        for (int rg = 0; rg < rowGroupCount && rowGroupStart < partitionSize; rg++) {
+            // The partition's row count is the authority on how far the frames may reach:
+            // it is what the reader sized the partition at, and what every row position
+            // this staging pass produces is measured against.
+            final long rowGroupSize = Math.min(parquetMeta.getRowGroupSize(rg), partitionSize - rowGroupStart);
+            if (rowGroupSize <= 0) {
+                continue;
+            }
+            if (copied == 0 && tsParquetIdx >= 0
+                    && parquetMeta.getRowGroupMaxTimestamp(rg, tsParquetIdx) < retainThreshold) {
+                // Wholly below the window. Row groups are ts-ascending, so this only ever
+                // skips a prefix, and once a row group has contributed there is nothing
+                // left to skip. A file that records no designated timestamp declines the
+                // skip rather than the staging: the boundary search below reads the same
+                // answer off the decoded rows, at the cost of decoding them.
+                rowGroupStart += rowGroupSize;
+                continue;
+            }
+            final int frameIndex = parquetStageFrameCount++;
+            parquetStageAddressCache.add(
+                    frameIndex,
+                    parquetStageFrame.of(
+                            partitionIndex,
+                            rowGroupStart,
+                            rowGroupStart + rowGroupSize,
+                            decoder,
+                            rg,
+                            0,
+                            (int) rowGroupSize
+                    )
+            );
+            parquetStageMemoryPool.navigateTo(frameIndex, parquetStageRecord);
+            // The window's lower edge falls inside the first row group the skip above kept;
+            // every later one is wholly inside the window.
+            final long frameRowLo = copied == 0
+                    ? firstFrameRowAtOrAbove(parquetStageRecord, rowGroupSize, tsIdx, retainThreshold)
+                    : 0;
+            for (long r = frameRowLo; r < rowGroupSize; r++) {
+                parquetStageRecord.setRowIndex(r);
+                stagingBuffer.copyRowFromRecord(parquetStageRecord, dstRow + copied);
+                copied++;
+            }
+            rowGroupStart += rowGroupSize;
+        }
+        return copied;
+    }
+
+    /**
+     * Binds this worker's Parquet staging trio - address cache, memory pool and record -
+     * to {@code lvReader}, allocating them on the first Parquet partition this worker
+     * ever stages.
+     * <p>
+     * The bind spans a staging pass rather than a partition: the address cache numbers
+     * frames from zero and the pool switches decoders per frame on its own, so one bind
+     * carries every Parquet partition of one window. The record reads SYMBOL columns as
+     * the raw ids the tier stores, so the reader it binds serves only the symbol
+     * accessors the copy never calls.
+     */
+    private void ensureParquetStageResources(TableReader lvReader) {
+        if (parquetStageBound) {
+            return;
+        }
+        if (parquetStageAddressCache == null) {
+            parquetStageAddressCache = new PageFrameAddressCache();
+        }
+        if (parquetStageMemoryPool == null) {
+            // No cache budget: this pass navigates each frame once and copies its rows out
+            // before moving on, so a retained buffer would be native memory the worker
+            // holds for nothing.
+            parquetStageMemoryPool = new PageFrameMemoryPool(engine.getConfiguration(), 0L);
+        }
+        if (parquetStageRecord == null) {
+            parquetStageRecord = new PageFrameMemoryRecord();
+        }
+        // Mark the bind before taking it, so a failure part-way through still releases
+        // whatever the calls below managed to bind.
+        parquetStageBound = true;
+        parquetStageFrameCount = 0;
+        final TableReaderMetadata metadata = lvReader.getMetadata();
+        parquetStageColumnMapping.clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            // The staging buffer's columns are the LV table's own, in its order, so the
+            // projection is the identity and a record column index is a staging one.
+            parquetStageColumnMapping.addColumn(i, metadata.getWriterIndex(i), metadata.getOriginalWriterIndex(i));
+        }
+        parquetStageAddressCache.of(metadata, parquetStageColumnMapping, false);
+        parquetStageMemoryPool.of(parquetStageAddressCache);
+        parquetStageRecord.of(lvReader);
+    }
+
+    /**
+     * Drops the Parquet staging bind at the end of a staging pass.
+     * <p>
+     * The decoders the address cache holds are the reader's, and the caller closes that
+     * reader as soon as the pass returns. So the pool's decoded buffers and its own
+     * decoder copy have to go first, and the record's aliases into those buffers with
+     * them; the next pass rebinds through {@link #ensureParquetStageResources}.
+     */
+    private void releaseParquetStageResources() {
+        parquetStageBound = false;
+        parquetStageFrameCount = 0;
+        if (parquetStageRecord != null) {
+            parquetStageRecord.clear();
+        }
+        if (parquetStageMemoryPool != null) {
+            parquetStageMemoryPool.releaseQueryResources();
+        }
+        if (parquetStageAddressCache != null) {
+            parquetStageAddressCache.clear();
+        }
     }
 
     /**
@@ -13072,6 +13277,30 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
             }
         }
+    }
+
+    /**
+     * Binary-searches a decoded, ts-ascending page frame for the first row index in
+     * {@code [0, size)} whose timestamp is at or above {@code threshold}, returning
+     * {@code size} when every row is below it. The Parquet counterpart of
+     * {@link #firstRowAtOrAbove}, which reads a native column file instead.
+     * <p>
+     * Leaves the record positioned wherever the search ended, so the caller must set the
+     * row index it reads from rather than inherit one.
+     */
+    private static long firstFrameRowAtOrAbove(PageFrameMemoryRecord record, long size, int tsIdx, long threshold) {
+        long lo = 0;
+        long hi = size;
+        while (lo < hi) {
+            final long mid = (lo + hi) >>> 1;
+            record.setRowIndex(mid);
+            if (record.getTimestamp(tsIdx) < threshold) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
     }
 
     /**
@@ -15013,6 +15242,114 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             maxTimestamp = Numbers.LONG_NULL;
             resumeDataOffset = Numbers.LONG_NULL;
             stateBytes = 0L;
+        }
+    }
+
+    /**
+     * The Parquet page frame {@link #stageParquetPartitionToStaging} hands to
+     * {@link PageFrameAddressCache#add}, refilled per row group.
+     * <p>
+     * The cache copies what it reads out of a frame and retains nothing, so one mutable
+     * instance per worker serves every frame of every staging pass. Only the Parquet
+     * accessors carry values: a Parquet frame's column addresses come from the decode
+     * rather than from the frame, and the cache records zeroes for them.
+     */
+    private static final class ParquetStagePageFrame implements PageFrame {
+        private ParquetDecoder decoder;
+        private long partitionHi;
+        private int partitionIndex;
+        private long partitionLo;
+        private int rowGroup;
+        private int rowGroupHi;
+        private int rowGroupLo;
+
+        @Override
+        public long getAuxPageAddress(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public long getAuxPageSize(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public int getColumnCount() {
+            return 0;
+        }
+
+        @Override
+        public byte getFormat() {
+            return PartitionFormat.PARQUET;
+        }
+
+        @Override
+        public IndexReader getIndexReader(int columnIndex, int direction) {
+            return null;
+        }
+
+        @Override
+        public long getPageAddress(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public long getPageSize(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public ParquetDecoder getParquetDecoder() {
+            return decoder;
+        }
+
+        @Override
+        public int getParquetRowGroup() {
+            return rowGroup;
+        }
+
+        @Override
+        public int getParquetRowGroupHi() {
+            return rowGroupHi;
+        }
+
+        @Override
+        public int getParquetRowGroupLo() {
+            return rowGroupLo;
+        }
+
+        @Override
+        public long getPartitionHi() {
+            return partitionHi;
+        }
+
+        @Override
+        public int getPartitionIndex() {
+            return partitionIndex;
+        }
+
+        @Override
+        public long getPartitionLo() {
+            return partitionLo;
+        }
+
+        ParquetStagePageFrame of(
+                int partitionIndex,
+                long partitionLo,
+                long partitionHi,
+                ParquetDecoder decoder,
+                int rowGroup,
+                int rowGroupLo,
+                int rowGroupHi
+        ) {
+            this.partitionIndex = partitionIndex;
+            this.partitionLo = partitionLo;
+            this.partitionHi = partitionHi;
+            this.decoder = decoder;
+            this.rowGroup = rowGroup;
+            this.rowGroupLo = rowGroupLo;
+            this.rowGroupHi = rowGroupHi;
+            return this;
         }
     }
 }

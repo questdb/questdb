@@ -74,9 +74,9 @@ import java.util.function.BooleanSupplier;
  * non-structural ALTER. What this class asserts is that each shape compiles, authorizes, sequences
  * and round-trips through the catalogue, and what an applied removal does to the view's runtime:
  * the removal events the writer records, the in-memory tier's consistency, the lifetime row
- * counter, the conservative checkpoint-timeline disposition and the durable retention marker.
- * Precise per-root timeline retention, Parquet-aware tier rebuild, seed recovery and replica
- * propagation belong to the later stages.
+ * counter, the checkpoint-timeline retention it publishes, the durable retention marker, and the
+ * in-memory tier rebuild over a Parquet partition the conversion left inside the view's
+ * {@code IN MEMORY} window. Seed recovery and replica propagation belong to the later stages.
  */
 public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
@@ -1119,6 +1119,174 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testConvertPartitionToParquetAndBackKeepsReadsExact() throws Exception {
+        // A settled partition converted to Parquet is still read whole by both live view
+        // cursor paths, and converting it back to native leaves the same rows behind. The
+        // view's own IN MEMORY window is a second - one FLUSH EVERY - so the converted day
+        // sits below it and the tier never has to read Parquet here; this is the read-path
+        // half of the conversion, which the window rebuild below builds on.
+        assertMemoryLeak(() -> {
+            createParquetBaseAndView("1s");
+            execute("INSERT INTO base VALUES " +
+                    "('1970-01-01T00:00:00.000000Z', 1, 'a', 'alpha'), " +
+                    "('1970-01-02T00:00:00.000000Z', 2, 'b', 'beta'), " +
+                    "('1970-01-03T00:00:00.000000Z', 3, 'a', 'gamma')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveUntilDurableRowCount(job, 3);
+                driveRefreshToQuiescence(job);
+
+                execute("ALTER LIVE VIEW lv CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+                driveLiveViewWalApply(job);
+                driveRefreshToQuiescence(job);
+                assertParquetPartitionCount(1);
+                assertParquetViewRows();
+                assertNoRefreshFaults("lv");
+
+                execute("ALTER LIVE VIEW lv CONVERT PARTITION TO NATIVE LIST '1970-01-01'");
+                driveLiveViewWalApply(job);
+                driveRefreshToQuiescence(job);
+                assertParquetPartitionCount(0);
+                assertParquetViewRows();
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testConvertWindowBoundaryPartitionToParquetRebuildsTier() throws Exception {
+        // The partition holding the IN MEMORY window's lower edge goes to Parquet, so the
+        // next tier rebuild has to read the window across a storage-format boundary: the
+        // older half decodes, the newer half memcpy's, and the two make one dense
+        // ts-ascending staging run. A Parquet partition publishes no per-column native
+        // files, so before the decode branch the rebuild dereferenced a null column and
+        // the refresh cycle faulted.
+        //
+        // What proves the rebuild landed is the routing mode: a cursor seams onto the slot
+        // only while the slot is stamped with the disk reader's seqTxn, which the rebuild
+        // is what re-stamps.
+        assertMemoryLeak(() -> {
+            createParquetBaseAndView("60m", "PARTITION BY HOUR");
+            execute("INSERT INTO base VALUES " +
+                    "('1970-01-01T00:00:00.000000Z', 1, 'a', 'alpha'), " +
+                    "('1970-01-01T01:00:00.000000Z', 2, 'b', 'beta'), " +
+                    "('1970-01-01T02:00:00.000000Z', 3, 'a', 'gamma'), " +
+                    "('1970-01-01T03:00:00.000000Z', 4, 'b', 'delta')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveUntilDurableRowCount(job, 4);
+                driveRefreshToQuiescence(job);
+                // IN MEMORY 60m against a 03:00 frontier puts the window's lower edge in the
+                // 02:00 partition, so converting that one is what makes the rebuild read
+                // Parquet - the 03:00 partition above it stays native.
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+
+                execute("ALTER LIVE VIEW lv CONVERT PARTITION TO PARQUET LIST '1970-01-01T02'");
+                driveLiveViewWalApply(job);
+                driveRefreshToQuiescence(job);
+
+                assertParquetPartitionCount(1);
+                assertNoRefreshFaults("lv");
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\tsym\tv\trn
+                                1970-01-01T00:00:00.000000Z\t1\ta\talpha\t1
+                                1970-01-01T01:00:00.000000Z\t2\tb\tbeta\t1
+                                1970-01-01T02:00:00.000000Z\t3\ta\tgamma\t2
+                                1970-01-01T03:00:00.000000Z\t4\tb\tdelta\t2
+                                """);
+                // The page-frame path agrees, and so does a SYMBOL read - the decode hands
+                // back the same ids the memcpy branch copies out of the column file.
+                assertQuery("SELECT sym, count() FROM lv ORDER BY 1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("sym\tcount\na\t2\nb\t2\n");
+
+                // The view keeps refreshing on top of a window that spans both formats.
+                execute("INSERT INTO base VALUES ('1970-01-01T04:00:00.000000Z', 5, 'a', 'epsilon')");
+                driveUntilDurableRowCount(job, 5);
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv");
+                assertQuery("SELECT ts, x, sym, v, rn FROM lv WHERE ts >= '1970-01-01T02'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tx\tsym\tv\trn
+                                1970-01-01T02:00:00.000000Z\t3\ta\tgamma\t2
+                                1970-01-01T03:00:00.000000Z\t4\tb\tdelta\t2
+                                1970-01-01T04:00:00.000000Z\t5\ta\tepsilon\t3
+                                """);
+
+                // Back to native: the rebuild takes the memcpy branch again over the same window.
+                execute("ALTER LIVE VIEW lv CONVERT PARTITION TO NATIVE LIST '1970-01-01T02'");
+                driveLiveViewWalApply(job);
+                driveRefreshToQuiescence(job);
+                assertParquetPartitionCount(0);
+                assertNoRefreshFaults("lv");
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+            }
+        });
+    }
+
+    @Test
+    public void testOutOfOrderRepairOverParquetPartitionSuspendsTheView() throws Exception {
+        // KNOWN GAP, not a desired behaviour. This test pins it so that the day the writer
+        // grows replace-mode support for Parquet the test fails and whoever did that work
+        // replaces these assertions with the real expectation: the repair completes and the
+        // view's rows match a recompute.
+        //
+        // A live view repairs an out-of-order base commit by publishing a REPLACE_RANGE over
+        // its own table, and TableWriter.processO3Block refuses replace mode against a
+        // Parquet partition outright ("commit replace mode is not supported for Parquet
+        // partitions"). The refusal is a critical error, so the apply suspends the view.
+        //
+        // The range the head-miss replay publishes runs from the view's lower bound, so the
+        // out-of-order row does not have to land inside the Parquet partition for the
+        // replacement to cover it: the row this test inserts sits an hour ABOVE that
+        // partition and the replacement reaches it anyway. Any out-of-order base commit
+        // under a view holding any Parquet partition takes this path, which is why CONVERT
+        // PARTITION TO PARQUET cannot be exposed on live views until it is fixed.
+        assertMemoryLeak(() -> {
+            createParquetBaseAndView("60m", "PARTITION BY HOUR");
+            execute("INSERT INTO base VALUES " +
+                    "('1970-01-01T01:00:00.000000Z', 1, 'a', 'alpha'), " +
+                    "('1970-01-01T02:00:00.000000Z', 3, 'a', 'gamma'), " +
+                    "('1970-01-01T03:00:00.000000Z', 4, 'b', 'delta')");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveUntilDurableRowCount(job, 3);
+                driveRefreshToQuiescence(job);
+
+                execute("ALTER LIVE VIEW lv CONVERT PARTITION TO PARQUET LIST '1970-01-01T01'");
+                driveLiveViewWalApply(job);
+                driveRefreshToQuiescence(job);
+                assertParquetPartitionCount(1);
+
+                // Out of order, and an hour ABOVE the Parquet partition.
+                execute("INSERT INTO base VALUES ('1970-01-01T02:30:00.000000Z', 2, 'a', 'beta')");
+                driveUntil(
+                        job,
+                        () -> engine.getTableSequencerAPI().isSuspended(lvToken),
+                        "the repair's REPLACE_RANGE never reached the Parquet partition"
+                );
+                Assert.assertTrue(
+                        "the refused replacement must suspend the view's own table",
+                        engine.getTableSequencerAPI().isSuspended(lvToken)
+                );
+                // The repair never landed, so the out-of-order row is absent from the view
+                // and the three rows the flush wrote are all it holds. Note that
+                // live_views() still reports the view 'active' here: view_status does not
+                // follow the durable tier's suspension.
+                assertQuery("SELECT count() FROM lv")
+                        .noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+            }
+        });
+    }
+
     private static Path checkpointsDir(Path path, TableToken lvToken) {
         return path.of(configuration.getDbRoot())
                 .concat(lvToken)
@@ -1414,6 +1582,50 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         assertRetentionMarker(engine.verifyTableName("lv"), false);
         assertQuery("SELECT count() FROM live_views() WHERE view_status <> 'active'")
                 .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+    }
+
+    private void assertParquetPartitionCount(int expected) throws Exception {
+        assertQuery("SELECT count() FROM table_partitions('lv') WHERE isParquet")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + expected + "\n");
+    }
+
+    /**
+     * Asserts the three-day fixture of the conversion round-trip through both read paths: the
+     * record cursor, which streams every column, and the page-frame cursor a scalar aggregate
+     * drives.
+     */
+    private void assertParquetViewRows() throws Exception {
+        assertQuery("SELECT * FROM lv")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tx\tsym\tv\trn
+                        1970-01-01T00:00:00.000000Z\t1\ta\talpha\t1
+                        1970-01-02T00:00:00.000000Z\t2\tb\tbeta\t1
+                        1970-01-03T00:00:00.000000Z\t3\ta\tgamma\t2
+                        """);
+        assertQuery("SELECT sum(x), count() FROM lv")
+                .noLeakCheck().noRandomAccess().expectSize()
+                .returns("sum\tcount\n6\t3\n");
+    }
+
+    /**
+     * A base and a view carrying a SYMBOL and a VARCHAR beside the fixed-width columns, so a
+     * staging pass over the view's own table exercises the raw symbol id, the var-size payload
+     * append and the fixed-width copy in one row.
+     */
+    private void createParquetBaseAndView(String inMemory) throws Exception {
+        createParquetBaseAndView(inMemory, "PARTITION BY DAY");
+    }
+
+    private void createParquetBaseAndView(String inMemory, String partitionByClause) throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL, v VARCHAR) TIMESTAMP(ts) " + partitionByClause + " WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY " + inMemory + " " + partitionByClause + " START FROM NOW AS " +
+                "(SELECT ts, x, sym, v, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
     }
 
     private void createBaseAndView(String partitionByClause) throws Exception {
