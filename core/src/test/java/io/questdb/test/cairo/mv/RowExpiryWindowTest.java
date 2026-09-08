@@ -26,8 +26,10 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.RowExpiryCleanupJob;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -56,6 +58,49 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
+    @Test
+    public void testExpiryWindowBindVariableRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            final String installedPredicate = "row_number() OVER (ORDER BY ts, k, v) > 1";
+            createViewWith("EXPIRE ROWS WHEN " + installedPredicate);
+            final ObjList<String> predicates = new ObjList<>();
+            predicates.add("row_number() OVER (ORDER BY ts) > $1");
+            predicates.add("row_number() OVER (ORDER BY ts) > :keep");
+            predicates.add("row_number() OVER (ORDER BY ts) > coalesce(null::LONG, $1, 2)");
+            predicates.add("CASE WHEN false THEN $1 ELSE row_number() OVER (ORDER BY ts) END > 1");
+            predicates.add("sum(v + $1) OVER (PARTITION BY k) > 1");
+            predicates.add("row_number() OVER (PARTITION BY v + :keep ORDER BY ts) > 1");
+            predicates.add("row_number() OVER (ORDER BY v + $1) > 1");
+            predicates.add("sum(v) OVER (ORDER BY ts ROWS BETWEEN $1 PRECEDING AND CURRENT ROW) > 1");
+            predicates.add("sum(v) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND :keep FOLLOWING) > 1");
+            predicates.add("row_number() OVER (ORDER BY ts) > 1 AND k IN (SELECT k FROM base WHERE v > $1)");
+
+            for (int binding = 0; binding < 3; binding++) {
+                sqlExecutionContext.getBindVariableService().clear();
+                if (binding > 0) {
+                    sqlExecutionContext.getBindVariableService().setLong(0, binding);
+                    sqlExecutionContext.getBindVariableService().setLong("keep", binding);
+                }
+                for (int i = 0, n = predicates.size(); i < n; i++) {
+                    final String predicate = predicates.getQuick(i);
+                    final String bind = predicate.contains("$1") ? "$1" : ":keep";
+                    assertWindowBindRejected("CREATE MATERIALIZED VIEW bad AS (SELECT * FROM base) EXPIRE ROWS WHEN " + predicate, bind);
+                    Assert.assertNull(engine.getTableTokenIfExists("bad"));
+                    assertWindowBindRejected("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN " + predicate, bind);
+                }
+                drainWalAndMatViewQueues();
+                try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                    Assert.assertEquals(RowExpiryUtil.encodeWindow(installedPredicate), metadata.getExpiryPredicate());
+                }
+                assertQuery("SELECT k, v FROM mv").noLeakCheck().returns("k\tv\nA\t1.0\n");
+                if (binding > 0) {
+                    assertQuery("SELECT k, v FROM mv WHERE v >= $1").noLeakCheck()
+                            .returns(binding == 1 ? "k\tv\nA\t1.0\n" : "k\tv\n");
+                }
+            }
+        });
     }
 
     @Test
@@ -112,6 +157,23 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             // A non-key predicate must remain outside the window. Pushing v > 5 below KEEP HIGHEST would
             // change ranks for other policies and is never part of the cloned partition constraint.
             assertQuery("SELECT k, region, v FROM mv WHERE k = 'A' AND v > 5 ORDER BY region").noLeakCheck().returns(expected);
+        });
+    }
+
+    @Test
+    public void testExpiryWindowQuotedBindLikeTextAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, \"price$1\" DOUBLE, \"price$2\" DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('$1', 1, 1, '2024-01-01'), (':keep', 2, 2, '2024-01-02')");
+            drainWalAndMatViewQueues();
+            final String predicate = "row_number() OVER (ORDER BY \"price$1\", \"price$2\")::LONG > 1 "
+                    + "AND k IN ('$1', ':keep', 'it''s $2') /* :keep $3 */";
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN " + predicate);
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT k FROM mv").noLeakCheck().returns("k\n$1\n");
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN " + predicate);
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT k FROM mv").noLeakCheck().returns("k\n$1\n");
         });
     }
 
@@ -1177,6 +1239,13 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                         + "; use KEEP <N> HIGHEST/LOWEST to rank an orderable column of any type"
         );
         Assert.assertNull(engine.getTableTokenIfExists("mvbad"));
+    }
+
+    private void assertWindowBindRejected(String sql, String bind) throws Exception {
+        assertQuery(sql).noLeakCheck().fails(
+                sql.indexOf(bind),
+                "invalid EXPIRE ROWS predicate: bind variables are not supported"
+        );
     }
 
     private void createBase() throws Exception {

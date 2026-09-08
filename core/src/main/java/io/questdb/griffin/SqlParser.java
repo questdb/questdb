@@ -195,6 +195,7 @@ public class SqlParser {
     // Designated timestamp column of the table whose EXPIRE ROWS predicate was last looked up (set by
     // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
     private CharSequence expiryTimestampColumnName;
+    private boolean isParsingExpiryPredicate;
     // For each table (by id) whose EXPIRE ROWS policy this parse read straight from the table metadata while a
     // SET/DROP EXPIRE was still in flight: the metadata version that read saw. The optimiser compares it
     // against the version the reader opens and rejects the compile if they differ, so a filter chosen from the
@@ -645,7 +646,12 @@ public class SqlParser {
             }
             // A predicate referencing a window function (e.g. v < max(v) OVER (...)) is illegal in a plain
             // WHERE, so flag it for the projection-CASE read filter / cleanup instead.
-            predicateSql = predicateHasWindowFunction(rawPredicate) ? RowExpiryUtil.encodeWindow(rawPredicate) : rawPredicate;
+            if (predicateHasWindowFunction(rawPredicate)) {
+                validateWindowExpiryPredicate(lexer.getContent(), predicateStart, predicateEnd, sqlParserCallback);
+                predicateSql = RowExpiryUtil.encodeWindow(rawPredicate);
+            } else {
+                predicateSql = rawPredicate;
+            }
         }
 
         final long cleanupIntervalMicros;
@@ -886,6 +892,13 @@ public class SqlParser {
     ) throws SqlException {
         CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
         return sqlParserCallback.parseCreateViewExt(lexer, executionContext, builder, nextToken);
+    }
+
+    private static ExpressionNode rejectExpiryBindVariable(ExpressionNode node) throws SqlException {
+        if (node.type == ExpressionNode.BIND_VARIABLE) {
+            throw SqlException.$(node.position, "invalid EXPIRE ROWS predicate: bind variables are not supported");
+        }
+        return node;
     }
 
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {
@@ -7858,6 +7871,20 @@ public class SqlParser {
         }
     }
 
+    private void validateWindowExpiryPredicate(CharSequence sql, int lo, int hi, SqlParserCallback sqlParserCallback) throws SqlException {
+        final GenericLexer probe = viewLexers.next();
+        probe.of(sql, lo, hi);
+        final boolean isParsingExpiryPredicateBefore = isParsingExpiryPredicate;
+        isParsingExpiryPredicate = true;
+        try {
+            // Parse without binding or folding: even an unused branch must not persist a parameter.
+            // A model lets subqueries parse normally; expr() also checks their nested expressions.
+            expr(probe, queryModelPool.next(), sqlParserCallback != null ? sqlParserCallback : viewSqlParserCallback);
+        } finally {
+            isParsingExpiryPredicate = isParsingExpiryPredicateBefore;
+        }
+    }
+
     // Returns the source position of the first window function found anywhere in the expression
     // tree, or -1 if there is none. A window function can sit below an operator or cast (e.g.
     // row_number() OVER (...) + 1), so the whole tree is walked, not just the root.
@@ -7963,7 +7990,12 @@ public class SqlParser {
         try {
             expressionTreeBuilder.pushModel(model);
             expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback, decls);
-            return rewriteKnownStatements(expressionTreeBuilder.poll(), decls, exprTargetVariableName);
+            final ExpressionNode node = expressionTreeBuilder.poll();
+            if (isParsingExpiryPredicate) {
+                // Includes function arguments, window keys, ordering expressions and frame bounds.
+                recursiveReplace(node, SqlParser::rejectExpiryBindVariable);
+            }
+            return rewriteKnownStatements(node, decls, exprTargetVariableName);
         } catch (SqlException e) {
             expressionTreeBuilder.reset();
             throw e;
