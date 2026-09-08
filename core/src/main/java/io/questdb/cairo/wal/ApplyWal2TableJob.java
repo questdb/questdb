@@ -1190,10 +1190,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         LOG.critical().$("unsolicited table lock [table=").$(tableToken)
                                 .$(", lockReason=").$(tableBusy.getReason())
                                 .I$();
-                        // This is abnormal termination but table is not set to suspended state.
-                        // Reset state of SeqTxnTracker so that next CheckWalTransactionJob run will send job notification if necessary.
-                        engine.notifyWalTxnRepublisher(tableToken);
                     }
+                    // This notification came off the queue and nothing applied it. Reset the SeqTxnTracker so
+                    // the next CheckWalTransactionsJob run re-publishes it, whatever holds the writer and whether
+                    // or not the lock was solicited. Only another WAL apply re-notifies on its own way out; every
+                    // other holder - a composite or parquet partition swap, a storage policy command, an ALTER -
+                    // owes the table nothing and leaves it lagging its sequencer until that job's own tracker
+                    // sweep, a whole cairo.sequencer.check.interval away. Re-publishing for the apply-holds-it
+                    // case as well costs one rescan and keeps this correct as new holders appear.
+                    engine.notifyWalTxnRepublisher(tableToken);
                     // Do not suspend table. Perhaps writer will be unlocked with no transaction applied.
                     // We do not suspend table because of having initial value on writerTxn. It will either be
                     // "ignore" or last txn we applied.
