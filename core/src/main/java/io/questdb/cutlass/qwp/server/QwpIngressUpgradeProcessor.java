@@ -178,12 +178,16 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     \r
                     """).getBytes(StandardCharsets.US_ASCII);
     // Dependencies for ILP processing (safe as instance fields — config only)
+    // Effective ingest payload cap in bytes: the recv buffer minus the
+    // worst-case WebSocket frame header, floored at the QWP protocol ceiling.
+    // Zero when the recv buffer cannot fit a frame header at all, which
+    // suppresses both carriers below.
+    private final int effectiveMaxBatchSize;
     // Precomputed X-QWP-Max-Batch-Size header bytes, cached because the
     // effective cap is derived from recvBufferSize (config-fixed for the
     // lifetime of this processor) and would otherwise allocate a String and
     // a byte[] on every handshake. Null when the cap collapses to zero,
     // which omits the header entirely.
-    private final int effectiveMaxBatchSize;
     private final byte[] effectiveMaxBatchSizeBytes;
     private final CairoEngine engine;
     // Frames handleWebSocketFrame's discard gate dropped during the current
@@ -279,6 +283,17 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
 
         return offset;
+    }
+
+    /**
+     * Writes the browser-only ingress SERVER_INFO WebSocket frame.
+     */
+    public static int writeBrowserServerInfoFrame(long bufferAddress, int maxBatchSizeBytes) {
+        int headerSize = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddress, 5);
+        long payloadAddress = bufferAddress + headerSize;
+        Unsafe.putByte(payloadAddress, QwpConstants.STATUS_SERVER_INFO);
+        Unsafe.putInt(payloadAddress + 1, maxBatchSizeBytes);
+        return headerSize + 5;
     }
 
     /**
@@ -500,17 +515,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // the client waiting on a handshake that never completes.
         state.setPendingHandshakeBytes(bytesWritten);
         state.setHandshakeFlushPending(true);
-    }
-
-    /**
-     * Writes the browser-only ingress SERVER_INFO WebSocket frame.
-     */
-    public static int writeBrowserServerInfoFrame(long bufferAddress, int maxBatchSizeBytes) {
-        int headerSize = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddress, 5);
-        long payloadAddress = bufferAddress + headerSize;
-        Unsafe.putByte(payloadAddress, QwpConstants.STATUS_SERVER_INFO);
-        Unsafe.putInt(payloadAddress + 1, maxBatchSizeBytes);
-        return headerSize + 5;
     }
 
     @Override

@@ -61,19 +61,15 @@ public class QwpMessageHeader {
     }
 
     /**
-     * Checks if the given 4 bytes match the QWP v1 message magic.
-     *
-     * @param magic the magic integer to check
-     * @return true if it's a QWP v1 message
-     */
-    public static boolean isMessageMagic(int magic) {
-        return magic == MAGIC_MESSAGE;
-    }
-
-    /**
      * Returns true only for the exact v1 durable-ack poll control frame.
      * Keeping the marker structural prevents a table-less poll from entering
      * the normal commit path and closing a user's deferred-commit group.
+     * <p>
+     * Every term is an equality on purpose. Relaxing the length to {@code >=},
+     * or the flags to a bitmask test, would classify a longer frame or a
+     * flag superset as a poll: the server would then ack a sequence whose
+     * payload it never processed, and a store-and-forward client would trim
+     * the matching record.
      */
     public static boolean isDurableAckPoll(long address, int length) {
         return length == HEADER_SIZE
@@ -82,6 +78,16 @@ public class QwpMessageHeader {
                 && Unsafe.getByte(address + HEADER_OFFSET_FLAGS) == FLAG_DURABLE_ACK_POLL
                 && Unsafe.getShort(address + HEADER_OFFSET_TABLE_COUNT) == 0
                 && Unsafe.getInt(address + HEADER_OFFSET_PAYLOAD_LENGTH) == 0;
+    }
+
+    /**
+     * Checks if the given 4 bytes match the QWP v1 message magic.
+     *
+     * @param magic the magic integer to check
+     * @return true if it's a QWP v1 message
+     */
+    public static boolean isMessageMagic(int magic) {
+        return magic == MAGIC_MESSAGE;
     }
 
     /**
