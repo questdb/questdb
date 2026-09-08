@@ -543,7 +543,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalWriteEqualTimestamp() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, true);
-        Rnd rnd = generateRandom(LOG, 244384685851541L, 1788878582671L);
+        Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
 
         setFuzzProbabilities(
