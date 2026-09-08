@@ -295,6 +295,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
             try {
                 int written = QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(
                         buf,
+                        16,
                         1_048_576
                 );
                 Assert.assertEquals(7, written);
@@ -306,6 +307,11 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
                 Assert.assertEquals(0, frame[4]);
                 Assert.assertEquals(16, frame[5]);
                 Assert.assertEquals(0, frame[6]);
+
+                // One byte short of the frame: refuse rather than write past
+                // the end of the raw send buffer. Exactly enough still writes.
+                Assert.assertEquals(-1, QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 6, 1_048_576));
+                Assert.assertEquals(7, QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 7, 1_048_576));
             } finally {
                 freeBuffer(buf, 16);
             }

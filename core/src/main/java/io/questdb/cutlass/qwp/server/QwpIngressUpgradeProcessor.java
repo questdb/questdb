@@ -286,9 +286,24 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
-     * Writes the browser-only ingress SERVER_INFO WebSocket frame.
+     * Writes the browser-only ingress SERVER_INFO WebSocket frame into the
+     * space left after the 101 response.
+     * <p>
+     * Takes {@code bufferSize} and answers {@code -1} when the frame does not
+     * fit, matching {@link QwpIngressHttpProcessor#writeMisdirectedRequestWithRole}
+     * and {@link io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor#writeServerInfoFrame}.
+     * The caller's {@code requiredHandshakeSize} reservation already covers
+     * these bytes, so this check is unreachable today -- it exists so the
+     * reservation cannot be dropped or mis-sized into an out-of-bounds write
+     * on the raw send buffer, which is the one failure mode this helper could
+     * not otherwise report.
+     *
+     * @return total bytes written, or -1 if {@code bufferSize} is too small
      */
-    public static int writeBrowserServerInfoFrame(long bufferAddress, int maxBatchSizeBytes) {
+    public static int writeBrowserServerInfoFrame(long bufferAddress, int bufferSize, int maxBatchSizeBytes) {
+        if (WebSocketFrameWriter.headerSize(5, false) + 5 > bufferSize) {
+            return -1;
+        }
         int headerSize = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddress, 5);
         long payloadAddress = bufferAddress + headerSize;
         Unsafe.putByte(payloadAddress, QwpConstants.STATUS_SERVER_INFO);
@@ -499,10 +514,15 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
         if (browserHandshakeRequested) {
-            bytesWritten += writeBrowserServerInfoFrame(
+            int serverInfoBytes = writeBrowserServerInfoFrame(
                     bufferAddr + bytesWritten,
+                    bufferSize - bytesWritten,
                     effectiveMaxBatchSize
             );
+            if (serverInfoBytes < 0) {
+                throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
+            }
+            bytesWritten += serverInfoBytes;
         }
         // The HttpRequestProcessor contract forbids PeerIsSlowToReadException
         // from onHeadersReady, so we defer the raw-socket send to

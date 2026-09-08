@@ -260,6 +260,21 @@ public class QwpBrowserSessionAuthTest extends AbstractBootstrapTest {
 
     @Test
     public void testUpgradeReturnsRotatedSessionCookie() throws Exception {
+        assertUpgradeReturnsRotatedSessionCookie("/write/v4");
+    }
+
+    @Test
+    public void testUpgradeReturnsRotatedSessionCookieOnEgress() throws Exception {
+        // The egress processor threads sessionCookieValueBytes through its own
+        // responseSize/writeResponse pair. Only the null branch is covered by
+        // testSessionCookieAuthenticatesIngressAndEgress, which stays green if
+        // the argument is dropped from both calls -- and if it is dropped from
+        // only one, the SERVER_INFO frame that follows the 101 lands at the
+        // wrong offset in the send buffer.
+        assertUpgradeReturnsRotatedSessionCookie("/read/v1");
+    }
+
+    private static void assertUpgradeReturnsRotatedSessionCookie(String path) throws Exception {
         AtomicLong currentMicros = new AtomicLong(1_760_743_438_000_000L);
         MicrosecondClock testClock = currentMicros::get;
         Bootstrap bootstrap = new Bootstrap(
@@ -281,7 +296,7 @@ public class QwpBrowserSessionAuthTest extends AbstractBootstrapTest {
                 Assert.assertNotNull(session);
 
                 currentMicros.set(session.getRotateAt() + 1);
-                String response = webSocketUpgrade("/write/v4", oldSessionId);
+                String response = webSocketUpgrade(path, oldSessionId);
                 String newSessionId = session.getSessionId().toString();
 
                 Assert.assertNotEquals(oldSessionId, newSessionId);
@@ -320,21 +335,15 @@ public class QwpBrowserSessionAuthTest extends AbstractBootstrapTest {
     private static String webSocketUpgrade(String path, String sessionId) throws Exception {
         try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
             socket.setSoTimeout(5_000);
-            StringBuilder request = new StringBuilder()
-                    .append("GET ").append(path).append(" HTTP/1.1\r\n")
-                    .append("Host: 127.0.0.1:").append(HTTP_PORT).append("\r\n")
-                    .append("Origin: http://127.0.0.1:").append(HTTP_PORT).append("\r\n")
-                    .append("Upgrade: websocket\r\n")
-                    .append("Connection: Upgrade\r\n")
-                    .append("Sec-WebSocket-Key: AQIDBAUGBwgJCgsMDQ4PEA==\r\n")
-                    .append("Sec-WebSocket-Version: 13\r\n");
-            if (sessionId != null) {
-                request.append("Cookie: ").append(SESSION_COOKIE_NAME).append('=').append(sessionId).append("\r\n");
-            }
-            request.append("\r\n");
+            String request = QwpWireTestFixtures.browserUpgradeRequest(
+                    path,
+                    "127.0.0.1:" + HTTP_PORT,
+                    "http",
+                    sessionId == null ? "" : "Cookie: " + SESSION_COOKIE_NAME + '=' + sessionId + "\r\n"
+            );
 
             OutputStream out = socket.getOutputStream();
-            out.write(request.toString().getBytes(StandardCharsets.US_ASCII));
+            out.write(request.getBytes(StandardCharsets.US_ASCII));
             out.flush();
 
             return QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());

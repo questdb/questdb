@@ -82,6 +82,42 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     }
 
     @Test
+    public void testBrowserHandshakeFailsHardWhenServerInfoDoesNotFitBuffer() throws Exception {
+        // The browser frame is appended to the raw send buffer AFTER the 101,
+        // so a buffer that fits the 101 alone must fail the handshake rather
+        // than write the frame past the end of it. Sized one byte short of the
+        // seven the frame needs, measured off a real 101 so the boundary stays
+        // correct as the response grows.
+        assertMemoryLeak(() -> {
+            int handshakeSize = measureHandshakeResponseSize();
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            LocalValue<QwpIngressProcessorState> lv = getLV();
+
+            int bufferSize = handshakeSize + 6;
+            long bufferAddr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    MockHttpRequestHeader header = new MockHttpRequestHeader();
+                    TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, bufferSize))
+            ) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
+                header.setUrlParam("qwp_browser_handshake", "v1");
+
+                assertBufferTooSmallFailure(processor, context, "101 handshake response");
+
+                Assert.assertEquals(0, context.getMockRawSocket().sentSize);
+                Assert.assertFalse(context.isSwitchProtocolCalled());
+                Assert.assertNull(lv.get(context));
+            } finally {
+                Unsafe.free(bufferAddr, bufferSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testBrowserHandshakeOmitsIngressServerInfoWhenParamEmpty() throws Exception {
         assertMemoryLeak(() -> assertBrowserHandshakeServerInfo("", false));
     }
@@ -745,6 +781,37 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         int end = response.indexOf('\r', start);
         Assert.assertTrue("unterminated X-QWP-Max-Batch-Size: " + response, end > start);
         return Integer.parseInt(response.substring(start, end));
+    }
+
+    /**
+     * Drives one plain (non-browser) handshake on a generous buffer and returns
+     * the exact 101 length. The browser URL parameter does not change the 101
+     * itself -- only what is appended after it -- so this is the boundary the
+     * SERVER_INFO reservation has to clear.
+     */
+    private static int measureHandshakeResponseSize() throws Exception {
+        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (
+                MockHttpRequestHeader header = new MockHttpRequestHeader();
+                TestableContext context = new TestableContext(
+                        httpConfig,
+                        header,
+                        new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE)
+                )
+        ) {
+            header.setHeader("Upgrade", "websocket");
+            header.setHeader("Connection", "Upgrade");
+            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+            header.setHeader("Sec-WebSocket-Version", "13");
+
+            processor.onHeadersReady(context);
+            processor.onRequestComplete(context);
+            return context.getMockRawSocket().sentSize;
+        } finally {
+            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private static int findHttpHeaderEnd(long bufferAddr, int size) {
