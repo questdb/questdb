@@ -412,7 +412,7 @@ public class ColumnTypeConverter {
         TableUtils.allocateDiskSpaceToPage(ff, dstFixFd, Long.BYTES);
         long addr = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, 0, Long.BYTES, true, memoryTag);
         try {
-            Unsafe.getUnsafe().putLong(addr, 0L);
+            Unsafe.putLong(addr, 0L);
         } finally {
             TableUtils.mapAppendColumnBufferRelease(ff, addr, 0, Long.BYTES, memoryTag);
         }

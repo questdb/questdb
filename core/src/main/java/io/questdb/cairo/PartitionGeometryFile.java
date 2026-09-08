@@ -96,24 +96,24 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     public void beginRecord(long writerTxn, long seqTxn, int expectedPieceCount) {
         ensureCapacity(recordSize(Math.max(expectedPieceCount, 1)));
         pieceCount = 0;
-        Unsafe.getUnsafe().putInt(buf + HEADER_OFFSET_MAGIC_32, MAGIC);
-        Unsafe.getUnsafe().putLong(buf + HEADER_OFFSET_WRITER_TXN_64, writerTxn);
-        Unsafe.getUnsafe().putLong(buf + HEADER_OFFSET_SEQ_TXN_64, seqTxn);
-        Unsafe.getUnsafe().putLong(buf + HEADER_OFFSET_PHYSICAL_ROWS_64, 0);
-        Unsafe.getUnsafe().putLong(buf + HEADER_OFFSET_LIVE_ROWS_64, 0);
+        Unsafe.putInt(buf + HEADER_OFFSET_MAGIC_32, MAGIC);
+        Unsafe.putLong(buf + HEADER_OFFSET_WRITER_TXN_64, writerTxn);
+        Unsafe.putLong(buf + HEADER_OFFSET_SEQ_TXN_64, seqTxn);
+        Unsafe.putLong(buf + HEADER_OFFSET_PHYSICAL_ROWS_64, 0);
+        Unsafe.putLong(buf + HEADER_OFFSET_LIVE_ROWS_64, 0);
         // The scratch buffer is reused across records and ensureCapacity carries its old contents
         // forward, so a field left unset here inherits the previous record's value and the checksum
         // then blesses it.
-        Unsafe.getUnsafe().putLong(buf + HEADER_OFFSET_LAST_WRITE_MICROS_64, 0);
+        Unsafe.putLong(buf + HEADER_OFFSET_LAST_WRITE_MICROS_64, 0);
     }
 
     public void addPiece(long tsLo, long tsHi, long rowOffset, long rowCount) {
         ensureCapacity(recordSize(pieceCount + 1));
         final long p = buf + HEADER_SIZE + (long) PIECE_SIZE * pieceCount;
-        Unsafe.getUnsafe().putLong(p + PIECE_OFFSET_TS_LO_64, tsLo);
-        Unsafe.getUnsafe().putLong(p + PIECE_OFFSET_TS_HI_64, tsHi);
-        Unsafe.getUnsafe().putLong(p + PIECE_OFFSET_ROW_OFFSET_64, rowOffset);
-        Unsafe.getUnsafe().putLong(p + PIECE_OFFSET_ROW_COUNT_64, rowCount);
+        Unsafe.putLong(p + PIECE_OFFSET_TS_LO_64, tsLo);
+        Unsafe.putLong(p + PIECE_OFFSET_TS_HI_64, tsHi);
+        Unsafe.putLong(p + PIECE_OFFSET_ROW_OFFSET_64, rowOffset);
+        Unsafe.putLong(p + PIECE_OFFSET_ROW_COUNT_64, rowCount);
         pieceCount++;
     }
 
@@ -123,8 +123,8 @@ public class PartitionGeometryFile implements Closeable, Mutable {
      */
     public long append(FilesFacade ff, Path partitionDir, int generation, long offset, int commitMode) {
         final long size = recordSize(pieceCount);
-        Unsafe.getUnsafe().putInt(buf + HEADER_OFFSET_PIECE_COUNT_32, pieceCount);
-        Unsafe.getUnsafe().putLong(buf + HEADER_OFFSET_CHECKSUM_64, checksum(buf, pieceCount));
+        Unsafe.putInt(buf + HEADER_OFFSET_PIECE_COUNT_32, pieceCount);
+        Unsafe.putLong(buf + HEADER_OFFSET_CHECKSUM_64, checksum(buf, pieceCount));
 
         final int dirLen = partitionDir.size();
         long fd = -1;
@@ -165,15 +165,15 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     }
 
     public long getLastWriteMicros() {
-        return Unsafe.getUnsafe().getLong(buf + HEADER_OFFSET_LAST_WRITE_MICROS_64);
+        return Unsafe.getLong(buf + HEADER_OFFSET_LAST_WRITE_MICROS_64);
     }
 
     public long getLiveRows() {
-        return Unsafe.getUnsafe().getLong(buf + HEADER_OFFSET_LIVE_ROWS_64);
+        return Unsafe.getLong(buf + HEADER_OFFSET_LIVE_ROWS_64);
     }
 
     public long getPhysicalRows() {
-        return Unsafe.getUnsafe().getLong(buf + HEADER_OFFSET_PHYSICAL_ROWS_64);
+        return Unsafe.getLong(buf + HEADER_OFFSET_PHYSICAL_ROWS_64);
     }
 
     public int getPieceCount() {
@@ -201,11 +201,11 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     }
 
     public long getSeqTxn() {
-        return Unsafe.getUnsafe().getLong(buf + HEADER_OFFSET_SEQ_TXN_64);
+        return Unsafe.getLong(buf + HEADER_OFFSET_SEQ_TXN_64);
     }
 
     public long getWriterTxn() {
-        return Unsafe.getUnsafe().getLong(buf + HEADER_OFFSET_WRITER_TXN_64);
+        return Unsafe.getLong(buf + HEADER_OFFSET_WRITER_TXN_64);
     }
 
     /**
@@ -223,8 +223,8 @@ public class PartitionGeometryFile implements Closeable, Mutable {
                         .put(", offset=").put(offset)
                         .put(']');
             }
-            final int magic = Unsafe.getUnsafe().getInt(buf + HEADER_OFFSET_MAGIC_32);
-            final int count = Unsafe.getUnsafe().getInt(buf + HEADER_OFFSET_PIECE_COUNT_32);
+            final int magic = Unsafe.getInt(buf + HEADER_OFFSET_MAGIC_32);
+            final int count = Unsafe.getInt(buf + HEADER_OFFSET_PIECE_COUNT_32);
             if (magic != MAGIC || count < 1 || count > MAX_PIECE_COUNT) {
                 throw CairoException.critical(0)
                         .put("invalid partition geometry record [path=").put(partitionDir)
@@ -243,7 +243,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
                         .put(", pieceCount=").put(count)
                         .put(']');
             }
-            final long stored = Unsafe.getUnsafe().getLong(buf + HEADER_OFFSET_CHECKSUM_64);
+            final long stored = Unsafe.getLong(buf + HEADER_OFFSET_CHECKSUM_64);
             if (stored != checksum(buf, count)) {
                 throw CairoException.critical(0)
                         .put("partition geometry checksum mismatch [path=").put(partitionDir)
@@ -260,31 +260,31 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     }
 
     public void setLastWriteMicros(long micros) {
-        Unsafe.getUnsafe().putLong(buf + HEADER_OFFSET_LAST_WRITE_MICROS_64, micros);
+        Unsafe.putLong(buf + HEADER_OFFSET_LAST_WRITE_MICROS_64, micros);
     }
 
     public void setLiveRows(long liveRows) {
-        Unsafe.getUnsafe().putLong(buf + HEADER_OFFSET_LIVE_ROWS_64, liveRows);
+        Unsafe.putLong(buf + HEADER_OFFSET_LIVE_ROWS_64, liveRows);
     }
 
     public void setPhysicalRows(long physicalRows) {
-        Unsafe.getUnsafe().putLong(buf + HEADER_OFFSET_PHYSICAL_ROWS_64, physicalRows);
+        Unsafe.putLong(buf + HEADER_OFFSET_PHYSICAL_ROWS_64, physicalRows);
     }
 
     private static long checksum(long addr, int pieceCount) {
         // Deliberately skips HEADER_OFFSET_CHECKSUM_64 itself.
         long h = 0xcbf29ce484222325L;
-        h = mix(h, Unsafe.getUnsafe().getInt(addr + HEADER_OFFSET_MAGIC_32));
+        h = mix(h, Unsafe.getInt(addr + HEADER_OFFSET_MAGIC_32));
         h = mix(h, pieceCount);
-        h = mix(h, Unsafe.getUnsafe().getLong(addr + HEADER_OFFSET_WRITER_TXN_64));
-        h = mix(h, Unsafe.getUnsafe().getLong(addr + HEADER_OFFSET_PHYSICAL_ROWS_64));
-        h = mix(h, Unsafe.getUnsafe().getLong(addr + HEADER_OFFSET_LIVE_ROWS_64));
+        h = mix(h, Unsafe.getLong(addr + HEADER_OFFSET_WRITER_TXN_64));
+        h = mix(h, Unsafe.getLong(addr + HEADER_OFFSET_PHYSICAL_ROWS_64));
+        h = mix(h, Unsafe.getLong(addr + HEADER_OFFSET_LIVE_ROWS_64));
         // The loop below starts at HEADER_SIZE, so a header field added after the checksum word is NOT
         // covered by it and has to be mixed in by hand.
-        h = mix(h, Unsafe.getUnsafe().getLong(addr + HEADER_OFFSET_LAST_WRITE_MICROS_64));
-        h = mix(h, Unsafe.getUnsafe().getLong(addr + HEADER_OFFSET_SEQ_TXN_64));
+        h = mix(h, Unsafe.getLong(addr + HEADER_OFFSET_LAST_WRITE_MICROS_64));
+        h = mix(h, Unsafe.getLong(addr + HEADER_OFFSET_SEQ_TXN_64));
         for (long p = addr + HEADER_SIZE, lim = p + (long) PIECE_SIZE * pieceCount; p < lim; p += Long.BYTES) {
-            h = mix(h, Unsafe.getUnsafe().getLong(p));
+            h = mix(h, Unsafe.getLong(p));
         }
         return h;
     }
@@ -311,6 +311,6 @@ public class PartitionGeometryFile implements Closeable, Mutable {
 
     private long getPieceLong(int index, int fieldOffset) {
         assert index > -1 && index < pieceCount;
-        return Unsafe.getUnsafe().getLong(buf + HEADER_SIZE + (long) PIECE_SIZE * index + fieldOffset);
+        return Unsafe.getLong(buf + HEADER_SIZE + (long) PIECE_SIZE * index + fieldOffset);
     }
 }

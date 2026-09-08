@@ -7636,7 +7636,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 if (i > 0) {
                     sink.putAscii(',');
                 }
-                sink.put(Unsafe.getUnsafe().getLong(rowsAddress + i * Long.BYTES));
+                sink.put(Unsafe.getLong(rowsAddress + i * Long.BYTES));
             }
             return sink.toString();
         } finally {
@@ -7662,11 +7662,11 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     // one-entry column address array pointing at it, and empty aux and bind variable blocks.
     private static void writeProbeColumn(long columnAddress, long dataAddress, long auxAddress, long varsAddress) {
         for (int i = 0; i < IR_PROBE_COLUMN.length; i++) {
-            Unsafe.getUnsafe().putLong(columnAddress + (long) i * Long.BYTES, IR_PROBE_COLUMN[i]);
+            Unsafe.putLong(columnAddress + (long) i * Long.BYTES, IR_PROBE_COLUMN[i]);
         }
-        Unsafe.getUnsafe().putLong(dataAddress, columnAddress);
-        Unsafe.getUnsafe().putLong(auxAddress, 0L);
-        Unsafe.getUnsafe().putLong(varsAddress, 0L);
+        Unsafe.putLong(dataAddress, columnAddress);
+        Unsafe.putLong(auxAddress, 0L);
+        Unsafe.putLong(varsAddress, 0L);
     }
 
     // The self-comparison WhereClauseParser.nodesEqual() recognises, spelled the same way it is:

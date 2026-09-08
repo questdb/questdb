@@ -9460,6 +9460,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", deadRows=").$(deadRows)
                 .I$();
         commitTxWriterAndPublishPendingPostingSealPurges();
+        // TRIM-FILES needs to be sure all the readers switched to the newest committed transactions
+        if (!txnScoreboard.isRangeAvailable(fromTxn, txWriter.getTxn())) {
+            LOG.info().$("TRIM-FILES deferred, a reader still resolves the partition as composite [table=").$(tableToken)
+                    .$(", dir=").$(formatPartitionForTimestamp(partitionTs, partitionNameTxn))
+                    .$(", deadRows=").$(deadRows)
+                    .I$();
+            return true;
+        }
         // Best-effort and strictly after the commit above: a failure leaves dead bytes in place, wasted
         // disk and nothing more. POSTING index files are left alone - their size tracks seal history, and
         // PostingSealPurgeJob already reclaims old generations.

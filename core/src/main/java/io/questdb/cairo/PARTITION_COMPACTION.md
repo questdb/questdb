@@ -50,7 +50,7 @@ Four ways to reclaim a folder's waste, cheapest first:
 | **JOIN** | merges pieces already adjacent in the files into one piece; copies nothing | no |
 | **MOVE-TAIL** | copies only the messy tail pieces into a new sibling folder, leaving the clean front untouched | no |
 | **MAKE-PLAIN** | lowers `E` to the row count so the folder stops being composite; no bytes move | yes |
-| **TRIM-FILES** | shortens every column file down to the live size, giving the dead bytes back to the filesystem | folds into MAKE-PLAIN's own check on this branch - see below |
+| **TRIM-FILES** | shortens every column file down to the live size, giving the dead bytes back to the filesystem | yes, its OWN check, after MAKE-PLAIN's commit - see below |
 | **REWRITE** | copies every live row into a fresh folder and deletes the old one | no (the delete has its own check) |
 
 Two pieces can only be merged (JOIN) or copied together (MOVE-TAIL, REWRITE) if they are neighbours in
@@ -65,7 +65,7 @@ wherever the data happens to sit in the files.
   tail, MOVE-TAIL splits the tail off into its own folder rather than recopying the whole thing.
 - Otherwise, REWRITE copies everything live into a fresh folder.
 - A folder already reduced to one piece at row 0, with real dead space above it, needs none of the
-  above - only MAKE-PLAIN (which also does TRIM-FILES's job on this branch - see below).
+  above - only MAKE-PLAIN, which then runs TRIM-FILES behind a second check of its own (see below).
 
 ### What MOVE-TAIL leaves behind
 
@@ -77,24 +77,40 @@ MOVE-TAIL commits at T1
       |
       |  wait: no reader below T1        <- readers may still see the pieces MOVE-TAIL removed
       v
-MAKE-PLAIN + TRIM-FILES commit at T2  (E -> row count, folder becomes plain; files cut to that same size)
+MAKE-PLAIN commits at T2                 (E -> row count, folder stops being composite)
+      |
+      |  wait: no reader below T2        <- readers below T2 still resolve the folder as composite,
+      v                                     so they still map E rows of files this is about to cut
+TRIM-FILES                               (files cut down to the row count)
 ```
 
-A general design where a reader maps a column up to the *file's own byte length* would need a second,
-later wait here: a reader that opened between "E -> row count" and "cut the files" would still have the
-old, larger length mapped, and shortening the files under it would leave it mapped past the end of a
-file. This branch's readers never do that - a reader maps a column up to the row count its *own
-resolved view* reports (`E` while still composite, the live row count once plain - see
-`TableReader#mappedRowCount`), never up to the file's raw length. Once the check above clears, no
-reader - old or new - can ever again resolve this folder as composite, so none can ever again map past
-the live row count, regardless of how large the files still physically are. That is what lets
-TRIM-FILES fold into the very same commit and check.
+TRIM-FILES needs its own, later wait, and it has to be taken AFTER MAKE-PLAIN's commit. A reader maps a
+column up to the row count its *own resolved view* reports - `E` while the folder still resolves as
+composite, the live row count once it resolves as plain (see `TableReader#mappedRowCount`) - never up to
+the file's raw byte length. The folder starts resolving as plain only at T2, so a reader anywhere in
+`[T1, T2)` still maps `E` rows, which is what the files still hold; cutting them to the row count leaves
+that reader mapped past the end of a file, and it reads a zero offset out of the aux vector.
+
+`isRangeAvailable` pushes the scoreboard's max txn to the value asked for, so taking the wait after the
+commit is also what closes the race against a reader acquiring T2 concurrently: a reader that arrives
+from there on takes T2 or newer and resolves the folder as plain.
+
+Lowering `E` is safe on its own - a reader below T2 keeps reading the old geometry generation, which the
+geometry purge retires behind its own wait - so the MAKE-PLAIN commit stands whether or not the second
+wait clears. Only the byte reclaim is skipped, and the dead bytes are unreachable by then: the folder is
+plain, every reader maps its live row count, and the next write to it truncates them off on close.
+
+An earlier version of this design folded TRIM-FILES into MAKE-PLAIN's single check, on the argument that
+once that check clears "no reader, old or new, can ever again resolve this folder as composite". That
+step does not hold: it clears readers below T1, not readers already sitting in `[T1, T2)`.
+`WalWriterFuzzTest#testWalWriteEqualTimestamp` hit it about once in twenty runs.
 
 ## Reader safety, the general principle
 
 No compaction step ever writes below `E` (dangerously, into bytes a live reader might resolve): live
 rows are always moved to a fresh location first (which nothing has ever pointed at, so it is safe to
 write to without asking), and only afterward is `E` itself lowered or a file shortened - both pure
-bookkeeping moves, gated on a check that no reader still needs the old state. On this branch, MAKE-PLAIN
-and TRIM-FILES share that one check (see above); a design whose readers map by the file's raw byte
-length instead of by row count would need TRIM-FILES to run as its own, later-checked step instead.
+bookkeeping moves, gated on a check that no reader still needs the old state. MAKE-PLAIN and TRIM-FILES
+take two separate checks, one commit apart (see above): lowering `E` waits for the readers that still see
+the pieces MOVE-TAIL removed, and shortening a file waits for the readers that still resolve the folder
+as composite and therefore still map `E` rows of it.

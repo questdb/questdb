@@ -106,13 +106,13 @@ public class WalCustomEventTest extends AbstractCairoTest {
                 assertEquals(Long.BYTES + Long.BYTES + payloadBytes.length, info.getPayloadSize());
 
                 // ts at +0
-                assertEquals(ts, Unsafe.getUnsafe().getLong(info.getPayloadAddr()));
+                assertEquals(ts, Unsafe.getLong(info.getPayloadAddr()));
                 // bin length prefix at +8 (Long.BYTES)
-                assertEquals(payloadBytes.length, Unsafe.getUnsafe().getLong(info.getPayloadAddr() + Long.BYTES));
+                assertEquals(payloadBytes.length, Unsafe.getLong(info.getPayloadAddr() + Long.BYTES));
                 // bin bytes at +16
                 long binAddr = info.getPayloadAddr() + Long.BYTES + Long.BYTES;
                 for (int i = 0; i < payloadBytes.length; i++) {
-                    assertEquals(payloadBytes[i], Unsafe.getUnsafe().getByte(binAddr + i));
+                    assertEquals(payloadBytes[i], Unsafe.getByte(binAddr + i));
                 }
             }
         });
@@ -247,7 +247,7 @@ public class WalCustomEventTest extends AbstractCairoTest {
                 // record 1: custom 64
                 assertTrue(cursor.hasNext());
                 assertEquals(CUSTOM_TYPE_LONG, cursor.getType());
-                assertEquals(42L, Unsafe.getUnsafe().getLong(cursor.getUnknownInfo().getPayloadAddr()));
+                assertEquals(42L, Unsafe.getLong(cursor.getUnknownInfo().getPayloadAddr()));
 
                 // record 2: DATA
                 assertTrue(cursor.hasNext());
@@ -256,7 +256,7 @@ public class WalCustomEventTest extends AbstractCairoTest {
                 // record 3: custom 65
                 assertTrue(cursor.hasNext());
                 assertEquals(CUSTOM_TYPE_SECOND, cursor.getType());
-                assertEquals(99L, Unsafe.getUnsafe().getLong(cursor.getUnknownInfo().getPayloadAddr()));
+                assertEquals(99L, Unsafe.getLong(cursor.getUnknownInfo().getPayloadAddr()));
 
                 assertFalse(cursor.hasNext());
             }
@@ -287,7 +287,7 @@ public class WalCustomEventTest extends AbstractCairoTest {
                 assertNotNull(info);
                 assertEquals(CUSTOM_TYPE_LONG, info.getType());
                 assertEquals(Long.BYTES, info.getPayloadSize());
-                assertEquals(payload, Unsafe.getUnsafe().getLong(info.getPayloadAddr()));
+                assertEquals(payload, Unsafe.getLong(info.getPayloadAddr()));
 
                 assertFalse(cursor.hasNext());
             }
@@ -358,7 +358,7 @@ public class WalCustomEventTest extends AbstractCairoTest {
                 segmentPath(path, tableToken, replacementWalId);
                 WalEventCursor cursor = reader.of(path, 0);
                 assertEquals(CUSTOM_TYPE_SECOND, cursor.getType());
-                assertEquals(0x0FEDCBA987654321L, Unsafe.getUnsafe().getLong(cursor.getUnknownInfo().getPayloadAddr()));
+                assertEquals(0x0FEDCBA987654321L, Unsafe.getLong(cursor.getUnknownInfo().getPayloadAddr()));
                 assertFalse(cursor.hasNext());
             }
         });
@@ -485,7 +485,7 @@ public class WalCustomEventTest extends AbstractCairoTest {
                 final long fileSize = ff.length(fd);
                 final long mem = TableUtils.mapRW(ff, fd, fileSize, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    Unsafe.getUnsafe().putInt(mem + WalUtils.WALE_HEADER_SIZE, newLength);
+                    Unsafe.putInt(mem + WalUtils.WALE_HEADER_SIZE, newLength);
                 } finally {
                     ff.munmap(mem, fileSize, MemoryTag.NATIVE_DEFAULT);
                 }

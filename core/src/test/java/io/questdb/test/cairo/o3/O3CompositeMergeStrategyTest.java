@@ -645,8 +645,8 @@ public class O3CompositeMergeStrategyTest {
         final long addr = Unsafe.malloc(size, MemoryTag.NATIVE_O3);
         try {
             for (int i = 0; i < timestamps.length; i++) {
-                Unsafe.getUnsafe().putLong(addr + i * 16L, timestamps[i]);
-                Unsafe.getUnsafe().putLong(addr + i * 16L + 8, i);
+                Unsafe.putLong(addr + i * 16L, timestamps[i]);
+                Unsafe.putLong(addr + i * 16L + 8, i);
             }
             body.accept(addr);
         } finally {
