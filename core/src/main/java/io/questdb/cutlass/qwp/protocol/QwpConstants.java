@@ -151,6 +151,22 @@ public final class QwpConstants {
      */
     public static final int MAX_TABLE_NAME_LENGTH = 127;
     /**
+     * {@link #STATUS_SERVER_INFO} capability bit: this connection negotiated
+     * durable acknowledgements.
+     * <p>
+     * The verdict travels in-band rather than on the handshake because neither
+     * handshake carrier can deliver it to a browser. {@code X-QWP-Durable-Ack}
+     * is unreadable from page JavaScript, and the
+     * {@code questdb.qwp.durable-ack.v1} subprotocol cannot carry it either:
+     * a browser fails the whole connection when it offered a subprotocol and
+     * the 101 names none (WHATWG "establish a WebSocket connection"), so
+     * withholding the echo destroys the connection the client needs in order
+     * to be told that durable ACK is unavailable. The echo therefore confirms
+     * only that the server speaks the browser negotiation, and this bit
+     * carries whether the capability is actually on.
+     */
+    public static final byte SERVER_INFO_CAP_DURABLE_ACK = 0x01;
+    /**
      * Status: Egress-only. Query aborted because the client sent a {@code CANCEL}
      * frame or the server invoked explicit cancellation.
      */
@@ -212,7 +228,9 @@ public final class QwpConstants {
      */
     public static final byte STATUS_SECURITY_ERROR = 0x08;
     /**
-     * Browser-requested ingress handshake carrying the server batch cap.
+     * Browser-requested ingress handshake frame. Payload:
+     * 1-byte status + 4-byte effective batch cap in bytes + 1-byte capability
+     * mask (see {@link #SERVER_INFO_CAP_DURABLE_ACK}).
      */
     public static final byte STATUS_SERVER_INFO = 0x01;
     /**

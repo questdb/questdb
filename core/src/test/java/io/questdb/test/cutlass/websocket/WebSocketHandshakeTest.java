@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.websocket;
 
 import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
@@ -296,22 +297,33 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
                 int written = QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(
                         buf,
                         16,
-                        1_048_576
+                        1_048_576,
+                        true
                 );
-                Assert.assertEquals(7, written);
+                Assert.assertEquals(8, written);
                 byte[] frame = readBytes(buf, written);
                 Assert.assertEquals((byte) 0x82, frame[0]);
-                Assert.assertEquals(5, frame[1]);
+                Assert.assertEquals(6, frame[1]);
                 Assert.assertEquals(1, frame[2]);
                 Assert.assertEquals(0, frame[3]);
                 Assert.assertEquals(0, frame[4]);
                 Assert.assertEquals(16, frame[5]);
                 Assert.assertEquals(0, frame[6]);
+                Assert.assertEquals(QwpConstants.SERVER_INFO_CAP_DURABLE_ACK, frame[7]);
+
+                // The capability byte is the whole point of the frame for a
+                // browser: it is the only carrier that can tell one apart from
+                // the other, since the subprotocol echo is now unconditional.
+                Assert.assertEquals(
+                        8,
+                        QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 16, 1_048_576, false)
+                );
+                Assert.assertEquals(0, readBytes(buf, 8)[7]);
 
                 // One byte short of the frame: refuse rather than write past
                 // the end of the raw send buffer. Exactly enough still writes.
-                Assert.assertEquals(-1, QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 6, 1_048_576));
-                Assert.assertEquals(7, QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 7, 1_048_576));
+                Assert.assertEquals(-1, QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 7, 1_048_576, false));
+                Assert.assertEquals(8, QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 8, 1_048_576, false));
             } finally {
                 freeBuffer(buf, 16);
             }

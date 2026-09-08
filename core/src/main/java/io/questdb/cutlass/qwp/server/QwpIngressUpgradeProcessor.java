@@ -152,6 +152,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_MISSING_UPGRADE_HEADER);
     private static final byte[] BAD_REQUEST_RESPONSE_ORIGIN_HEADER_NOT_ALLOWED =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_ORIGIN_HEADER_NOT_ALLOWED);
+    // Browser-only ingress SERVER_INFO frame: status byte, u32 effective batch
+    // cap, capability mask. Named so onHeadersReady's send-buffer reservation
+    // and writeBrowserServerInfoFrame cannot drift apart -- an under-reservation
+    // is an out-of-bounds write on the raw send buffer.
+    private static final int BROWSER_SERVER_INFO_PAYLOAD_BYTES = 6;
+    private static final int BROWSER_SERVER_INFO_WS_FRAME_BYTES =
+            WebSocketFrameWriter.headerSize(BROWSER_SERVER_INFO_PAYLOAD_BYTES, false)
+                    + BROWSER_SERVER_INFO_PAYLOAD_BYTES;
     private static final String ERROR_DURABLE_ACK_POLL_NOT_NEGOTIATED = "durable ACK poll was not negotiated";
     private static final Log LOG = LogFactory.getLog(QwpIngressUpgradeProcessor.class);
     private static final LocalValue<QwpIngressProcessorState> LV = new LocalValue<>();
@@ -300,15 +308,21 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      *
      * @return total bytes written, or -1 if {@code bufferSize} is too small
      */
-    public static int writeBrowserServerInfoFrame(long bufferAddress, int bufferSize, int maxBatchSizeBytes) {
-        if (WebSocketFrameWriter.headerSize(5, false) + 5 > bufferSize) {
+    public static int writeBrowserServerInfoFrame(
+            long bufferAddress,
+            int bufferSize,
+            int maxBatchSizeBytes,
+            boolean durableAckEnabled
+    ) {
+        if (BROWSER_SERVER_INFO_WS_FRAME_BYTES > bufferSize) {
             return -1;
         }
-        int headerSize = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddress, 5);
+        int headerSize = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddress, BROWSER_SERVER_INFO_PAYLOAD_BYTES);
         long payloadAddress = bufferAddress + headerSize;
         Unsafe.putByte(payloadAddress, QwpConstants.STATUS_SERVER_INFO);
         Unsafe.putInt(payloadAddress + 1, maxBatchSizeBytes);
-        return headerSize + 5;
+        Unsafe.putByte(payloadAddress + 5, durableAckEnabled ? QwpConstants.SERVER_INFO_CAP_DURABLE_ACK : (byte) 0);
+        return headerSize + BROWSER_SERVER_INFO_PAYLOAD_BYTES;
     }
 
     /**
@@ -472,17 +486,33 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK);
         boolean durableAckRequested = durableAckHeaderRequested || durableAckWebSocketProtocolRequested;
         boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
-        boolean durableAckWebSocketProtocolEnabled = durableAckEnabled && durableAckWebSocketProtocolRequested;
+        // Echo the subprotocol whenever it was offered, enabled or not. The
+        // token confirms the browser negotiation dialect, NOT the capability:
+        // a browser fails the whole connection when it offered a subprotocol
+        // and the 101 names none, so gating the echo on durableAckEnabled
+        // would destroy the connection the client needs in order to be told
+        // that durable ACK is unavailable. The verdict rides the SERVER_INFO
+        // frame below as SERVER_INFO_CAP_DURABLE_ACK instead. RFC 6455 is
+        // satisfied either way -- we still never name a token the client did
+        // not offer.
+        boolean durableAckWebSocketProtocolEnabled = durableAckWebSocketProtocolRequested;
         Utf8Sequence browserHandshake = requestHeader.getUrlParam(
                 QwpIngressHttpProcessor.URL_PARAM_QWP_BROWSER_HANDSHAKE);
-        boolean browserHandshakeRequested = effectiveMaxBatchSize > 0
-                && browserHandshake != null
-                && Utf8s.equalsAscii("v1", browserHandshake);
+        // Either browser carrier pulls the frame: a client that only wants
+        // durable ACK must not also have to pass qwp_browser_handshake=v1 to
+        // learn whether it got it.
+        boolean browserServerInfoRequested = effectiveMaxBatchSize > 0
+                && ((browserHandshake != null && Utf8s.equalsAscii("v1", browserHandshake))
+                || durableAckWebSocketProtocolRequested);
+        if (durableAckWebSocketProtocolRequested && !durableAckEnabled) {
+            LOG.info().$("QWP durable ACK requested over the browser subprotocol but the registry is disabled [fd=")
+                    .$(context.getFd()).I$();
+        }
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocolEnabled);
-        if (browserHandshakeRequested) {
-            requiredHandshakeSize += WebSocketFrameWriter.headerSize(5, false) + 5;
+        if (browserServerInfoRequested) {
+            requiredHandshakeSize += BROWSER_SERVER_INFO_WS_FRAME_BYTES;
         }
         if (requiredHandshakeSize > bufferSize) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
@@ -513,11 +543,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
-        if (browserHandshakeRequested) {
+        if (browserServerInfoRequested) {
             int serverInfoBytes = writeBrowserServerInfoFrame(
                     bufferAddr + bytesWritten,
                     bufferSize - bytesWritten,
-                    effectiveMaxBatchSize
+                    effectiveMaxBatchSize,
+                    durableAckEnabled
             );
             if (serverInfoBytes < 0) {
                 throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);

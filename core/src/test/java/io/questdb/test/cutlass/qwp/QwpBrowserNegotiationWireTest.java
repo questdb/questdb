@@ -158,8 +158,8 @@ public class QwpBrowserNegotiationWireTest extends AbstractQwpBootstrapTest {
                     QwpWireTestFixtures.performWriteHandshake(socket, "?qwp_browser_handshake=v1");
                     byte[] frame = QwpWireTestFixtures.readServerFrame(socket.getInputStream());
                     Assert.assertEquals(
-                            "the browser ingress handshake frame is status + u32 cap",
-                            5,
+                            "the browser ingress handshake frame is status + u32 cap + capability mask",
+                            6,
                             frame.length
                     );
                     Assert.assertEquals(
@@ -174,6 +174,14 @@ public class QwpBrowserNegotiationWireTest extends AbstractQwpBootstrapTest {
                     Assert.assertTrue(
                             "the advertised batch cap must be usable, got " + maxBatchSize,
                             maxBatchSize > 0 && maxBatchSize <= QwpConstants.DEFAULT_MAX_BATCH_SIZE
+                    );
+                    // This server has no durable-ack registry, so the verdict
+                    // must read false here rather than being absent: the bit is
+                    // the only durable-ack signal a browser can read.
+                    Assert.assertEquals(
+                            "the capability mask must report durable ACK off",
+                            0,
+                            frame[5] & QwpConstants.SERVER_INFO_CAP_DURABLE_ACK
                     );
                 }
             }
