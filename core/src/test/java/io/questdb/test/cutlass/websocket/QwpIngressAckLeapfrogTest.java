@@ -560,12 +560,27 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
             try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                // The observable ack is identical whether the poll arm's
+                // hasUncommittedDeferredRows() guard withholds the advance or
+                // the last-resort clamp inside setHighestProcessedSequence
+                // refuses it: both leave the watermark untouched, and the clamp
+                // only differs by a LOG.critical() line. Count the calls so the
+                // guard itself is what this test holds -- the clamp is
+                // documented as containment for a regression of exactly this
+                // path, so a green test that leans on it proves nothing.
+                AtomicLong watermarkAdvanceAttempts = new AtomicLong();
                 QwpIngressProcessorState state = new QwpIngressProcessorState(
                         RECV_BUFFER_SIZE,
                         httpConfig.getSendBufferSize(),
                         engine,
                         httpConfig.getLineHttpProcessorConfiguration()
-                );
+                ) {
+                    @Override
+                    public void setHighestProcessedSequence(long highestProcessedSequence) {
+                        watermarkAdvanceAttempts.incrementAndGet();
+                        super.setHighestProcessedSequence(highestProcessedSequence);
+                    }
+                };
                 state.of(-1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
                 getLV().set(context, state);
@@ -573,7 +588,13 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                 drive(processor, context, nf, deferred.length);
                 Assert.assertEquals("deferred rows must remain unacknowledged", -1, maxCumulativeOkAck(rawSocket.sentFrames));
 
+                long attemptsBeforePoll = watermarkAdvanceAttempts.get();
                 drive(processor, context, nf, poll.length);
+                Assert.assertEquals(
+                        "a durable ACK poll must not even ask the watermark to advance while a deferred group is open",
+                        attemptsBeforePoll,
+                        watermarkAdvanceAttempts.get()
+                );
                 Assert.assertEquals(
                         "a durable ACK poll must not commit or acknowledge an in-progress deferred group",
                         -1,

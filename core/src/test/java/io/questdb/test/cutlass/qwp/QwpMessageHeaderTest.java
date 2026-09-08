@@ -252,6 +252,11 @@ public class QwpMessageHeaderTest {
             }
             Assert.assertTrue(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
             Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE - 1));
+            // The length term must stay an equality. A shorter frame is refused
+            // by >= too, so only a LONGER one separates == from >=, which is the
+            // relaxation isDurableAckPoll's contract names: a frame carrying
+            // trailing bytes would be acked as a poll without being processed.
+            Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE + 1));
 
             Unsafe.putByte(addr + HEADER_OFFSET_TABLE_COUNT, (byte) 1);
             Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
@@ -275,6 +280,13 @@ public class QwpMessageHeaderTest {
             Assert.assertTrue(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
 
             Unsafe.putByte(addr + HEADER_OFFSET_FLAGS, FLAG_DEFER_COMMIT);
+            Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
+
+            // A different flag is refused by a bitmask test as well, so it does
+            // not pin the equality. A SUPERSET is the relaxation that matters:
+            // under (flags & FLAG_DURABLE_ACK_POLL) != 0 this frame would enter
+            // the poll arm and close the deferred-commit group it also asks for.
+            Unsafe.putByte(addr + HEADER_OFFSET_FLAGS, (byte) (FLAG_DURABLE_ACK_POLL | FLAG_DEFER_COMMIT));
             Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
         } finally {
             Unsafe.free(addr, HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
