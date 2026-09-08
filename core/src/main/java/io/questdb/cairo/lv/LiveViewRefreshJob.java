@@ -512,9 +512,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        // workerId is the fixed per-worker identity captured at assign(int, job)
-        // time. The continuation framework may remount this job on a peer carrier,
-        // so workerContext.carrierId() is not asserted against it here.
         return processNotifications();
     }
 

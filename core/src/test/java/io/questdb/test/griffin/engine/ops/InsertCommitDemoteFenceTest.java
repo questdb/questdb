@@ -42,6 +42,11 @@ import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeState;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -50,7 +55,13 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Proxy;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.LockSupport;
 
 /**
  * Verifies that the HTTP /exec write executors -- InsertOperationImpl (plain INSERT) and
@@ -71,6 +82,150 @@ import java.util.concurrent.atomic.AtomicInteger;
  * the commit; writer.commit() is never called and the buffered rows are rolled back.
  */
 public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
+
+    /**
+     * On a PRIMARY node the async-enqueue branch must remain reachable: the read-only re-check passes and
+     * the branch proceeds to enqueue (it does not refuse a legitimate writer-busy fallback). The enqueue
+     * itself is exercised by the protocol/integration tests; here we assert the fence does not turn the
+     * non-WAL writer-busy fallback into a refusal on a primary node.
+     */
+    @Test
+    public void testAsyncEnqueueBranchProceedsOnPrimary() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPoolExhaustedWriterEngine(false)) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(primaryEngine, "test update") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        return 0;
+                    }
+                };
+                try {
+                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(primaryEngine), new SCSequence(), false);
+                } catch (Throwable e) {
+                    // The enqueue itself does not complete against a fake table on a bare engine (the
+                    // table-name registry is not built), so the branch fails after the read-only re-check
+                    // passes. The failure must NOT be the read-only refusal -- the point is the primary
+                    // node reached the enqueue rather than refusing it.
+                    final boolean readOnlyRefusal = e instanceof CairoException ce
+                            && ce.isAuthorizationError()
+                            && ce.getMessage() != null
+                            && ce.getMessage().contains("replica access is read-only");
+                    Assert.assertFalse(
+                            "a primary node must not refuse the async-enqueue branch with the read-only error",
+                            readOnlyRefusal
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * The async-enqueue fallback fence: when the WAL writer acquire throws EntryUnavailableException (the
+     * pool is exhausted), the catch branch must re-check read-only BEFORE enqueuing the operation. On a
+     * read-only (demoting) node the branch must refuse with the standard authorization error rather than
+     * route the WAL UPDATE through the legacy non-WAL writer pool, which would physical-commit it without
+     * minting a replicated sequencer txn (a silent acked-loss). A non-null event sub-sequence is supplied
+     * so the branch is the async-enqueue path, not the re-throw.
+     */
+    @Test
+    public void testAsyncEnqueueBranchRefusesOnReadOnlyReplica() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine readOnlyEngine = buildPoolExhaustedWriterEngine(true)) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(readOnlyEngine, "test update") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        return 0;
+                    }
+                };
+                try {
+                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(readOnlyEngine), new SCSequence(), false);
+                    Assert.fail("the async-enqueue branch must refuse on a read-only node before enqueuing");
+                } catch (CairoException e) {
+                    assertReadOnlyRefusal(e);
+                }
+            }
+        });
+    }
+
+    /**
+     * On a PRIMARY node the dispatcher fence must let the operation through: apply() runs exactly once.
+     */
+    @Test
+    public void testDispatcherFenceAppliesOnPrimary() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger applyCalled = new AtomicInteger(0);
+            try (CairoEngine primaryEngine = buildPrimaryWriterEngine()) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(primaryEngine, "test update") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        applyCalled.incrementAndGet();
+                        return 0;
+                    }
+                };
+                dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(primaryEngine), null, false);
+                Assert.assertEquals("apply() must run once on a primary node", 1, applyCalled.get());
+            }
+        });
+    }
+
+    /**
+     * The OperationDispatcher fence (WAL UPDATE/ALTER over pg-wire and /exec): a flip that lands after
+     * the eager getTableWriterAPI gate passes but before the inline apply() must be caught by the
+     * in-lock re-check, so the operation is NOT externalized (apply() never runs). The eager gate
+     * consumes the first isReadOnlyMode() read (returns false, the writer is acquired as PRIMARY); the
+     * in-lock re-check consumes the second (returns true, refuse). Behavioral assertion: apply() is
+     * never reached and the refusal is the standard read-only authorization error.
+     */
+    @Test
+    public void testDispatcherFenceInLockReCheckCatchesFlip() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger applyCalled = new AtomicInteger(0);
+            try (CairoEngine flipEngine = buildFlipAfterFirstCallWriterEngine()) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(flipEngine, "test update") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        applyCalled.incrementAndGet();
+                        return 0;
+                    }
+                };
+                try {
+                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(flipEngine), null, false);
+                    Assert.fail("dispatcher.execute() must throw authorization when the in-lock re-check sees read-only");
+                } catch (CairoException e) {
+                    assertReadOnlyRefusal(e);
+                }
+                Assert.assertEquals(
+                        "apply() must not externalize the operation on the flipped node", 0, applyCalled.get());
+            }
+        });
+    }
+
+    /**
+     * A read-only engine must refuse the WAL UPDATE/ALTER dispatch at the unlocked fast-refuse, before
+     * acquiring a writer or reaching apply().
+     */
+    @Test
+    public void testDispatcherFenceRefusesOnReadOnlyReplica() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger applyCalled = new AtomicInteger(0);
+            try (CairoEngine readOnlyEngine = buildReadOnlyWriterEngine()) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(readOnlyEngine, "test update") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        applyCalled.incrementAndGet();
+                        return 0;
+                    }
+                };
+                try {
+                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(readOnlyEngine), null, false);
+                    Assert.fail("dispatcher.execute() must throw authorization on a read-only node");
+                } catch (CairoException e) {
+                    assertReadOnlyRefusal(e);
+                }
+                Assert.assertEquals("apply() must not run on a read-only node", 0, applyCalled.get());
+            }
+        });
+    }
 
     /**
      * INSERT ... SELECT: the in-lock re-check catches a flip that lands after the early-out passes but
@@ -198,151 +353,648 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The OperationDispatcher fence (WAL UPDATE/ALTER over pg-wire and /exec): a flip that lands after
-     * the eager getTableWriterAPI gate passes but before the inline apply() must be caught by the
-     * in-lock re-check, so the operation is NOT externalized (apply() never runs). The eager gate
-     * consumes the first isReadOnlyMode() read (returns false, the writer is acquired as PRIMARY); the
-     * in-lock re-check consumes the second (returns true, refuse). Behavioral assertion: apply() is
-     * never reached and the refusal is the standard read-only authorization error.
-     */
     @Test
-    public void testDispatcherFenceInLockReCheckCatchesFlip() throws Exception {
+    public void testRoleSwitchLocksRejectConditions() throws Exception {
         assertMemoryLeak(() -> {
-            AtomicInteger applyCalled = new AtomicInteger(0);
-            try (CairoEngine flipEngine = buildFlipAfterFirstCallWriterEngine()) {
-                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(flipEngine, "test update") {
-                    @Override
-                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
-                        applyCalled.incrementAndGet();
-                        return 0;
-                    }
-                };
-                try {
-                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(flipEngine), null, false);
-                    Assert.fail("dispatcher.execute() must throw authorization when the in-lock re-check sees read-only");
-                } catch (CairoException e) {
-                    assertReadOnlyRefusal(e);
-                }
-                Assert.assertEquals(
-                        "apply() must not externalize the operation on the flipped node", 0, applyCalled.get());
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                Assert.assertThrows(
+                        UnsupportedOperationException.class,
+                        primaryEngine.getRoleSwitchReadLock()::newCondition
+                );
+                Assert.assertThrows(
+                        UnsupportedOperationException.class,
+                        primaryEngine.getRoleSwitchWriteLock()::newCondition
+                );
             }
         });
     }
 
-    /**
-     * A read-only engine must refuse the WAL UPDATE/ALTER dispatch at the unlocked fast-refuse, before
-     * acquiring a writer or reaching apply().
-     */
     @Test
-    public void testDispatcherFenceRefusesOnReadOnlyReplica() throws Exception {
+    public void testRoleSwitchReadLockRestoresModeAfterTaskFailure() throws Exception {
         assertMemoryLeak(() -> {
-            AtomicInteger applyCalled = new AtomicInteger(0);
-            try (CairoEngine readOnlyEngine = buildReadOnlyWriterEngine()) {
-                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(readOnlyEngine, "test update") {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicReference<Throwable> taskError = new AtomicReference<>();
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final FiberTask task = new FiberTask() {
                     @Override
-                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
-                        applyCalled.incrementAndGet();
-                        return 0;
+                    protected void onError(Throwable th) {
+                        taskError.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        readLock.lock();
+                        try {
+                            Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
+                            failFiberTask();
+                            return true;
+                        } finally {
+                            readLock.unlock();
+                        }
                     }
                 };
                 try {
-                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(readOnlyEngine), null, false);
-                    Assert.fail("dispatcher.execute() must throw authorization on a read-only node");
-                } catch (CairoException e) {
-                    assertReadOnlyRefusal(e);
-                }
-                Assert.assertEquals("apply() must not run on a read-only node", 0, applyCalled.get());
-            }
-        });
-    }
-
-    /**
-     * On a PRIMARY node the dispatcher fence must let the operation through: apply() runs exactly once.
-     */
-    @Test
-    public void testDispatcherFenceAppliesOnPrimary() throws Exception {
-        assertMemoryLeak(() -> {
-            AtomicInteger applyCalled = new AtomicInteger(0);
-            try (CairoEngine primaryEngine = buildPrimaryWriterEngine()) {
-                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(primaryEngine, "test update") {
-                    @Override
-                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
-                        applyCalled.incrementAndGet();
-                        return 0;
-                    }
-                };
-                dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(primaryEngine), null, false);
-                Assert.assertEquals("apply() must run once on a primary node", 1, applyCalled.get());
-            }
-        });
-    }
-
-    /**
-     * The async-enqueue fallback fence: when the WAL writer acquire throws EntryUnavailableException (the
-     * pool is exhausted), the catch branch must re-check read-only BEFORE enqueuing the operation. On a
-     * read-only (demoting) node the branch must refuse with the standard authorization error rather than
-     * route the WAL UPDATE through the legacy non-WAL writer pool, which would physical-commit it without
-     * minting a replicated sequencer txn (a silent acked-loss). A non-null event sub-sequence is supplied
-     * so the branch is the async-enqueue path, not the re-throw.
-     */
-    @Test
-    public void testAsyncEnqueueBranchRefusesOnReadOnlyReplica() throws Exception {
-        assertMemoryLeak(() -> {
-            try (CairoEngine readOnlyEngine = buildPoolExhaustedWriterEngine(true)) {
-                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(readOnlyEngine, "test update") {
-                    @Override
-                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
-                        return 0;
-                    }
-                };
-                try {
-                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(readOnlyEngine), new SCSequence(), false);
-                    Assert.fail("the async-enqueue branch must refuse on a read-only node before enqueuing");
-                } catch (CairoException e) {
-                    assertReadOnlyRefusal(e);
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertTrue(task.isDone());
+                    Assert.assertNotNull(taskError.get());
+                    TestUtils.assertContains(taskError.get().getMessage(), "role-switch read lock blocks suspension");
+                    Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+                    Assert.assertTrue(writeLock.tryLock());
+                    writeLock.unlock();
+                } finally {
+                    close(runtime);
                 }
             }
         });
     }
 
-    /**
-     * On a PRIMARY node the async-enqueue branch must remain reachable: the read-only re-check passes and
-     * the branch proceeds to enqueue (it does not refuse a legitimate writer-busy fallback). The enqueue
-     * itself is exercised by the protocol/integration tests; here we assert the fence does not turn the
-     * non-WAL writer-busy fallback into a refusal on a primary node.
-     */
     @Test
-    public void testAsyncEnqueueBranchProceedsOnPrimary() throws Exception {
+    public void testRoleSwitchReadLockReentersWhileWriterQueued() throws Exception {
         assertMemoryLeak(() -> {
-            try (CairoEngine primaryEngine = buildPoolExhaustedWriterEngine(false)) {
-                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(primaryEngine, "test update") {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final CountDownLatch writerDone = new CountDownLatch(1);
+                final Thread writer = new Thread(() -> {
+                    writeLock.lock();
+                    writeLock.unlock();
+                    writerDone.countDown();
+                }, "role-switch-writer");
+                readLock.lock();
+                try {
+                    writer.start();
+                    TestUtils.assertEventually(() -> Assert.assertEquals(Thread.State.WAITING, writer.getState()));
+                    Assert.assertTrue(readLock.tryLock());
+                    readLock.unlock();
+                } finally {
+                    readLock.unlock();
+                }
+                Assert.assertTrue(writerDone.await(5, TimeUnit.SECONDS));
+                writer.join();
+                Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchReadLockCleanupAfterTaskLeak() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicReference<Throwable> taskError = new AtomicReference<>();
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final FiberTask leakingTask = new FiberTask() {
                     @Override
-                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
-                        return 0;
+                    protected void onError(Throwable th) {
+                        taskError.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        readLock.lock();
+                        return true;
+                    }
+                };
+                final AtomicReference<Throwable> replacementTaskError = new AtomicReference<>();
+                final FiberTask replacementTask = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        replacementTaskError.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        readLock.lock();
+                        try {
+                            Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                            return true;
+                        } finally {
+                            readLock.unlock();
+                        }
                     }
                 };
                 try {
-                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(primaryEngine), new SCSequence(), false);
-                } catch (Throwable e) {
-                    // The enqueue itself does not complete against a fake table on a bare engine (the
-                    // table-name registry is not built), so the branch fails after the read-only re-check
-                    // passes. The failure must NOT be the read-only refusal -- the point is the primary
-                    // node reached the enqueue rather than refusing it.
-                    final boolean readOnlyRefusal = e instanceof CairoException ce
-                            && ce.isAuthorizationError()
-                            && ce.getMessage() != null
-                            && ce.getMessage().contains("replica access is read-only");
-                    Assert.assertFalse(
-                            "a primary node must not refuse the async-enqueue branch with the read-only error",
-                            readOnlyRefusal
-                    );
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(leakingTask));
+                    Assert.assertEquals(1, runtime.drain(1));
+
+                    Assert.assertTrue(leakingTask.isDone());
+                    Assert.assertNotNull(taskError.get());
+                    TestUtils.assertContains(taskError.get().getMessage(), "leaked role-switch read lock");
+                    Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+                    Assert.assertTrue(writeLock.tryLock());
+                    writeLock.unlock();
+
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(replacementTask));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    if (replacementTaskError.get() != null) {
+                        throw new AssertionError(replacementTaskError.get());
+                    }
+                    Assert.assertTrue(replacementTask.isDone());
+                    Assert.assertEquals(1, runtime.getCreatedFiberCount());
+                } finally {
+                    close(runtime);
                 }
             }
         });
     }
 
-    // --- helpers ---
+    @Test
+    public void testRoleSwitchReadLockInterruptibleWaitDoesNotLeak() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicBoolean isInterrupted = new AtomicBoolean();
+                final AtomicReference<Throwable> readerFailure = new AtomicReference<>();
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final Thread reader = new Thread(() -> {
+                    try {
+                        readLock.lockInterruptibly();
+                        try {
+                            readerFailure.set(new AssertionError("reader acquired a held role-switch write lock"));
+                        } finally {
+                            readLock.unlock();
+                        }
+                    } catch (InterruptedException e) {
+                        isInterrupted.set(true);
+                    } catch (Throwable th) {
+                        readerFailure.set(th);
+                    }
+                });
+                reader.setDaemon(true);
+
+                writeLock.lock();
+                try {
+                    reader.start();
+                    awaitThreadWaiting(reader);
+                    reader.interrupt();
+                    reader.join(TimeUnit.SECONDS.toMillis(10));
+                    Assert.assertFalse(reader.isAlive());
+                    Assert.assertTrue(isInterrupted.get());
+                    Assert.assertNull(readerFailure.get());
+                    Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+                } finally {
+                    reader.interrupt();
+                    writeLock.unlock();
+                }
+
+                Assert.assertTrue(readLock.tryLock());
+                readLock.unlock();
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchReadLockIsReentrantInLegacyExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final AtomicBoolean isWriterAcquired = new AtomicBoolean();
+                final AtomicReference<Throwable> writerFailure = new AtomicReference<>();
+                final AtomicReference<Throwable> wrongOwnerFailure = new AtomicReference<>();
+                final CountDownLatch writerStarted = new CountDownLatch(1);
+                final Thread writer = new Thread(() -> {
+                    writerStarted.countDown();
+                    try {
+                        if (!writeLock.tryLock(10, TimeUnit.SECONDS)) {
+                            throw new AssertionError("timed out acquiring role-switch write lock");
+                        }
+                        try {
+                            isWriterAcquired.set(true);
+                        } finally {
+                            writeLock.unlock();
+                        }
+                    } catch (Throwable th) {
+                        writerFailure.set(th);
+                    }
+                });
+                writer.setDaemon(true);
+                readLock.lock();
+                try {
+                    Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                    writer.start();
+                    Assert.assertTrue(writerStarted.await(10, TimeUnit.SECONDS));
+                    awaitThreadWaiting(writer);
+                    Assert.assertFalse(isWriterAcquired.get());
+
+                    Assert.assertTrue(readLock.tryLock(1, TimeUnit.SECONDS));
+                    try {
+                        Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                    } finally {
+                        readLock.unlock();
+                    }
+
+                    final Thread wrongOwner = new Thread(() -> {
+                        try {
+                            readLock.unlock();
+                            Assert.fail("wrong owner unlocked role-switch read lock");
+                        } catch (Throwable th) {
+                            wrongOwnerFailure.set(th);
+                        }
+                    });
+                    wrongOwner.setDaemon(true);
+                    wrongOwner.start();
+                    wrongOwner.join(TimeUnit.SECONDS.toMillis(10));
+                    Assert.assertFalse(wrongOwner.isAlive());
+                    Assert.assertTrue(wrongOwnerFailure.get() instanceof IllegalMonitorStateException);
+                    Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                } finally {
+                    readLock.unlock();
+                }
+
+                writer.join(TimeUnit.SECONDS.toMillis(10));
+                Assert.assertFalse(writer.isAlive());
+                if (writerFailure.get() != null) {
+                    throw new AssertionError(writerFailure.get());
+                }
+                Assert.assertTrue(isWriterAcquired.get());
+                Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+                Assert.assertTrue(writeLock.tryLock());
+                writeLock.unlock();
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchReadLockRestoresFiberMode() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicReference<Throwable> taskError = new AtomicReference<>();
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final FiberTask task = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        taskError.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        Assert.assertEquals(SuspensionScope.Mode.FIBER, SuspensionScope.getMode());
+                        readLock.lock();
+                        try {
+                            Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
+                            Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                            readLock.lock();
+                            try {
+                                Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
+                                Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                            } finally {
+                                readLock.unlock();
+                            }
+                            Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                        } finally {
+                            readLock.unlock();
+                        }
+                        Assert.assertEquals(SuspensionScope.Mode.FIBER, SuspensionScope.getMode());
+                        return true;
+                    }
+                };
+                try {
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    if (taskError.get() != null) {
+                        throw new AssertionError(taskError.get());
+                    }
+                    Assert.assertTrue(task.isDone());
+                } finally {
+                    close(runtime);
+                }
+                Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchReadLockTryLockTimesOutBehindWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicBoolean isImmediateLockAcquired = new AtomicBoolean();
+                final AtomicBoolean isTimedLockAcquired = new AtomicBoolean();
+                final AtomicReference<Throwable> readerFailure = new AtomicReference<>();
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final Thread reader = new Thread(() -> {
+                    try {
+                        isImmediateLockAcquired.set(readLock.tryLock());
+                        if (isImmediateLockAcquired.get()) {
+                            readLock.unlock();
+                        }
+                        isTimedLockAcquired.set(readLock.tryLock(1, TimeUnit.MILLISECONDS));
+                        if (isTimedLockAcquired.get()) {
+                            readLock.unlock();
+                        }
+                    } catch (Throwable th) {
+                        readerFailure.set(th);
+                    }
+                });
+                reader.setDaemon(true);
+
+                writeLock.lock();
+                try {
+                    reader.start();
+                    reader.join(TimeUnit.SECONDS.toMillis(10));
+                    Assert.assertFalse(reader.isAlive());
+                    Assert.assertFalse(isImmediateLockAcquired.get());
+                    Assert.assertFalse(isTimedLockAcquired.get());
+                    Assert.assertNull(readerFailure.get());
+                } finally {
+                    writeLock.unlock();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchReadLocksLeakCleanupAcrossEnginesInFiber() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    CairoEngine firstEngine = buildPrimaryEngine();
+                    CairoEngine secondEngine = buildPrimaryEngine()
+            ) {
+                final AtomicReference<Throwable> taskError = new AtomicReference<>();
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final Lock firstReadLock = firstEngine.getRoleSwitchReadLock();
+                final Lock secondReadLock = secondEngine.getRoleSwitchReadLock();
+                final FiberTask task = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        taskError.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        firstReadLock.lock();
+                        secondReadLock.lock();
+                        firstReadLock.unlock();
+                        Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
+                        return true;
+                    }
+                };
+                try {
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertTrue(task.isDone());
+                    Assert.assertNotNull(taskError.get());
+                    TestUtils.assertContains(taskError.get().getMessage(), "leaked role-switch read lock");
+                    Assert.assertEquals(0, firstEngine.getRoleSwitchReadLockCount());
+                    Assert.assertEquals(0, secondEngine.getRoleSwitchReadLockCount());
+                } finally {
+                    close(runtime);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchReadLocksNestAcrossEngines() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    CairoEngine firstEngine = buildPrimaryEngine();
+                    CairoEngine secondEngine = buildPrimaryEngine()
+            ) {
+                final Lock firstReadLock = firstEngine.getRoleSwitchReadLock();
+                final Lock secondReadLock = secondEngine.getRoleSwitchReadLock();
+                final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.FIBER);
+                boolean isFirstReadLockHeld = false;
+                boolean isSecondReadLockHeld = false;
+                try {
+                    firstReadLock.lock();
+                    isFirstReadLockHeld = true;
+                    secondReadLock.lock();
+                    isSecondReadLockHeld = true;
+                    Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
+                    Assert.assertEquals(1, firstEngine.getRoleSwitchReadLockCount());
+                    Assert.assertEquals(1, secondEngine.getRoleSwitchReadLockCount());
+
+                    firstReadLock.unlock();
+                    isFirstReadLockHeld = false;
+                    Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
+                    secondReadLock.lock();
+                    Assert.assertEquals(1, secondEngine.getRoleSwitchReadLockCount());
+                    secondReadLock.unlock();
+                    Assert.assertEquals(1, secondEngine.getRoleSwitchReadLockCount());
+                    secondReadLock.unlock();
+                    isSecondReadLockHeld = false;
+                    Assert.assertEquals(SuspensionScope.Mode.FIBER, SuspensionScope.getMode());
+                } finally {
+                    if (isSecondReadLockHeld) {
+                        secondReadLock.unlock();
+                    }
+                    if (isFirstReadLockHeld) {
+                        firstReadLock.unlock();
+                    }
+                    SuspensionScope.restore(previousMode);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchWriteLockInterruptibleWaitDoesNotLeak() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicBoolean isInterrupted = new AtomicBoolean();
+                final AtomicReference<Throwable> writerFailure = new AtomicReference<>();
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final Thread writer = new Thread(() -> {
+                    try {
+                        writeLock.lockInterruptibly();
+                        try {
+                            writerFailure.set(new AssertionError("writer acquired a held role-switch read lock"));
+                        } finally {
+                            writeLock.unlock();
+                        }
+                    } catch (InterruptedException e) {
+                        isInterrupted.set(true);
+                    } catch (Throwable th) {
+                        writerFailure.set(th);
+                    }
+                });
+                writer.setDaemon(true);
+
+                readLock.lock();
+                try {
+                    writer.start();
+                    awaitThreadWaiting(writer);
+                    writer.interrupt();
+                    writer.join(TimeUnit.SECONDS.toMillis(10));
+                    Assert.assertFalse(writer.isAlive());
+                    Assert.assertTrue(isInterrupted.get());
+                    Assert.assertNull(writerFailure.get());
+                    Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+                } finally {
+                    writer.interrupt();
+                    readLock.unlock();
+                }
+
+                Assert.assertTrue(writeLock.tryLock());
+                writeLock.unlock();
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchWriteLockReentrancyAndDowngrade() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                writeLock.lock();
+                writeLock.lock();
+                readLock.lock();
+                Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+
+                writeLock.unlock();
+                Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+                writeLock.unlock();
+                Assert.assertEquals(1, primaryEngine.getRoleSwitchReadLockCount());
+
+                readLock.unlock();
+                Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+                Assert.assertTrue(writeLock.tryLock());
+                writeLock.unlock();
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchWriteLockRejectsFiberOwner() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicReference<Throwable> taskError = new AtomicReference<>();
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final FiberTask task = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        taskError.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        writeLock.lock();
+                        try {
+                            return true;
+                        } finally {
+                            writeLock.unlock();
+                        }
+                    }
+                };
+                try {
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertTrue(task.isDone());
+                    Assert.assertNotNull(taskError.get());
+                    TestUtils.assertContains(taskError.get().getMessage(), "role-switch write lock");
+                    Assert.assertTrue(writeLock.tryLock());
+                    writeLock.unlock();
+                } finally {
+                    close(runtime);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchWriteLockTryLockWithMinimumTimeout() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicBoolean isWriteLocked = new AtomicBoolean();
+                final AtomicReference<Throwable> writerFailure = new AtomicReference<>();
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final Thread writer = new Thread(() -> {
+                    try {
+                        isWriteLocked.set(writeLock.tryLock(Long.MIN_VALUE, TimeUnit.NANOSECONDS));
+                    } catch (Throwable th) {
+                        writerFailure.set(th);
+                    }
+                });
+                writer.setDaemon(true);
+
+                readLock.lock();
+                try {
+                    writer.start();
+                    writer.join(TimeUnit.SECONDS.toMillis(10));
+                    Assert.assertFalse(writer.isAlive());
+                    Assert.assertFalse(isWriteLocked.get());
+                    Assert.assertNull(writerFailure.get());
+                } finally {
+                    readLock.unlock();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchWriterPreventsReaderBarging() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final AtomicInteger acquireOrder = new AtomicInteger();
+                final AtomicReference<Throwable> readerFailure = new AtomicReference<>();
+                final AtomicReference<Throwable> writerFailure = new AtomicReference<>();
+                final CountDownLatch readerStarted = new CountDownLatch(1);
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final Thread writer = new Thread(() -> {
+                    try {
+                        writeLock.lock();
+                        try {
+                            if (!acquireOrder.compareAndSet(0, 1)) {
+                                throw new AssertionError("reader barged ahead of role-switch writer");
+                            }
+                        } finally {
+                            writeLock.unlock();
+                        }
+                    } catch (Throwable th) {
+                        writerFailure.set(th);
+                    }
+                });
+                final Thread reader = new Thread(() -> {
+                    readerStarted.countDown();
+                    try {
+                        readLock.lock();
+                        try {
+                            if (!acquireOrder.compareAndSet(1, 2)) {
+                                throw new AssertionError("role-switch reader acquired out of order");
+                            }
+                        } finally {
+                            readLock.unlock();
+                        }
+                    } catch (Throwable th) {
+                        readerFailure.set(th);
+                    }
+                });
+                writer.setDaemon(true);
+                reader.setDaemon(true);
+
+                readLock.lock();
+                try {
+                    writer.start();
+                    awaitThreadWaiting(writer);
+                    reader.start();
+                    Assert.assertTrue(readerStarted.await(10, TimeUnit.SECONDS));
+                    awaitThreadWaiting(reader);
+                } finally {
+                    readLock.unlock();
+                }
+
+                writer.join(TimeUnit.SECONDS.toMillis(10));
+                reader.join(TimeUnit.SECONDS.toMillis(10));
+                Assert.assertFalse(writer.isAlive());
+                Assert.assertFalse(reader.isAlive());
+                Assert.assertNull(writerFailure.get());
+                Assert.assertNull(readerFailure.get());
+                Assert.assertEquals(2, acquireOrder.get());
+            }
+        });
+    }
 
     private static void assertReadOnlyRefusal(CairoException e) {
         Assert.assertTrue("exception must be an authorization error", e.isAuthorizationError());
@@ -350,6 +1002,33 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                 "message must be 'replica access is read-only'",
                 e.getMessage().contains("replica access is read-only")
         );
+    }
+
+    private static void awaitThreadWaiting(Thread thread) {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            final Thread.State state = thread.getState();
+            if (state == Thread.State.BLOCKED
+                    || state == Thread.State.TIMED_WAITING
+                    || state == Thread.State.WAITING) {
+                return;
+            }
+            if (state == Thread.State.TERMINATED) {
+                Assert.fail("thread terminated before waiting [name=" + thread.getName() + ']');
+            }
+            LockSupport.parkNanos(100_000);
+        }
+        Assert.fail("thread did not wait [name=" + thread.getName() + ", state=" + thread.getState() + ']');
+    }
+
+    private static void close(FiberRuntime runtime) {
+        runtime.beginQuiesce();
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
+            runtime.drain(8);
+        }
+        Assert.assertTrue(runtime.awaitClosed(deadline));
+        runtime.closeAfterDrained();
     }
 
     /**
@@ -366,6 +1045,18 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                     default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
                 }
         );
+    }
+
+    /**
+     * A real UpdateOperation used only to carry a TableToken into OperationDispatcher.execute. The
+     * dispatcher's apply() is overridden per test to count invocations, so this operation's own apply()
+     * never runs -- the fence either refuses before apply() or the test counts the call.
+     */
+    private static UpdateOperation fakeOperation() {
+        final TableToken token = new TableToken("disp_fence", "disp_fence~1", null, 1, true, false, false);
+        final ObjList<CharSequence> columns = new ObjList<>();
+        columns.add("val");
+        return new UpdateOperation(token, 1, 0, 0, columns);
     }
 
     /**
@@ -417,6 +1108,26 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
     }
 
     /**
+     * A TableWriterAPI proxy that only needs to satisfy the try-with-resources close() in
+     * OperationDispatcher.execute. The fence refuses before apply() in the tests that use it, so no
+     * write method is reached; close() is the only call the dispatcher makes on a refused path.
+     */
+    private static TableWriterAPI noOpWriter() {
+        return (TableWriterAPI) Proxy.newProxyInstance(
+                TableWriterAPI.class.getClassLoader(),
+                new Class[]{TableWriterAPI.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "close" -> null;
+                    default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
+                }
+        );
+    }
+
+    private static void failFiberTask() {
+        throw new IllegalStateException("role-switch read lock blocks suspension");
+    }
+
+    /**
      * isReadOnlyMode() returns false on the first call (early-out passes) and true on every
      * subsequent call (the flip happened inside the lock window).
      */
@@ -429,28 +1140,6 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
             public boolean isReadOnlyMode() {
                 int n = callCount.incrementAndGet();
                 return n >= 2;
-            }
-        };
-    }
-
-    private CairoEngine buildPrimaryEngine() throws Exception {
-        String dir = temp.newFolder().getAbsolutePath();
-        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
-        return new CairoEngine(cfg, false) {
-            @Override
-            public boolean isReadOnlyMode() {
-                return false;
-            }
-        };
-    }
-
-    private CairoEngine buildReadOnlyEngine() throws Exception {
-        String dir = temp.newFolder().getAbsolutePath();
-        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
-        return new CairoEngine(cfg, false) {
-            @Override
-            public boolean isReadOnlyMode() {
-                return true;
             }
         };
     }
@@ -478,38 +1167,6 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
         };
     }
 
-    private CairoEngine buildPrimaryWriterEngine() throws Exception {
-        String dir = temp.newFolder().getAbsolutePath();
-        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
-        return new CairoEngine(cfg, false) {
-            @Override
-            public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
-                return noOpWriter();
-            }
-
-            @Override
-            public boolean isReadOnlyMode() {
-                return false;
-            }
-        };
-    }
-
-    private CairoEngine buildReadOnlyWriterEngine() throws Exception {
-        String dir = temp.newFolder().getAbsolutePath();
-        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
-        return new CairoEngine(cfg, false) {
-            @Override
-            public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
-                return noOpWriter();
-            }
-
-            @Override
-            public boolean isReadOnlyMode() {
-                return true;
-            }
-        };
-    }
-
     /**
      * Engine whose WAL writer acquire always throws EntryUnavailableException (the pool-exhausted
      * condition that routes OperationDispatcher.execute into the async-enqueue catch branch). The
@@ -532,31 +1189,57 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
         };
     }
 
-    /**
-     * A real UpdateOperation used only to carry a TableToken into OperationDispatcher.execute. The
-     * dispatcher's apply() is overridden per test to count invocations, so this operation's own apply()
-     * never runs -- the fence either refuses before apply() or the test counts the call.
-     */
-    private static UpdateOperation fakeOperation() {
-        final TableToken token = new TableToken("disp_fence", "disp_fence~1", null, 1, true, false, false);
-        final ObjList<CharSequence> columns = new ObjList<>();
-        columns.add("val");
-        return new UpdateOperation(token, 1, 0, 0, columns);
+    private CairoEngine buildPrimaryEngine() throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public boolean isReadOnlyMode() {
+                return false;
+            }
+        };
     }
 
-    /**
-     * A TableWriterAPI proxy that only needs to satisfy the try-with-resources close() in
-     * OperationDispatcher.execute. The fence refuses before apply() in the tests that use it, so no
-     * write method is reached; close() is the only call the dispatcher makes on a refused path.
-     */
-    private static TableWriterAPI noOpWriter() {
-        return (TableWriterAPI) Proxy.newProxyInstance(
-                TableWriterAPI.class.getClassLoader(),
-                new Class[]{TableWriterAPI.class},
-                (proxy, method, args) -> switch (method.getName()) {
-                    case "close" -> null;
-                    default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
-                }
-        );
+    private CairoEngine buildPrimaryWriterEngine() throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
+                return noOpWriter();
+            }
+
+            @Override
+            public boolean isReadOnlyMode() {
+                return false;
+            }
+        };
+    }
+
+    private CairoEngine buildReadOnlyEngine() throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public boolean isReadOnlyMode() {
+                return true;
+            }
+        };
+    }
+
+    private CairoEngine buildReadOnlyWriterEngine() throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
+                return noOpWriter();
+            }
+
+            @Override
+            public boolean isReadOnlyMode() {
+                return true;
+            }
+        };
     }
 }
