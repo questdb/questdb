@@ -240,10 +240,20 @@ public class QwpBrowserSessionAuthTest extends AbstractBootstrapTest {
                 questdb.start();
                 String sessionId = createSession();
 
-                Assert.assertTrue(webSocketUpgrade("/write/v4", sessionId)
-                        .startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
-                Assert.assertTrue(webSocketUpgrade("/read/v1", sessionId)
-                        .startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+                String ingress = webSocketUpgrade("/write/v4", sessionId);
+                Assert.assertTrue(ingress.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+                // The session is nowhere near its rotation window, so the
+                // handshake did not change the id and must not re-issue the
+                // cookie. Without this the empty-sink guard in
+                // QwpIngressHttpProcessor.getSessionCookieValueBytes could be
+                // dropped and every upgrade would answer with
+                // "Set-Cookie: qdb_session=" plus a 30-day Max-Age, which
+                // overwrites the browser's live session with an empty value.
+                Assert.assertFalse(ingress, ingress.contains("Set-Cookie"));
+
+                String egress = webSocketUpgrade("/read/v1", sessionId);
+                Assert.assertTrue(egress.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+                Assert.assertFalse(egress, egress.contains("Set-Cookie"));
             }
         });
     }

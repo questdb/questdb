@@ -38,12 +38,16 @@ import java.io.OutputStream;
 import java.net.Socket;
 
 /**
- * Wire coverage of the two browser-only egress carriers. A browser WebSocket
- * cannot set {@code X-QWP-Accept-Encoding} or {@code X-QWP-Max-Batch-Rows}, so
- * the server also reads them from the upgrade URL. The unit tests around
- * {@code negotiateMaxBatchRows} and {@code writeServerInfoFrame} cover the
+ * Wire coverage of the browser-only URL carriers. A browser WebSocket cannot
+ * set {@code X-QWP-Accept-Encoding} or {@code X-QWP-Max-Batch-Rows} on egress,
+ * and cannot read the {@code X-QWP-Max-Batch-Size} response header on ingress,
+ * so the server also reads {@code qwp_accept_encoding},
+ * {@code qwp_max_batch_rows} and {@code qwp_browser_handshake} from the upgrade
+ * URL. The unit tests around {@code negotiateMaxBatchRows},
+ * {@code negotiateAcceptEncoding} and {@code writeServerInfoFrame} cover the
  * functions in isolation; only a real upgrade proves {@code onHeadersReady}
- * reads the right URL parameter and applies it to the connection.
+ * reads the right URL parameter on the right route and applies it to the
+ * connection.
  */
 public class QwpBrowserNegotiationWireTest extends AbstractQwpBootstrapTest {
 
@@ -92,6 +96,41 @@ public class QwpBrowserNegotiationWireTest extends AbstractQwpBootstrapTest {
                         0,
                         readCapabilities(plain) & QwpEgressMsgKind.CAP_COMPRESSION
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testBrowserUrlHandshakePushesIngressServerInfo() throws Exception {
+        // The ingress counterpart of the two egress carriers below. The unit
+        // tests drive qwp_browser_handshake through a mock request header, so
+        // only a real upgrade proves the parameter survives route matching on
+        // /write/v4 and reaches getUrlParam.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain ignored = startFragmented()) {
+                try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
+                    socket.setSoTimeout(60_000);
+                    QwpWireTestFixtures.performWriteHandshake(socket, "?qwp_browser_handshake=v1");
+                    byte[] frame = QwpWireTestFixtures.readServerFrame(socket.getInputStream());
+                    Assert.assertEquals(
+                            "the browser ingress handshake frame is status + u32 cap",
+                            5,
+                            frame.length
+                    );
+                    Assert.assertEquals(
+                            "STATUS_SERVER_INFO must be the first frame after the upgrade",
+                            QwpConstants.STATUS_SERVER_INFO,
+                            frame[0]
+                    );
+                    int maxBatchSize = (frame[1] & 0xFF)
+                            | (frame[2] & 0xFF) << 8
+                            | (frame[3] & 0xFF) << 16
+                            | (frame[4] & 0xFF) << 24;
+                    Assert.assertTrue(
+                            "the advertised batch cap must be usable, got " + maxBatchSize,
+                            maxBatchSize > 0 && maxBatchSize <= QwpConstants.DEFAULT_MAX_BATCH_SIZE
+                    );
+                }
             }
         });
     }

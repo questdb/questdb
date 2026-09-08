@@ -140,30 +140,19 @@ public final class QwpWireTestFixtures {
      * @param query leading {@code ?} included, or empty for none
      */
     public static void performReadHandshake(Socket socket, String query) throws Exception {
-        OutputStream out = socket.getOutputStream();
-        InputStream in = socket.getInputStream();
+        performHandshake(socket, "/read/v1", query);
+    }
 
-        byte[] keyBytes = new byte[16];
-        for (int i = 0; i < 16; i++) {
-            keyBytes[i] = (byte) (i + 1);
-        }
-        String wsKey = Base64.getEncoder().encodeToString(keyBytes);
-
-        String request = "GET /read/v1" + query + " HTTP/1.1\r\n" +
-                "Host: localhost\r\n" +
-                "Upgrade: websocket\r\n" +
-                "Connection: Upgrade\r\n" +
-                "Sec-WebSocket-Key: " + wsKey + "\r\n" +
-                "Sec-WebSocket-Version: 13\r\n" +
-                "\r\n";
-        out.write(request.getBytes(StandardCharsets.UTF_8));
-        out.flush();
-
-        String response = readHttpHeaders(in);
-        Assert.assertTrue(
-                "Expected 101 Switching Protocols, got: <<<" + response + ">>>",
-                response.startsWith("HTTP/1.1 101")
-        );
+    /**
+     * Upgrades the write endpoint with an optional query string. The ingress
+     * counterpart of {@link #performReadHandshake(Socket, String)}, for the
+     * browser-only URL carriers a browser WebSocket must use in place of the
+     * {@code X-QWP-*} headers it cannot set.
+     *
+     * @param query leading {@code ?} included, or empty for none
+     */
+    public static void performWriteHandshake(Socket socket, String query) throws Exception {
+        performHandshake(socket, "/write/v4", query);
     }
 
     /**
@@ -225,6 +214,33 @@ public final class QwpWireTestFixtures {
             read += n;
         }
         return payload;
+    }
+
+    private static void performHandshake(Socket socket, String path, String query) throws Exception {
+        OutputStream out = socket.getOutputStream();
+        InputStream in = socket.getInputStream();
+
+        byte[] keyBytes = new byte[16];
+        for (int i = 0; i < 16; i++) {
+            keyBytes[i] = (byte) (i + 1);
+        }
+        String wsKey = Base64.getEncoder().encodeToString(keyBytes);
+
+        String request = "GET " + path + query + " HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Upgrade: websocket\r\n" +
+                "Connection: Upgrade\r\n" +
+                "Sec-WebSocket-Key: " + wsKey + "\r\n" +
+                "Sec-WebSocket-Version: 13\r\n" +
+                "\r\n";
+        out.write(request.getBytes(StandardCharsets.UTF_8));
+        out.flush();
+
+        String response = readHttpHeaders(in);
+        Assert.assertTrue(
+                "Expected 101 Switching Protocols, got: <<<" + response + ">>>",
+                response.startsWith("HTTP/1.1 101")
+        );
     }
 
     private static int readByte(InputStream in) throws Exception {

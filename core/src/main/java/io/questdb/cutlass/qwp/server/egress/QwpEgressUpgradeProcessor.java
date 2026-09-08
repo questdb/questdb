@@ -290,6 +290,25 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     }
 
     /**
+     * Resolves the optional client compression preference. Native clients use
+     * the upgrade header; browsers use the URL parameter because the browser
+     * WebSocket API cannot set custom headers. When both are present the URL
+     * parameter wins: it can only have come from the client's own connect URL,
+     * so a reverse proxy cannot override the browser's choice by injecting a
+     * header -- the same threat {@link #negotiateMaxBatchRows} guards against
+     * by taking the stricter of its two carriers.
+     * <p>
+     * Which carrier the client used also decides how it learns the result, so
+     * the caller keys {@code CAP_COMPRESSION} off the URL parameter's presence
+     * rather than off which value won. Doing it the other way round would let
+     * an injected header compress the wire while the browser was told nothing,
+     * leaving it to decode compressed frames as raw.
+     */
+    public static Utf8Sequence negotiateAcceptEncoding(Utf8Sequence headerValue, Utf8Sequence urlParamValue) {
+        return urlParamValue != null ? urlParamValue : headerValue;
+    }
+
+    /**
      * Resolves the optional client batch-row preference. Native clients use
      * the upgrade header; browsers use the URL parameter because the browser
      * WebSocket API cannot set custom headers. When both are present, both
@@ -378,14 +397,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // optional X-QWP-Content-Encoding header. The negotiator returns
         // RESULT_NONE when the header is absent or no supported codec is
         // listed, which leaves the wire raw and omits the response header.
-        Utf8Sequence acceptEncoding = requestHeader.getHeader(
+        Utf8Sequence acceptEncodingHeader = requestHeader.getHeader(
                 QwpIngressHttpProcessor.HEADER_X_QWP_ACCEPT_ENCODING);
-        boolean browserCompressionNegotiation = false;
-        if (acceptEncoding == null) {
-            acceptEncoding = requestHeader.getUrlParam(
-                    QwpIngressHttpProcessor.URL_PARAM_QWP_ACCEPT_ENCODING);
-            browserCompressionNegotiation = acceptEncoding != null;
-        }
+        Utf8Sequence acceptEncodingUrlParam = requestHeader.getUrlParam(
+                QwpIngressHttpProcessor.URL_PARAM_QWP_ACCEPT_ENCODING);
+        // Keyed off the carrier the client used, not off which value won: a
+        // client that asked through the URL cannot read the Content-Encoding
+        // response header and needs the codec in the SERVER_INFO frame.
+        boolean browserCompressionNegotiation = acceptEncodingUrlParam != null;
+        Utf8Sequence acceptEncoding = negotiateAcceptEncoding(acceptEncodingHeader, acceptEncodingUrlParam);
         long negotiatedCompression = QwpEgressCompressionNegotiator.negotiate(acceptEncoding);
         byte negotiatedCodec = QwpEgressCompressionNegotiator.codec(negotiatedCompression);
         byte negotiatedLevel = QwpEgressCompressionNegotiator.level(negotiatedCompression);

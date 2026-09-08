@@ -614,6 +614,65 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The reject arm must flush the pending cumulative ack before the error,
+     * exactly like the error arm at the tail of {@code handleBinaryMessage}.
+     * Both frames go out either way, but a store-and-forward sender that treats
+     * the error as terminal tears the connection down on reading it; anything
+     * still behind the error on the wire is never read, so those frames stay in
+     * its replay queue and reconnect duplicates their rows.
+     */
+    @Test
+    public void testDurableAckPollRejectFlushesPendingAckFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            byte[] data = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
+            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, durableAckPollMessage());
+            byte[] wire = concat(data, poll);
+
+            PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = new QwpIngressProcessorState(
+                        RECV_BUFFER_SIZE,
+                        httpConfig.getSendBufferSize(),
+                        engine,
+                        httpConfig.getLineHttpProcessorConfiguration()
+                );
+                state.of(-1, AllowAllSecurityContext.INSTANCE);
+                // Durable ack deliberately left off: this is the reject arm.
+                getLV().set(context, state);
+
+                // Both frames in one pass, so the data frame's ack is still
+                // pending (ACK_BATCH_SIZE is 8) when the poll is refused.
+                drive(processor, context, nf, wire.length);
+
+                int ackIndex = indexOfBinaryFrame(rawSocket.sentFrames, QwpConstants.STATUS_OK, 0);
+                int errorIndex = indexOfBinaryFrame(rawSocket.sentFrames, QwpConstants.STATUS_PARSE_ERROR, 1);
+                Assert.assertTrue("the committed data frame must be acknowledged", ackIndex >= 0);
+                Assert.assertTrue("the refused poll must receive STATUS_PARSE_ERROR", errorIndex >= 0);
+                Assert.assertTrue(
+                        "the cumulative ack must precede the error on the wire, got ack at "
+                                + ackIndex + " and error at " + errorIndex,
+                        ackIndex < errorIndex
+                );
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("tab")) {
+                Assert.assertEquals("the refused poll must neither add nor drop rows", 1, reader.size());
+            }
+        });
+    }
+
     private static void drive(
             QwpIngressUpgradeProcessor processor,
             HttpConnectionContext context,
@@ -671,6 +730,21 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             }
         }
         return false;
+    }
+
+    /**
+     * Position of the first server-to-client BINARY frame carrying the given
+     * status and sequence, or -1 when none was sent. Order matters where an ack
+     * and an error leave in the same pass.
+     */
+    private static int indexOfBinaryFrame(ObjList<byte[]> frames, byte status, long seq) {
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            if (isBinaryFrame(f) && f[2] == status && readLeLong(f, 3) == seq) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static boolean isBinaryFrame(byte[] frame) {

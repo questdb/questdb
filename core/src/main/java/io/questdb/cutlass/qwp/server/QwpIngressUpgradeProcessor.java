@@ -152,6 +152,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_MISSING_UPGRADE_HEADER);
     private static final byte[] BAD_REQUEST_RESPONSE_ORIGIN_HEADER_NOT_ALLOWED =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_ORIGIN_HEADER_NOT_ALLOWED);
+    private static final String ERROR_DURABLE_ACK_POLL_NOT_NEGOTIATED = "durable ACK poll was not negotiated";
     private static final Log LOG = LogFactory.getLog(QwpIngressUpgradeProcessor.class);
     private static final LocalValue<QwpIngressProcessorState> LV = new LocalValue<>();
     // Worst-case WebSocket frame header size (2-byte base + 8-byte 64-bit
@@ -1465,13 +1466,29 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         if (QwpMessageHeader.isDurableAckPoll(payload, length)) {
             if (!state.isDurableAckEnabled()) {
+                // Before any flush that may defer, so a blocked error frame still
+                // clamps the watermark and refuses the pipelined tail.
                 state.markSequenceUnresolved(seq);
+                // Same ordering as the error arm at the tail of this method, and
+                // for the same reason: up to ACK_BATCH_SIZE - 1 frames can sit
+                // committed but unacked when this fires. Letting the error reach
+                // the client first lets a sender that treats it as terminal tear
+                // the connection down before reading the ack that covers them,
+                // and replay duplicates those rows on reconnect.
+                if (state.hasPendingAck()) {
+                    try {
+                        trySendAck(context, state);
+                    } catch (PeerIsSlowToReadException e) {
+                        state.onErrorBlocked(STATUS_PARSE_ERROR, seq, ERROR_DURABLE_ACK_POLL_NOT_NEGOTIATED);
+                        throw e;
+                    }
+                }
                 sendErrorResponse(
                         context,
                         state,
                         seq,
                         STATUS_PARSE_ERROR,
-                        "durable ACK poll was not negotiated"
+                        ERROR_DURABLE_ACK_POLL_NOT_NEGOTIATED
                 );
                 return;
             }
