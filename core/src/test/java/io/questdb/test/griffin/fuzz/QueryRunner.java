@@ -26,34 +26,28 @@ package io.questdb.test.griffin.fuzz;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -143,12 +137,10 @@ import java.util.regex.Pattern;
  * </ul>
  */
 public final class QueryRunner {
-    // Empty metadata for parseFunction calls in hasIntOverflowingConstantArithmetic.
-    // The detector compiles candidate subexpressions to check for INT-to-LONG
-    // overflow promotion; column references in a candidate force parseFunction
-    // to fail with "column not found", which the caller treats as "candidate
-    // is not a constant arithmetic subtree" and skips.
-    private static final GenericRecordMetadata EMPTY_METADATA = new GenericRecordMetadata();
+    // FP-column mask of an Outcome that never produced a projection (it threw).
+    // reconcilePair only consults the masks when both sides succeeded, so this
+    // is never read; it keeps the record's accessor total.
+    private static final boolean[] EMPTY_FP_MASK = new boolean[0];
     // Fault-injection tuning. The malloc fault arms the RSS limit at the
     // post-compile usage plus a small random slack so the next native heap
     // allocation in the cursor-construction/iteration phase trips the real
@@ -164,14 +156,6 @@ public final class QueryRunner {
     private static final int FAULT_MAX_FILE_OPS = 48;
     private static final int FAULT_MAX_FN_CALLS = 40;
     private static final long FAULT_MEM_LEAK_SLACK = 256 * 1024;
-    // Matches LONG, FLOAT, DOUBLE, DECIMAL, TIMESTAMP, or DATE type hints in a
-    // candidate subexpression. The presence of any such hint means the bind
-    // form keeps the same type as the literal form, so a fold-to-LongConstant
-    // does not imply the INT-overflow asymmetry. See
-    // hasIntOverflowingConstantArithmetic for the full rationale.
-    private static final Pattern NON_INT_TYPE_HINT = Pattern.compile(
-            "\\d+[Ll]\\b|::(?:LONG|FLOAT|DOUBLE|DECIMAL|TIMESTAMP|DATE)"
-    );
     private final boolean diffJit;
     private final boolean diffShadow;
     private final CairoEngine engine;
@@ -190,11 +174,6 @@ public final class QueryRunner {
     private int faultsFired;
     // Per-type count of faults that actually fired, indexed by FaultType.ordinal().
     private final int[] faultsFiredByType = new int[FaultType.values().length];
-    // Reused per parseFunction call. Stateful (metadataStack, function stacks)
-    // but parseFunction is contractually re-entrant: it pushes/pops its own
-    // state in try/finally, so a single instance is safe across the runner's
-    // single-threaded check loop.
-    private final FunctionParser functionParser;
     private final TextPlanSink planSink = new TextPlanSink();
     private final boolean primaryHasAnyParquet;
     private final Pattern[] primaryPatterns;
@@ -223,7 +202,6 @@ public final class QueryRunner {
     ) {
         this.engine = engine;
         this.executionContext = executionContext;
-        this.functionParser = new FunctionParser(engine.getConfiguration(), engine.getFunctionFactoryCache());
         this.diffJit = diffJit;
         this.diffShadow = diffShadow;
         this.verifyCursor = verifyCursor;
@@ -279,6 +257,21 @@ public final class QueryRunner {
 
     public int getFaultsFired(FaultType type) {
         return faultsFiredByType[type.ordinal()];
+    }
+
+    /**
+     * Reports whether {@code type} can be armed at all this run. FILE needs the engine's FilesFacade
+     * to be a {@link FailureFileFacade}; without it the constructor drops FILE from {@link #faultTypes}
+     * and the fuzzer never arms one. That disarm reads as "armed 0, fired 0", so no fire-count floor
+     * can see it - only this check can.
+     */
+    public boolean isFaultTypeAvailable(FaultType type) {
+        for (int i = 0, n = faultTypes.length; i < n; i++) {
+            if (faultTypes[i] == type) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public Result run(GeneratedQuery query) {
@@ -475,6 +468,21 @@ public final class QueryRunner {
     }
 
     /**
+     * Builds the per-output-column FLOAT/DOUBLE mask for a projection. Cell
+     * {@code i} of a materialized row is FP-typed iff {@code mask[i]} is true;
+     * only those cells get the floating-point reduction-order tolerance, so an
+     * exact (integer / non-FP) column always compares bit for bit.
+     */
+    private static boolean[] buildFpColumnMask(RecordMetadata metadata, int columnCount) {
+        boolean[] mask = new boolean[columnCount];
+        for (int i = 0; i < columnCount; i++) {
+            int type = metadata.getColumnType(i);
+            mask[i] = type == ColumnType.FLOAT || type == ColumnType.DOUBLE;
+        }
+        return mask;
+    }
+
+    /**
      * Formats a per-cursor-check failure message: the reason, the SQL, and the
      * first-pass row dump. When {@code secondPass} is non-null (the toTop
      * re-iteration diff) it is appended as a second dump so the divergence is
@@ -493,26 +501,28 @@ public final class QueryRunner {
     }
 
     /**
-     * Scans {@code sql} character-by-character for balanced parenthesised
-     * substrings starting at {@code openIdx}, and returns the position of
-     * the matching {@code )} (or -1 if none). Used by
-     * {@link #hasIntOverflowingConstantArithmetic} so every {@code (...)}
-     * subtree the fuzzer's
-     * {@link io.questdb.test.griffin.fuzz.expr.ArithmeticExpr#appendSql
-     * ArithmeticExpr} emits becomes a candidate for the fold check, without
-     * regex-encoding the inner grammar of the parenthesised expression.
+     * Per-column AND of the two compared projections' FP masks. A cell only earns
+     * the floating-point reduction-order tolerance when BOTH sides type its column
+     * as FLOAT/DOUBLE.
+     * <p>
+     * The two sides usually share a projection, but the bind axis does not
+     * guarantee it: bind values are bound as STRINGs, so the bind form's overload
+     * resolution can type a projection column differently from the literal form's
+     * -- that asymmetry is the whole premise of the axis. Taking the mask from one
+     * side would then let an integer column inherit the FP tolerance, which at
+     * magnitude 2^17 and above is wide enough to swallow a one-unit divergence: the
+     * exact class of bug the bind axis exists to surface.
+     * <p>
+     * Where the two masks disagree the intersection compares the cell exactly, so
+     * the type divergence itself surfaces as a divergence rather than a skip.
      */
-    private static int findMatchingParen(CharSequence sql, int openIdx, int n) {
-        int depth = 1;
-        for (int j = openIdx + 1; j < n; j++) {
-            char c = sql.charAt(j);
-            if (c == '(') {
-                depth++;
-            } else if (c == ')' && --depth == 0) {
-                return j;
-            }
+    static boolean[] intersectFpColumnMasks(boolean[] a, boolean[] b) {
+        int n = Math.min(a.length, b.length);
+        boolean[] mask = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            mask[i] = a[i] && b[i];
         }
-        return -1;
+        return mask;
     }
 
     /**
@@ -666,6 +676,18 @@ public final class QueryRunner {
      *       time; the same logical query against a non-indexed sibling
      *       full-scans and compiles fine. Same planner-sensitivity shape as
      *       the ASC-timestamp check above.</li>
+     *   <li>"left/right-hand side of HORIZON JOIN can only be a table with an
+     *       optional filter" - HORIZON JOIN's single-threaded path (taken when
+     *       parallel HORIZON JOIN is off, or when the aggregate/key functions
+     *       are not parallelism-safe) needs the master to support random access
+     *       (to revisit rows in sorted order) and the slave to support time
+     *       frames. When the filtered SYMBOL column on the master carries a
+     *       POSTING index whose covering set serves the whole filter, the
+     *       planner routes it through a covering-index access path that does not
+     *       support random access, and the LHS is rejected at compile time; the
+     *       same query against a non-indexed sibling full-scans, supports random
+     *       access, and compiles. The RHS check is the slave-side analogue. Same
+     *       planner-sensitivity shape as the SPLICE check above.</li>
      *   <li>"right side column ... is of unsupported type" - ASOF JOIN
      *       falls back to {@code createFullFatJoin} when the slave factory
      *       does not support random access (e.g. shadow's slave becomes a
@@ -737,6 +759,7 @@ public final class QueryRunner {
         return o.exceptionMessage.contains("doesn't have ASC timestamp order")
                 || o.exceptionMessage.contains("RANGE is supported only for queries ordered by designated timestamp")
                 || o.exceptionMessage.contains("side of splice join doesn't support random access")
+                || o.exceptionMessage.contains("of HORIZON JOIN can only be a table with an optional filter")
                 || o.exceptionMessage.contains("column must appear in GROUP BY clause")
                 || o.exceptionMessage.contains("constant expected")
                 || o.exceptionMessage.contains("there is no matching function")
@@ -771,27 +794,6 @@ public final class QueryRunner {
             rowsRead++;
         }
         return rowsRead;
-    }
-
-    /**
-     * Parses {@code s} either as a plain long literal or as a finite double
-     * inside the long range, rounded to the nearest long. Used by
-     * {@link #rowEqualsWithIntOverflowTolerance(String, String)} so the
-     * predicate can match cells that traveled through {@code ::DOUBLE} (or
-     * any other DOUBLE-promoting op) and surfaced in scientific notation,
-     * with the rounding absorbing low-ulp FP drift introduced by
-     * {@code FILL(LINEAR)} or parallel-reduction order.
-     */
-    private static long parseLongOrIntegerDouble(String s) {
-        try {
-            return Long.parseLong(s);
-        } catch (NumberFormatException ignored) {
-        }
-        double d = Double.parseDouble(s);
-        if (!Double.isFinite(d) || d < Long.MIN_VALUE || d > Long.MAX_VALUE) {
-            throw new NumberFormatException(s);
-        }
-        return Math.round(d);
     }
 
     /**
@@ -919,13 +921,16 @@ public final class QueryRunner {
 
     /**
      * Returns true iff every cell in {@code a} either matches the
-     * corresponding cell in {@code b} exactly or both parse as finite
-     * doubles within a small relative tolerance. Used as a fallback for
-     * floating-point aggregates whose last-digit value depends on the
-     * order of summation, which legitimately differs between an indexed
-     * scan and a full scan or between parquet and native partitions.
+     * corresponding cell in {@code b} exactly or, for a FLOAT/DOUBLE-typed
+     * column (per {@code fpColumnMask}), both parse as finite doubles within
+     * a small relative tolerance. Used as a fallback for floating-point
+     * aggregates whose last-digit value depends on the order of summation,
+     * which legitimately differs between an indexed scan and a full scan or
+     * between parquet and native partitions. Cells in non-FP columns are
+     * compared exactly even when both parse as doubles, so a genuine integer
+     * COUNT/SUM divergence is never absorbed as FP drift.
      */
-    private static boolean rowEqualsWithFpTolerance(String a, String b) {
+    static boolean rowEqualsWithFpTolerance(String a, String b, boolean[] fpColumnMask) {
         if (a.equals(b)) {
             return true;
         }
@@ -937,6 +942,14 @@ public final class QueryRunner {
         for (int i = 0; i < tokensA.length; i++) {
             if (tokensA[i].equals(tokensB[i])) {
                 continue;
+            }
+            // A differing cell in a non-FP column is a real divergence: only
+            // FLOAT/DOUBLE columns carry reduction-order drift, so everything
+            // else must match exactly. The trailing empty token (materialize
+            // appends a tab after the last column) has no mask entry but is
+            // always equal on both sides, so it never reaches here.
+            if (i >= fpColumnMask.length || !fpColumnMask[i]) {
+                return false;
             }
             double da;
             double db;
@@ -958,157 +971,28 @@ public final class QueryRunner {
             if (Math.abs(da - db) <= doubleEps) {
                 continue;
             }
-            // Parallel SUM/AVG over FLOAT (or DOUBLE columns whose values
-            // were promoted from FLOAT) drifts at single-precision ulps
-            // when partial sums are merged across worker threads, which
-            // is several orders of magnitude looser than 1e-12 relative.
-            // Allow up to 32 FLOAT ulps -- still tight enough to flag a
-            // real arithmetic bug, which would shift the result by far
-            // more than ulp-scale noise.
-            double floatEps = Math.max(1e-15, Math.ulp((float) scale) * 32.0);
+            // Parallel/storage-partitioned SUM/AVG over FLOAT (or DOUBLE
+            // columns whose values were promoted from FLOAT) drifts at
+            // single-precision relative scale: per-frame partial sums merge
+            // in an order set by the worker/frame partition, which
+            // legitimately differs between an indexed scan and a full scan,
+            // between parquet and native partitions, and even run to run
+            // under work stealing. The drift is a small multiple of FLOAT
+            // epsilon relative to the magnitude - a HORIZON JOIN sum over a
+            // FLOAT slave column drifted ~32x FLOAT epsilon between a native
+            // and a parquet shadow - so allow 64x to cover the tail with
+            // margin. This stays far below the shift a real row-set error
+            // produces (dropping or adding even one FLOAT term moves the sum
+            // by thousands of FLOAT epsilons). The mask check above already
+            // restricted this tolerance to FLOAT/DOUBLE columns, so an integer
+            // COUNT or LONG SUM that diverges by even one unit is flagged
+            // regardless of magnitude.
+            //
+            // scale * Math.ulp(1f) is the relative ulp at the magnitude;
+            // unlike Math.ulp((float) scale) it does not quantize to the
+            // bottom of the binade, where the bare ulp runs up to 2x tight.
+            double floatEps = Math.max(1e-15, scale * (Math.ulp(1f) * 64.0));
             if (Math.abs(da - db) > floatEps) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Returns true iff every differing cell pairs a literal LONG that
-     * doesn't fit in INT with a bind value equal to its INT truncation.
-     * {@code FunctionParser.functionToConstant0} promotes an INT-typed
-     * fold result to {@code LongConstant} when {@code intConst != longConst},
-     * so a fully-constant arithmetic subtree like {@code -569823 * 456438}
-     * yields {@code -260088870474L} in literal form. The bind form keeps
-     * the bound leaf opaque, the optimizer picks the {@code *(II)} factory,
-     * and runtime evaluation overflows to {@code 1904134582 == (int) -260088870474L}.
-     * Same SQL, same value, different code path; not a data divergence.
-     * <p>
-     * Cells are accepted as plain long literals or as finite doubles inside
-     * the long range, rounded to the nearest long. The rounding lets the
-     * predicate cover values that flowed through {@code ::DOUBLE} (or any
-     * other DOUBLE-promoting op) and surfaced in scientific notation, and
-     * absorbs low-ulp drift introduced by {@code FILL(LINEAR)} or
-     * parallel-reduction order. Aggregations of N>1 rows are not covered:
-     * literal sums {@code v * N}, bind sums {@code (int)v * N}, and the
-     * truncation relation no longer holds at the aggregate level.
-     */
-    private static boolean rowEqualsWithIntOverflowTolerance(String literal, String bind) {
-        if (literal.equals(bind)) {
-            return true;
-        }
-        String[] cellsLit = literal.split("\t", -1);
-        String[] cellsBind = bind.split("\t", -1);
-        if (cellsLit.length != cellsBind.length) {
-            return false;
-        }
-        for (int i = 0; i < cellsLit.length; i++) {
-            if (cellsLit[i].equals(cellsBind[i])) {
-                continue;
-            }
-            long litLong;
-            long bindLong;
-            try {
-                litLong = parseLongOrIntegerDouble(cellsLit[i]);
-                bindLong = parseLongOrIntegerDouble(cellsBind[i]);
-            } catch (NumberFormatException e) {
-                return false;
-            }
-            // Only tolerate when the literal value really overflows INT.
-            // Otherwise (int) litLong == litLong trivially and the diff
-            // would have to be a real bug.
-            if (litLong == (int) litLong) {
-                return false;
-            }
-            if ((int) litLong != bindLong) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Multiset comparison: the two row sets are equal iff they contain the same
-     * lines, regardless of order. Parallel operators (GROUP BY, etc.) do not
-     * guarantee a stable iteration order across runs, but neither toggle
-     * affects which rows are produced -- only the per-row evaluation. So
-     * order divergence is normal; element-set divergence is a real bug.
-     */
-    private static boolean rowsetEquals(StringSink a, StringSink b) {
-        // Fast path: identical text.
-        if (a.length() == b.length() && a.toString().contentEquals(b)) {
-            return true;
-        }
-        String[] linesA = a.toString().split("\n", -1);
-        String[] linesB = b.toString().split("\n", -1);
-        if (linesA.length != linesB.length) {
-            return false;
-        }
-        Arrays.sort(linesA);
-        Arrays.sort(linesB);
-        for (int i = 0; i < linesA.length; i++) {
-            if (!linesA[i].equals(linesB[i])) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Multiset comparison with floating-point tolerance: the two row sets
-     * are equivalent iff each line in {@code a} can be paired with a
-     * distinct line in {@code b} that matches under
-     * {@link #rowEqualsWithFpTolerance(String, String)}. Used after a
-     * strict {@link #rowsetEquals} fails to absorb FP-reduction-order
-     * drift in {@code SUM}/{@code AVG} aggregates whose last digits depend
-     * on the access path the planner picks. Greedy matching is O(n^2);
-     * fuzz queries produce small row sets so this is fine.
-     */
-    private static boolean rowsetEqualsWithFpTolerance(StringSink a, StringSink b) {
-        String[] linesA = a.toString().split("\n", -1);
-        String[] linesB = b.toString().split("\n", -1);
-        if (linesA.length != linesB.length) {
-            return false;
-        }
-        boolean[] usedB = new boolean[linesB.length];
-        for (String lineA : linesA) {
-            boolean matched = false;
-            for (int j = 0; j < linesB.length; j++) {
-                if (!usedB[j] && rowEqualsWithFpTolerance(lineA, linesB[j])) {
-                    usedB[j] = true;
-                    matched = true;
-                    break;
-                }
-            }
-            if (!matched) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Multiset comparison that absorbs the literal-vs-bind INT overflow
-     * asymmetry: each literal line must pair with a distinct bind line
-     * matching under {@link #rowEqualsWithIntOverflowTolerance(String, String)}.
-     */
-    private static boolean rowsetEqualsWithIntOverflowTolerance(StringSink literal, StringSink bind) {
-        String[] linesLit = literal.toString().split("\n", -1);
-        String[] linesBind = bind.toString().split("\n", -1);
-        if (linesLit.length != linesBind.length) {
-            return false;
-        }
-        boolean[] usedBind = new boolean[linesBind.length];
-        for (String litLine : linesLit) {
-            boolean matched = false;
-            for (int j = 0; j < linesBind.length; j++) {
-                if (!usedBind[j] && rowEqualsWithIntOverflowTolerance(litLine, linesBind[j])) {
-                    usedBind[j] = true;
-                    matched = true;
-                    break;
-                }
-            }
-            if (!matched) {
                 return false;
             }
         }
@@ -1253,91 +1137,64 @@ public final class QueryRunner {
         return cause == null ? new AssertionError(msg) : new AssertionError(msg, cause);
     }
 
-    private boolean foldsToOverflowingLong(SqlCompiler compiler, String candidate) {
-        if (NON_INT_TYPE_HINT.matcher(candidate).find()) {
+    /**
+     * Multiset comparison: the two row sets are equal iff they contain the same
+     * lines, regardless of order. Parallel operators (GROUP BY, etc.) do not
+     * guarantee a stable iteration order across runs, but neither toggle
+     * affects which rows are produced -- only the per-row evaluation. So
+     * order divergence is normal; element-set divergence is a real bug.
+     */
+    private static boolean rowsetEquals(StringSink a, StringSink b) {
+        // Fast path: identical text.
+        if (a.length() == b.length() && a.toString().contentEquals(b)) {
+            return true;
+        }
+        String[] linesA = a.toString().split("\n", -1);
+        String[] linesB = b.toString().split("\n", -1);
+        if (linesA.length != linesB.length) {
             return false;
         }
-        Function fn = null;
-        try {
-            ExpressionNode node = compiler.testParseExpression(candidate, (IQueryModel) null);
-            if (node == null) {
+        Arrays.sort(linesA);
+        Arrays.sort(linesB);
+        for (int i = 0; i < linesA.length; i++) {
+            if (!linesA[i].equals(linesB[i])) {
                 return false;
             }
-            fn = functionParser.parseFunction(node, EMPTY_METADATA, executionContext);
-            if (!(fn instanceof LongConstant)) {
-                return false;
-            }
-            long v = fn.getLong(null);
-            return v != (int) v;
-        } catch (Throwable ignore) {
-            // Candidate parse/fold failed (column ref, subselect, unsupported
-            // syntax, etc.). Not a constant arithmetic subtree; move on.
-            return false;
-        } finally {
-            Misc.free(fn);
         }
+        return true;
     }
 
     /**
-     * Returns true iff a parenthesised subexpression of {@code sql} folds,
-     * through the same {@link FunctionParser} the compiler uses, to a
-     * {@link LongConstant} whose long value does not fit in INT. This is the
-     * SQL shape that triggers the bind-vs-literal int-overflow asymmetry:
-     * the literal form folds the subtree at compile time, {@code
-     * FunctionParser.functionToConstant0} promotes the INT-typed result to a
-     * {@link LongConstant} (because {@code intConst != longConst}), and the
-     * result keeps its full LONG magnitude; the bind form keeps the subtree
-     * opaque, the optimizer picks the {@code *(II)} (or {@code +(II)} /
-     * {@code -(II)}) factory and runtime evaluation wraps modulo 2^32. The
-     * wrap can shift the truth value of a downstream comparison: against a
-     * SHORT column, an INT predicate widens to INT on the bind side (so the
-     * wrapped negative compares as less than any short value) while the
-     * literal side carries the LONG and compares honestly, and the
-     * surviving row sets differ in size. Equivalently, when the overflowing
-     * value feeds a string-context cast (e.g. {@code ::SYMBOL} /
-     * {@code ::VARCHAR} inside a comparison), the lexicographic order of
-     * the rendered string legitimately differs between the two forms and
-     * the WHERE clause filters a different set of rows. Cell-level
-     * tolerance via {@link #rowEqualsWithIntOverflowTolerance} cannot help
-     * once the surviving row sets differ in size, so the bind axis falls
-     * back to this SQL-shape detector.
-     * <p>
-     * Reusing {@code FunctionParser} rather than re-implementing the fold
-     * here means the detector covers every shape the compiler would
-     * collapse: nested arithmetic such as {@code ((-17::BYTE + 125931) *
-     * -816546)}, wrappers like {@code abs(58539)}, integer casts, and
-     * anything else {@code functionToConstant0} promotes. Each
-     * {@link io.questdb.test.griffin.fuzz.expr.ArithmeticExpr ArithmeticExpr}
-     * emits a {@code (lhs op rhs)} parens, so walking balanced parens
-     * surfaces every candidate without parsing the whole SQL.
-     * <p>
-     * The {@link #NON_INT_TYPE_HINT} pre-filter excludes candidates that
-     * carry a LONG/FLOAT/DOUBLE/DECIMAL/TIMESTAMP/DATE literal or cast,
-     * because their fold lands on a {@link LongConstant} (or larger type)
-     * for type-promotion reasons, not the INT-overflow promotion the
-     * asymmetry needs. The bind form of those subexpressions keeps the
-     * same wide type, so there is no divergence to attribute.
+     * Multiset comparison with floating-point tolerance: the two row sets
+     * are equivalent iff each line in {@code a} can be paired with a
+     * distinct line in {@code b} that matches under
+     * {@link #rowEqualsWithFpTolerance(String, String, boolean[])}. Used after a
+     * strict {@link #rowsetEquals} fails to absorb FP-reduction-order
+     * drift in {@code SUM}/{@code AVG} aggregates whose last digits depend
+     * on the access path the planner picks. Greedy matching is O(n^2);
+     * fuzz queries produce small row sets so this is fine.
      */
-    private boolean hasIntOverflowingConstantArithmetic(CharSequence sql) {
-        int n = sql.length();
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            for (int i = 0; i < n; i++) {
-                if (sql.charAt(i) != '(') {
-                    continue;
-                }
-                int closeIdx = findMatchingParen(sql, i, n);
-                if (closeIdx < 0) {
-                    continue;
-                }
-                if (foldsToOverflowingLong(compiler, sql.subSequence(i, closeIdx + 1).toString())) {
-                    return true;
+    private static boolean rowsetEqualsWithFpTolerance(StringSink a, StringSink b, boolean[] fpColumnMask) {
+        String[] linesA = a.toString().split("\n", -1);
+        String[] linesB = b.toString().split("\n", -1);
+        if (linesA.length != linesB.length) {
+            return false;
+        }
+        boolean[] usedB = new boolean[linesB.length];
+        for (String lineA : linesA) {
+            boolean matched = false;
+            for (int j = 0; j < linesB.length; j++) {
+                if (!usedB[j] && rowEqualsWithFpTolerance(lineA, linesB[j], fpColumnMask)) {
+                    usedB[j] = true;
+                    matched = true;
+                    break;
                 }
             }
-        } catch (Throwable ignore) {
-            // Compiler unavailable. Conservative: report no overflow shape so
-            // the surrounding bind axis still flags the divergence honestly.
+            if (!matched) {
+                return false;
+            }
         }
-        return false;
+        return true;
     }
 
     /**
@@ -1371,35 +1228,12 @@ public final class QueryRunner {
             // the order of summation, which legitimately differs across
             // index/parquet access paths and across JIT modes. The
             // tolerance is tight enough to flag a real arithmetic
-            // divergence while absorbing reduction-order noise.
-            if (a.rowsRead == b.rowsRead && rowsetEqualsWithFpTolerance(rowsA, rowsB)) {
+            // divergence while absorbing reduction-order noise. The mask is
+            // the intersection of the two projections' FP masks, so a column
+            // either side types as an integer is compared exactly.
+            if (a.rowsRead == b.rowsRead
+                    && rowsetEqualsWithFpTolerance(rowsA, rowsB, intersectFpColumnMasks(a.fpColumnMask, b.fpColumnMask))) {
                 return Result.skipped("rowset matches with floating-point tolerance");
-            }
-            // Literal-vs-bind diff where every differing cell is the INT
-            // truncation of an INT-overflowing LONG. The literal form's
-            // constant folder promotes the overflowing INT * INT product to
-            // LONG; the bind form keeps a runtime INT path that wraps
-            // modulo 2^32. Same SQL, same value semantics, different
-            // compile-time vs. runtime arithmetic. See
-            // rowEqualsWithIntOverflowTolerance for the full rationale.
-            if (diffName.contains("bind variable") && a.rowsRead == b.rowsRead
-                    && rowsetEqualsWithIntOverflowTolerance(rowsA, rowsB)) {
-                return Result.skipped("bind int overflow asymmetry");
-            }
-            // Same int-overflow asymmetry but the wrap shifts the predicate's
-            // truth value rather than just an output cell, so the surviving
-            // row sets differ in size and the cell-level tolerance above
-            // cannot pair them up. The SQL-shape detector recognises a
-            // parenthesised constant arithmetic of two integer literals
-            // whose long-arithmetic result does not fit in INT; that is the
-            // exact subtree the literal form folds to LONG and the bind form
-            // wraps at runtime. When the rendered value then feeds a
-            // string-context cast inside a WHERE comparison, the
-            // lexicographic order of the two strings flips and a different
-            // set of rows survives. Treat as a fold-order asymmetry rather
-            // than a data divergence.
-            if (diffName.contains("bind variable") && hasIntOverflowingConstantArithmetic(sql)) {
-                return Result.skipped("bind int overflow asymmetry (predicate)");
             }
             return Result.failed(sql, divergence(diffName, a, b, rowsA, rowsB, labelA, labelB));
         }
@@ -1573,9 +1407,18 @@ public final class QueryRunner {
         rows.clear();
         try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
             int rowsRead;
+            boolean[] fpColumnMask;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 int columnCount = metadata.getColumnCount();
+                // The FP-column mask belongs to THIS projection, so it travels on this
+                // Outcome. reconcilePair intersects the two sides' masks: on the bind
+                // axis the literal and the bind form can legitimately resolve a
+                // projection column to different types (bind values arrive as STRINGs),
+                // and a mask read from only one side would then apply the FP tolerance
+                // to a column the other side typed as an integer -- silently absorbing
+                // a genuine one-unit integer divergence.
+                fpColumnMask = buildFpColumnMask(metadata, columnCount);
                 rowsRead = materialize(cursor, metadata, columnCount, rows);
                 // toTop() must rewind without re-executing, and size() /
                 // calculateSize() must agree with the materialized row count.
@@ -1591,7 +1434,7 @@ public final class QueryRunner {
             // hasPushedLimit / hasEarlyExitGroupBy only feed the fault oracle's
             // swallow check (runFault), which runs runRaw / runRawMallocFault, not
             // this differential path.
-            return Outcome.ok(rowsRead, planUsesIndex(planSink.getSink()), false, false, false, usesParquet);
+            return Outcome.ok(rowsRead, planUsesIndex(planSink.getSink()), false, false, false, usesParquet, fpColumnMask);
         } catch (CursorCheckException e) {
             throw e;
         } catch (SqlException e) {
@@ -1771,6 +1614,13 @@ public final class QueryRunner {
         }
     }
 
+    /**
+     * One execution attempt. {@code fpColumnMask} is the per-output-column
+     * FLOAT/DOUBLE mask of the projection THIS run produced (empty when the run
+     * threw, and for the fault-oracle runs, which never reconcile). It rides on
+     * the outcome rather than on the runner so a reconcile always intersects the
+     * masks of the two runs it is actually comparing.
+     */
     private record Outcome(
             int rowsRead,
             boolean hasIndex,
@@ -1778,17 +1628,22 @@ public final class QueryRunner {
             boolean hasEarlyExitGroupBy,
             boolean hasBlockingAggregation,
             boolean usesParquet,
+            boolean[] fpColumnMask,
             Throwable failure,
             String exceptionClass,
             String exceptionMessage
     ) {
 
         static Outcome error(Throwable t, String message, boolean usesParquet) {
-            return new Outcome(0, false, false, false, false, usesParquet, t, t.getClass().getSimpleName(), message);
+            return new Outcome(0, false, false, false, false, usesParquet, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
         }
 
         static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean hasBlockingAggregation, boolean usesParquet) {
-            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, null, null, null);
+            return ok(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, EMPTY_FP_MASK);
+        }
+
+        static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean hasBlockingAggregation, boolean usesParquet, boolean[] fpColumnMask) {
+            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, fpColumnMask, null, null, null);
         }
     }
 

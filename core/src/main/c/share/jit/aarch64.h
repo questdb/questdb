@@ -211,14 +211,18 @@ namespace questdb::aarch64 {
         ldr_indexed(c, column_address, data_ptr, column_idx);
         c.add(column_address, column_address, offset);
         if (header_size == 4) {
-            c.ldr(length.w(), ptr(column_address));
+            // ldrsw, not a 32-bit ldr: the narrow load zero-extends, which would leave the -1
+            // NULL_LEN header as 0x00000000ffffffff and never match the 64-bit NULL sentinel.
+            c.ldrsw(length, ptr(column_address));
         } else {
             c.ldr(length, ptr(column_address));
         }
         c.bind(l_nonzero);
-        if (header_size == 4) {
-            return {length.w(), data_type_t::i32, data_kind_t::kMemory};
-        }
+        // Report i64 for a four-byte STRING header as well as for an eight-byte BINARY one. Both
+        // arms leave a sign-correct 64-bit value in `length`: the fast path subtracts two 64-bit
+        // offsets, and the slow path sign-extends the header with ldrsw. Typing the result i64
+        // matches serializeNull(), which spells every var-size header NULL sentinel as an I8
+        // immediate, so convert() harmonises nothing and the loop pays no per-row int32_to_int64.
         return {length, data_type_t::i64, data_kind_t::kMemory};
     }
 
@@ -999,6 +1003,17 @@ namespace questdb::aarch64 {
         }
     };
 
+    // Declines the filter. Compiler::report_error records the reason on the JitErrorHandler that
+    // compileFunction() installed, and compileFunction() reads that error BEFORE c.finalize() and
+    // before gGlobalContext.rt.add(), so a declined function is never register-allocated, never
+    // assembled and never registered - nothing emitted after this call can run. SqlCodeGenerator
+    // then falls back to the Java filter, the same graceful decline any other unsupported shape
+    // takes. Mirrors questdb::avx2::decline_filter(); this backend cannot reach that one because
+    // avx2.h is x86-only and compiler.cpp does not include it on aarch64.
+    inline void decline_filter(Compiler &c, const char *reason) {
+        c.report_error(asmjit::Error::kInvalidState, reason);
+    }
+
     void emit_bin_op(Compiler &c, Arena &arena, const instruction_t &instr, ArenaVector<jit_value_t> &values, bool null_check,
                      bool has_short_circuit_label, opcodes next_opcode) {
         if (instr.opcode == opcodes::Eq || instr.opcode == opcodes::Ne) {
@@ -1095,7 +1110,22 @@ namespace questdb::aarch64 {
                 values.append(arena, div(c, lhs, rhs, null_check));
                 break;
             default:
-                __builtin_unreachable();
+                // Fail closed, for the same reason avx2::emit_bin_op does - and this backend is the
+                // ONLY one ARM64 has, so nothing else covers it. emit_code() routes EVERY opcode it
+                // does not handle itself into this function, so this arm sees whatever a corrupt or
+                // future-extended IR stream carries. __builtin_unreachable() made that undefined
+                // behaviour: the compiler drops the range check on the jump table and an
+                // out-of-enum opcode indexes past its end, inside the JVM and with no recovery.
+                //
+                // get_arguments() already popped both operands, so push a placeholder mask back -
+                // the same balancing the flag-optimization path above does with its flags_marker.
+                // scalar_tail() reads the top of the stack as a Gp (cbz), and lhs is a Vec for a
+                // float operand, so the placeholder is a fresh i32 register rather than lhs. It is
+                // never read: compileFunction() sees the error before c.finalize(), so the function
+                // is never register-allocated, assembled or registered.
+                decline_filter(c, "unsupported opcode in the scalar path");
+                values.append(arena, {c.new_gp32("declined_mask"), data_type_t::i32, data_kind_t::kConst});
+                break;
         }
     }
 
@@ -1125,6 +1155,17 @@ namespace questdb::aarch64 {
             auto &instr = istream[i];
             switch (instr.opcode) {
                 case opcodes::Inv:
+                    // Fail closed. Inv is the placeholder the serializer writes for a symbol bind
+                    // variable and a constant stub; backfillNode() either overwrites those 24 bytes
+                    // or throws, so a finished IR stream never carries one. Should one ever survive,
+                    // returning here abandons code generation with NOTHING on the value stack, and
+                    // scalar_tail()'s !values.is_empty() guard - which exists for the legitimate
+                    // case where every predicate resolved through a short-circuit jump - then skips
+                    // the final cbz and falls straight into the unconditional row store. That
+                    // filter selects every row, silently, and this is the ONLY backend aarch64 has:
+                    // Function::compile() there always takes scalar_loop. Decline first so it falls
+                    // back to the Java filter and the log names the reason.
+                    decline_filter(c, "invalid opcode in the scalar path");
                     return;
                 case opcodes::Ret:
                     return;

@@ -3,12 +3,15 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
+        # macOS legs run on Apple Silicon: the plain macOS-14/15/26 Azure images
+        # are Intel x64, and x86-64 macOS is not a supported platform - aarch64 is
+        # the only macOS build we ship. Shard layout is unchanged from those legs.
         mac-griffin-base:
           # griffin base package only; subpackages run in mac-griffin-sub,
           # fuzz tests in mac-griffin-fuzz. Splitting the single griffin shard
           # (the pipeline's long pole) keeps each leg well under the 60 min cap.
           WEB_CONSOLE_PROFILE: ""
-          imageName: "macos-14"
+          imageName: "macOS-15-arm64"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.25"
@@ -22,7 +25,7 @@ jobs:
           # griffin subpackages; base package runs in mac-griffin-base,
           # fuzz tests in mac-griffin-fuzz.
           WEB_CONSOLE_PROFILE: ""
-          imageName: "macos-14"
+          imageName: "macOS-15-arm64"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.25"
@@ -41,7 +44,7 @@ jobs:
           # would only match immediate children of griffin/ and leave subpackage
           # fuzzers (join, unnest, window, order-by, ...) on mac-griffin-sub.
           WEB_CONSOLE_PROFILE: ""
-          imageName: "macos-14"
+          imageName: "macOS-15-arm64"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.25"
@@ -51,7 +54,7 @@ jobs:
           javadoc_profile: ""
         mac-cairo:
           WEB_CONSOLE_PROFILE: ""
-          imageName: "macos-14"
+          imageName: "macOS-15-arm64"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.25"
@@ -63,7 +66,7 @@ jobs:
           javadoc_profile: ""
         mac-cairo-fuzz:
           WEB_CONSOLE_PROFILE: ""
-          imageName: "macos-14"
+          imageName: "macOS-15-arm64"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.25"
@@ -73,7 +76,7 @@ jobs:
           javadoc_profile: ""
         mac-pgwire:
           WEB_CONSOLE_PROFILE: ""
-          imageName: "macos-14"
+          imageName: "macOS-15-arm64"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.25"
@@ -85,7 +88,7 @@ jobs:
           # No WEB_CONSOLE_PROFILE override: this group runs ServerMainTest, whose
           # testServerUpgradeDoesNotOverrideWebConsoleConfig needs the bundled web
           # console, so it inherits the default build-web-console profile.
-          imageName: "macos-14"
+          imageName: "macOS-15-arm64"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.25"

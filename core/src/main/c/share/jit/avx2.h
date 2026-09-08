@@ -60,7 +60,7 @@ namespace questdb::avx2 {
                     case data_type_t::i64: {
                         int64_t value = instr.ipayload.lo;
                         Vec dummy;
-                        if (!cache.findInt(value, dummy)) {
+                        if (!cache.findInt(value, type, dummy)) {
                             Vec reg = c.new_ymm("const_ymm_%lld", value);
                             switch (type) {
                                 case data_type_t::i8: {
@@ -89,7 +89,7 @@ namespace questdb::avx2 {
                                 default:
                                     break;
                             }
-                            cache.addInt(value, reg);
+                            cache.addInt(value, type, reg);
                         }
                         break;
                     }
@@ -315,7 +315,7 @@ namespace questdb::avx2 {
     }
 
     jit_value_t
-    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &input_index,
+    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &input_index, bool wide_lane,
              const ColumnAddressCache &cache) {
         if (type == data_type_t::varchar_header) {
             return read_mem_varchar_header(c, column_idx, varsize_aux_ptr, input_index);
@@ -349,7 +349,30 @@ namespace questdb::avx2 {
         Mem m;
         uint32_t shift = type_shift(type);
         if (shift < 4) {
-            m = ymmword_ptr(column_address, input_index, shift);
+            if (wide_lane) {
+                switch (type) {
+                    case data_type_t::i8:
+                        m = dword_ptr(column_address, input_index, shift);
+                        break;
+                    case data_type_t::i16:
+                        m = qword_ptr(column_address, input_index, shift);
+                        break;
+                    case data_type_t::i32:
+                    case data_type_t::f32:
+                        m = xmmword_ptr(column_address, input_index, shift);
+                        break;
+                    case data_type_t::i64:
+                    case data_type_t::f64:
+                        // A 64-bit column already spans the four wide lanes: 4 x 8B = 32B.
+                        // It loads exactly as it does outside wide-lane mode.
+                        m = ymmword_ptr(column_address, input_index, shift);
+                        break;
+                    default:
+                        __builtin_unreachable();
+                }
+            } else {
+                m = ymmword_ptr(column_address, input_index, shift);
+            }
         } else {
             Gp offset = c.new_gp64("row_offset");
             c.mov(offset, input_index);
@@ -359,14 +382,33 @@ namespace questdb::avx2 {
         Vec row_data = c.new_ymm();
         switch (type) {
             case data_type_t::i8:
+                if (wide_lane) {
+                    c.vmovd(row_data.xmm(), m);
+                    break;
+                }
+                [[fallthrough]];
             case data_type_t::i16:
+                if (wide_lane) {
+                    c.vmovq(row_data.xmm(), m);
+                    break;
+                }
+                [[fallthrough]];
             case data_type_t::i32:
+                if (wide_lane) {
+                    c.vmovdqu(row_data.xmm(), m);
+                    break;
+                }
+                [[fallthrough]];
             case data_type_t::i64:
             case data_type_t::i128:
                 c.vmovdqu(row_data, m);
                 break;
             case data_type_t::f32:
-                c.vmovups(row_data, m);
+                if (wide_lane) {
+                    c.vmovups(row_data.xmm(), m);
+                } else {
+                    c.vmovups(row_data, m);
+                }
                 break;
             case data_type_t::f64:
                 c.vmovupd(row_data, m);
@@ -384,7 +426,7 @@ namespace questdb::avx2 {
         if (type == data_type_t::i8 || type == data_type_t::i16 ||
             type == data_type_t::i32 || type == data_type_t::i64) {
             Vec cached;
-            if (cache.findInt(instr.ipayload.lo, cached)) {
+            if (cache.findInt(instr.ipayload.lo, type, cached)) {
                 return {cached, type, data_kind_t::kConst};
             }
         }
@@ -460,22 +502,77 @@ namespace questdb::avx2 {
         return {mask_not(c, lhs.vec()), dt, dk};
     }
 
-    jit_value_t bin_and(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
-        auto dt = lhs.dtype();
-        auto dk = dst_kind(lhs, rhs);
-        return {mask_and(c, lhs.vec(), rhs.vec()), dt, dk};
+    jit_value_t normalize_wide_mask(Compiler &c, const jit_value_t &value) {
+        if (value.dtype() != data_type_t::i32) {
+            return value;
+        }
+        Vec dst = c.new_ymm("wide_mask");
+        c.vpmovsxdq(dst, value.vec().xmm());
+        return {dst, data_type_t::i64, value.dkind()};
     }
 
-    jit_value_t bin_or(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
-        auto dt = lhs.dtype();
-        auto dk = dst_kind(lhs, rhs);
-        return {mask_or(c, lhs.vec(), rhs.vec()), dt, dk};
+    // Declines the filter instead of emitting a widening that would be wrong for the loop it lands
+    // in. Recording the error makes compileFunction() discard the function and report it, and
+    // SqlCodeGenerator then falls back to the Java filter - the same graceful decline any other
+    // unsupported shape takes. The operands come back unchanged so the rest of code generation
+    // stays well-formed; nothing it emits is ever run.
+    inline void decline_filter(Compiler &c, const char *reason) {
+        c.report_error(asmjit::Error::kInvalidState, reason);
+    }
+
+    // Declines the filter and hands the pairing back untouched. convert() uses it for every
+    // pairing it cannot harmonise for the lane count in force: the caller keeps emitting
+    // well-formed code so the value stack stays balanced, and compileFunction() discards the
+    // function before anything it emitted can run.
+    inline std::pair<jit_value_t, jit_value_t>
+    decline_pairing(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, const char *reason) {
+        decline_filter(c, reason);
+        return std::make_pair(lhs, rhs);
+    }
+
+    jit_value_t sx_i64(Compiler &c, const jit_value_t &value, bool null_check) {
+        if (value.dtype() != data_type_t::i32) {
+            // Fail closed. The frontend emits SX_I64 only over a narrow-int leaf that
+            // isWideLaneEligible has admitted, so this is unreachable today; a future gap there
+            // costs a JIT decline rather than the undefined behaviour __builtin_unreachable()
+            // would hand it, which has no recovery inside a JVM.
+            decline_filter(c, "sx_i64 expects an i32 operand");
+            Vec zero = c.new_ymm("sx_i64_declined");
+            c.vpxor(zero, zero, zero);
+            return {zero, data_type_t::i64, value.dkind()};
+        }
+
+        Vec extended = c.new_ymm("sx_i64");
+        c.vpmovsxdq(extended, value.vec().xmm());
+        if (null_check) {
+            Vec null_mask_i32 = c.new_ymm("sx_i64_null_i32");
+            c.vpcmpeqd(null_mask_i32, value.vec(), vec_int_null(c));
+            Vec null_mask_i64 = c.new_ymm("sx_i64_null_i64");
+            c.vpmovsxdq(null_mask_i64, null_mask_i32.xmm());
+            extended = select_bytes(c, null_mask_i64, extended, vec_long_null(c));
+        }
+        return {extended, data_type_t::i64, value.dkind()};
+    }
+
+    jit_value_t bin_and(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool wide_lane) {
+        auto left = wide_lane ? normalize_wide_mask(c, lhs) : lhs;
+        auto right = wide_lane ? normalize_wide_mask(c, rhs) : rhs;
+        auto dk = dst_kind(left, right);
+        return {mask_and(c, left.vec(), right.vec()), left.dtype(), dk};
+    }
+
+    jit_value_t bin_or(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool wide_lane) {
+        auto left = wide_lane ? normalize_wide_mask(c, lhs) : lhs;
+        auto right = wide_lane ? normalize_wide_mask(c, rhs) : rhs;
+        auto dk = dst_kind(left, right);
+        return {mask_or(c, left.vec(), right.vec()), left.dtype(), dk};
     }
 
     jit_value_t cmp_eq(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
-        return {cmp_eq(c, dt, lhs.vec(), rhs.vec()), data_type_t::i32, dk};
+        auto mt = mask_type(dt);
+        return {cmp_eq(c, dt, lhs.vec(), rhs.vec()), mt, dk};
     }
 
     jit_value_t cmp_ne(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
@@ -537,23 +634,78 @@ namespace questdb::avx2 {
         return {div(c, dt, lhs.vec(), rhs.vec(), null_check), dt, dk};
     }
 
+    // Harmonises the two operands of a binary op before emit_bin_op issues the instruction, which
+    // types itself from the LEFT operand alone. A pairing with no case here falls through unchanged
+    // and the op would then be emitted at the left width against a register holding the right one -
+    // wrong rows, silently - so every pairing this function cannot harmonise fails CLOSED: it
+    // declines the filter and SqlCodeGenerator falls back to the Java one.
+    //
+    // The gate is the loop's LANE COUNT, not the wide-lane flag. sx_i64, cvt_itod, cvt_ftod and
+    // cvt_ltod each produce exactly four results - the first three read only the low 128 bits of
+    // their operand, cvt_ltod converts four i64 - so each is correct at four lanes and only at
+    // four lanes. compiler.cpp runs four lanes for WIDE_LANE and for SINGLE_SIZE over an
+    // eight-byte column alike (step = 256 / (type_size_bytes * 8) is 4 for an eight-byte lane), so
+    // gating on wide_lane declined to convert in a loop that was already four lanes wide. That is
+    // what let an (i32, f64) pairing reach vcmppd against a register holding eight packed i32,
+    // and left the mask at 32-bit granularity for compress_register's vpermps to splice two row
+    // ids into one out-of-range id.
+    //
+    // cvt_itof is the exception: it converts a full register of eight i32 and changes no lane
+    // width, so it needs no lane count and stays ungated.
+    //
+    // A var-size column reads as four packed i64 lanes (read_mem_varsize /
+    // read_mem_varchar_header) and serializeNull spells the header NULL sentinel as an i64
+    // immediate for STRING, BINARY and VARCHAR alike, so `<varsize> IS [NOT] NULL` arrives here
+    // already same-width and falls straight through to the return below. STRING used to arrive as
+    // an (i64, i32) pairing, which this function harmonised correctly but at the price of an
+    // sx_i64 the four-lane loop re-ran on every iteration for a loop-invariant broadcast; the
+    // frontend types the sentinel to match the lane instead. The mixed-width arms stay for the
+    // pairings that still reach them.
     inline std::pair<jit_value_t, jit_value_t>
-    convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check, uint32_t lane_count) {
         // data_type_t::i32 -> data_type_t::f32
         // data_type_t::i64 -> data_type_t::f64
+        const bool four_lane = lane_count == 4;
         switch (lhs.dtype()) {
             case data_type_t::i32:
                 switch (rhs.dtype()) {
                     case data_type_t::f32:
                         return std::make_pair(
                                 jit_value_t(cvt_itof(c, lhs.vec(), null_check), data_type_t::f32, lhs.dkind()), rhs);
+                    case data_type_t::i64:
+                        if (!four_lane) {
+                            return decline_pairing(c, lhs, rhs, "i32-with-i64 pairing outside the four-lane loop");
+                        }
+                        return std::make_pair(sx_i64(c, lhs, null_check), rhs);
+                    case data_type_t::f64:
+                        if (!four_lane) {
+                            return decline_pairing(c, lhs, rhs, "i32-with-f64 pairing outside the four-lane loop");
+                        }
+                        return std::make_pair(
+                                jit_value_t(cvt_itod(c, lhs.vec(), null_check), data_type_t::f64, lhs.dkind()),
+                                rhs);
                     default:
                         break;
                 }
                 break;
             case data_type_t::i64:
                 switch (rhs.dtype()) {
+                    case data_type_t::i32:
+                        if (!four_lane) {
+                            return decline_pairing(c, lhs, rhs, "i64-with-i32 pairing outside the four-lane loop");
+                        }
+                        return std::make_pair(lhs, sx_i64(c, rhs, null_check));
+                    case data_type_t::f32:
+                        if (!four_lane) {
+                            return decline_pairing(c, lhs, rhs, "i64-with-f32 pairing outside the four-lane loop");
+                        }
+                        return std::make_pair(
+                                jit_value_t(cvt_ltod(c, lhs.vec(), null_check), data_type_t::f64, lhs.dkind()),
+                                jit_value_t(cvt_ftod(c, rhs.vec()), data_type_t::f64, rhs.dkind()));
                     case data_type_t::f64:
+                        if (!four_lane) {
+                            return decline_pairing(c, lhs, rhs, "i64-with-f64 pairing outside the four-lane loop");
+                        }
                         return std::make_pair(
                                 jit_value_t(cvt_ltod(c, lhs.vec(), null_check), data_type_t::f64, lhs.dkind()), rhs);
                     default:
@@ -565,23 +717,74 @@ namespace questdb::avx2 {
                     case data_type_t::i32:
                         return std::make_pair(lhs, jit_value_t(cvt_itof(c, rhs.vec(), null_check), data_type_t::f32,
                                                                rhs.dkind()));
+                    case data_type_t::i64:
+                        if (!four_lane) {
+                            return decline_pairing(c, lhs, rhs, "f32-with-i64 pairing outside the four-lane loop");
+                        }
+                        return std::make_pair(
+                                jit_value_t(cvt_ftod(c, lhs.vec()), data_type_t::f64, lhs.dkind()),
+                                jit_value_t(cvt_ltod(c, rhs.vec(), null_check), data_type_t::f64, rhs.dkind()));
+                    case data_type_t::f64:
+                        if (!four_lane) {
+                            return decline_pairing(c, lhs, rhs, "f32-with-f64 pairing outside the four-lane loop");
+                        }
+                        return std::make_pair(
+                                jit_value_t(cvt_ftod(c, lhs.vec()), data_type_t::f64, lhs.dkind()), rhs);
                     default:
                         break;
                 }
                 break;
             case data_type_t::f64:
                 switch (rhs.dtype()) {
+                    case data_type_t::i32:
+                        if (!four_lane) {
+                            return decline_pairing(c, lhs, rhs, "f64-with-i32 pairing outside the four-lane loop");
+                        }
+                        return std::make_pair(
+                                lhs,
+                                jit_value_t(cvt_itod(c, rhs.vec(), null_check), data_type_t::f64, rhs.dkind()));
                     case data_type_t::i64:
+                        if (!four_lane) {
+                            return decline_pairing(c, lhs, rhs, "f64-with-i64 pairing outside the four-lane loop");
+                        }
                         return std::make_pair(lhs, jit_value_t(cvt_ltod(c, rhs.vec(), null_check), data_type_t::f64,
                                                                rhs.dkind()));
+                    case data_type_t::f32:
+                        if (!four_lane) {
+                            return decline_pairing(c, lhs, rhs, "f64-with-f32 pairing outside the four-lane loop");
+                        }
+                        return std::make_pair(lhs, jit_value_t(cvt_ftod(c, rhs.vec()), data_type_t::f64, rhs.dkind()));
                     default:
                         break;
                 }
                 break;
             case data_type_t::i128:
-                return std::make_pair(lhs, rhs);
+                // Fail closed, like every other arm here. An (i128, i128) pairing needs no
+                // conversion and the terminal same-type return below hands it back untouched, so
+                // breaking out costs that pairing nothing. Returning HERE instead skipped the
+                // terminal check, and an (i128, i64) pairing - or any other mismatched i128 one -
+                // then fell through unharmonised while its mirror image, (i64, i128), declined
+                // through the inner switch's default. cmp_eq() and the arithmetic helpers type the
+                // instruction from the LEFT operand alone, so the unharmonised direction compared
+                // 128-bit lanes against a register holding 64-bit ones - wrong rows, silently.
+                //
+                // No IR stream the frontend emits today reaches it. An i128 operand comes from a
+                // UUID or LONG128 column, a UUID literal or a UUID / LONG128 bind variable;
+                // PredicateContext::updateType rejects any other column beside a UUID one outright,
+                // and SQL resolves no comparison operator for LONG128 against another type at all
+                // ("there is no matching operator `=` with the argument types: LONG128 = LONG").
+                // Even where the serializer is driven directly past those, an i128 operand makes
+                // getExecHint() answer MIXED_SIZE or SCALAR the moment anything narrower joins the
+                // filter, and neither hint runs an AVX2 loop. That is an argument for closing the
+                // hole, not for leaving it guarded by the absence of an input.
+                break;
             default:
                 break;
+        }
+        // Same-width pairings need no conversion and are the common case. Anything else has no arm
+        // above, so nothing harmonised it and nothing may assume it is harmless.
+        if (lhs.dtype() != rhs.dtype()) {
+            return decline_pairing(c, lhs, rhs, "no conversion for this operand pairing");
         }
         return std::make_pair(lhs, rhs);
     }
@@ -591,23 +794,40 @@ namespace questdb::avx2 {
     }
 
     inline std::pair<jit_value_t, jit_value_t>
-    get_arguments(Compiler &c, ArenaVector<jit_value_t> &values, bool ncheck) {
+    get_arguments(Compiler &c, ArenaVector<jit_value_t> &values, bool ncheck, uint32_t lane_count) {
         auto lhs = values.pop();
         auto rhs = values.pop();
-        return convert(c, lhs, rhs, ncheck);
+        return convert(c, lhs, rhs, ncheck, lane_count);
     }
 
-    void emit_bin_op(Compiler &c, Arena &arena, const instruction_t &instr, ArenaVector<jit_value_t> &values, bool ncheck) {
-        auto args = get_arguments(c, values, ncheck);
+    void emit_bin_op(Compiler &c, Arena &arena, const instruction_t &instr, ArenaVector<jit_value_t> &values, bool ncheck, bool wide_lane,
+                     uint32_t lane_count) {
+        // AND and OR combine comparison MASKS, not values, and bin_and / bin_or already widen a
+        // four-lane i32 mask themselves. Routing them through convert() would take the i32-with-i64
+        // arm below and pay for a null blend a mask can never need - a lane is 0 or -1, never
+        // INT_NULL - so they take the operands untouched, exactly as they did before that arm
+        // existed. serializeOperator declines the bitwise operators, so these two opcodes never
+        // carry values.
+        switch (instr.opcode) {
+            case opcodes::And: {
+                auto lhs = get_argument(values);
+                auto rhs = get_argument(values);
+                values.append(arena, bin_and(c, lhs, rhs, wide_lane));
+                return;
+            }
+            case opcodes::Or: {
+                auto lhs = get_argument(values);
+                auto rhs = get_argument(values);
+                values.append(arena, bin_or(c, lhs, rhs, wide_lane));
+                return;
+            }
+            default:
+                break;
+        }
+        auto args = get_arguments(c, values, ncheck, lane_count);
         auto lhs = args.first;
         auto rhs = args.second;
         switch (instr.opcode) {
-            case opcodes::And:
-                values.append(arena, bin_and(c, lhs, rhs));
-                break;
-            case opcodes::Or:
-                values.append(arena, bin_or(c, lhs, rhs));
-                break;
             case opcodes::Eq:
                 values.append(arena, cmp_eq(c, lhs, rhs));
                 break;
@@ -639,19 +859,41 @@ namespace questdb::avx2 {
                 values.append(arena, div(c, lhs, rhs, ncheck));
                 break;
             default:
-                __builtin_unreachable();
+                // Fail closed. emit_code() routes EVERY opcode it does not handle itself into this
+                // function, so this arm sees whatever a corrupt or future-extended IR stream
+                // carries. __builtin_unreachable() made that undefined behaviour: the compiler
+                // drops the range check on the jump table and an out-of-enum opcode indexes past
+                // its end, inside the JVM and with no recovery. Declining costs a JIT decline
+                // instead, and SqlCodeGenerator falls back to the Java filter.
+                //
+                // get_arguments() already popped both operands, so push one back. avx2_loop() pops
+                // the mask this instruction owes it, and ArenaVector::pop() asserts only in a debug
+                // build - a release build underflows _size to UINT32_MAX and reads out of bounds.
+                // Every avx2 jit_value_t is a Vec, so lhs is a well-formed operand for that pop.
+                // The declined function is never register-allocated, assembled or registered:
+                // compileFunction() reads the error before c.finalize().
+                decline_filter(c, "unsupported opcode in the SIMD path");
+                values.append(arena, lhs);
+                break;
         }
     }
 
     void
-    emit_code(Compiler &c, Arena &arena, const instruction_t *istream, size_t size, ArenaVector<jit_value_t> &values, bool ncheck,
+    emit_code(Compiler &c, Arena &arena, const instruction_t *istream, size_t size, ArenaVector<jit_value_t> &values, bool ncheck, bool wide_lane,
+              uint32_t lane_count,
               const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &vars_ptr, const Gp &input_index,
               const ColumnAddressCache &addr_cache, const ConstantCacheYmm&const_cache) {
         for (size_t i = 0; i < size; ++i) {
             auto instr = istream[i];
             switch (instr.opcode) {
                 case opcodes::Inv:
-                    return; // todo: throw exception
+                    // Fail closed. Inv is the placeholder the serializer writes for a symbol bind
+                    // variable and a constant stub; backfillNode() either overwrites it or throws,
+                    // so a finished IR stream never carries one. Should it ever survive, abandoning
+                    // here leaves the value stack unbalanced - decline first so the filter falls
+                    // back to the Java one and the log names the reason.
+                    decline_filter(c, "invalid opcode in the SIMD path");
+                    return;
                 case opcodes::Ret:
                     return;
                 case opcodes::Var: {
@@ -663,7 +905,7 @@ namespace questdb::avx2 {
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(arena, read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, addr_cache));
+                    values.append(arena, read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, wide_lane, addr_cache));
                 }
                     break;
                 case opcodes::Imm:
@@ -679,10 +921,28 @@ namespace questdb::avx2 {
                 case opcodes::Or_Sc:
                 case opcodes::Begin_Sc:
                 case opcodes::End_Sc:
-                case opcodes::Sx_I64: // Sx_I64 only feeds narrow+i8 mixed predicates, which force scalar
-                    return; // Compilation error: opcode not supported in SIMD path
+                    // Fail closed. serializePredicatesAndSc / serializePredicatesOrSc are the only
+                    // producers of these opcodes and both throw when getExecHint() answers
+                    // SINGLE_SIZE or WIDE_LANE, so no stream carrying one reaches an AVX2 loop
+                    // today. Decline anyway: a short-circuit opcode sits PART-WAY through a stream,
+                    // so abandoning here leaves values behind rather than none at all, and
+                    // avx2_loop's empty-stack guard would not see it - the loop would pop an
+                    // operand instead of a mask and run a filter that selects the wrong rows.
+                    decline_filter(c, "short-circuit opcode in the SIMD path");
+                    return;
+                case opcodes::Sx_I64:
+                    if (!wide_lane) {
+                        // Fail closed. The frontend emits SX_I64 only for the wide-lane loop, so
+                        // this is unreachable; abandoning code generation here would instead leave
+                        // the value stack short and avx2_loop would pop an empty ArenaVector -
+                        // undefined behaviour inside the JVM rather than a decline. Keep emitting
+                        // so the stack stays balanced; the declined function never runs.
+                        decline_filter(c, "SX_I64 outside the wide-lane loop");
+                    }
+                    values.append(arena, sx_i64(c, get_argument(values), ncheck));
+                    break;
                 default:
-                    emit_bin_op(c, arena, instr, values, ncheck);
+                    emit_bin_op(c, arena, instr, values, ncheck, wide_lane, lane_count);
                     break;
             }
         }

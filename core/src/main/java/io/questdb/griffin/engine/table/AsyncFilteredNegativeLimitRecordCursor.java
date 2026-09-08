@@ -201,6 +201,10 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
         rowIndex = rows.getCapacity() - rowCount;
     }
 
+    private CairoException buildInterruptionException() {
+        return frameSequence.buildInterruptionException();
+    }
+
     private void fetchAllFrames() {
         if (frameLimit == -1) {
             frameSequence.prepareForDispatch();
@@ -259,7 +263,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
             LOG.error().$("negative limit filter error [ex=").$(e).I$();
             if (e instanceof CairoException ce) {
                 if (ce.isInterruption()) {
-                    throwTimeoutException();
+                    throw buildInterruptionException();
                 } else {
                     throw ce;
                 }
@@ -273,15 +277,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
         }
 
         if (!allFramesActive) {
-            throwTimeoutException();
-        }
-    }
-
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
+            throw buildInterruptionException();
         }
     }
 

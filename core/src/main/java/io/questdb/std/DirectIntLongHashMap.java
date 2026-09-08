@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
+import org.jetbrains.annotations.Nullable;
 
 
 public class DirectIntLongHashMap implements Mutable, QuietCloseable, Reopenable {
@@ -38,6 +39,10 @@ public class DirectIntLongHashMap implements Mutable, QuietCloseable, Reopenable
     private int capacity;
     private int free;
     private long mask;
+    // Per-workload native memory tracker bound by the owning cursor at workload start.
+    // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
+    // degrade to the global-only overloads in that case.
+    private @Nullable MemoryTracker memoryTracker;
     private long ptr;
     private int size;
 
@@ -71,11 +76,16 @@ public class DirectIntLongHashMap implements Mutable, QuietCloseable, Reopenable
     @Override
     public void close() {
         if (ptr != 0) {
-            ptr = Unsafe.free(ptr, 12L * capacity, memoryTag);
+            ptr = Unsafe.free(ptr, 12L * capacity, memoryTag, memoryTracker);
             capacity = 0;
             free = 0;
             size = 0;
         }
+        // The block is gone, so the tracker that charged it carries no debt for this map any more.
+        // Dropping the reference keeps a later free - one that runs after the pooled tracker was
+        // recycled by another workload - on the global counter, where it cannot corrupt someone
+        // else's total.
+        memoryTracker = null;
     }
 
     public boolean excludes(int key) {
@@ -145,9 +155,9 @@ public class DirectIntLongHashMap implements Mutable, QuietCloseable, Reopenable
             final long oldCapacity = capacity;
             long newPtr;
             if (ptr == 0) {
-                newPtr = Unsafe.malloc(12L * initialCapacity, memoryTag);
+                newPtr = Unsafe.malloc(12L * initialCapacity, memoryTag, memoryTracker);
             } else {
-                newPtr = Unsafe.realloc(ptr, 12L * oldCapacity, 12L * initialCapacity, memoryTag);
+                newPtr = Unsafe.realloc(ptr, 12L * oldCapacity, 12L * initialCapacity, memoryTag, memoryTracker);
             }
             ptr = newPtr;
             capacity = initialCapacity;
@@ -155,6 +165,21 @@ public class DirectIntLongHashMap implements Mutable, QuietCloseable, Reopenable
         }
 
         clear();
+    }
+
+    /**
+     * Binds the per-workload {@link MemoryTracker} that every subsequent allocation charges. A
+     * {@code null} tracker degrades the map to global-only accounting.
+     * <p>
+     * Rebinding releases the live block first: a block has to be freed under the tracker that
+     * charged it, or the two counters drift apart and the per-query limit stops holding. Callers
+     * therefore bind at workload start, immediately before {@link #reopen()}, when the map is empty.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker != memoryTracker) {
+            close();
+            memoryTracker = tracker;
+        }
     }
 
     public int size() {
@@ -193,7 +218,7 @@ public class DirectIntLongHashMap implements Mutable, QuietCloseable, Reopenable
         }
 
         final int oldCapacity = capacity;
-        long newPtr = Unsafe.malloc(12L * newCapacity, memoryTag);
+        long newPtr = Unsafe.malloc(12L * newCapacity, memoryTag, memoryTracker);
 
         long oldPtr = ptr;
         ptr = newPtr;
@@ -216,10 +241,14 @@ public class DirectIntLongHashMap implements Mutable, QuietCloseable, Reopenable
             }
         }
 
-        Unsafe.free(oldPtr, 12L * oldCapacity, memoryTag);
+        Unsafe.free(oldPtr, 12L * oldCapacity, memoryTag, memoryTracker);
     }
 
     private void zero() {
+        if (ptr == 0) {
+            // Closed: clear() still runs its bookkeeping, but there is no block to wipe.
+            return;
+        }
         if (noEntryKey == 0) {
             // Vectorized fast path for zero default value.
             Vect.memset(ptr, 12L * capacity, 0);

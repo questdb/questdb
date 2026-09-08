@@ -51,10 +51,23 @@ stages:
           name: hetzner-incus
         timeoutInMinutes: 60
         variables:
-          SOURCE_CODE_CHANGED: true
-          ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
+          - group: github-public-read
+          - name: SOURCE_CODE_CHANGED
+            value: true
+          - name: ARCHIVED_CRASH_LOG
+            value: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
         steps:
           - template: templates/checkout-source.yml
+          - bash: |
+              set -eux
+              # ci/submodule-update.sh authenticates the clones when it can (GH_TOKEN,
+              # or the checkout task's persisted credential) and retries with backoff
+              # when it cannot; fork PR builds never receive GIT_GITHUB_TOKEN because
+              # Azure withholds secret variables from forks.
+              bash ci/submodule-update.sh --recursive java-questdb-client
+            displayName: "Checkout client submodules"
+            env:
+              GH_TOKEN: $(GIT_GITHUB_TOKEN)
           - template: templates/use-hetzner-apt-mirrors.yml
           - bash: |
               sudo apt-get update && sudo apt-get install -y openjdk-25-jdk maven build-essential zip

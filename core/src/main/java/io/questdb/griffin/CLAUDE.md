@@ -303,6 +303,284 @@ Both paths **must produce identical results** for the same conversion. This mean
    starting at `skipRows = columnTop`. Parquet decoder reads all rows but the column top
    ensures correct alignment.
 
+## INT Expression Width
+
+An INT expression carries exactly one value: the value its four bytes hold. INT arithmetic wraps
+modulo 2^32 in every context, exactly as LONG arithmetic wraps modulo 2^64.
+
+> **Width is a property of the declared type and nothing else. To compute at 64 bits, widen an
+> operand: `secs * 1_000_000L`, or `i::long * j`.**
+
+`2000000000 + 2000000000` is an INT expression whose value is `-294967296`, and `::LONG`,
+`::TIMESTAMP`, `::DOUBLE`, a store into a LONG column, `to_utc(...)`, a comparison against a LONG
+column and an `UPDATE` into a TIMESTAMP column all read that same number, sign-extended where the
+target is 64 bits. `IntFunction.getLong()` / `getTimestamp()` / `getDate()` are all
+`Numbers.intToLong(getInt())`, and `Numbers.intToLong(INT_NULL) == LONG_NULL`, so an expression that
+lands on `-2^31` reads as NULL at every width.
+
+Three properties follow, and they are the reason to prefer this over any context-dependent rule:
+
+- **`SELECT expr` shows exactly what every consumer received.** A user who gets a wrong timestamp
+  can inspect the arithmetic and see the wrap that caused it, in one step.
+- **Nullness stops depending on context.** `2147483647 + 1`, `-1073741824 * 2` and `~2147483647`
+  read as NULL everywhere, `::long` included.
+- **Every boundary reads a function at its declared type**, the engine's oldest and best-tested
+  contract. Nothing is left for a boundary to ask, so nothing is left for it to get wrong.
+
+Consumers such as timestamp predicates, SAMPLE BY, window bounds and partition DDL validate and
+use the final wrapped value exactly as if it had been written as an INT literal. They must not
+inspect the arithmetic AST and reject a value because it may have wrapped.
+
+### What this gives up
+
+GitHub issue [#4752](https://github.com/questdb/questdb/issues/4752) is reopened by this rule.
+`to_utc(1_720_468_802 * 1_000_000, tz)` returns a 1970 date. PR #4824 fixed it by giving the INT
+operators a `getLong()` that recomputed at 64 bits, and PR #7021 extended that to more operators;
+both are reverted here. The mitigation is the release note and the workaround the issue itself
+named (`1_000_000L`), not anything in the engine. `IntWidthWrapTest` pins the whole matrix,
+`MulIntFunctionFactoryTest#testTimestampIntOverflow` pins the repro, and `IntWidthContextTest` pins
+the three contexts that reach 64 bits through overload resolution rather than through syntax.
+
+A designated timestamp target is the loudest case: the wrapped product is negative, so the writer
+refuses it with "designated timestamp before 1970-01-01 is not allowed" rather than storing a 1970
+date. An ingest that relied on the widening errors instead of inserting.
+
+**Throw on overflow** — the Postgres / DuckDB behaviour — is the follow-up this unblocks. It is the
+same one-value architecture with a stricter value policy, and it fixes #4752 in *every* spelling
+with one rule and no context-dependence.
+
+### Constant folding
+
+`FunctionParser.functionToConstant0`'s INT arm folds to an `IntConstant` holding the wrap, or to
+`IntConstant.NULL` when `getInt()` carries the sentinel. The declared type of a constant expression
+no longer depends on its value, so:
+
+- `SELECT 1000000*1000000` is an INT column returning `-727379968`. Over pgwire the OID is `int4`.
+- `CREATE TABLE t AS (SELECT 1000000*1000000 AS v)` creates an **INT** column storing the wrap.
+- `INSERT INTO <existing INT column> SELECT 1000000*1000000` stores the wrap.
+
+The literal, column and bind-variable spellings of one constant arithmetic therefore agree exactly,
+which is what let the query fuzzer drop its int-overflow tolerance.
+
+### The store path
+
+`RecordToRowCopierUtils` (two bytecode generators) and `LoopingRecordToRowCopier` are purely
+type-directed: an INT source reads `getInt()` for every target and `SqlUtil.implicitCastIntAsLong`
+sign-extends it for a 64-bit one. There is no per-column width question, so no factory, metadata or
+`ColumnTypes` view has to answer one.
+
+### The JIT
+
+`CompiledFilterIRSerializer` derives every type from the AST plus metadata and never reads the
+function tree, so it has to reproduce the same rule by hand. The rule it implements is uniform:
+**compute an arithmetic subtree at its own width, sign-extend only at the comparison boundary.**
+
+`arithExprType` types a node by operand promotion alone, so an INT arithmetic subtree is `I4_TYPE`
+however large its mathematical result; only a genuine 64-bit operand promotes it. `descend()` folds
+a pure-constant subtree at that same type — the I4 arm reproduces the Java filter's per-op INT
+wrapping, which differs from `(int) longVal` for a non-modular operator such as division.
+
+Three compensations survive, and all three are about a constant's emitted WIDTH rather than about
+arithmetic semantics:
+
+- `markNarrowConstCmpWidenPair` / `maybeWidenCmpConstOperand` sign-extend a narrow-int leaf and the
+  out-of-INT-range constant it is compared against (`WHERE i < 5_000_000_000`). The type observer
+  sees only 4-byte columns, so the constant would otherwise emit as a lossy F4.
+- `markFloatCmpConst` sends a constant with no exact float to the filter at double width, since a
+  FLOAT column always compares at DOUBLE width in Java.
+- `isNarrowIntCmpWideningConst` does the same for a narrow-int leaf compared against a
+  floating-point constant (`WHERE i < 1.00000003`), which promotes to DOUBLE in Java through
+  `IntFunction#getDouble`. Two independent roundings can diverge here, not one: the constant may
+  have no exact float, **and** the column may be the side that rounds, since `(float)` holds every
+  integer only up to 2^24 — `(float) 16777217` is `16777216`, so even an exactly-representable
+  bound like `16777216.0` collides. The rule widens on `inexact || |c| >= 2^24`, and widens the
+  LEAF too so the pair reaches the backend's ungated `(i64, f64)` arm. `maybeWidenCmpConstOperand`
+  covers the arithmetic-subtree spelling (`i + 0 > 16777216.0`) by widening only the constant, so
+  the subtree keeps wrapping at i32. Two things keep the cost off the vectorized path: the rule
+  widens an inexact constant only when an integer (or the tolerance band round one) actually falls
+  between the bound and the float the JIT would emit, so `i > 1.1` and `i > 0.1` keep the eight-lane
+  loop; and `isWideLaneIntCmpFloatConstPair` makes the shapes that DO widen wide-lane eligible, so
+  they run the four-lane loop rather than dropping to scalar. BYTE and SHORT leaves stay scalar -
+  `avx2::sx_i64` widens an i32 lane and declines anything else - as does the arithmetic-subtree
+  spelling, which is never sign-extended.
+- `narrowKeptConstants` pins an integer constant operand of a NARROW arithmetic node to its own
+  width, so `i32 * 2` stays `int32_mul` even when a LONG elsewhere in the predicate makes the
+  observer type constants at I8.
+
+An `IN` list re-serializes its key once per element but the key is one node with one emitted width,
+so a single 64-bit pairing pulls the whole list to 64 bits: `markWidthSemantics` sign-extends the
+key and every narrow-int leaf element together.
+
+`forceScalarOnUnharmonisedNarrowArith` is the one place the JIT gives up performance for the rule.
+SX_I64 is emitted per LEAF, so there is no way to sign-extend a narrow arithmetic subtree's RESULT
+from the frontend, and the pairing reaches the backend as i32-against-i64 — which neither vectorized
+mode reproduces correctly. `WHERE i * j > long_col` therefore runs scalar. Teaching the IR to emit
+SX_I64 after an operator rather than after a leaf would recover it, and is the obvious follow-up.
+
+Missing a width compensation does not merely lose rows — it can make the **scalar and vectorized
+backends disagree with each other**, so the same query on the same data returns different rows
+depending on whether the host has AVX2. `assertJitScalarAndVectorMatchJava` in
+`CompiledFilterRegressionTest` runs a query with JIT off, then `FORCE_SCALAR`, then vectorized, and
+is the guard for that class of bug.
+
+`isFloatLeaf` deliberately does NOT accept an F8-promoting subtree such as `f + 0.0`. Widening only
+the *bound* there is not enough, because the JIT also computes the arithmetic itself at f32 while
+Java computes it at f64: for a value-preserving operand (`+ 0.0`, `* 1.0`) the two agree and
+widening the bound fixes the comparison, but for `f - 0.1` the f32 and f64 sums already differ, so
+widening the bound alone moves the divergence rather than removing it. Fixing that shape means
+promoting the whole subtree to f64, not just its bound.
+
+Promoting the subtree was attempted and reverted. Marking every constant operand of such a node does
+move the arithmetic to f64, but three things have to move with it and none of them is local: an `IN`
+key needs its ELEMENTS widened too, which `markNarrowConstCmpWidenNode`'s IN branch does not do for
+an F8 key; a constant sub-expression operand (`f * (1.0 / 3.0)`) is not a constant by
+`isWideLaneNumericConstant`, so the bound widens while the arithmetic does not; and `requiresWideLane`
+has to be extended as well, or an exactly-representable bound drops the predicate out of the
+vectorized loop entirely.
+
+### The tolerance boundary
+
+Both filters read the floating-point tolerance INCLUSIVELY in the sources, and agree.
+`Numbers.equals` is `Math.abs(l - r) <= DOUBLE_TOLERANCE`; the native `double_cmp_epsilon` and
+`float_cmp_epsilon` are `epsilon >= |lhs - rhs|` on all three backends - `ucomisd`/`ucomiss` with `setae`/`setb` in
+`jit/impl/x86.h`, `fcmp` with `cset GE`/`cset LT` in `jit/impl/aarch64.h`, and `vcmppd`/`vcmpps`
+with `CmpImm::kLE` in `jit/impl/avx2.h`. On both x86 and aarch64 the chosen condition code is the
+one that stays FALSE on unordered operands, so a NaN difference still compares "not equal" and the
+`ne` arm still answers true for it; AVX2's `kLE` is likewise the ordered predicate, with the
+separate `nans` mask deciding the both-NaN case.
+
+The comparators used to be STRICT (`epsilon > |lhs - rhs|`), which made the compiled filter select
+different rows from the Java one at exactly `|row - bound| == 1e-10`, on `<`, `>=`, `=` and `<>`.
+That divergence had always been reachable for INT, LONG, FLOAT and DOUBLE; BYTE and SHORT reached it
+only once the narrow-int widening began compiling them, because `serializeNumber`'s I1 / I2 arms
+parse an integer and used to decline a fractional bound outright. Making the comparators inclusive
+closed it for every column type at once.
+`CompiledFilterRegressionTest.testNarrowIntColumnVsExactToleranceBoundConstant` pins the agreement
+for all six types across all six operators, on a 1_000-row fixture so the AVX2 loop actually runs -
+a small table is handled entirely by the scalar tail and leaves `jit/impl/avx2.h` untested.
+
+Two consequences worth knowing:
+
+- **No Maven profile compiles the C++.** `mvn test` runs whatever binary is on the classpath:
+  `bin-local/` when a local `cmake --build` has produced one, otherwise the committed
+  `core/src/main/resources/io/questdb/bin/<os>-<arch>/`. A fresh CI checkout has no `bin-local`, so
+  CI tests the COMMITTED binaries. Any change to `core/src/main/c/` is invisible to CI until the
+  `Build and Push Release CXX Libraries` workflow rebuilds and pushes all five platform targets.
+- **The parquet row-group pushdown models these comparators, and has to contain EVERY comparator
+  the shipped binary might carry - not only the one the sources describe.** This is the durable
+  lesson of the change and the thing to get right before touching
+  `ParquetRowGroupFilter.isRowKept` or `isRowKeptByCompiledFloatFilter` again.
+
+  `ParquetRowGroupFilter` certifies a pushed bound by asking whether ANY row filter keeps the first
+  row the pruner would drop, so the model must be an OVER-approximation of every filter that can
+  run. `ParquetRowGroupFilter` is Java and ships the instant it merges; the comparators do not,
+  because nothing in the Maven build compiles the C++ (previous bullet). So between merging a
+  comparator change and dispatching the rebuild workflow, an inclusive model would run against a
+  strict compiled filter - and inclusiveness is **not** uniformly conservative:
+
+  | arm | spelling | widest model | why |
+  |---|---|---|---|
+  | `OP_LE`, `OP_GE`, `OP_EQ` | `isEq \|\| ...` | **inclusive** equality | a wider `isEq` widens the model |
+  | `OP_LT`, `OP_GT` | `!isEq && ...` | **strict** equality | a wider `isEq` NARROWS the model |
+
+  Get the second row wrong and the model UNDER-approximates: it reports "dropped" for a row the
+  running filter keeps, the row group is pruned before any filter sees it, and the query silently
+  returns fewer rows. Three reachable witnesses at the time of writing: `WHERE floatcol < 1e-10` and
+  `WHERE floatcol > -1e-10` (both certify the bound `0.0f`, which `FILTER_OP_LT`/`GT` then use to
+  prune every group the strict comparator would have kept a row from), and `WHERE floatcol < 2e-10`
+  (the f32 arm alone).
+
+  So the model carries BOTH readings and picks the wider per arm: `Numbers.equals` /
+  `isFloatEqAtSinglePrecision` for the eq-including arms, an `isEqStrict` /
+  `isFloatEqStrictAtSinglePrecision` for the eq-excluding ones. The union contains the strict
+  comparator and the inclusive one, so it is correct before and after the rebuild and the merge
+  order stops mattering. It costs a handful of declined pushdowns at near-zero / near-tolerance
+  bounds, where pushdown was already marginal.
+  `ParquetRowGroupPruningTest.testFloatColumnInclusiveOpCertifiesAgainstCompiledF32Filter` and
+  `testFloatColumnPushdownMatchesNativeUnderEitherComparator` are the regression tests; the second
+  pins the three witnesses and passes against the committed binary and a rebuilt one alike.
+
+  **Where that invariant stops.** Only the FLOAT bound arm carries
+  `isRowKeptByCompiledFloatFilter`. The integral stats path - `integralBound` /
+  `tryPutIntFromDouble`, taken by INT, BYTE and SHORT - models the DOUBLE-width filters alone, and
+  that is deliberate. The f32 arm is reachable from an integral column (`serializeNumber` pairs an
+  I4 leaf with an F4 bound, so `anint < 1.5` compiles to `(f32 1.5D)(i32 anint)(<)`), but leaving it
+  unmodelled makes the pruner agree with the JAVA filter, which drops those rows too; only the f32
+  arm keeps them, and there it is the side that disagrees with every other filter QuestDB runs. The
+  divergence window is one open interval about 4.8e-18 wide per sign and needs a row group whose
+  integral max (resp. min) is exactly 0, so no workload reaches it. Widening the integral arm to the
+  f32 comparator would move the pruner toward a filter the Java one contradicts - the wrong
+  direction.
+
+One difference survives and is unrelated to inclusiveness: `FLOAT_EPSILON` is
+`(float) DOUBLE_TOLERANCE`, i.e. `1.000000013351432e-10`, slightly larger than the `1e-10` the Java
+filter uses. Any shape that runs the compiled filter's f32 arm - an INT leaf against a fractional
+bound, via `serializeNumber`'s I4 arm - therefore still disagrees with the Java filter for a value
+that lands between the two tolerances.
+`CompiledFilterRegressionTest.testIntColumnVsFloatToleranceBoundConstantStillDivergesOnF32Width`
+pins it.
+
+### Constant reassociation
+
+`ExpressionNode.reassociateConstants` regroups a constant pair only when
+`isReassociationSafe`. Integer pairs are excluded, because an intermediate can land on a NULL
+sentinel. A **quoted** literal counts as widening for this purpose: overload resolution still
+casts `'02'` to a number, so `l * '02' * 4` is integer arithmetic and regrouping it would
+change the result exactly as `l * 2 * 4` would.
+
+Concatenation never reaches that guard. `SqlParser.rewriteConcat` converts every `||` `OPERATION`
+node into a `concat` `FUNCTION` node before the expression leaves the parser, and `addConcatArgs`
+folds a nested `concat` into its parent's argument list, so `(A || B) || C`, `A || (B || C)` and
+`A || B || C` all arrive at `FunctionParser` as one `concat(A, B, C)` node. `reassociateConstants`
+runs strictly after that rewrite - `FunctionParser.parseFunction` is its only production caller -
+and it regroups only a binary `OPERATION` pair: a two-argument `concat` fails its
+`type != OPERATION` check, and a wider one takes the n-ary arm, which recurses into `args` without
+restructuring the node. A `||` pair is never a regrouping candidate in the first place. The
+flattening is what makes concatenation associative: both bracketings collapse to the same argument
+list. It says nothing about commutativity, and `concat` is not commutative - the arguments keep
+their source order.
+
+`rewriteConcat` reaches every position whose node `FunctionParser` receives directly.
+`rewriteKnownStatements` runs it over the whole expression tree with `PostOrderTreeTraversalAlgo`,
+which descends through `lhs` / `rhs` and through an n-ary node's `args`, so function arguments,
+`CASE` arms and `IN` lists come with it. Every `SqlParser.expr(...)` overload that returns an
+`ExpressionNode` ends in that rewrite, and the join-`ON` path calls it in both of its branches. A
+window's own sub-expressions hang off `WindowExpression` rather than off `lhs` / `rhs`, so
+`rewriteWindowSubExpression` runs the same traversal battery over `PARTITION BY`, `ORDER BY` and
+the frame bounds - for an inline `OVER (...)` and for a named `WINDOW w AS (...)` alike.
+`expr(...)` parses a `DECLARE` variable's value itself, so substituting that variable splices in
+an already-rewritten subtree.
+
+One production position escapes the rewrite: a live view's `ANCHOR EXPRESSION`.
+`ExpressionParser.parseWindowExpr` builds that node by calling `parseExpr` directly, and
+`SqlParser.rewriteWindowExpression` then walks only `PARTITION BY`, `ORDER BY`, `rowsLoExpr` and
+`rowsHiExpr` - never `WindowExpression.getAnchorExpression()`. `copySpecFrom` does not carry the
+anchor across either. A `||` written there therefore stays an `OPERATION` node on the model.
+
+**The text round-trip that follows is load-bearing - do not optimise it away.**
+`SqlParser.captureAnchoredWindow` renders the anchor node back to SQL with `toSink` and stores the
+text in `LvAnchorSpec.anchorExpressionSql`. Both consumers - `CairoEngine`'s CREATE-time pass-2
+anchor validator and `LiveViewRefreshJob.ensureAnchorFunction` - re-parse that text through
+`SqlCompilerImpl.parseExpression`, which calls the rewriting
+`parser.expr(lexer, (IQueryModel) null, this)` overload, and only then hand the result to
+`FunctionParser.parseFunction`. Nothing hands the raw anchor node to `FunctionParser`:
+`SqlParser`'s other read of `getAnchorExpression()` drives AST-level validation alone. A
+maintainer who deletes the round-trip and passes `w.getAnchorExpression()` straight to
+`parseFunction` would feed a `||` `OPERATION` node to `reassociateConstants` - exactly what this
+section rules out.
+
+Two `parseExpr` callers skip the rewrites. `ExpressionParser.parseWindowExpr` is the production one;
+`rewriteWindowExpression` re-applies them to every window sub-expression it does reach, which leaves
+`ANCHOR EXPRESSION` as the only unrewritten result. The other is the `@TestOnly`
+`SqlParser.expr(lexer, listener, callback)` overload, which only
+`SqlCompiler.testParseExpression(CharSequence, ExpressionParserListener)` reaches.
+
+That distinction matters to the tests. `ConstantReassociationTest.assertReassociation` uses the
+`@TestOnly` overload, so it is faithful only for the operators no rewrite touches - the arithmetic
+and boolean ones. The concatenation cases use `assertPostRewriteReassociation`, which routes
+through `testParseExpression(CharSequence, IQueryModel)` and therefore asserts against the same
+`concat` tree production builds.
+
 ## NULL Sentinels by Type
 
 | Type | Null Sentinel | Notes |
@@ -372,3 +650,6 @@ must stay in sync.
 | `PageFrameMemoryRecord.java` | Query path: per-row lazy conversion at accessor level (zero-GC) |
 | `row_groups.rs` | Rust: type dispatch, `post_convert()`, boolean expansion, date/timestamp scaling |
 | `decode.rs` | Rust: physical parquet type → decoded values |
+| `CompiledFilterIRSerializer.java` | `markNarrowConstCmpWidenPair`, `maybeWidenCmpConstOperand`, `narrowKeptConstants`, `isFloatLeaf` — the JIT's surviving constant-width compensations |
+| `IntWidthWrapTest.java` (test) | The spelling matrix for the wrap-always rule, and the #4752 cost |
+| `ExpressionNode.java` (griffin/model) | `cacheConstantFold()` / `isReassociationSafe()` — the constant-reassociation guard |

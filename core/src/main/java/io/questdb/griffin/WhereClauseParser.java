@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
@@ -155,7 +156,20 @@ public final class WhereClauseParser implements Mutable {
     private final ObjList<Function> tmpFunctions = new ObjList<>();
     private boolean allKeyExcludedValuesAreKnown = true;
     private boolean allKeyValuesAreKnown = true;
+    // Query-lifetime node pool passed in by the caller (the compiler's sqlNodePool). Used to rebuild
+    // a residual dateadd predicate when an and_offset pushdown cannot be fully represented. The nodes
+    // it produces are spliced into the query model's where-clause AST, so they must be allocated from
+    // the same pool that owns that AST rather than a parser-local pool cleared on the next pass.
+    private ObjectPool<ExpressionNode> expressionNodePool;
     private boolean isConstFunction;
+    // True while analyzeAndOffset is descending into its wrapped predicate, so a NESTED and_offset
+    // knows its shift does not sit on the designated timestamp itself. moveWhereInsideSubQueries
+    // wraps once per annotated model, and the last wrap applied - the innermost model's - ends up
+    // outermost, so only the outermost node shifts the raw column. An inner node's input is that
+    // node's output, which can exceed the driver's designated-timestamp ceiling by the accumulated
+    // shifts; the wrap guard must fall back to Long.MAX_VALUE there. Mirrors
+    // MonotonicTimestampFunction.shiftInputCeiling, which asks the same question of a function chain.
+    private boolean isInsideAndOffset;
     private boolean noIndex;
     private CharSequence preferredKeyColumn;
     private int reentryDepth;
@@ -232,6 +246,8 @@ public final class WhereClauseParser implements Mutable {
         clearExcludedKeys();
         timestamp = null;
         preferredKeyColumn = null;
+        expressionNodePool = null;
+        isInsideAndOffset = false;
         resolvedBoundFunc = null;
         allKeyValuesAreKnown = true;
         allKeyExcludedValuesAreKnown = true;
@@ -247,9 +263,10 @@ public final class WhereClauseParser implements Mutable {
             @NotNull FunctionParser functionParser,
             @NotNull RecordMetadata metadata,
             @NotNull SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
-            @NotNull TableReader reader,
-            boolean noIndex
+            boolean isKeyColumnSuppressed,
+            @Nullable TableReader reader,
+            boolean noIndex,
+            @NotNull ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
         final int depth = reentryDepth++;
         SavedState saved = null;
@@ -273,9 +290,10 @@ public final class WhereClauseParser implements Mutable {
                     functionParser,
                     metadata,
                     executionContext,
-                    latestByMultiColumn,
+                    isKeyColumnSuppressed,
                     reader,
-                    noIndex
+                    noIndex,
+                    expressionNodePool
             );
         } catch (Throwable th) {
             failure = th;
@@ -306,9 +324,10 @@ public final class WhereClauseParser implements Mutable {
             @NotNull FunctionParser functionParser,
             @NotNull RecordMetadata metadata,
             @NotNull SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
-            @NotNull TableReader reader,
-            boolean noIndex
+            boolean isKeyColumnSuppressed,
+            @Nullable TableReader reader,
+            boolean noIndex,
+            @NotNull ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
         clearKeys();
         clearExcludedKeys();
@@ -316,6 +335,7 @@ public final class WhereClauseParser implements Mutable {
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.noIndex = noIndex;
         this.preferredKeyColumn = preferredKeyColumn;
+        this.expressionNodePool = expressionNodePool;
         // Live view base SELECT compilation suppresses indexed-symbol key extraction so the
         // planner emits a plain FilteredRecordCursorFactory shape that the incremental refresh
         // path already handles. Without this, an indexed-symbol equality predicate would push
@@ -324,83 +344,91 @@ public final class WhereClauseParser implements Mutable {
         this.useIndexedSymbolFilters = !executionContext.isLiveViewCompile();
 
         IntrinsicModel model = models.next();
-        int timestampType = reader.getMetadata().getTimestampType();
-        model.of(timestampType, reader.getPartitionedBy(), executionContext.getCairoEngine().getConfiguration());
+        int timestampType = timestampTypeOf(m, reader);
+        model.of(timestampType, partitionByOf(reader), executionContext.getCairoEngine().getConfiguration());
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        try {
 
-        // pre-order iterative tree traversal
-        // see: http://en.wikipedia.org/wiki/Tree_traversal
+            // pre-order iterative tree traversal
+            // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        if (removeAndIntrinsics(
-                timestampDriver,
-                translator,
-                model,
-                node,
-                m,
-                functionParser,
-                metadata,
-                executionContext,
-                latestByMultiColumn, reader)) {
-            createKeyValueBindVariables(model, functionParser, executionContext);
-            return model;
-        }
+            if (removeAndIntrinsics(
+                    timestampDriver,
+                    translator,
+                    model,
+                    node,
+                    m,
+                    functionParser,
+                    metadata,
+                    executionContext,
+                    isKeyColumnSuppressed, reader)) {
+                createKeyValueBindVariables(model, functionParser, executionContext);
+                return model;
+            }
 
-        ExpressionNode root = node;
-        stack.clear();
-        while (!stack.isEmpty() || node != null) {
-            if (node != null) {
-                // tokenless nodes (e.g. sub-queries used as boolean predicates) are not
-                // intrinsic candidates; fall through to the poll branch so they stay in
-                // the residual filter
-                if (node.token != null && isAndKeyword(node.token)) {
-                    if (!removeAndIntrinsics(
-                            timestampDriver,
-                            translator,
-                            model,
-                            node.rhs,
-                            m,
-                            functionParser,
-                            metadata,
-                            executionContext,
-                            latestByMultiColumn,
-                            reader)) {
-                        // Check if rhs is an OR of timestamp intrinsics
-                        if (!tryExtractOrTimestampIntrinsics(timestampDriver, model, node.rhs, functionParser, metadata, executionContext)) {
-                            stack.push(node.rhs);
+            ExpressionNode root = node;
+            stack.clear();
+            while (!stack.isEmpty() || node != null) {
+                if (node != null) {
+                    // tokenless nodes (e.g. sub-queries used as boolean predicates) are not
+                    // intrinsic candidates; fall through to the poll branch so they stay in
+                    // the residual filter
+                    if (node.token != null && isAndKeyword(node.token)) {
+                        if (!removeAndIntrinsics(
+                                timestampDriver,
+                                translator,
+                                model,
+                                node.rhs,
+                                m,
+                                functionParser,
+                                metadata,
+                                executionContext,
+                                isKeyColumnSuppressed,
+                                reader)) {
+                            // Check if rhs is an OR of timestamp intrinsics
+                            if (!tryExtractOrTimestampIntrinsics(timestampDriver, model, node.rhs, functionParser, metadata, executionContext)) {
+                                stack.push(node.rhs);
+                            }
                         }
-                    }
-                    if (removeAndIntrinsics(
-                            timestampDriver,
-                            translator,
-                            model,
-                            node.lhs,
-                            m,
-                            functionParser,
-                            metadata,
-                            executionContext,
-                            latestByMultiColumn,
-                            reader)) {
-                        node = null;
-                    } else if (tryExtractOrTimestampIntrinsics(timestampDriver, model, node.lhs, functionParser, metadata, executionContext)) {
-                        // lhs was an OR of timestamp intrinsics, successfully extracted
-                        node = null;
+                        if (removeAndIntrinsics(
+                                timestampDriver,
+                                translator,
+                                model,
+                                node.lhs,
+                                m,
+                                functionParser,
+                                metadata,
+                                executionContext,
+                                isKeyColumnSuppressed,
+                                reader)) {
+                            node = null;
+                        } else if (tryExtractOrTimestampIntrinsics(timestampDriver, model, node.lhs, functionParser, metadata, executionContext)) {
+                            // lhs was an OR of timestamp intrinsics, successfully extracted
+                            node = null;
+                        } else {
+                            node = node.lhs;
+                        }
+                    } else if (node.token != null && isOrKeyword(node.token) && tryExtractOrTimestampIntrinsics(timestampDriver, model, node, functionParser, metadata, executionContext)) {
+                        // Entire OR tree was extracted as timestamp intrinsics
+                        node = stack.poll();
                     } else {
-                        node = node.lhs;
+                        node = stack.poll();
                     }
-                } else if (node.token != null && isOrKeyword(node.token) && tryExtractOrTimestampIntrinsics(timestampDriver, model, node, functionParser, metadata, executionContext)) {
-                    // Entire OR tree was extracted as timestamp intrinsics
-                    node = stack.poll();
                 } else {
                     node = stack.poll();
                 }
-            } else {
-                node = stack.poll();
             }
+            applyKeyExclusions(translator, functionParser, metadata, executionContext, model);
+            model.filter = collapseIntrinsicNodes(root);
+            createKeyValueBindVariables(model, functionParser, executionContext);
+            return model;
+        } catch (Throwable th) {
+            // A conjunct that already handed a runtime-bound function to the model is unwound past by
+            // the throw, and nothing else holds a reference to it. Release the model's interval filters
+            // on the way out rather than leaving them for whenever the pool hands this slot out again.
+            model.clearIntervalFilters();
+            throw th;
         }
-        applyKeyExclusions(translator, functionParser, metadata, executionContext, model);
-        model.filter = collapseIntrinsicNodes(root);
-        createKeyValueBindVariables(model, functionParser, executionContext);
-        return model;
     }
 
     /**
@@ -447,6 +475,7 @@ public final class WhereClauseParser implements Mutable {
                 || typeTag == ColumnType.DATE
                 || typeTag == ColumnType.STRING
                 || typeTag == ColumnType.SYMBOL
+                || typeTag == ColumnType.INT
                 || typeTag == ColumnType.LONG
                 || typeTag == ColumnType.VARCHAR;
     }
@@ -472,6 +501,8 @@ public final class WhereClauseParser implements Mutable {
             return varchar == null
                     ? Numbers.LONG_NULL
                     : parseStringAsTimestamp(timestampDriver, varchar.asAsciiCharSequence(), functionPosition, detectIntervals);
+        } else if (ColumnType.tagOf(type) == ColumnType.INT) {
+            return Numbers.intToLong(function.getInt(null));
         } else {
             return timestampDriver.from(function.getTimestamp(null), ColumnType.getTimestampType(type));
         }
@@ -499,7 +530,13 @@ public final class WhereClauseParser implements Mutable {
      * Checks if a symbol column with idx index has more distinct values
      * or has higher capacity than the current key column.
      */
-    private static boolean isMoreSelective(IntrinsicModel model, RecordMetadata meta, TableReader reader, int idx) {
+    private static boolean isMoreSelective(IntrinsicModel model, RecordMetadata meta, @Nullable TableReader reader, int idx) {
+        if (reader == null) {
+            // The WAL serialisation compile extracts without a reader, so symbol counts are out of
+            // reach. This only picks which indexed symbol drives the scan and that scan is never
+            // generated on that path, so keeping the column already chosen is the neutral answer.
+            return false;
+        }
         SymbolMapReader colReader = reader.getSymbolMapReader(idx);
         SymbolMapReader keyReader = reader.getSymbolMapReader(meta.getColumnIndex(model.keyColumn));
         int colCount = colReader.getSymbolCount();
@@ -553,6 +590,20 @@ public final class WhereClauseParser implements Mutable {
         }
     }
 
+    /**
+     * The partition scheme the extracted intervals will be evaluated against, or
+     * {@link PartitionBy#NONE} when there is no reader to ask.
+     * <p>
+     * A null reader means the WAL serialisation compile, which runs the extraction purely to
+     * validate the WHERE clause and drops the model without calling
+     * {@link IntrinsicModel#buildIntervalModel()}. The partition scheme reaches nothing else -
+     * {@code RuntimeIntervalModelBuilder} stores it and hands it to the model it builds - so the
+     * validation run has no use for it.
+     */
+    private static int partitionByOf(@Nullable TableReader reader) {
+        return reader != null ? reader.getPartitionedBy() : PartitionBy.NONE;
+    }
+
     private static void revertNodes(ObjList<ExpressionNode> nodes) {
         for (int n = 0, k = nodes.size(); n < k; n++) {
             nodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
@@ -599,11 +650,22 @@ public final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         // and_offset args are stored in reverse order: [offset, unit, predicate]
         // This matches how ExpressionNode.toSink renders function args
+        //
+        // SqlOptimiser#wrapInAndOffset always builds [CONSTANT int, CONSTANT quoted-char, predicate],
+        // so no OPTIMISER-inserted wrapper can take the malformed-shape returns below. They are still
+        // reachable, because intrinsicOps dispatches and_offset on its token alone and a user can
+        // write one by hand. Those arms deliberately leave the node for the function compiler, which
+        // reports "unknown function name: and_offset(...)" - the correct answer for a hand-written
+        // call, since and_offset is an internal pseudo-function with no FunctionFactory and no public
+        // arity. The leaked-internal-name problem this guards against is the opposite case: a wrapper
+        // the optimiser inserted into a query that never mentioned and_offset. Those are well-formed
+        // by construction and are rebuilt below, including the unknown-unit arm, whose unit is the one
+        // value the optimiser does not validate.
         ObjList<ExpressionNode> args = node.args;
         if (args.size() != 3) {
             return false;
@@ -612,6 +674,21 @@ public final class WhereClauseParser implements Mutable {
         ExpressionNode predicate = args.getQuick(2);
         ExpressionNode unitNode = args.getQuick(1);
         ExpressionNode offsetNode = args.getQuick(0);
+
+        // Only a predicate over the designated timestamp can become an interval. SqlOptimiser only
+        // ever wraps one, but intrinsicOps dispatches and_offset on its token alone, so a
+        // hand-written call over any other column reaches here too. The analysis below would then
+        // consume the conjunct - analyzeEquals0 sets tempModel.keyColumn without applying an
+        // interval, and the merge reports full representation - so the predicate would vanish and
+        // the query would silently return rows that fail it.
+        //
+        // Declining is not enough: the stranded-wrapper rebuild would turn the call into a dateadd
+        // residual over a non-timestamp column, which either fails with a confusing cast error or
+        // silently applies a time offset to a plain number. and_offset is internal, with no
+        // FunctionFactory and no public arity, so reject the call outright and say so.
+        if (!referencesTimestamp(predicate)) {
+            throw SqlException.$(node.position, "unknown function name: ").put(node.token);
+        }
 
         // Parse unit character - must be a constant single-character token
         // Valid forms: 'h' (quoted single char) or h (unquoted single char)
@@ -646,44 +723,125 @@ public final class WhereClauseParser implements Mutable {
         // Get the add method for this unit from the timestamp driver
         TimestampDriver.TimestampAddMethod addMethod = timestampDriver.getAddMethod(unit);
         if (addMethod == null) {
-            return false;  // Unknown unit
+            // Unknown unit. SqlOptimiser's parseUnitCharacter accepts any single character, so a
+            // unit that dateadd itself rejects still reaches here inside a wrapper. Rebuild the
+            // residual instead of bailing with the wrapper intact: the filter paths that compile
+            // intrinsicModel.filter directly - indexed symbol, LATEST ON - never run the stranded
+            // wrapper rebuild, so they would surface the internal "unknown function name:
+            // and_offset" instead of the dateadd error the non-indexed path reports. No temp model
+            // exists yet at this point, so there is nothing to free. The rebuilt dateadd carries the
+            // bad unit to the function compiler, which reports "invalid time period".
+            rebuildAndOffsetResidual(node, predicate, unitToken, -offsetValue);
+            return false;
         }
+
+        // Calendar months and years clamp the day of month - addMonths(2022-03-31, -1) and
+        // addMonths(2022-03-28, -1) both land on 2022-02-28 - so the shift stops being injective and
+        // cannot be inverted by shifting the bounds back. It also stops being MONOTONE: the clamp
+        // discards the day but keeps the time of day, so addMonths(2022-03-28T00:00:00.000001, -1)
+        // comes out ABOVE addMonths(2022-03-29T00:00:00, -1) even though its input is below. That
+        // rules out deciding the clamp by probing a neighbouring tick. Every other unit adds a fixed
+        // number of ticks and is a bijection, as is a zero offset. See the merge below for what the
+        // non-injective case costs: a widened interval that must stay behind a residual filter.
+        final boolean isInjective = offsetValue == 0 || (unit != 'M' && unit != 'y');
 
         // Create a temporary model to extract intervals from the inner predicate
         IntrinsicModel tempModel = models.next();
-        int timestampType = reader.getMetadata().getTimestampType();
-        tempModel.of(timestampType, reader.getPartitionedBy(), executionContext.getCairoEngine().getConfiguration());
+        int timestampType = timestampTypeOf(m, reader);
+        tempModel.of(timestampType, partitionByOf(reader), executionContext.getCairoEngine().getConfiguration());
 
         // Process the inner predicate recursively
-        boolean extracted = removeAndIntrinsics(
-                timestampDriver,
-                translator,
-                tempModel,
-                predicate,
-                m,
-                functionParser,
-                metadata,
-                executionContext,
-                latestByMultiColumn,
-                reader
-        );
+        final boolean isNestedAndOffset = isInsideAndOffset;
+        boolean isExtracted;
+        isInsideAndOffset = true;
+        try {
+            isExtracted = removeAndIntrinsics(
+                    timestampDriver,
+                    translator,
+                    tempModel,
+                    predicate,
+                    m,
+                    functionParser,
+                    metadata,
+                    executionContext,
+                    isKeyColumnSuppressed,
+                    reader
+            );
+        } finally {
+            isInsideAndOffset = isNestedAndOffset;
+        }
 
-        if (predicate.intrinsicValue == IntrinsicModel.FALSE
-                || tempModel.intrinsicValue == IntrinsicModel.FALSE) {
+        if (tempModel.intrinsicValue == IntrinsicModel.FALSE) {
+            // The inner predicate is a contradiction (e.g. "ts != ts", folded by analyzeNotEquals0),
+            // so the offset shift of its empty row set is empty too, whatever the offset. Consuming
+            // the predicate here means nothing else frees the temp model, so clear it first.
+            //
+            // Only the model's FALSE means a contradiction. The predicate node's FALSE does not: the
+            // NULL-keyword arms of analyzeEquals0/analyzeNotEquals0 set it on the node purely to mark
+            // the bound as not extractable, then return false to leave the predicate as a residual
+            // filter. Reading that marker as a contradiction empties "ts != NULL", which every
+            // non-null row satisfies.
+            tempModel.clearIntervalFilters();
             model.intersectEmpty();
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         }
 
-        if (extracted || tempModel.hasIntervalFilters()) {
+        if (isExtracted || tempModel.hasIntervalFilters()) {
             // Merge directly from the temp model without allocating an intermediate RuntimeIntervalModel.
             // This applies the offset to each interval boundary using the timestamp driver's add method,
-            // which correctly handles variable-length units like months and years.
-            model.mergeIntervalModelWithAddMethod(tempModel, addMethod, offsetValue);
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
+            // which correctly handles variable-length units like months and years. Consume the predicate
+            // only when the merge fully represents it as an interval; otherwise leave it as a residual
+            // filter so a source it cannot push down (e.g. multiple disjoint intervals that must union,
+            // or a dynamic bound) still filters correctly.
+            // Only the outermost wrapper shifts the designated timestamp itself, so only it may use
+            // the driver's storage ceiling to decide whether the forward dateadd can wrap a real row
+            // into the requested range.
+            final long shiftInputCeiling = isNestedAndOffset
+                    ? Long.MAX_VALUE
+                    : timestampDriver.getMaxDesignatedTimestamp();
+            if (model.mergeIntervalModelWithAddMethod(tempModel, addMethod, offsetValue, isInjective, shiftInputCeiling)) {
+                if (isExtracted && isInjective) {
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
+                }
+                // The merge applied a WIDENED (superset) interval, so consuming the predicate would
+                // return rows that fail it. Keep the interval for pruning and rebuild the predicate
+                // so it still re-checks each row. Two analyses land here:
+                // - removeAndIntrinsics declined but still left intervals behind, as
+                //   analyzeMonotonicTimestamp deliberately does. A lossy cast bound is the reachable
+                //   case - ts::timestamp truncates a TIMESTAMP_NS column, so the preimage of the
+                //   bound is wider than the bound itself.
+                // - the offset unit is not injective ('M', 'y'), so mergeIntervalModelWithAddMethod
+                //   widened the upper boundary to cover the timestamps the day-of-month clamp folds
+                //   onto it. Those rows satisfy the predicate and must not be scanned away.
+                // The merge consumed tempModel, so do not clear it again here.
+                rebuildAndOffsetResidual(node, predicate, unitToken, -offsetValue);
+                return false;
+            }
         }
 
+        // The offset predicate could not be fully represented as an interval scan (e.g. a multi-interval
+        // union over an already-dynamic model). The and_offset wrapper is an internal pseudo-function
+        // with no FunctionFactory, so leaving it in the residual filter would fail to compile with
+        // "unknown function name: and_offset". Rewrite the node in place into an equivalent, compilable
+        // residual dateadd(unit, stride, source_ts) <op> bound. The stored offset is the inverse of the
+        // original dateadd stride (see SqlOptimiser), so the reconstructed dateadd uses the negated
+        // offset to restore the original virtual-column semantics.
+        //
+        // mergeIntervalModelWithAddMethod reported failure without consuming tempModel, so any dynamic
+        // bound Function that removeAndIntrinsics compiled into tempModel's dynamicRangeList is still
+        // owned here. The residual is rebuilt from the predicate AST (re-compiled later), so that temp
+        // Function is dead - free it now instead of leaving it orphaned until the pool slot is reused.
+        //
+        // Reachable despite SqlOptimiser's isStaticTimestampPredicate() gate, which admits no bound
+        // that resolves at execution time: and_offset is registered in intrinsicOps by TOKEN and
+        // dispatched with no check of where the node came from, so a hand-written and_offset in a
+        // WHERE clause arrives here having never passed that gate, carrying whatever bound the user
+        // wrote. See testHandWrittenAndOffsetDynamicBoundFreesTempModel, which leaks 1 KiB without
+        // this call.
+        tempModel.clearIntervalFilters();
+        rebuildAndOffsetResidual(node, predicate, unitToken, -offsetValue);
         return false;
     }
 
@@ -762,7 +920,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         checkNodeValid(node);
@@ -776,7 +934,7 @@ public final class WhereClauseParser implements Mutable {
                 m,
                 functionParser,
                 executionContext,
-                latestByMultiColumn,
+                isKeyColumnSuppressed,
                 reader
         )
                 ||
@@ -790,7 +948,7 @@ public final class WhereClauseParser implements Mutable {
                         m,
                         functionParser,
                         executionContext,
-                        latestByMultiColumn,
+                        isKeyColumnSuppressed,
                         reader
                 );
     }
@@ -805,7 +963,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         if (nodesEqual(a, b)) {
@@ -853,7 +1011,7 @@ public final class WhereClauseParser implements Mutable {
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                        if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, m, latestByMultiColumn)) {
+                        if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
                                 if (!isCorrectType(b.type)) {
@@ -1007,7 +1165,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata metadata,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         if (node.paramCount < 2) {
@@ -1037,8 +1195,8 @@ public final class WhereClauseParser implements Mutable {
             throw SqlException.invalidColumn(col.position, col.token);
         }
         return analyzeInInterval(timestampDriver, model, col, node, false, functionParser, metadata, executionContext, false)
-                || analyzeListOfValues(model, column, metadata, node, latestByMultiColumn, reader, functionParser, executionContext)
-                || analyzeInLambda(model, column, metadata, node, latestByMultiColumn, reader);
+                || analyzeListOfValues(model, column, metadata, node, isKeyColumnSuppressed, reader, functionParser, executionContext)
+                || analyzeInLambda(model, column, metadata, node, isKeyColumnSuppressed, reader);
     }
 
     private boolean analyzeInInterval(
@@ -1212,11 +1370,11 @@ public final class WhereClauseParser implements Mutable {
             CharSequence columnName,
             RecordMetadata m,
             ExpressionNode node,
-            boolean latestByMultiColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         int columnIndex = m.getColumnIndex(columnName);
-        if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, m, latestByMultiColumn)) {
+        if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
             if (preferredKeyColumn != null && !Chars.equalsIgnoreCase(columnName, preferredKeyColumn)) {
                 return false;
             }
@@ -1295,7 +1453,7 @@ public final class WhereClauseParser implements Mutable {
             CharSequence columnName,
             RecordMetadata meta,
             ExpressionNode node,
-            boolean latestByMultiColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader,
             FunctionParser functionParser,
             SqlExecutionContext executionContext
@@ -1304,12 +1462,15 @@ public final class WhereClauseParser implements Mutable {
         boolean newColumn = true;
 
         // Note: "preferred" is an unfortunate name, the actual meaning is a "column from a 'LATEST ON' clause".
-        // Moreover, it is only populated when "latest on" has a single column.
-        // Q: Why are we checking if we have multi-column latest by here?
-        // A: When using multi-column LATEST BY, we cannot use index-based scans because the indexed column
-        //    alone doesn't provide enough information to determine the "latest" record. The "latest" determination
-        //    requires all columns in the LATEST BY clause, so we must disable index usage in such cases.
-        if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, meta, latestByMultiColumn)) {
+        // Moreover, it is only populated when "latest on" has a single SYMBOL column.
+        // Q: Why does isKeyColumnSuppressed gate index usage here?
+        // A: isKeyColumnSuppressed is set whenever no latest-by factory can consume a key intrinsic - a multi-column
+        //    or a non-symbol single-column LATEST ON. A multi-column LATEST BY cannot use index-based scans
+        //    because one indexed column alone does not identify the "latest" record (that needs all the
+        //    LATEST BY columns); a non-symbol key has no symbol index to scan at all. In both cases the
+        //    predicate must stay a residual filter, so disable key extraction. See
+        //    isColumnPreferredOrIndexedAndKeyColumnAllowed for the full rule.
+        if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, meta, isKeyColumnSuppressed)) {
             // check if we already have indexed column, and it is of worse selectivity
             if (model.keyColumn != null
                     && (newColumn = !Chars.equalsIgnoreCase(model.keyColumn, columnName))
@@ -1691,7 +1852,7 @@ public final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
 
@@ -1709,7 +1870,7 @@ public final class WhereClauseParser implements Mutable {
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
-            analyzeNotListOfValues(model, column, m, node, notNode, latestByMultiColumn, reader, functionParser, executionContext);
+            analyzeNotListOfValues(model, column, m, node, notNode, isKeyColumnSuppressed, reader, functionParser, executionContext);
         }
 
         return ok;
@@ -1741,7 +1902,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         if (nodesEqual(a, b) && a.noLeafs() && b.noLeafs()) {
@@ -1783,7 +1944,7 @@ public final class WhereClauseParser implements Mutable {
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                        if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, m, latestByMultiColumn)) {
+                        if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
                                 if (!isCorrectType(b.type)) {
@@ -1880,7 +2041,7 @@ public final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         ExpressionNode node = notNode.rhs;
@@ -1905,7 +2066,7 @@ public final class WhereClauseParser implements Mutable {
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
-            analyzeNotListOfValues(model, column, m, node, notNode, latestByMultiColumn, reader, functionParser, executionContext);
+            analyzeNotListOfValues(model, column, m, node, notNode, isKeyColumnSuppressed, reader, functionParser, executionContext);
         }
 
         return ok;
@@ -1917,14 +2078,14 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             ExpressionNode node,
             ExpressionNode notNode,
-            boolean latestByMultiColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader,
             FunctionParser functionParser,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final int columnIndex = m.getColumnIndex(columnName);
         boolean newColumn = true;
-        if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, m, latestByMultiColumn)) {
+        if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
             if (model.keyColumn != null
                     && (newColumn = !Chars.equalsIgnoreCase(model.keyColumn, columnName))
                     && !isMoreSelective(model, m, reader, columnIndex)) {
@@ -2508,6 +2669,7 @@ public final class WhereClauseParser implements Mutable {
         preferredKeyColumn = state.preferredKeyColumn;
         noIndex = state.noIndex;
         isConstFunction = state.isConstFunction;
+        isInsideAndOffset = state.isInsideAndOffset;
         resolvedBoundConst = state.resolvedBoundConst;
         resolvedBoundFunc = state.resolvedBoundFunc;
         allKeyValuesAreKnown = state.allKeyValuesAreKnown;
@@ -2560,6 +2722,7 @@ public final class WhereClauseParser implements Mutable {
         state.preferredKeyColumn = preferredKeyColumn;
         state.noIndex = noIndex;
         state.isConstFunction = isConstFunction;
+        state.isInsideAndOffset = isInsideAndOffset;
         state.resolvedBoundConst = resolvedBoundConst;
         state.resolvedBoundFunc = resolvedBoundFunc;
         state.allKeyValuesAreKnown = allKeyValuesAreKnown;
@@ -2653,18 +2816,6 @@ public final class WhereClauseParser implements Mutable {
         node.lhs = collapseWithinNodes(collapseWithin0(node.lhs));
         node.rhs = collapseWithinNodes(collapseWithin0(node.rhs));
         return collapseWithin0(node);
-    }
-
-    private boolean columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(
-            CharSequence columnName,
-            RecordMetadata m,
-            boolean latestByMultiColumn
-    ) {
-        return !latestByMultiColumn &&
-                (
-                        Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
-                                || (preferredKeyColumn == null && !noIndex && useIndexedSymbolFilters && m.isColumnIndexed(m.getColumnIndex(columnName)))
-                );
     }
 
     /**
@@ -2977,6 +3128,23 @@ public final class WhereClauseParser implements Mutable {
                 throw SqlException.$(node.position, "Unexpected function type [").put(ColumnType.nameOf(funcType)).put("]");
             }
         }
+    }
+
+    // A column qualifies as the intrinsic key column when key extraction is enabled
+    // (isKeyColumnSuppressed is false) and the column is either the preferred key column or, absent
+    // a preferred one, an indexed column. isKeyColumnSuppressed is set when the caller has no factory
+    // that can consume a key intrinsic - a multi-column or non-symbol LATEST ON - so the
+    // predicate stays a residual filter instead of being silently dropped.
+    private boolean isColumnPreferredOrIndexedAndKeyColumnAllowed(
+            CharSequence columnName,
+            RecordMetadata m,
+            boolean isKeyColumnSuppressed
+    ) {
+        return !isKeyColumnSuppressed &&
+                (
+                        Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
+                                || (preferredKeyColumn == null && !noIndex && useIndexedSymbolFilters && m.isColumnIndexed(m.getColumnIndex(columnName)))
+                );
     }
 
     private boolean isCorrectType(int type) {
@@ -3296,6 +3464,123 @@ public final class WhereClauseParser implements Mutable {
         }
     }
 
+    /**
+     * Rewrites an and_offset pseudo-function node in place into an equivalent, compilable residual
+     * predicate when its timestamp offset cannot be pushed down as an interval scan. The wrapped inner
+     * predicate references the source timestamp column (SqlOptimiser rewrote the virtual alias to the
+     * source column before wrapping), so each such literal is wrapped back in
+     * {@code dateadd(unit, stride, source_ts)} to restore the original {@code tt <op> bound} semantics.
+     * Without this, the internal and_offset node would reach the function compiler and fail with
+     * "unknown function name: and_offset".
+     *
+     * @param node      the and_offset function node to rewrite in place
+     * @param predicate the wrapped inner predicate (and_offset arg 2)
+     * @param unitToken the dateadd period token, e.g. {@code 'h'} (and_offset arg 1)
+     * @param stride    the dateadd stride, i.e. the negated stored (inverse) offset
+     */
+    private void rebuildAndOffsetResidual(ExpressionNode node, ExpressionNode predicate, CharSequence unitToken, int stride) {
+        // Rewrite any nested wrapper first. moveWhereInsideSubQueries wraps once per annotated model
+        // as it pushes the predicate down, so the LAST wrap applied - the innermost model's - ends up
+        // as the OUTERMOST and_offset node. This method therefore sees the innermost model's unit,
+        // and the wrapper it holds carries an outer model's unit that must land further from the
+        // source timestamp. wrapTimestampLiteral only replaces LITERAL nodes, so whichever pass runs
+        // first plants its dateadd at the leaf and the later pass nests around it. Recursing here
+        // rewrites the inner wrapper while the leaf is still a bare literal, giving
+        // dateadd(outer_unit, o2, dateadd(this_unit, o1, ts)); wrapping first would instead yield
+        // dateadd(this_unit, o1, dateadd(outer_unit, o2, ts)), and calendar units do not commute with
+        // fixed-tick units. It also removes the nested wrapper at source, so no and_offset survives
+        // into the residual filter. Mirrors rebuildStrandedAndOffsets, which recurses for this reason.
+        rebuildStrandedAndOffsets(expressionNodePool, predicate, timestamp);
+        // The temp interval extraction may have marked predicate sub-nodes as consumed (intrinsicValue
+        // TRUE); reset them so collapseIntrinsicNodes keeps the whole reconstructed residual. This runs
+        // after the recursion above so a TRUE mark the inner wrapper's copyFrom carried up is cleared too.
+        resetIntrinsicMarks(predicate);
+        // The stride is invariant across the subtree, so format it once here rather than once
+        // per wrapped literal down in the recursion.
+        wrapTimestampLiterals(expressionNodePool, predicate, unitToken, Integer.toString(stride), timestamp);
+        node.copyFrom(predicate);
+    }
+
+    /**
+     * Rewrites every {@code and_offset} pseudo-function node still present in {@code node} into an
+     * equivalent, compilable {@code dateadd(unit, stride, source_ts) <op> bound} residual.
+     * <p>
+     * {@link #analyzeAndOffset} already does this for the wrappers it sees, but it only runs when a
+     * model goes through interval extraction. {@code SqlOptimiser#moveWhereInsideSubQueries} pushes a
+     * wrapper onto whatever nested model it finds, and a model that never reaches interval extraction
+     * (for instance a sub-query carrying a LIMIT) hands the wrapper straight to the function compiler,
+     * which fails with "unknown function name: and_offset" and leaks an internal name to the user.
+     * Calling this immediately before a filter is compiled makes the un-wrapping happen at a layer
+     * every filter passes through, rather than only on the interval-extraction path.
+     * <p>
+     * Rewriting is idempotent: {@code copyFrom} replaces the wrapper with the rebuilt predicate, so a
+     * second pass finds no {@code and_offset} node.
+     */
+    public static void rebuildStrandedAndOffsets(ObjectPool<ExpressionNode> pool, ExpressionNode node, CharSequence designatedTimestamp) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.FUNCTION
+                && Chars.equalsIgnoreCase(node.token, "and_offset")
+                && node.args.size() == 3) {
+            // and_offset args are stored in reverse order: [offset, unit, predicate]
+            final ExpressionNode predicate = node.args.getQuick(2);
+            final ExpressionNode unitNode = node.args.getQuick(1);
+            final ExpressionNode offsetNode = node.args.getQuick(0);
+            // Only rewrite a wrapper whose inner predicate references the designated timestamp - the
+            // shape SqlOptimiser produces, mirroring the analyzeAndOffset guard. A hand-written
+            // and_offset over any other column would otherwise be rewritten into dateadd(...) over that
+            // column, silently treating a non-timestamp value as a timestamp and dropping rows; leave it
+            // for the function compiler to reject as an unknown function name, as master did.
+            if (referencesColumn(predicate, designatedTimestamp)
+                    && unitNode.type == ExpressionNode.CONSTANT
+                    && unitNode.token != null
+                    && !unitNode.token.isEmpty()
+                    && offsetNode.type == ExpressionNode.CONSTANT) {
+                try {
+                    // The stored offset is the inverse of the original dateadd stride, so negate it
+                    // to restore the virtual-column semantics - see analyzeAndOffset.
+                    final int stride = -Numbers.parseInt(offsetNode.token);
+                    rebuildStrandedAndOffsets(pool, predicate, designatedTimestamp);
+                    resetIntrinsicMarks(predicate);
+                    wrapTimestampLiterals(pool, predicate, unitNode.token, Integer.toString(stride), designatedTimestamp);
+                    node.copyFrom(predicate);
+                    return;
+                } catch (NumericException ignore) {
+                    // Not a well-formed wrapper; leave it for the function compiler to reject.
+                }
+            }
+        }
+        rebuildStrandedAndOffsets(pool, node.lhs, designatedTimestamp);
+        rebuildStrandedAndOffsets(pool, node.rhs, designatedTimestamp);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            rebuildStrandedAndOffsets(pool, node.args.getQuick(i), designatedTimestamp);
+        }
+    }
+
+    /**
+     * Recursively reports whether any column literal in {@code node} names {@code columnName}
+     * (case-insensitive, null-safe). Used to gate the stranded and_offset rewrite on the wrapped
+     * predicate actually referencing the designated timestamp.
+     */
+    private static boolean referencesColumn(ExpressionNode node, CharSequence columnName) {
+        if (node == null || columnName == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            return Chars.equalsIgnoreCaseNc(node.token, columnName);
+        }
+        if (referencesColumn(node.lhs, columnName) || referencesColumn(node.rhs, columnName)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (referencesColumn(node.args.getQuick(i), columnName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean referencesTimestamp(ExpressionNode node) {
         if (node == null || timestamp == null) {
             return false;
@@ -3323,7 +3608,7 @@ public final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         if (node.token == null) {
@@ -3333,7 +3618,7 @@ public final class WhereClauseParser implements Mutable {
         }
         return switch (intrinsicOps.get(node.token)) {
             case INTRINSIC_OP_IN ->
-                    analyzeIn(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
+                    analyzeIn(timestampDriver, translator, model, node, m, functionParser, executionContext, isKeyColumnSuppressed, reader);
             case INTRINSIC_OP_GREATER_EQ ->
                     analyzeGreater(timestampDriver, model, node, true, functionParser, metadata, executionContext);
             case INTRINSIC_OP_GREATER ->
@@ -3343,9 +3628,9 @@ public final class WhereClauseParser implements Mutable {
             case INTRINSIC_OP_LESS ->
                     analyzeLess(timestampDriver, model, node, false, functionParser, metadata, executionContext);
             case INTRINSIC_OP_EQUAL ->
-                    analyzeEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
+                    analyzeEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, isKeyColumnSuppressed, reader);
             case INTRINSIC_OP_NOT_EQ ->
-                    analyzeNotEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
+                    analyzeNotEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, isKeyColumnSuppressed, reader);
             case INTRINSIC_OP_NOT -> node.rhs != null && node.rhs.token != null && ((
                     isInKeyword(node.rhs.token) && analyzeNotIn(
                             timestampDriver,
@@ -3356,7 +3641,7 @@ public final class WhereClauseParser implements Mutable {
                             functionParser,
                             metadata,
                             executionContext,
-                            latestByMultiColumn,
+                            isKeyColumnSuppressed,
                             reader
                     ))
                     || (
@@ -3369,14 +3654,14 @@ public final class WhereClauseParser implements Mutable {
                             functionParser,
                             metadata,
                             executionContext,
-                            latestByMultiColumn,
+                            isKeyColumnSuppressed,
                             reader
                     )
             ));
             case INTRINSIC_OP_BETWEEN ->
                     analyzeBetween(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext);
             case INTRINSIC_OP_AND_OFFSET ->
-                    analyzeAndOffset(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext, latestByMultiColumn, reader);
+                    analyzeAndOffset(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext, isKeyColumnSuppressed, reader);
             default -> false;
         };
     }
@@ -3457,6 +3742,19 @@ public final class WhereClauseParser implements Mutable {
 
     private void resetExcludedNodes() {
         revertNodes(keyExclNodes);
+    }
+
+    private static void resetIntrinsicMarks(ExpressionNode node) {
+        if (node == null) {
+            return;
+        }
+        node.intrinsicValue = IntrinsicModel.UNDEFINED;
+        resetIntrinsicMarks(node.lhs);
+        resetIntrinsicMarks(node.rhs);
+        final ObjList<ExpressionNode> args = node.args;
+        for (int i = 0, n = args.size(); i < n; i++) {
+            resetIntrinsicMarks(args.getQuick(i));
+        }
     }
 
     private void resetNodes() {
@@ -3819,6 +4117,81 @@ public final class WhereClauseParser implements Mutable {
         return value;
     }
 
+    /**
+     * The designated timestamp's type, taken from the reader when there is one and from the table
+     * metadata otherwise. Both call sites pass the same metadata the reader would have reported, so
+     * this only matters to the reader-less WAL serialisation compile.
+     */
+    private static int timestampTypeOf(RecordMetadata m, @Nullable TableReader reader) {
+        return reader != null ? reader.getMetadata().getTimestampType() : m.getTimestampType();
+    }
+
+    /**
+     * If {@code child} is the source-timestamp column literal, replaces it with
+     * {@code dateadd(unit, stride, child)}; otherwise descends to wrap nested literals. Returns the
+     * (possibly replaced) child to store back into the parent slot. Only a literal that names
+     * {@code timestampName} is wrapped: the optimiser's own shape references only the source timestamp
+     * (referencesOnlyTimestampAlias), but a hand-written and_offset mixing the timestamp with another
+     * column reaches here too, and offsetting a non-timestamp value would apply dateadd to a plain
+     * number - wrong rows for a numeric column, a cast error for a symbol/string one.
+     */
+    private static ExpressionNode wrapTimestampLiteral(
+            ObjectPool<ExpressionNode> pool,
+            ExpressionNode child,
+            CharSequence unitToken,
+            CharSequence strideToken,
+            CharSequence timestampName
+    ) {
+        if (child == null) {
+            return null;
+        }
+        if (child.type == ExpressionNode.LITERAL) {
+            if (!Chars.equalsIgnoreCaseNc(child.token, timestampName)) {
+                // Not the source timestamp - leave it untouched.
+                return child;
+            }
+            final ExpressionNode strideNode = pool.next().of(
+                    ExpressionNode.CONSTANT, strideToken, 0, child.position);
+            final ExpressionNode unitNode = pool.next().of(
+                    ExpressionNode.CONSTANT, unitToken, 0, child.position);
+            final ExpressionNode dateadd = pool.next().of(
+                    ExpressionNode.FUNCTION, "dateadd", 0, child.position);
+            dateadd.paramCount = 3;
+            // dateadd args are stored in reverse order: [timestamp, stride, unit]
+            dateadd.args.add(child);
+            dateadd.args.add(strideNode);
+            dateadd.args.add(unitNode);
+            return dateadd;
+        }
+        wrapTimestampLiterals(pool, child, unitToken, strideToken, timestampName);
+        return child;
+    }
+
+    /**
+     * Wraps every source-timestamp column literal in the predicate subtree with
+     * {@code dateadd(unit, stride, literal)}. Only literals naming {@code timestampName} are wrapped -
+     * referencesOnlyTimestampAlias (SqlOptimiser) guarantees the optimiser's own shape carries only
+     * those, so this faithfully restores {@code tt = dateadd(unit, stride, source_ts)} there, while a
+     * hand-written and_offset that also references another column leaves that column alone.
+     */
+    private static void wrapTimestampLiterals(
+            ObjectPool<ExpressionNode> pool,
+            ExpressionNode node,
+            CharSequence unitToken,
+            CharSequence strideToken,
+            CharSequence timestampName
+    ) {
+        if (node == null) {
+            return;
+        }
+        node.lhs = wrapTimestampLiteral(pool, node.lhs, unitToken, strideToken, timestampName);
+        node.rhs = wrapTimestampLiteral(pool, node.rhs, unitToken, strideToken, timestampName);
+        final ObjList<ExpressionNode> args = node.args;
+        for (int i = 0, n = args.size(); i < n; i++) {
+            args.setQuick(i, wrapTimestampLiteral(pool, args.getQuick(i), unitToken, strideToken, timestampName));
+        }
+    }
+
     ExpressionNode extractWithin(
             AliasTranslator translator,
             ExpressionNode node,
@@ -3884,6 +4257,7 @@ public final class WhereClauseParser implements Mutable {
         private boolean allKeyExcludedValuesAreKnown;
         private boolean allKeyValuesAreKnown;
         private boolean isConstFunction;
+        private boolean isInsideAndOffset;
         private boolean noIndex;
         private CharSequence preferredKeyColumn;
         private long resolvedBoundConst;

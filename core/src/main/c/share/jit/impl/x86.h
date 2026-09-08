@@ -377,10 +377,31 @@ namespace questdb::x86 {
         return r;
     }
 
+    // QuestDB reads any non-finite floating point value as NULL - Numbers#isNull is an
+    // exponent-bits test, so it covers +/-Infinity as well as NaN - and
+    // DivFloatFunctionFactory / DivDoubleFunctionFactory fold a non-finite quotient to NaN
+    // ("Numbers.isFinite(f) ? f : Float.NaN") so the comparison treats it as NULL rather than
+    // as a very large number. The division has to fold the same way here, or a zero divisor
+    // makes the two filters select different rows: the Java filter reads NaN > 0 as false and
+    // drops the row while a propagated +Infinity > 0 keeps it.
+    //
+    // Only division folds. Mul/Add/Sub deliberately do NOT fold in the Java factories either,
+    // so overflowing to an infinity there already agrees on both paths and must stay that way.
     inline Vec float_div(Compiler &c, const Vec &lhs, const Vec &rhs) {
         Vec r =c.new_xmm_ss();
         c.movss(r, lhs);
         c.divss(r, rhs);
+        // Same exponent-bits test float_cmp_epsilon uses: all ones in the exponent means
+        // +/-Infinity or NaN.
+        Mem NaN = c.new_int32_const(asmjit::ConstPoolScope::kLocal, 0x7fc00000); // float NaN
+        Label l_exit = c.new_label();
+        Gp int_r = c.new_gp32();
+        c.movd(int_r, r);
+        c.and_(int_r, 0x7F800000);
+        c.cmp(int_r, 0x7F800000);
+        c.jne(l_exit);
+        c.movss(r, NaN);
+        c.bind(l_exit);
         return r;
     }
 
@@ -405,10 +426,22 @@ namespace questdb::x86 {
         return r;
     }
 
+    // See float_div: a non-finite quotient folds to NaN so it orders as NULL, matching
+    // DivDoubleFunctionFactory.
     inline Vec double_div(Compiler &c, const Vec &lhs, const Vec &rhs) {
         Vec r =c.new_xmm_sd();
         c.movsd(r, lhs);
         c.divsd(r, rhs);
+        Mem NaN = c.new_int64_const(asmjit::ConstPoolScope::kLocal, 0x7ff8000000000000LL); // double NaN
+        Mem inf_memory = c.new_int64_const(asmjit::ConstPoolScope::kLocal, 0x7FF0000000000000LL);
+        Label l_exit = c.new_label();
+        Gp int_r = c.new_gp64();
+        c.movq(int_r, r);
+        c.and_(int_r, inf_memory);
+        c.cmp(int_r, inf_memory);
+        c.jne(l_exit);
+        c.movsd(r, NaN);
+        c.bind(l_exit);
         return r;
     }
 
@@ -776,7 +809,8 @@ namespace questdb::x86 {
         return r.as<Gp>();
     }
 
-    // (isnan(lhs) && isnan(rhs) || fabs(l - r) < 0.0000000001);
+    // (isnan(lhs) && isnan(rhs) || fabs(l - r) <= 0.0000000001);
+    // The tolerance test is INCLUSIVE, matching Numbers.equals() ("Math.abs(l - r) <= DOUBLE_TOLERANCE").
     inline Gp double_cmp_epsilon(Compiler &c, const Vec &xmm0, const Vec &xmm1, double epsilon, bool eq) {
         c.comment("double_cmp_epsilon_start");
         int64_t nans[] = {0x7fffffffffffffff, 0x7fffffffffffffff}; // double NaN
@@ -813,10 +847,14 @@ namespace questdb::x86 {
         c.movsd(rhs, d);
         c.xor_(r, r);
         c.ucomisd(rhs, lhs);
+        // ucomisd sets CF=1 when rhs < lhs and when the operands are unordered, CF=0 when
+        // rhs > lhs and when rhs == lhs. setae (CF==0) is therefore "epsilon >= |diff|",
+        // the inclusive test, and it still answers false on a NaN diff. setb (CF==1) is its
+        // exact complement and still answers true on a NaN diff, as double_ne_epsilon needs.
         if (eq) {
-            c.seta(r.r8_lo());
+            c.setae(r.r8_lo());
         } else {
-            c.setbe(r.r8_lo());
+            c.setb(r.r8_lo());
         }
         c.bind(l_exit);
         c.comment("double_cmp_epsilon_stop");
@@ -867,10 +905,12 @@ namespace questdb::x86 {
         c.movss(rhs, d);
         c.xor_(r, r);
         c.ucomiss(rhs, lhs);
+        // As in double_cmp_epsilon: setae (CF==0) is the inclusive "epsilon >= |diff|" and
+        // setb (CF==1) its exact complement; both keep the unordered (NaN) answers unchanged.
         if (eq) {
-            c.seta(r.r8_lo());
+            c.setae(r.r8_lo());
         } else {
-            c.setbe(r.r8_lo());
+            c.setb(r.r8_lo());
         }
         c.bind(l_exit);
         c.comment("float_cmp_epsilon_stop");

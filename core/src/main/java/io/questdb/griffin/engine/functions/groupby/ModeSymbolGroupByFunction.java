@@ -192,7 +192,10 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
 
     @Override
     public @Nullable SymbolTable newSymbolTable() {
-        return this;
+        // Delegate, the way valueOf() below does - the values are the argument's, not this
+        // function's. Returning "this" handed the caller something it can free, and freeing it
+        // closed the argument this function is still reading through.
+        return arg.newSymbolTable();
     }
 
     @Override

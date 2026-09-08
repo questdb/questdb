@@ -340,6 +340,16 @@ public final class Os {
     private static void loadLib(String lib) {
         InputStream is = Os.class.getResourceAsStream(lib);
         if (is == null) {
+            if (type == DARWIN && arch == ARCH_X86_64) {
+                // x86-64 (Intel) macOS is not a supported platform: no CI job builds or tests it,
+                // so the jar intentionally bundles no darwin-x86-64 library. Say that, instead of
+                // blaming the package - and instead of shipping a binary nothing ever rebuilds,
+                // which would silently drift out of sync with the Java code.
+                throw new FatalError("QuestDB does not support x86-64 (Intel) macOS, no native library is bundled for it. "
+                        + "Supported platforms: macOS aarch64, Linux x86-64, Linux aarch64, Windows x86-64. "
+                        + "On an Intel Mac, run QuestDB with Docker (questdb/questdb) instead. "
+                        + "On Apple Silicon, check you are not running an x86-64 JDK under Rosetta.");
+            }
             throw new FatalError("Internal error: cannot find " + lib + ", broken package?");
         }
         loadLib(lib, is);
@@ -398,6 +408,11 @@ public final class Os {
                 throw new Error("Unsupported OS: " + osName);
             }
 
+            // Production layout: /io/questdb/bin/<os>-<arch>/. The directories that exist are
+            // exactly the platforms CI builds, tests and ships: darwin-aarch64, linux-x86-64,
+            // linux-aarch64 and windows-x86-64 -- OsTest#testOnlySupportedPlatformNativeLibsAreShipped
+            // pins that set. Any other combination -- darwin-x86-64 above all -- resolves to a
+            // missing resource, and loadLib() below reports it as an unsupported platform.
             String prdLibRoot = "/io/questdb/bin/" + name + '-' + archName + '/';
             String devCXXLibRoot = "/io/questdb/bin-local/";
             String cxxLibName = "libquestdb" + outputLibExt;

@@ -25,17 +25,18 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.NullRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
-import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -79,7 +80,7 @@ public class ExtraNullColumnRecord implements Record {
 
     @Override
     public long getBinLen(int col) {
-        return col < columnSplit ? base.getBinLen(col) : 0;
+        return col < columnSplit ? base.getBinLen(col) : TableUtils.NULL_LEN;
     }
 
     @Override
@@ -209,12 +210,16 @@ public class ExtraNullColumnRecord implements Record {
 
     @Override
     public Long256 getLong256A(int col) {
-        return col < columnSplit ? base.getLong256A(col) : Long256NullConstant.INSTANCE;
+        // Return Long256Impl.NULL_LONG256, not Long256NullConstant.INSTANCE: the latter is a Long256
+        // but not a Long256Impl, so Long256Impl.isNull (CountLong256GroupByFunction) and the pgwire
+        // binary path (PGUtils.calculateColumnBinSize) crash on the unchecked (Long256Impl) cast in
+        // Long256Impl.equals. Matches the sibling HorizonJoinRecord / MultiHorizonJoinRecord.
+        return col < columnSplit ? base.getLong256A(col) : Long256Impl.NULL_LONG256;
     }
 
     @Override
     public Long256 getLong256B(int col) {
-        return col < columnSplit ? base.getLong256B(col) : Long256NullConstant.INSTANCE;
+        return col < columnSplit ? base.getLong256B(col) : Long256Impl.NULL_LONG256;
     }
 
     @Override
@@ -244,7 +249,7 @@ public class ExtraNullColumnRecord implements Record {
 
     @Override
     public int getStrLen(int col) {
-        return col < columnSplit ? base.getStrLen(col) : 0;
+        return col < columnSplit ? base.getStrLen(col) : TableUtils.NULL_LEN;
     }
 
     @Override
@@ -279,7 +284,7 @@ public class ExtraNullColumnRecord implements Record {
 
     @Override
     public int getVarcharSize(int col) {
-        return col < columnSplit ? base.getVarcharSize(col) : 0;
+        return col < columnSplit ? base.getVarcharSize(col) : TableUtils.NULL_LEN;
     }
 
     public void of(Record record) {
