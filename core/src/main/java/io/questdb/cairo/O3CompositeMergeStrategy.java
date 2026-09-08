@@ -59,7 +59,8 @@ public class O3CompositeMergeStrategy {
     /**
      * Cuts the piece at {@code piece} in two, in place: the lower half keeps the first {@code below} rows and the upper
      * half takes the rest.
-     * @param below rows of the piece below the cut
+     *
+     * @param below     rows of the piece below the cut
      * @param lowerTsHi timestamp of the lower half's LAST row
      * @param upperTsLo timestamp of the upper half's FIRST row
      * @return true when the cut was applied
@@ -86,17 +87,18 @@ public class O3CompositeMergeStrategy {
     /**
      * Assigns every O3 row in {@code [srcOooLo, srcOooHi]} to a piece or to a gap, then emits the action list in
      * timestamp order.
-     * @param bounds piece bounds, {@link #LONGS_PER_BOUND} longs each, ascending by tsLo
+     *
+     * @param bounds               piece bounds, {@link #LONGS_PER_BOUND} longs each, ascending by tsLo
      * @param sortedTimestampsAddr native address of the sorted O3 timestamp index, 16 bytes per entry
-     * @param srcOooLo first O3 row, inclusive
-     * @param srcOooHi last O3 row, inclusive
-     * @param smallPieceThreshold a piece with fewer rows than this absorbs adjacent gap data instead of letting it
-     * found a new piece
-     * @param physicalRows the partition's physical extent BEFORE this commit writes anything, used only to test whether
-     * the last piece owns the shared files' tail; pass a value no piece can reach (e.g.
-     * @param commitMayDedup whether this commit's rows can collide with an existing row.
-     * @param plan output, reused across calls: {@code plan.actions} is reset and repopulated so its {@code size()} IS
-     * the action count, and {@code plan.appendActionIndex} is set to the {@link ActionType#APPEND} action's position,
+     * @param srcOooLo             first O3 row, inclusive
+     * @param srcOooHi             last O3 row, inclusive
+     * @param smallPieceThreshold  a piece with fewer rows than this absorbs adjacent gap data instead of letting it
+     *                             found a new piece
+     * @param physicalRows         the partition's physical extent BEFORE this commit writes anything, used only to test whether
+     *                             the last piece owns the shared files' tail; pass a value no piece can reach (e.g.
+     * @param commitMayDedup       whether this commit's rows can collide with an existing row.
+     * @param plan                 output, reused across calls: {@code plan.actions} is reset and repopulated so its {@code size()} IS
+     *                             the action count, and {@code plan.appendActionIndex} is set to the {@link ActionType#APPEND} action's position,
      * @return {@code plan}, for a fluent call at the use site
      */
     public static Plan computeActions(
@@ -170,9 +172,10 @@ public class O3CompositeMergeStrategy {
      * row and one just above its last. A piece's bounds describe the rows it holds, so the cluster belongs to neither
      * side and lands in the gap between them as a piece of its own - the existing rows around it are never read. A
      * batch that spans the whole piece, which has no outer edge to spare, is cut around all the same.
+     *
      * @param minPieceRows the existing rows a cut has to spare to be worth the piece it makes
-     * @param maxCuts hard cap on the cuts one commit makes, a safety valve above the size rule
-     * @param cutsOut output, cleared first: {@link #LONGS_PER_CUT} longs per cut, ascending
+     * @param maxCuts      hard cap on the cuts one commit makes, a safety valve above the size rule
+     * @param cutsOut      output, cleared first: {@link #LONGS_PER_CUT} longs per cut, ascending
      * @return the number of cuts proposed
      */
     public static int computeCuts(

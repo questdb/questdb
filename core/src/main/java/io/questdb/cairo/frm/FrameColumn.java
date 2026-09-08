@@ -53,6 +53,7 @@ public interface FrameColumn extends Closeable {
 
     /**
      * Appends the MERGE of two sources to this column's tail, interleaved by {@code mergeIndexAddr}.
+     *
      * @param mergeIndexAddr native address of the merge index
      * @param mergeIndexRows number of rows the index describes, which is the number of rows appended
      */

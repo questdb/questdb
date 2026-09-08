@@ -61,8 +61,9 @@ public class FrameAlgebra {
 
     /**
      * Appends the MERGE of two frames to {@code target}'s tail, interleaved by {@code mergeIndexAddr}.
+     *
      * @param mergeIndexAddr native address of the merge index over {@code [source1Lo, source1Hi)} and {@code
-     * [source2Lo, source2Hi)}
+     *                       [source2Lo, source2Hi)}
      */
     public static void merge(
             Frame target,

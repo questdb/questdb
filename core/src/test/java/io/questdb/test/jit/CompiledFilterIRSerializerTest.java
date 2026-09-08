@@ -86,6 +86,12 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public static void setUpStatic2() {
         bindVarFunctions = new ObjList<>();
         irMemory = Vm.getCARWInstance(2048, 1, MemoryTag.NATIVE_JIT);
+        // MemoryCARWImpl is lazy - it takes its native page on the first write, not in the
+        // constructor. Left to itself, whichever test method happens to serialize first inside an
+        // assertMemoryLeak() block pays for this static buffer and reads it back as a 2048-byte
+        // NATIVE_JIT leak; which method that is depends on the JVM's method order, so the failure
+        // moves between platforms. Take the page here, outside every leak check.
+        irMemory.extend(2048);
         serializer = new CompiledFilterIRSerializer();
     }
 

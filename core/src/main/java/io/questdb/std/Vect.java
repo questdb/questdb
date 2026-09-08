@@ -237,6 +237,7 @@ public final class Vect {
 
     /**
      * Column-top aware merge: a data-side row below {@code srcDataTop} is written as {@code pNullValue}.
+     *
      * @param pNullValue address of a single element of the column's width holding its NULL pattern
      */
     public static native void mergeShuffle128BitWithTop(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long srcDataTop, long pNullValue);
@@ -245,6 +246,7 @@ public final class Vect {
 
     /**
      * Column-top aware merge: a data-side row below {@code srcDataTop} is written as {@code pNullValue}.
+     *
      * @param pNullValue address of a single element of the column's width holding its NULL pattern
      */
     public static native void mergeShuffle16BitWithTop(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long srcDataTop, long pNullValue);
@@ -253,6 +255,7 @@ public final class Vect {
 
     /**
      * Column-top aware merge: a data-side row below {@code srcDataTop} is written as {@code pNullValue}.
+     *
      * @param pNullValue address of a single element of the column's width holding its NULL pattern
      */
     public static native void mergeShuffle256BitWithTop(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long srcDataTop, long pNullValue);
@@ -261,6 +264,7 @@ public final class Vect {
 
     /**
      * Column-top aware merge: a data-side row below {@code srcDataTop} is written as {@code pNullValue}.
+     *
      * @param pNullValue address of a single element of the column's width holding its NULL pattern
      */
     public static native void mergeShuffle32BitWithTop(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long srcDataTop, long pNullValue);
@@ -269,6 +273,7 @@ public final class Vect {
 
     /**
      * Column-top aware merge: a data-side row below {@code srcDataTop} is written as {@code pNullValue}.
+     *
      * @param pNullValue address of a single element of the column's width holding its NULL pattern
      */
     public static native void mergeShuffle64BitWithTop(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long srcDataTop, long pNullValue);
@@ -277,6 +282,7 @@ public final class Vect {
 
     /**
      * Column-top aware merge: a data-side row below {@code srcDataTop} is written as {@code pNullValue}.
+     *
      * @param pNullValue address of a single element of the column's width holding its NULL pattern
      */
     public static native void mergeShuffle8BitWithTop(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long srcDataTop, long pNullValue);

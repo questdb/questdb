@@ -172,6 +172,7 @@ public interface ColumnTypeDriver {
      * Column-top aware {@link #o3ColumnMerge}: any row of source 1 (the on-disk column) below {@code srcDataTop} has no
      * entry in the column file and is merged in as this type's NULL. {@code srcAuxAddr1} / {@code srcDataAddr1} are
      * UNBIASED - the file's first stored row is logical row {@code srcDataTop}.
+     *
      * @param srcDataTop the column top of source 1, in rows
      */
     void o3ColumnMergeWithTop(

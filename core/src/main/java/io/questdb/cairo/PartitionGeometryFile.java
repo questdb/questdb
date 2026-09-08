@@ -90,6 +90,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
 
     /**
      * Starts building a record in the scratch buffer.
+     *
      * @param seqTxn the partition's last-modifying seqTxn, or -1 when unknown (non-WAL table)
      */
     public void beginRecord(long writerTxn, long seqTxn, int expectedPieceCount) {

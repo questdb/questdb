@@ -592,6 +592,7 @@ public class TxReader implements Closeable, Mutable {
 
     /**
      * Packs a slot-3 geometry pointer from its components.
+     *
      * @param byteOffset must be 8-byte aligned, as every real geometry record start is
      */
     @TestOnly

@@ -43,6 +43,7 @@ import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -1117,7 +1118,7 @@ public class DecimalGroupByTest extends AbstractCairoTest {
     private void testParallelQuery(String ddl, String query, String expected) {
         try {
             assertMemoryLeak(() -> {
-                final WorkerPool pool = new WorkerPool(() -> 1);
+                final WorkerPool pool = new TestWorkerPool(1, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
 
                 TestUtils.execute(
                         pool,

@@ -1758,8 +1758,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Swaps in a Parquet partition compacted off a {@link TableReader} snapshot, holding this writer only for the
      * metadata-only swap.
+     *
      * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the source partition's generation moved since
-     * the build snapshot
+     *                                                               the build snapshot
      */
     public void swapCompactedParquetPartition(
             long partitionTimestamp,
@@ -3922,8 +3923,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Swaps in a composite partition REWRITE built off a {@link TableReader} snapshot, holding this writer only for the
      * metadata-only swap.
+     *
      * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the source partition's generation moved since
-     * the build snapshot
+     *                                                               the build snapshot
      */
     public void swapCompactedCompositePartition(
             long partitionTimestamp,
@@ -6066,6 +6068,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * {@link #compactPartition0} immediately committed as its own transaction - the shape every existing caller of a
      * REWRITE wants.
+     *
      * @return true when the partition was rewritten and a transaction committed
      */
     private boolean compactPartition(int partitionIndex) {
@@ -6160,6 +6163,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Forces a composite partition into its ordinary, single-piece-at-row-0 shape before an operation that cannot
      * tolerate dead space or a piece above file row 0: CONVERT PARTITION TO PARQUET and {@link
      * #squashSplitPartitions(int, int, int, boolean)} both read each column file as one flat {@code [0, liveRows)}
+     *
      * @param reason short label folded into the exception message if compaction cannot make progress
      */
     private void compactPartitionToPlain(int partitionIndex, String reason) {
@@ -6184,6 +6188,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Compacts ONE partition, reclaiming the dead space a merge-append left in its column files.
+     *
      * @return {@link #COMPACTION_NONE}, {@link #COMPACTION_JOINED}, {@link #COMPACTION_MOVED_TAIL}, {@link
      * #COMPACTION_MADE_PLAIN} or {@link #COMPACTION_REWRITTEN}
      */
@@ -6467,6 +6472,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void configureIndexersForClosedActivePartition() {
         final long lastPartitionTs = txWriter.getLastPartitionTimestamp();
         final long lastPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(lastPartitionTs);
+        final long lastPartitionSize = txWriter.getPartitionRowCountByTimestamp(lastPartitionTs);
         setStateForTimestamp(path, lastPartitionTs);
         final int plen = path.size();
         try {
@@ -6480,6 +6486,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final CharSequence name = metadata.getColumnName(i);
                     final long columnNameTxn = columnVersionWriter.getColumnNameTxn(lastPartitionTs, i);
                     final long columnTop = columnVersionWriter.getColumnTopQuick(lastPartitionTs, i);
+                    // A column with no rows here has nothing to index, and need not even have a
+                    // key file: ADD COLUMN builds one on the active partition, but a restored table
+                    // has none - backup carries no column files for a row-less column and the
+                    // restore's index rebuild skips it on the same test. Opening an absent one
+                    // throws "index does not exist" while the writer is still being constructed,
+                    // and WAL apply suspends the table over it. Drop the writer instead of binding
+                    // one: this is the only thing that rebinds a BITMAP indexer for an
+                    // append-blocked partition, so leaving it alone would strand it on whatever
+                    // EARLIER partition it was last configured for. No truncate - those are another
+                    // partition's files, and this writer is not the one that owns their extent.
+                    if (columnTop >= lastPartitionSize) {
+                        indexer.releaseIndexWriterNoTruncate();
+                        continue;
+                    }
                     indexer.configureWriter(path.trimTo(plen), name, columnNameTxn, columnTop, lastPartitionTs, lastPartitionNameTxn);
                 }
             }
@@ -8131,6 +8151,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * JOIN (PARTITION_COMPACTION.md Sec.5): folds the longest run of {@code partitionIndex}'s pieces that are
      * neighbours both in ordinal order and in the directory's column files (adjacent {@code rowOffset}s).
+     *
      * @return true when a run was folded and a transaction committed
      */
     private boolean foldContiguousPieces(int partitionIndex) {
@@ -9407,6 +9428,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * MAKE-PLAIN (PARTITION_COMPACTION.md Sec.5).
+     *
      * @return true if the partition was made plain this call; false if a reader still resolves the geometry record this
      * shape came from, leaving it to the caller's decline/backoff bookkeeping
      */
@@ -9664,6 +9686,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * MOVE-TAIL (PARTITION_COMPACTION.md Sec.5): leaves the clean front's directory untouched and copies only the tail
      * pieces into a new sibling {@code attachedPartitions} entry.
+     *
      * @return {@link #COMPACTION_NONE} or {@link #COMPACTION_MOVED_TAIL}
      */
     private int moveTailToFreshPartition(int partitionIndex) {
@@ -15542,8 +15565,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * @param coveringState what the O3 write left the partition's COVERING posting indexes in - one of {@link
-     * #COVERING_INDEX_REBUILD}, {@link #COVERING_INDEX_PUBLISHED}, {@link #COVERING_INDEX_DEFERRED}
+     * @param coveringState    what the O3 write left the partition's COVERING posting indexes in - one of {@link
+     *                         #COVERING_INDEX_REBUILD}, {@link #COVERING_INDEX_PUBLISHED}, {@link #COVERING_INDEX_DEFERRED}
      * @param oldPartitionSize with {@code COVERING_INDEX_DEFERRED}: the first row the write appended
      * @param newPartitionSize with {@code COVERING_INDEX_DEFERRED}: the row after the last one it appended
      */
@@ -17028,8 +17051,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * After a parquet (re)write, zero column tops so that column-version records match the parquet content: the Rust
      * encoder/decoder has no equivalent of a native column's addTop shortcut, so a parquet row group always carries a
      * full, dense value (real or NULL) for every row of every column it materialises, unconditionally.
+     *
      * @param zeroAllColumns when {@code true}, zero column tops for ALL columns (including ones that had no data at
-     * all).
+     *                       all).
      */
     private void zeroColumnTopsAfterFullMaterialization(long partitionTimestamp, long partitionRowCount, boolean zeroAllColumns) {
         final int columnCount = metadata.getColumnCount();

@@ -818,6 +818,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     // Compaction is always on now; kept as a no-op so call sites still document intent.
+
     /**
      * Housekeeping on, with the piece-count rule's SCALED cap out of the way. The cap is
      * max(configured floor, liveRows / avg.rows.piece.lim) - see

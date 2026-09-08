@@ -133,6 +133,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     /**
      * Builds a composite partition's REWRITE off {@code reader}'s own snapshot, holding no writer.
+     *
      * @return a command ready to publish, or {@code null} when the partition holds no live rows
      */
     private CompositePartitionSwapCommand buildCompactedComposite(
