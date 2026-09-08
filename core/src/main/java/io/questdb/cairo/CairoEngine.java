@@ -764,7 +764,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 .put(", writerTxn=").put(writerTxn);
     }
 
-    /** Starts a classified statement; a non-negative owner ID must be ended with endSqlExecution(). */
     public long beginSqlExecution(
             CharSequence query,
             SqlExecutionContext executionContext,
