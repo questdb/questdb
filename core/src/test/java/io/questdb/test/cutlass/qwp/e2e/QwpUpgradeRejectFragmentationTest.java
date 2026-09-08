@@ -277,15 +277,11 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     private static void assertCrossSchemeUpgradeRejected(int port, String path, String scheme) throws Exception {
-        String request = "GET " + path + " HTTP/1.1\r\n"
-                + "Host: localhost:" + port + "\r\n"
-                + "Origin: " + scheme + "://localhost:" + port + "\r\n"
-                + "Upgrade: websocket\r\n"
-                + "Connection: Upgrade\r\n"
-                + "Sec-WebSocket-Key: AQIDBAUGBwgJCgsMDQ4PEA==\r\n"
-                + "Sec-WebSocket-Version: 13\r\n"
-                + "\r\n";
-        assertFullRejectDelivered(port, request, EXPECTED_400_ORIGIN_REJECT);
+        assertFullRejectDelivered(
+                port,
+                QwpWireTestFixtures.browserUpgradeRequest(path, "localhost:" + port, scheme, ""),
+                EXPECTED_400_ORIGIN_REJECT
+        );
     }
 
     private static void assertSameOriginUpgradeAccepted(int port, String path) throws Exception {
@@ -295,14 +291,7 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     private static void assertSameOriginUpgradeAccepted(int port, String path, String scheme) throws Exception {
         try (Socket socket = new Socket("localhost", port)) {
             socket.setSoTimeout(5_000);
-            String request = "GET " + path + " HTTP/1.1\r\n"
-                    + "Host: localhost:" + port + "\r\n"
-                    + "Origin: " + scheme + "://localhost:" + port + "\r\n"
-                    + "Upgrade: websocket\r\n"
-                    + "Connection: Upgrade\r\n"
-                    + "Sec-WebSocket-Key: AQIDBAUGBwgJCgsMDQ4PEA==\r\n"
-                    + "Sec-WebSocket-Version: 13\r\n"
-                    + "\r\n";
+            String request = QwpWireTestFixtures.browserUpgradeRequest(path, "localhost:" + port, scheme, "");
             OutputStream out = socket.getOutputStream();
             out.write(request.getBytes(StandardCharsets.US_ASCII));
             out.flush();

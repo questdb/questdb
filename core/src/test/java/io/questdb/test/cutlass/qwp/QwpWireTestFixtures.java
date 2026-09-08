@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.qwp;
 
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import org.junit.Assert;
@@ -33,6 +34,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Base64;
@@ -48,8 +51,54 @@ import java.util.Base64;
  * helper here rather than re-deriving the byte layouts per module.
  */
 public final class QwpWireTestFixtures {
+    /**
+     * RFC 6455 handshake nonce. A public protocol value, not a secret -- see the
+     * {@code generic-api-key} allowlist entry in {@code .gitleaks.toml}.
+     */
+    public static final String WEBSOCKET_KEY = "AQIDBAUGBwgJCgsMDQ4PEA==";
 
     private QwpWireTestFixtures() {
+    }
+
+    /**
+     * Asserts that {@code message} is a well-formed QWP v1 message whose first
+     * payload byte is {@code expectedKind}, including that the header's declared
+     * payload length matches the bytes actually present.
+     */
+    public static void assertQwpMessageKind(byte[] message, byte expectedKind) {
+        Assert.assertTrue("QWP message is too short", message.length > QwpConstants.HEADER_SIZE);
+        ByteBuffer header = ByteBuffer.wrap(message).order(ByteOrder.LITTLE_ENDIAN);
+        Assert.assertEquals(QwpConstants.MAGIC_MESSAGE, header.getInt(QwpConstants.HEADER_OFFSET_MAGIC));
+        Assert.assertEquals(QwpConstants.VERSION, message[QwpConstants.HEADER_OFFSET_VERSION]);
+        Assert.assertEquals(
+                message.length - QwpConstants.HEADER_SIZE,
+                header.getInt(QwpConstants.HEADER_OFFSET_PAYLOAD_LENGTH)
+        );
+        Assert.assertEquals(expectedKind, message[QwpConstants.HEADER_SIZE]);
+    }
+
+    /**
+     * Builds a browser-shaped WebSocket upgrade request: a real browser always
+     * sends {@code Origin} and cannot attach {@code X-QWP-*} headers, so every
+     * QWP browser test drives this exact shape.
+     *
+     * @param authority    value for {@code Host}, and the authority the
+     *                     {@code Origin} is built from, so the request is
+     *                     same-origin by construction
+     * @param originScheme {@code http} or {@code https}
+     * @param extraHeaders already-formatted {@code Name: value\r\n} lines
+     *                     (cookies, credentials), or empty for none
+     */
+    public static String browserUpgradeRequest(String path, String authority, String originScheme, String extraHeaders) {
+        return "GET " + path + " HTTP/1.1\r\n"
+                + "Host: " + authority + "\r\n"
+                + "Origin: " + originScheme + "://" + authority + "\r\n"
+                + "Upgrade: websocket\r\n"
+                + "Connection: Upgrade\r\n"
+                + "Sec-WebSocket-Key: " + WEBSOCKET_KEY + "\r\n"
+                + "Sec-WebSocket-Version: 13\r\n"
+                + extraHeaders
+                + "\r\n";
     }
 
     /**
@@ -90,6 +139,48 @@ public final class QwpWireTestFixtures {
         i = QwpVarint.encode(p, i, initialCredit);
         p[i++] = 0x00;
         return Arrays.copyOf(p, i);
+    }
+
+    /**
+     * Builds a complete single-row QWP ingress message for a table shaped
+     * {@code (value long, ts timestamp) timestamp(ts)}: header + one table
+     * block carrying one {@code value} column and the designated timestamp,
+     * which is written with an empty column name per the v1 layout.
+     */
+    public static byte[] encodeSingleLongRow(String tableName, long value, long timestampMicros) {
+        byte[] tableNameBytes = tableName.getBytes(StandardCharsets.UTF_8);
+        byte[] valueColumnName = "value".getBytes(StandardCharsets.UTF_8);
+        byte[] payload = new byte[64 + tableNameBytes.length + valueColumnName.length];
+        int i = 0;
+        i = QwpVarint.encode(payload, i, tableNameBytes.length);
+        System.arraycopy(tableNameBytes, 0, payload, i, tableNameBytes.length);
+        i += tableNameBytes.length;
+        i = QwpVarint.encode(payload, i, 1); // row count
+        i = QwpVarint.encode(payload, i, 2); // column count
+        i = QwpVarint.encode(payload, i, valueColumnName.length);
+        System.arraycopy(valueColumnName, 0, payload, i, valueColumnName.length);
+        i += valueColumnName.length;
+        payload[i++] = QwpConstants.TYPE_LONG;
+        i = QwpVarint.encode(payload, i, 0); // designated timestamp has an empty column name
+        payload[i++] = QwpConstants.TYPE_TIMESTAMP;
+        ByteBuffer payloadBuffer = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN);
+        payload[i++] = 0; // value column has no nulls
+        payloadBuffer.putLong(i, value);
+        i += Long.BYTES;
+        payload[i++] = 0; // timestamp column has no nulls
+        payload[i++] = 0; // uncompressed timestamp encoding
+        payloadBuffer.putLong(i, timestampMicros);
+        i += Long.BYTES;
+
+        byte[] message = new byte[QwpConstants.HEADER_SIZE + i];
+        ByteBuffer messageBuffer = ByteBuffer.wrap(message).order(ByteOrder.LITTLE_ENDIAN);
+        messageBuffer.putInt(QwpConstants.HEADER_OFFSET_MAGIC, QwpConstants.MAGIC_MESSAGE);
+        message[QwpConstants.HEADER_OFFSET_VERSION] = QwpConstants.VERSION;
+        message[QwpConstants.HEADER_OFFSET_FLAGS] = QwpConstants.FLAG_GORILLA;
+        message[QwpConstants.HEADER_OFFSET_TABLE_COUNT] = 1;
+        messageBuffer.putInt(QwpConstants.HEADER_OFFSET_PAYLOAD_LENGTH, i);
+        System.arraycopy(payload, 0, message, QwpConstants.HEADER_SIZE, i);
+        return message;
     }
 
     /**
