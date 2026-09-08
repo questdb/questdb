@@ -676,8 +676,9 @@ public class SqlParser {
     /**
      * Captures the raw column-list text after {@code PARTITION BY} in a KEEP clause, up to ';' / EOF or the
      * next clause boundary {@link #expireRowsClauseBoundary} recognises. Unlike the WHEN capture, this
-     * method checks every token: KEEP accepts a flat comma-separated column list, and later validation
-     * rejects expressions or parenthesised text. Shared by KEEP LATEST and KEEP HIGHEST/LOWEST.
+     * method requires identifiers separated by commas. Name resolution alone is insufficient: unquoted
+     * {@code k limit 1} could match a column name but add a LIMIT when the read query parses the stored text.
+     * Shared by KEEP LATEST and KEEP HIGHEST/LOWEST.
      */
     private ColumnListCapture captureKeepColumnList(
             GenericLexer lexer,
@@ -687,6 +688,8 @@ public class SqlParser {
         final int startPos = lexer.getPosition();
         int end;
         boolean foundCleanup = false;
+        boolean hasColumn = false;
+        boolean isColumnExpected = true;
         CharSequence tok;
         while (true) {
             tok = optTok(lexer);
@@ -702,6 +705,19 @@ public class SqlParser {
                 foundCleanup = boundary == EXPIRE_BOUNDARY_CLEANUP;
                 break;
             }
+            if (isColumnExpected) {
+                validateIdentifier(lexer, tok);
+                hasColumn = true;
+                isColumnExpected = false;
+            } else {
+                if (!Chars.equals(tok, ',')) {
+                    throw SqlException.$(tokPos, "',' expected");
+                }
+                isColumnExpected = true;
+            }
+        }
+        if (hasColumn && isColumnExpected) {
+            throw SqlException.$(end, "column name expected");
         }
         rejectCommentInExpiryClause(lexer.getContent(), startPos, end);
         final ColumnListCapture capture = new ColumnListCapture();

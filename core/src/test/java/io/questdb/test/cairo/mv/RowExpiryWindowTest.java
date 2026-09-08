@@ -719,27 +719,24 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         // OVER (PARTITION BY <text>) verbatim, so text that parses as SQL but is not a column list would
         // rewrite the generated window predicate: a ') AND (1=0' closes the OVER early and turns the keep
         // filter into a constant, silently retaining every row (or, with ') OR (1=1', expiring every row).
-        // Resolving each key as a column is what rejects it, on CREATE and on ALTER alike.
+        // The parser rejects the first token that violates the identifier/comma grammar, on both
+        // CREATE and ALTER, before metadata name resolution.
         assertMemoryLeak(() -> {
             createBase();
             execute("CREATE MATERIALIZED VIEW mvalt AS (SELECT * FROM base) PARTITION BY DAY");
             drainWalAndMatViewQueues();
-            final String[] injections = {
+            final ObjList<String> injections = new ObjList<>(
                     "k) AND (1=0",
                     "k) OR (1=1",
-                    "k ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW",
-            };
-            for (String injection : injections) {
-                assertExceptionNoLeakCheck(
-                        "create materialized view mvbad as (select * from base) expire rows keep highest v partition by " + injection,
-                        25,
-                        "invalid EXPIRE ROWS KEEP HIGHEST PARTITION BY column: " + injection
-                );
-                assertExceptionNoLeakCheck(
-                        "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP HIGHEST v PARTITION BY " + injection,
-                        46,
-                        "invalid EXPIRE ROWS KEEP HIGHEST PARTITION BY column: " + injection
-                );
+                    "k ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW"
+            );
+            for (int i = 0; i < injections.size(); i++) {
+                final String injection = injections.getQuick(i);
+                final int errorOffset = injection.charAt(1) == ')' ? 1 : 2;
+                final String create = "CREATE MATERIALIZED VIEW mvbad AS (SELECT * FROM base) EXPIRE ROWS KEEP HIGHEST v PARTITION BY ";
+                final String alter = "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP HIGHEST v PARTITION BY ";
+                assertExceptionNoLeakCheck(create + injection, create.length() + errorOffset, "',' expected");
+                assertExceptionNoLeakCheck(alter + injection, alter.length() + errorOffset, "',' expected");
             }
         });
     }

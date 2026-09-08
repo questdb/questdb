@@ -78,6 +78,69 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeepColumnListRejectsMalformedSeparators() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String prefix = "CREATE MATERIALIZED VIEW bad AS (SELECT * FROM base) EXPIRE ROWS KEEP LATEST PARTITION BY ";
+            assertExceptionNoLeakCheck(prefix + "k,", prefix.length() + 2, "column name expected");
+            assertExceptionNoLeakCheck(prefix + "k,;", prefix.length() + 2, "column name expected");
+            assertExceptionNoLeakCheck(prefix + "k, CLEANUP EVERY 1h", prefix.length() + 3, "column name expected");
+            assertExceptionNoLeakCheck(prefix + "k,,v", prefix.length() + 2, "identifier should start with a letter or '_'");
+            assertExceptionNoLeakCheck(prefix + "(k)", prefix.length(), "identifier should start with a letter or '_'");
+            assertExceptionNoLeakCheck(prefix + "k + 1", prefix.length() + 2, "',' expected");
+        });
+    }
+
+    @Test
+    public void testKeepColumnListRejectsTrailingSql() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP, \"k limit 1\" INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('A', 1, '2024-01-01', 1), ('A', 2, '2024-01-02', 1), ('B', 3, '2024-01-03', 2)");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS KEEP LATEST PARTITION BY k");
+            drainWalAndMatViewQueues();
+
+            // The raw text names a real column, but without quotes it would add a LIMIT to the
+            // generated latest-by query. Reject it before either CREATE or ALTER persists it.
+            final ObjList<String> modes = new ObjList<>("LATEST", "HIGHEST v", "LOWEST v", "2 HIGHEST v", "2 LOWEST v");
+            for (int i = 0; i < modes.size(); i++) {
+                final String clause = " EXPIRE ROWS KEEP " + modes.getQuick(i) + " PARTITION BY k limit 1";
+                final String create = "CREATE MATERIALIZED VIEW bad AS (SELECT * FROM base)" + clause;
+                final String alter = "ALTER MATERIALIZED VIEW mv SET" + clause;
+                assertExceptionNoLeakCheck(create, create.indexOf("limit 1"), "',' expected");
+                assertExceptionNoLeakCheck(alter, alter.indexOf("limit 1"), "',' expected");
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().expectSize().returns("""
+                    k\tv
+                    A\t2.0
+                    B\t3.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testKeepColumnListSupportsQuotedKeysAndCleanup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP, \"k limit 1\" INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('A', 1, '2024-01-01', 1), ('A', 2, '2024-01-02', 1), ('B', 3, '2024-01-03', 2)");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) "
+                    + "EXPIRE ROWS KEEP LATEST PARTITION BY k, \"k limit 1\" CLEANUP EVERY 30m;");
+            drainWalAndMatViewQueues();
+            final String expected = """
+                    k\tv
+                    A\t2.0
+                    B\t3.0
+                    """;
+            assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().expectSize().returns(expected);
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP HIGHEST v PARTITION BY \"k limit 1\", k CLEANUP EVERY 1h;");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().returns(expected);
+        });
+    }
+
+    @Test
     public void testKeepLatestCatalogueRendersClause() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
