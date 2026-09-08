@@ -149,6 +149,7 @@ public class QueryModel implements IQueryModel {
     // LateralJoinRewriter marks the final lateral output so SqlOptimiser can hide
     // synthesized alignment columns after wildcard expansion assigns final aliases.
     private boolean isOuterRefWildcardExcluded;
+    private boolean isScalarExpiryRead;
     // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
@@ -402,6 +403,7 @@ public class QueryModel implements IQueryModel {
         orderByDirectionAdvice.clear();
         orderByPosition = 0;
         orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
+        isScalarExpiryRead = false;
         isSelectTranslation = false;
         groupBy.clear();
         dependencies.clear();
@@ -1394,6 +1396,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public boolean isScalarExpiryRead() {
+        return isScalarExpiryRead;
+    }
+
+    @Override
     public boolean isSelectTranslation() {
         return isSelectTranslation;
     }
@@ -1929,6 +1936,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
         this.sampleByTimezoneName = sampleByTimezoneName;
+    }
+
+    @Override
+    public void setScalarExpiryRead(boolean isScalarExpiryRead) {
+        this.isScalarExpiryRead = isScalarExpiryRead;
     }
 
     @Override

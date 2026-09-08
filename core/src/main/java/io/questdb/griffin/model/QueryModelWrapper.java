@@ -908,6 +908,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public boolean isScalarExpiryRead() {
+        return delegate.isScalarExpiryRead();
+    }
+
+    @Override
     public boolean isSelectTranslation() {
         return delegate.isSelectTranslation();
     }
@@ -1284,6 +1289,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setScalarExpiryRead(boolean isScalarExpiryRead) {
         throw new UnsupportedOperationException();
     }
 

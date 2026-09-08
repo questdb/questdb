@@ -2607,18 +2607,26 @@ public class SqlOptimiser implements Mutable {
      *
      * @param model the starting model.
      */
-    // Rewrites `LATEST ON` over a `SELECT * FROM t [WHERE ...]` sub-query so it reads table `t`
-    // directly, dropping the sub-query wrapper. It returns the same rows in the same column order.
+    // Rewrites `LATEST ON` over the parser's scalar EXPIRE ROWS wrapper so it reads the physical
+    // table directly. It returns the same rows in the same column order. Ordinary sub-queries and
+    // views without scalar expiry keep their previous plans, even when structurally identical.
     //
     // The direct read reaches generateLatestByTableQuery, whose factories keep the table's DESIGNATED
     // TIMESTAMP and emit in timestamp order. A sub-query base instead produces
     // LatestByLightRecordCursorFactory, which emits one row per partition key in map-insertion order
-    // and therefore publishes no designated timestamp (see the comment on that class). Anything above
-    // that needs one - SAMPLE BY, ASOF/LT/SPLICE JOIN, ORDER BY-timestamp elision - cannot compile
-    // over the sub-query form and fails with "TIMESTAMP column is required but not provided". The
-    // rewrite is therefore a correctness-visible property of the plan and applies to every equivalent
-    // query, whatever the key type. For an indexed SYMBOL key it is also one index seek per key
-    // instead of a full scan.
+    // and therefore publishes no designated timestamp (see the comment on that class). SAMPLE BY and
+    // ASOF/LT/SPLICE JOIN above that output can fail with "TIMESTAMP column is required but not
+    // provided"; ORDER BY timestamp needs a real sort rather than elision. Adding scalar expiry must
+    // not break previously valid timestamp-dependent queries merely because the parser inserted a
+    // wrapper. The rewrite therefore covers every key type, not just indexed SYMBOLs.
+    //
+    // Deliberate tradeoff: direct latest-by evaluates residual filters row by row instead of using the
+    // sub-query's async/JIT filter. Selective full-scan expiry queries can be slower. Scoping the rewrite
+    // by parser provenance contains that cost to scalar-expiry reads; it also gives up the general
+    // indexed-subquery speedup. Do not widen this gate as a blanket performance optimisation, or disable
+    // the rewrite to recover JIT without preserving actual timestamp ordering. Follow-up: combine async/JIT
+    // residual filtering with ordered latest-by, retaining interval/index pruning and early exits.
+    // See docs/row-expiry-latest-by.md for the scope, evidence and follow-up validation matrix.
     //
     // Applies only when the rewrite is provably equivalent:
     //   - the LATEST ON model has no JOIN: with a join, LATEST ON applies to the join output, but the
@@ -2645,6 +2653,7 @@ public class SqlOptimiser implements Mutable {
             final ExpressionNode tableWhere = table != null ? table.getWhereClause() : null;
             final ExpressionNode modelWhere = model.getWhereClause();
             if (table != null
+                    && table.isScalarExpiryRead()
                     && onTs != null
                     // Skip if the table's WHERE has a qualified column like `x.v`: the rewrite drops the
                     // sub-query that defined `x`, so the prefix no longer resolves and the query fails to

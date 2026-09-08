@@ -522,6 +522,12 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean isPivotGroupByColumnHasNoAlias();
 
+    /**
+     * True only for the physical table read that the parser introduces for a scalar EXPIRE ROWS policy.
+     * Unlike isExpiryKeepFilter(), this also covers timestamp predicates eligible for interval pruning.
+     */
+    boolean isScalarExpiryRead();
+
     boolean isSelectTranslation();
 
     boolean isSkipped();
@@ -669,6 +675,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setSampleByOffset(ExpressionNode sampleByOffset);
 
     void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName);
+
+    void setScalarExpiryRead(boolean isScalarExpiryRead);
 
     void setSelectModelType(int selectModelType);
 

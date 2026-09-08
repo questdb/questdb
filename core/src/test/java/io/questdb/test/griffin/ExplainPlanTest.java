@@ -5047,42 +5047,47 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
-    // R1: LATEST ON over a trivial identity-passthrough sub-query of a single table, on the base's
-    // designated timestamp with an indexed SYMBOL partition key, must use the indexed direct-table
-    // fast path (same plan as the equivalent same-level query), not LatestBy light + full scan.
+    // Only scalar-expiry expansion opts into the direct-table hoist. Ordinary sub-queries keep
+    // their previous plans, including interval pruning, even when an indexed key could benefit.
     @Test
-    public void testLatestOnTrivialSubqueryFilteredUsesIndexedFastPath() throws Exception {
+    public void testLatestOnTrivialSubqueryFilteredStaysLight() throws Exception {
         assertQuery("select s, i, ts from (select * from a where ts >= 0::timestamp) latest on ts partition by s")
                 .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        LatestByDeferredListValuesFiltered
-                            Interval backward scan on: a
-                              intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
+                        SelectedRecord
+                            LatestBy light order_by_timestamp: true
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: a
+                                      intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
                         """);
     }
 
     @Test
-    public void testLatestOnTrivialSubqueryUnfilteredUsesIndexedFastPath() throws Exception {
+    public void testLatestOnTrivialSubqueryUnfilteredStaysLight() throws Exception {
         assertQuery("select * from (select * from a) latest on ts partition by s")
                 .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        LatestByAllIndexed
-                            Async index backward scan on: s workers: 2
-                            Frame backward scan on: a
+                        SelectedRecord
+                            LatestBy light order_by_timestamp: true
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
                         """);
     }
 
-    // A non-indexed partition key hoists as well. There is no index to seek, so the gain is not an index
-    // seek per key; the direct table read is what carries the table's designated timestamp, which
-    // LatestBy light does not (see pushLatestByToTableModel).
+    // The scope boundary does not depend on key indexes.
     @Test
-    public void testLatestOnTrivialSubqueryNonIndexedHoistsToTable() throws Exception {
+    public void testLatestOnTrivialSubqueryNonIndexedStaysLight() throws Exception {
         assertQuery("select s, i, ts from (select * from a where ts >= 0::timestamp) latest on ts partition by s")
                 .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        LatestByDeferredListValuesFiltered
-                            Interval backward scan on: a
-                              intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
+                        SelectedRecord
+                            LatestBy light order_by_timestamp: true
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: a
+                                      intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
                         """);
     }
 

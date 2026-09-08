@@ -1113,6 +1113,15 @@ public class SqlParser {
         if (!flip) {
             markExpiryKeepFilter(subQuery);
         }
+        // Mark the physical read, not a projection that the optimiser may collapse. This provenance
+        // scopes LATEST ON hoisting to scalar-expiry expansion, including flippable timestamp policies.
+        // isExpiryKeepFilter cannot serve this purpose: it deliberately excludes those policies.
+        for (IQueryModel m = subQuery; m != null; m = m.getNestedModel()) {
+            if (m.getTableNameExpr() != null) {
+                m.setScalarExpiryRead(true);
+                break;
+            }
+        }
         model.setNestedModel(subQuery);
         model.setNestedModelIsSubQuery(true);
         if (model.getAlias() == null) {

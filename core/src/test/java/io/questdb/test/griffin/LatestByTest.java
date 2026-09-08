@@ -443,20 +443,16 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLatestByIndexedSubQueryFastPathSameResultAsSameLevel() throws Exception {
-        // R1: LATEST ON over a trivial identity-passthrough sub-query of an indexed-symbol table is
-        // relocated to the direct-table indexed fast path. It must return exactly the same rows (in the
-        // same designated-timestamp order) as the equivalent same-level query. The dataset is arranged
-        // so a wrong plan would be observable: key-insertion order (CC, BB) differs from latest-ts order.
+    public void testLatestByIndexedSubQuerySameResultAsSameLevel() throws Exception {
+        // Ordinary nested latest-by keeps the light plan. An explicit ORDER BY makes its results
+        // comparable to the direct-table path despite their different natural output orders.
         assertMemoryLeak(() -> {
             execute("create table x (a double, b symbol index, k timestamp) timestamp(k) partition by DAY");
             execute("insert into x values (10.0,'CC','1970-01-01T00:00:00.000000Z'),"
                     + "(20.0,'BB','1970-01-02T00:00:00.000000Z'),"
                     + "(30.0,'BB','1970-01-03T00:00:00.000000Z'),"
                     + "(40.0,'CC','1970-01-04T00:00:00.000000Z')");
-            // With an explicit projection, the relocated sub-query form must be byte-identical to the
-            // equivalent same-level form (which already uses the indexed fast path) - same rows, same
-            // column order, same designated timestamp. Compared cursor-to-cursor.
+            // Compare the ordered rows and projection cursor-to-cursor.
             assertSqlCursors(
                     "select a, b, k from x where b in ('BB','CC') and a > 0 latest on k partition by b order by b",
                     "select a, b, k from (x where b in ('BB','CC')) where a > 0 latest on k partition by b order by b"
@@ -473,11 +469,9 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByNonIndexedSubQueryKeepsDesignatedTimestamp() throws Exception {
-        // The hoist also fires when the PARTITION BY key is a non-indexed symbol. There is no index to
-        // seek, so the gain is not speed: the direct table read is what carries the table's designated
-        // timestamp. LatestBy light, which a sub-query base would produce, emits in partition-key order
-        // and therefore publishes no timestamp, and a SAMPLE BY above it cannot compile. The dataset is
-        // arranged so key order (x, y) differs from latest-timestamp order.
+        // SAMPLE BY written at the same query level can preserve the designation through its own
+        // rewrites. Keep this working without the general latest-by hoist. The dataset puts key order
+        // (x, y) out of step with latest-timestamp order.
         assertMemoryLeak(() -> {
             execute("create table nb (i int, s symbol, ts timestamp) timestamp(ts) partition by DAY");
             execute("insert into nb values (1,'x','2024-01-01T00:00:00.000000Z'),"
@@ -501,14 +495,8 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByIndexedSubQueryQualifiedFilterStaysCorrect() throws Exception {
-        // A LATEST ON over a `SELECT * FROM t WHERE ...` sub-query is normally rewritten to read table t
-        // directly (the indexed fast path). That rewrite must be skipped when the sub-query's WHERE
-        // qualifies a column with a table/alias prefix (x.v or tab.v): reading t directly drops the
-        // sub-query that gave the prefix its meaning, so the column no longer resolves and the query
-        // fails to compile. Skipped queries keep compiling on the LatestBy light plan and return the same
-        // rows as the query written without the sub-query. The fast path needs an indexed SYMBOL key, so
-        // the indexed table is what exercises this; the dataset puts key order (CC, BB) out of step with
-        // timestamp order.
+        // Qualified predicates at either level keep their alias scope and the ordinary light plan.
+        // An index alone must not opt an ordinary sub-query into the scalar-expiry hoist.
         assertMemoryLeak(() -> {
             execute("create table tab (v double, sym symbol index, ts timestamp) timestamp(ts) partition by DAY");
             execute("insert into tab values (10.0,'CC','1970-01-01T00:00:00.000000Z'),"
@@ -530,15 +518,13 @@ public class LatestByTest extends AbstractCairoTest {
                     .expectSize()
                     .withPlanContaining("LatestBy light")
                     .returns(expected);
-            // A qualified column in the LATEST ON model's OWN WHERE (not the table's) does not prevent the
-            // rewrite: that WHERE stays put and `x.` still resolves, so this reaches the indexed fast path
-            // and returns the same rows.
+            // A qualified predicate in the LATEST ON model's own WHERE also keeps the light plan.
             assertQuery("select sym, ts, v from (select * from tab) x where x.v > 0 latest on ts partition by sym order by sym")
                     .noLeakCheck()
                     .expectSize()
-                    .withPlanContaining("LatestByDeferredListValuesFiltered")
+                    .withPlanContaining("LatestBy light")
                     .returns(expected);
-            // byte-identical to the same query written without the sub-query (which already uses the light plan)
+            // Byte-identical ordered results to the direct-table query.
             assertSqlCursors(
                     "select sym, ts, v from tab where v > 0 latest on ts partition by sym order by sym",
                     "select sym, ts, v from (select * from tab x where x.v > 0) latest on ts partition by sym order by sym"
@@ -548,11 +534,8 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByIndexedSubQueryReorderedProjectionKeepsColumnOrder() throws Exception {
-        // The relocation to the direct-table indexed fast path drops the projection layer that sits
-        // between LATEST ON and the table read. That layer is free to list the table's columns in an
-        // order of its own, so dropping it must not let the table's storage order reach the result. The
-        // dataset puts key order (CC, BB) out of step with timestamp order, and the storage order
-        // (sym, v, ts) out of step with every projection below.
+        // Ordinary nested reads keep the light plan and the requested projection order, not the
+        // table's storage order. Key order (CC, BB) differs from latest-timestamp order.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table reord (sym symbol index, v double, ts #TIMESTAMP) timestamp(ts) partition by DAY",
@@ -567,7 +550,7 @@ public class LatestByTest extends AbstractCairoTest {
             assertQuery("select * from (select v, sym, ts from reord) latest on ts partition by sym order by sym")
                     .noLeakCheck()
                     .expectSize()
-                    .withPlanContaining("LatestByAllIndexed")
+                    .withPlanContaining("LatestBy light")
                     .returns("v\tsym\tts\n"
                             + "30.0\tBB\t1970-01-03T00:00:00.000000" + suffix + "\n"
                             + "40.0\tCC\t1970-01-04T00:00:00.000000" + suffix + "\n");
@@ -575,15 +558,15 @@ public class LatestByTest extends AbstractCairoTest {
             assertQuery("select ts, sym, v from (select v, sym, ts from reord) latest on ts partition by sym order by sym")
                     .noLeakCheck()
                     .expectSize()
-                    .withPlanContaining("LatestByAllIndexed")
+                    .withPlanContaining("LatestBy light")
                     .returns("ts\tsym\tv\n"
                             + "1970-01-03T00:00:00.000000" + suffix + "\tBB\t30.0\n"
                             + "1970-01-04T00:00:00.000000" + suffix + "\tCC\t40.0\n");
-            // the sub-query's WHERE moves up with the table read; the reordering still holds
+            // Filtering the sub-query must also preserve the projection order.
             assertQuery("select * from (select v, sym, ts from reord where v > 15.0) latest on ts partition by sym order by sym")
                     .noLeakCheck()
                     .expectSize()
-                    .withPlanContaining("LatestByDeferredListValuesFiltered")
+                    .withPlanContaining("LatestBy light")
                     .returns("v\tsym\tts\n"
                             + "30.0\tBB\t1970-01-03T00:00:00.000000" + suffix + "\n"
                             + "40.0\tCC\t1970-01-04T00:00:00.000000" + suffix + "\n");
@@ -613,28 +596,23 @@ public class LatestByTest extends AbstractCairoTest {
             // filter split across the two levels
             assertQuery("SELECT * FROM (SELECT * FROM w WHERE k = 'A') WHERE k = 'B' LATEST ON ts PARTITION BY k")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .withPlanContaining("Empty table")
                     .returns(empty);
             // both halves inside the sub-query
             assertQuery("SELECT * FROM (SELECT * FROM w WHERE k = 'A' AND k = 'B') LATEST ON ts PARTITION BY k")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .returns(empty);
             // both halves outside the sub-query
             assertQuery("SELECT * FROM (SELECT * FROM w) WHERE k = 'A' AND k = 'B' LATEST ON ts PARTITION BY k")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .returns(empty);
             // the same shape spelled as a CTE
             assertQuery("WITH c AS (SELECT * FROM w WHERE k IN ('A','B')) SELECT * FROM c WHERE k = 'C' LATEST ON ts PARTITION BY k")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .returns(empty);
             // PARTITION BY a column the contradiction does not mention
             assertQuery("SELECT * FROM (SELECT * FROM w WHERE k = 'A') WHERE k = 'B' LATEST ON ts PARTITION BY v")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .returns(empty);
             // the same query written at one level
             assertQuery("SELECT * FROM w WHERE k = 'A' AND k = 'B' LATEST ON ts PARTITION BY k")
@@ -676,10 +654,9 @@ public class LatestByTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .expectSize()
                     .returns(latestOfA);
-            // the same query through the sub-query form the LATEST ON hoist rewrites
+            // The ordinary sub-query keeps the light plan and does not advertise timestamp ordering.
             assertQuery("SELECT * FROM (SELECT * FROM ix WHERE s = 'A') LATEST ON ts PARTITION BY k")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .expectSize()
                     .returns(latestOfA);
             // IN and != spellings of the same predicate
