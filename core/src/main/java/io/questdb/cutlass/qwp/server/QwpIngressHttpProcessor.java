@@ -98,13 +98,18 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // the reject path the per-call reason.getBytes / Integer.toString /
     // contentLength.getBytes allocations.
     static final String ERROR_CONNECTION_MUST_CONTAIN_UPGRADE = "Connection header must contain 'upgrade'";
+    // Names the rule rather than the header: an Origin IS allowed, as long as
+    // it is same-origin with Host. An operator who hits this is almost always
+    // behind a proxy that rewrote or dropped the port from Host, and a message
+    // reading "Origin header not allowed" sends them looking for a way to turn
+    // browser support on instead.
+    static final String ERROR_CROSS_ORIGIN_NOT_ALLOWED = "Origin is not same-origin with Host on QWP WebSocket";
     static final String ERROR_INVALID_SEC_WEBSOCKET_KEY = "Invalid Sec-WebSocket-Key (must be 24-character base64 key)";
     static final String ERROR_INVALID_UPGRADE_HEADER_VALUE = "Invalid Upgrade header value";
     static final String ERROR_MISSING_CONNECTION_HEADER = "Missing Connection header";
     static final String ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER = "Missing Sec-WebSocket-Key header";
     static final String ERROR_MISSING_SEC_WEBSOCKET_VERSION_HEADER = "Missing Sec-WebSocket-Version header";
     static final String ERROR_MISSING_UPGRADE_HEADER = "Missing Upgrade header";
-    static final String ERROR_ORIGIN_HEADER_NOT_ALLOWED = "Origin header not allowed on QWP WebSocket";
     static final String ERROR_UNSUPPORTED_WEBSOCKET_VERSION = "Unsupported WebSocket version (must be 13)";
     // Sec-WebSocket-Key is defined by RFC 6455 as a 16-byte base64 value --
     // exactly 24 ASCII bytes on the wire. 64 bytes leaves defensive headroom
@@ -480,7 +485,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         // cross-origin or malformed request. Machine clients normally omit it.
         Utf8Sequence origin = header.getHeader(HEADER_ORIGIN);
         if (origin != null && !isSameOrigin(origin, header.getHeader(HEADER_HOST), secureConnection)) {
-            return ERROR_ORIGIN_HEADER_NOT_ALLOWED;
+            return ERROR_CROSS_ORIGIN_NOT_ALLOWED;
         }
 
         // Check Upgrade header

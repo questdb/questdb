@@ -140,6 +140,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // probe / attack traffic does not produce GC pressure on the connect path.
     private static final byte[] BAD_REQUEST_RESPONSE_CONNECTION_MUST_CONTAIN_UPGRADE =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_CONNECTION_MUST_CONTAIN_UPGRADE);
+    private static final byte[] BAD_REQUEST_RESPONSE_CROSS_ORIGIN_NOT_ALLOWED =
+            precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_CROSS_ORIGIN_NOT_ALLOWED);
     private static final byte[] BAD_REQUEST_RESPONSE_INVALID_SEC_WEBSOCKET_KEY =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_INVALID_SEC_WEBSOCKET_KEY);
     private static final byte[] BAD_REQUEST_RESPONSE_INVALID_UPGRADE_HEADER_VALUE =
@@ -150,8 +152,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER);
     private static final byte[] BAD_REQUEST_RESPONSE_MISSING_UPGRADE_HEADER =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_MISSING_UPGRADE_HEADER);
-    private static final byte[] BAD_REQUEST_RESPONSE_ORIGIN_HEADER_NOT_ALLOWED =
-            precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_ORIGIN_HEADER_NOT_ALLOWED);
     // Browser-only ingress SERVER_INFO frame: status byte, u32 effective batch
     // cap, capability mask. Named so onHeadersReady's send-buffer reservation
     // and writeBrowserServerInfoFrame cannot drift apart -- an under-reservation
@@ -1001,6 +1001,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         return switch (validationError) {
             case QwpIngressHttpProcessor.ERROR_CONNECTION_MUST_CONTAIN_UPGRADE ->
                     BAD_REQUEST_RESPONSE_CONNECTION_MUST_CONTAIN_UPGRADE;
+            case QwpIngressHttpProcessor.ERROR_CROSS_ORIGIN_NOT_ALLOWED ->
+                    BAD_REQUEST_RESPONSE_CROSS_ORIGIN_NOT_ALLOWED;
             case QwpIngressHttpProcessor.ERROR_INVALID_SEC_WEBSOCKET_KEY ->
                     BAD_REQUEST_RESPONSE_INVALID_SEC_WEBSOCKET_KEY;
             case QwpIngressHttpProcessor.ERROR_INVALID_UPGRADE_HEADER_VALUE ->
@@ -1010,8 +1012,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             case QwpIngressHttpProcessor.ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER ->
                     BAD_REQUEST_RESPONSE_MISSING_SEC_WEBSOCKET_KEY_HEADER;
             case QwpIngressHttpProcessor.ERROR_MISSING_UPGRADE_HEADER -> BAD_REQUEST_RESPONSE_MISSING_UPGRADE_HEADER;
-            case QwpIngressHttpProcessor.ERROR_ORIGIN_HEADER_NOT_ALLOWED ->
-                    BAD_REQUEST_RESPONSE_ORIGIN_HEADER_NOT_ALLOWED;
             default -> null;
         };
     }

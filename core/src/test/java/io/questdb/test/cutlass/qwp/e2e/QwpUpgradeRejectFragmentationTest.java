@@ -86,16 +86,16 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     private static final int RECV_BUFFER_SIZE = 131_072;
     private static final int SEND_BUFFER_SIZE = 131_072;
     private static final int EGRESS_SEND_BUFFER_SIZE = 262_144;
-    // Canonical 400 Bad Request body written when the Origin header is
-    // present. Hardcoded so the test asserts on exact wire bytes; the
-    // server-side templates are package-private.
+    // Canonical 400 Bad Request body written when the Origin header is not
+    // same-origin with Host. Hardcoded so the test asserts on exact wire
+    // bytes; the server-side templates are package-private.
     private static final byte[] EXPECTED_400_ORIGIN_REJECT = (
             """
                     HTTP/1.1 400 Bad Request\r
                     Content-Type: text/plain\r
-                    Content-Length: 42\r
+                    Content-Length: 52\r
                     \r
-                    Origin header not allowed on QWP WebSocket"""
+                    Origin is not same-origin with Host on QWP WebSocket"""
     ).getBytes(StandardCharsets.US_ASCII);
     // Canonical 421 Misdirected Request body written when the server role is
     // REPLICA. The X-QuestDB-Role header tells the client where to retry, so

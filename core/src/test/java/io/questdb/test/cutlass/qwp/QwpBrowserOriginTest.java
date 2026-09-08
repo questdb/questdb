@@ -73,6 +73,25 @@ public class QwpBrowserOriginTest {
                 new Utf8String("questdb.example.com/x"),
                 false
         ));
+        // Origin authority is a strict PREFIX of Host: a page on the default
+        // port reaching QWP on another one. RFC 6454 makes the port part of
+        // the origin, so this is cross-origin. Every other rejection here has
+        // the origin authority longer than Host or differing within the
+        // compared bytes, so relaxing the length equality to "reject only when
+        // longer" would leave them all green and re-open CSWSH from any
+        // same-host web app on a different port.
+        Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("http://questdb.example.com"),
+                new Utf8String("questdb.example.com:9000"),
+                false
+        ));
+        // Degenerate authority: the byte loop never runs, so only the
+        // explicit <= 0 guard rejects this.
+        Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("http://"),
+                new Utf8String(""),
+                false
+        ));
         // HTTP/1.1 requires Host, but the parser does not, and byteAt on the
         // production DirectUtf8String is unchecked.
         Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
