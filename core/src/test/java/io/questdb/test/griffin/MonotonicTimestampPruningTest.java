@@ -641,8 +641,9 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             execute("INSERT INTO tn VALUES " +
                     "(1, '2024-06-15T12:00:00.000000000Z')," +
                     "(2, '2261-12-31T08:00:00.000000000Z');");
-            // the round-up of a bound within one day of the nano domain max (~2262-04-11) overflows;
-            // both rows satisfy the predicate, so a wrapped interval must not drop them
+            // the '2262-04-11' bound sits within one day of the nano domain max (2262-04-11T23:47:16Z),
+            // so rounding it up to the next day overflows; both rows satisfy the predicate, so a
+            // wrapped interval must not drop them
             assertQuery("SELECT * FROM tn WHERE date_trunc('day', ts) <= '2262-04-11'")
                     .timestamp("ts")
                     .withPlanContaining("Frame forward scan on: tn")
@@ -827,9 +828,9 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             execute("INSERT INTO tn VALUES " +
                     "(1, '2024-06-15T12:00:00.000000000Z')," +
                     "(2, '2261-12-31T10:00:00.000000000Z');");
-            // rounding the bound up to the next 10h bucket overflows the nano domain max (~2262-04-11);
-            // the EXACT floor inverse must detect the wrap and keep a residual filter rather than prune
-            // with a wrapped interval that drops both matching rows
+            // rounding the '2262-04-11T20:00' bound up to the next 10h bucket overflows the nano domain
+            // max (2262-04-11T23:47:16Z); the EXACT floor inverse must detect the wrap and keep a
+            // residual filter rather than prune with a wrapped interval that drops both matching rows
             assertQuery("SELECT * FROM tn WHERE timestamp_floor('10h', ts, null, '00:00', '+01:00') <= '2262-04-11T20:00:00.000000000Z'")
                     .timestamp("ts")
                     .withPlanContaining("filter:")

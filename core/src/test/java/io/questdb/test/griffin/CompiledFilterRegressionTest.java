@@ -372,7 +372,8 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // Equality still compiles: the IR compares the raw 16-bit lane, which
             // matches EqCharCharFunctionFactory.
             assertQueryNotNullNoLeakCheck("x where ch = 'A' or ch = 'Z'");
-            assertJitMatchesJava("x where ch > 'A' and ch < 'Z'", true);
+            // Ordering compiles too, on the same scalar, vectorized and count-only passes.
+            assertQueryNotNullNoLeakCheck("x where ch > 'A' and ch < 'Z'");
         });
     }
 
@@ -5831,13 +5832,14 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitMatchesJavaInAllModesOnEmptyResult("x WHERE ip < null");
             assertJitMatchesJavaInAllModes("x WHERE ip <= null");
             assertJitMatchesJavaInAllModes("x WHERE null <= ip");
-            for (String literal : new String[]{
+            final String[] literals = {
                     "'127.255.255.255'",
                     "'128.0.0.0'",
                     "'255.255.255.255'",
                     "'0.0.0.0'",
                     "'null'"
-            }) {
+            };
+            for (String literal : literals) {
                 // Which of these 40 combinations answers "no rows" FOLLOWS from the semantics
                 // under test, so derive it here rather than keep a list of the empty legs that
                 // nothing forces anyone to update. '0.0.0.0' IS the IPv4 NULL sentinel and 'null'
@@ -5859,6 +5861,22 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                             "x WHERE " + literal + " " + operator + " ip",
                             isStrict && (isNullLiteral || (isMaxLiteral && "<".equals(operator)))
                     );
+                }
+            }
+
+            // assertJitMatchesJavaInAllModes has no count-only leg, so the 40 combinations above
+            // never reach CompiledCountOnlyFilter. count() takes a different code path from the
+            // row-returning form, so this runs every literal form through it as well, with the
+            // Java engine as the oracle: runQuery() executes the row-returning form with the JIT
+            // disabled and returns its row count, which is what count() must answer on the empty
+            // legs too, and assertJitCountQuery() pins that count in both JIT modes while asserting
+            // that a compiled filter is in play.
+            for (String literal : literals) {
+                for (String operator : new String[]{"<", "<=", ">", ">="}) {
+                    final String columnFirst = "x WHERE ip " + operator + " " + literal;
+                    assertJitCountQuery("SELECT count() FROM " + columnFirst, runQuery(columnFirst));
+                    final String literalFirst = "x WHERE " + literal + " " + operator + " ip";
+                    assertJitCountQuery("SELECT count() FROM " + literalFirst, runQuery(literalFirst));
                 }
             }
 
@@ -7378,14 +7396,14 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // are the arithmetic's answer rather than a tolerance's.
             execute("""
                     INSERT INTO a1r VALUES
-                        (0, 498626, 0.0),
-                        (1_000_000, 1194170, 1.0),
-                        (2_000_000, 1889714, 2.0),
-                        (3_000_000, 1000000, 0.0),
+                        (0, 498_626, 0.0),
+                        (1_000_000, 1_194_170, 1.0),
+                        (2_000_000, 1_889_714, 2.0),
+                        (3_000_000, 1_000_000, 0.0),
                         (4_000_000, NULL, 1.0),
-                        (5_000_000, 498626, NULL),
+                        (5_000_000, 498_626, NULL),
                         (6_000_000, NULL, NULL),
-                        (7_000_000, -196918, -1.0),
+                        (7_000_000, -196_918, -1.0),
                         (8_000_000, 5, 0.5)
                     """);
             // The fixture trap the neighbouring tests document: a column that is not really INT or
@@ -7415,21 +7433,21 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:08.000000Z\t5\t0.5\n";
 
             // The shape the assert declined, in both spellings and both operand orders.
-            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where i = 498626 + 695544L * f", equalRows);
-            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where i <> 498626 + 695544L * f", notEqualRows);
-            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where 498626 + 695544L * f = i", equalRows);
-            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where 498626 + 695544L * f <> i", notEqualRows);
-            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where i > 498626 + 695544L * f", greaterRows);
-            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where i < 498626 + 695544L * f", lessRows);
-            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where 498626 + 695544L * f < i", greaterRows);
-            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where 498626 + 695544L * f > i", lessRows);
+            assertJitScalarAndVectorMatchJava("SELECT k, i, f FROM a1r WHERE i = 498_626 + 695_544L * f", equalRows);
+            assertJitScalarAndVectorMatchJava("SELECT k, i, f FROM a1r WHERE i <> 498_626 + 695_544L * f", notEqualRows);
+            assertJitScalarAndVectorMatchJava("SELECT k, i, f FROM a1r WHERE 498_626 + 695_544L * f = i", equalRows);
+            assertJitScalarAndVectorMatchJava("SELECT k, i, f FROM a1r WHERE 498_626 + 695_544L * f <> i", notEqualRows);
+            assertJitScalarAndVectorMatchJava("SELECT k, i, f FROM a1r WHERE i > 498_626 + 695_544L * f", greaterRows);
+            assertJitScalarAndVectorMatchJava("SELECT k, i, f FROM a1r WHERE i < 498_626 + 695_544L * f", lessRows);
+            assertJitScalarAndVectorMatchJava("SELECT k, i, f FROM a1r WHERE 498_626 + 695_544L * f < i", greaterRows);
+            assertJitScalarAndVectorMatchJava("SELECT k, i, f FROM a1r WHERE 498_626 + 695_544L * f > i", lessRows);
 
             // Control: spell the addend 498626L and the immediate is i64 rather than a marked
             // narrow one, which is why this sibling never tripped the assert. Same rows.
-            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where i = 498626L + 695544L * f", equalRows);
+            assertJitScalarAndVectorMatchJava("SELECT k, i, f FROM a1r WHERE i = 498_626L + 695_544L * f", equalRows);
             // Control: drop the addend and the product stands alone, with no i32 immediate to pair
             // against it.
-            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where i = 695544L * f",
+            assertJitScalarAndVectorMatchJava("SELECT k, i, f FROM a1r WHERE i = 695_544L * f",
                     "k\ti\tf\n" +
                             "1970-01-01T00:00:06.000000Z\tnull\tnull\n");
         });

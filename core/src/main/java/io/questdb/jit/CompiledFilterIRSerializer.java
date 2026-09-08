@@ -1199,6 +1199,25 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         };
     }
 
+    /**
+     * The value of {@code operand} when it is a quoted CHAR literal the literal-specialised
+     * ordering forms can pick a shape from, and {@link Numbers#CHAR_NULL} otherwise: for a column,
+     * a bind variable, an arithmetic subtree, an unquoted number, and for the NULL literal itself,
+     * whose zero is neither positive nor negative and so has no shape of its own. The value only
+     * selects the form; the literal still reaches the stream through the ordinary stub-and-backfill
+     * route of {@link #serializeConstant}, so it is typed exactly as the general expansion types it.
+     */
+    private static char charOrderingLiteral(ExpressionNode operand) {
+        if (operand.type != ExpressionNode.CONSTANT) {
+            return Numbers.CHAR_NULL;
+        }
+        final CharSequence token = operand.token;
+        if (token.length() != 3 || !Chars.isQuoted(token)) {
+            return Numbers.CHAR_NULL;
+        }
+        return token.charAt(1);
+    }
+
     private static int columnTypeCode(int columnTypeTag) {
         return switch (columnTypeTag) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE -> I1_TYPE;
@@ -1336,6 +1355,30 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
         return false;
+    }
+
+    /**
+     * The value of {@code operand} when it is a quoted IPv4 literal the literal-specialised
+     * ordering forms can pick a shape from, and {@link Numbers#IPv4_NULL} otherwise: for a column,
+     * a bind variable, an unquoted keyword, a quoted 'null', a malformed address, and for
+     * '0.0.0.0' itself, which is the NULL sentinel and has no sign class of its own. The value only
+     * selects the form; the literal still reaches the stream through the ordinary stub-and-backfill
+     * route of {@link #serializeConstant}, which is also where a malformed address declines.
+     */
+    private static int ipv4OrderingLiteral(ExpressionNode operand) {
+        if (operand.type != ExpressionNode.CONSTANT) {
+            return Numbers.IPv4_NULL;
+        }
+        final CharSequence token = operand.token;
+        final int len = token.length();
+        if (len < 3 || !Chars.isQuoted(token)) {
+            return Numbers.IPv4_NULL;
+        }
+        try {
+            return Numbers.parseIPv4_0(token, 1, len - 1);
+        } catch (NumericException e) {
+            return Numbers.IPv4_NULL;
+        }
     }
 
     private static boolean isArithmeticOperation(ExpressionNode node) {
@@ -4882,6 +4925,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         rewindOrderingOperands(node);
 
+        // Against a literal the serializer knows one operand's sign at compile time, and the
+        // unsigned-order expansion below collapses to one sign test of the other operand and one
+        // comparison against the literal. A column, bind variable or arithmetic operand has no
+        // compile-time sign and takes the general expansion, as does the NULL literal.
+        final boolean isNonStrict = opcode == LE || opcode == GE;
+        final char leftLiteral = charOrderingLiteral(left);
+        final char rightLiteral = charOrderingLiteral(right);
+        if (rightLiteral != Numbers.CHAR_NULL && leftLiteral == Numbers.CHAR_NULL) {
+            serializeCharOrderingBelowLiteral(left, right, (short) rightLiteral < 0, isNonStrict);
+            return;
+        }
+        if (leftLiteral != Numbers.CHAR_NULL && rightLiteral == Numbers.CHAR_NULL) {
+            serializeCharOrderingAboveLiteral(right, left, (short) leftLiteral < 0, isNonStrict);
+            return;
+        }
+
         // Neither operand may be CHAR_NULL (zero).
         serializeCharSignTest(left, NE);
         serializeCharSignTest(right, NE);
@@ -4906,10 +4965,57 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         putOperator(AND);
     }
 
+    /**
+     * {@code operand > literal} (or {@code >=}) in the unsigned CHAR order, against a non-NULL
+     * literal. The mirror of {@link #serializeCharOrderingBelowLiteral}: above a positive literal
+     * means above it OR negative, above a negative literal means negative AND above it. CHAR_NULL
+     * is neither negative nor above a non-NULL literal of either sign, so NULL rows drop out of
+     * both shapes without a term of their own.
+     */
+    private void serializeCharOrderingAboveLiteral(
+            ExpressionNode operand,
+            ExpressionNode literal,
+            boolean isLiteralNegative,
+            boolean isNonStrict
+    ) throws SqlException {
+        serializeCharSignTest(operand, LT);
+        serializeLiteralCompare(operand, literal, isNonStrict ? GE : GT);
+        putOperator(isLiteralNegative ? AND : OR);
+    }
+
+    /**
+     * {@code operand < literal} (or {@code <=}) in the unsigned CHAR order, against a non-NULL
+     * literal. A signed i16 lane reads U+0001..U+7FFF as positive and U+8000..U+FFFF as negative,
+     * and every negative lane sorts above every positive one in the unsigned order, so the
+     * literal's sign - known at compile time - picks the whole shape: below a positive literal
+     * means positive AND below it, below a negative literal means positive OR below it (which
+     * only a negative lane can be). CHAR_NULL is neither positive nor below a literal of either
+     * sign, so NULL rows drop out of both shapes without a term of their own. Native i16
+     * comparisons check no null sentinel, so the sign test reads the lane as is.
+     */
+    private void serializeCharOrderingBelowLiteral(
+            ExpressionNode operand,
+            ExpressionNode literal,
+            boolean isLiteralNegative,
+            boolean isNonStrict
+    ) throws SqlException {
+        serializeCharSignTest(operand, GT);
+        serializeLiteralCompare(operand, literal, isNonStrict ? LE : LT);
+        putOperator(isLiteralNegative ? OR : AND);
+    }
+
     private void serializeCharSignTest(ExpressionNode operand, int opcode) throws SqlException {
         putOperand(IMM, I2_TYPE, Numbers.CHAR_NULL);
         traverseAlgo.traverse(operand, this);
         putOperator(opcode);
+    }
+
+    private void serializeIPv4MinTest(ExpressionNode operand) throws SqlException {
+        // The valid IPv4 value 128.0.0.0 is INT_MIN, which the native i32 order comparisons treat
+        // as the INT null sentinel; EQ compares the raw lane.
+        putOperand(IMM, I4_TYPE, Integer.MIN_VALUE);
+        traverseAlgo.traverse(operand, this);
+        putOperator(EQ);
     }
 
     private void serializeIPv4NegativeTest(ExpressionNode operand) throws SqlException {
@@ -4936,6 +5042,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         rewindOrderingOperands(node);
 
+        // Against a literal the serializer knows one operand's sign class at compile time, and the
+        // unsigned-order expansion below collapses to the few terms that class calls for. A column,
+        // bind variable or arithmetic operand has no compile-time sign and takes the general
+        // expansion, as does the NULL literal.
+        final boolean isNonStrict = opcode == LE || opcode == GE;
+        final int leftLiteral = ipv4OrderingLiteral(left);
+        final int rightLiteral = ipv4OrderingLiteral(right);
+        if (rightLiteral != Numbers.IPv4_NULL && leftLiteral == Numbers.IPv4_NULL) {
+            serializeIPv4OrderingBelowLiteral(left, right, rightLiteral, isNonStrict);
+            return;
+        }
+        if (leftLiteral != Numbers.IPv4_NULL && rightLiteral == Numbers.IPv4_NULL) {
+            serializeIPv4OrderingAboveLiteral(right, left, leftLiteral, isNonStrict);
+            return;
+        }
+
         // Strict ordering excludes either-null rows.
         serializeIPv4ZeroTest(left, NE);
         serializeIPv4ZeroTest(right, NE);
@@ -4961,6 +5083,79 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    /**
+     * {@code operand > literal} (or {@code >=}) in the unsigned IPv4 order, against a non-NULL
+     * literal. The mirror of {@link #serializeIPv4OrderingBelowLiteral}:
+     * <ul>
+     * <li>literal below 128.0.0.0: above it, OR negative (either INT_MIN or a negative lane);</li>
+     * <li>literal 128.0.0.0: a negative lane other than INT_MIN, which is what native {@code < 0}
+     * answers; non-strict adds INT_MIN itself;</li>
+     * <li>literal above 128.0.0.0: negative AND above it, where native GT / GE already read INT_MIN
+     * as false.</li>
+     * </ul>
+     */
+    private void serializeIPv4OrderingAboveLiteral(
+            ExpressionNode operand,
+            ExpressionNode literal,
+            int literalValue,
+            boolean isNonStrict
+    ) throws SqlException {
+        if (literalValue > 0) {
+            serializeLiteralCompare(operand, literal, isNonStrict ? GE : GT);
+            serializeIPv4NegativeTest(operand);
+            putOperator(OR);
+        } else if (literalValue == Integer.MIN_VALUE) {
+            serializeIPv4ZeroTest(operand, LT);
+            if (isNonStrict) {
+                serializeIPv4MinTest(operand);
+                putOperator(OR);
+            }
+        } else {
+            serializeIPv4ZeroTest(operand, LT);
+            serializeLiteralCompare(operand, literal, isNonStrict ? GE : GT);
+            putOperator(AND);
+        }
+    }
+
+    /**
+     * {@code operand < literal} (or {@code <=}) in the unsigned IPv4 order, against a non-NULL
+     * literal. A signed i32 lane reads 0.0.0.1..127.255.255.255 as positive and
+     * 128.0.0.0..255.255.255.255 as negative, with 128.0.0.0 being INT_MIN - the value the native
+     * i32 order comparisons treat as the INT null sentinel, so {@code > 0} and {@code < 0} both read
+     * it as false and an {@code = INT_MIN} term names it. The literal's class, known at compile
+     * time, picks the shape:
+     * <ul>
+     * <li>literal below 128.0.0.0: positive AND below it;</li>
+     * <li>literal 128.0.0.0: positive; non-strict adds INT_MIN itself;</li>
+     * <li>literal above 128.0.0.0: positive, OR INT_MIN, OR below it (which only a negative lane
+     * can be).</li>
+     * </ul>
+     * IPv4 NULL is zero: neither positive, nor negative, nor INT_MIN, nor below a non-NULL literal
+     * that is itself negative, so NULL rows drop out of every shape without a term of their own.
+     */
+    private void serializeIPv4OrderingBelowLiteral(
+            ExpressionNode operand,
+            ExpressionNode literal,
+            int literalValue,
+            boolean isNonStrict
+    ) throws SqlException {
+        serializeIPv4ZeroTest(operand, GT);
+        if (literalValue > 0) {
+            serializeLiteralCompare(operand, literal, isNonStrict ? LE : LT);
+            putOperator(AND);
+        } else if (literalValue == Integer.MIN_VALUE) {
+            if (isNonStrict) {
+                serializeIPv4MinTest(operand);
+                putOperator(OR);
+            }
+        } else {
+            serializeIPv4MinTest(operand);
+            putOperator(OR);
+            serializeLiteralCompare(operand, literal, isNonStrict ? LE : LT);
+            putOperator(OR);
+        }
+    }
+
     private void serializeIPv4SignedLess(ExpressionNode left, ExpressionNode right) throws SqlException {
         // Repair the native null-check mask for the valid INT_MIN IPv4 value.
         putOperand(IMM, I4_TYPE, Integer.MIN_VALUE);
@@ -4979,6 +5174,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     private void serializeIPv4ZeroTest(ExpressionNode operand, int opcode) throws SqlException {
         putOperand(IMM, I4_TYPE, Numbers.IPv4_NULL);
+        traverseAlgo.traverse(operand, this);
+        putOperator(opcode);
+    }
+
+    private void serializeLiteralCompare(ExpressionNode operand, ExpressionNode literal, int opcode) throws SqlException {
+        // Emits `operand <opcode> literal`. The backends pop the left operand first, so the
+        // last-pushed value is the left operand: the literal (right operand) goes in first and
+        // the operand goes in last, the way the general expansions order theirs.
+        traverseAlgo.traverse(literal, this);
         traverseAlgo.traverse(operand, this);
         putOperator(opcode);
     }

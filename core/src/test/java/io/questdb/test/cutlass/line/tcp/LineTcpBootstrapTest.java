@@ -1182,6 +1182,62 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testLineTimestampOutOfRangeIsRejectedOnNonWalTableWithoutDesignatedTimestamp() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getBindPort();
+                // a table without a designated timestamp cannot be partitioned, and the parser accepts
+                // WAL / BYPASS WAL only after PARTITION BY, so this table is non-WAL by construction
+                serverMain.execute("CREATE TABLE test_no_ts_out_of_range (x LONG)");
+
+                // The table has no designated timestamp column, so the writer drops the line timestamp
+                // on the floor. The server still validates it against the bounds of the micros driver
+                // that a table without a designated timestamp resolves to, the same way the WAL path
+                // does, instead of accepting a value it would refuse on any other table.
+                final long inRange = MicrosTimestampDriver.floor("2024-01-01 00:00:00.000000");
+
+                // the line timestamp is negative
+                assertNonWalDesignatedTimestampRejected(port, "test_no_ts_out_of_range", sender -> {
+                    sender.table("test_no_ts_out_of_range")
+                            .longColumn("x", 1)
+                            .at(inRange, ChronoUnit.MICROS);
+                    sender.table("test_no_ts_out_of_range")
+                            .longColumn("x", 2)
+                            .at(-1, ChronoUnit.MICROS);
+                });
+
+                // the line timestamp is past the 9999-12-31 ceiling of a micros timestamp
+                assertNonWalDesignatedTimestampRejected(port, "test_no_ts_out_of_range", sender -> {
+                    sender.table("test_no_ts_out_of_range")
+                            .longColumn("x", 3)
+                            .at(inRange + 1, ChronoUnit.MICROS);
+                    sender.table("test_no_ts_out_of_range")
+                            .longColumn("x", 4)
+                            .at(Micros.YEAR_10000, ChronoUnit.MICROS);
+                });
+
+                // the writer survives the rejections: a good line sent after the faults still lands
+                try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
+                    sender.table("test_no_ts_out_of_range")
+                            .longColumn("x", 5)
+                            .at(inRange + 2, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                // only the out-of-range messages are rejected, the rows around them land
+                assertEventually(() -> serverMain.assertSql(
+                        "SELECT x FROM test_no_ts_out_of_range",
+                        """
+                                x
+                                1
+                                3
+                                5
+                                """));
+            }
+        });
+    }
+
+    @Test
     public void testMaxNameLength() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
@@ -1702,7 +1758,10 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
      * so a rejected message surfaces as a disconnect under the default disconnect-on-error policy.
      */
     private void assertNonWalDesignatedTimestampRejected(int port, String tableName, Consumer<Sender> batchWriter) throws Exception {
-        try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
+        final Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2);
+        try {
+            // a fresh connection: the batch and its first flush must reach the server, so a
+            // failure here is a real failure rather than a disconnect to tolerate
             batchWriter.accept(sender);
             sender.flush();
             // TCP buffering may hide the disconnect from the first probe, so keep probing
@@ -1714,8 +1773,12 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 } catch (LineSenderException ignored) {
                 }
             }, 30);
-        } catch (LineSenderException ignored) {
-            // the sender may notice the server-side disconnect while closing
+        } finally {
+            try {
+                sender.close();
+            } catch (LineSenderException ignored) {
+                // the sender may notice the server-side disconnect while closing
+            }
         }
     }
 

@@ -29,7 +29,9 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -47,6 +49,7 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @RunWith(Parameterized.class)
 public class TimestampBoundsTest extends AbstractCairoTest {
@@ -237,6 +240,14 @@ public class TimestampBoundsTest extends AbstractCairoTest {
      * The rejected row must not leave the writer distressed or the partition bookkeeping damaged:
      * before the bound was enforced, a batch that ended past the ceiling threw
      * {@code ArrayIndexOutOfBoundsException} out of {@code TxWriter} and killed the writer.
+     * <p>
+     * A distressed non-WAL writer never survives to be inspected after the statement: the pool
+     * closes and evicts it on return ({@code WriterPool.returnToPool}, {@code CR_DISTRESSED}) and
+     * the next statement reopens a healthy one, so the surviving rows alone cannot tell the two
+     * outcomes apart. The eviction announces itself as {@code EV_LOCK_CLOSE} on the executing
+     * thread before the INSERT returns, and that is where this test looks. The WAL leg is inert
+     * here: its rejected batch never reaches the table writer, and the WAL writer pool reports its
+     * events as {@code SRC_WAL_WRITER}.
      */
     @Test
     public void testDesignatedNanosTimestampOutOfBoundsKeepsTableUsable() throws Exception {
@@ -244,8 +255,25 @@ public class TimestampBoundsTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY "
                     + (walEnabled ? "" : "BYPASS ") + "WAL");
             execute("INSERT INTO tango VALUES ('2024-01-01T00:00:00.000000000Z')");
-            assertQuery("INSERT INTO tango VALUES (" + (Long.MAX_VALUE - 1) + "), (" + Long.MAX_VALUE + ")")
-                    .fails(26, NANOS_OUT_OF_BOUNDS);
+            final AtomicInteger distressedCloses = new AtomicInteger();
+            final PoolListener previousListener = engine.getPoolListener();
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                if (
+                        factoryType == PoolListener.SRC_WRITER
+                                && event == PoolListener.EV_LOCK_CLOSE
+                                && tableToken != null
+                                && Chars.equals(tableToken.getTableName(), "tango")
+                ) {
+                    distressedCloses.incrementAndGet();
+                }
+            });
+            try {
+                assertQuery("INSERT INTO tango VALUES (" + (Long.MAX_VALUE - 1) + "), (" + Long.MAX_VALUE + ")")
+                        .fails(26, NANOS_OUT_OF_BOUNDS);
+            } finally {
+                engine.setPoolListener(previousListener);
+            }
+            Assert.assertEquals("rejected batch left the writer distressed", 0, distressedCloses.get());
             execute("INSERT INTO tango VALUES ('2024-01-02T00:00:00.000000000Z')");
             drainWalQueue();
             assertQuery("SELECT * FROM tango").timestamp("ts").expectSize().returns("""

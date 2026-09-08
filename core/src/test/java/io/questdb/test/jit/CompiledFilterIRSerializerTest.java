@@ -1073,13 +1073,13 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         //
         // The IR is what it always was: the fix touches only the width model the assert walks, not
         // a single emitted instruction, so this pins the IR and the hint together.
-        int options = serialize("anint <> 498626 + 695544L * afloat", false, false, true);
+        int options = serialize("anint <> 498_626 + 695_544L * afloat", false, false, true);
         assertIR("i64-with-f32 product under a narrow int immediate",
                 "(f32 afloat)(i64 695544L)(*)(i32 498626L)(+)(i32 anint)(sx_i64)(<>)(ret)");
         assertOptionsHint("i64-with-f32 product under a narrow int immediate", options, OptionsHint.WIDE_LANE);
 
         // The same shape under = rather than <>: both spellings reach the assert.
-        options = serialize("anint = 498626 + 695544L * afloat", false, false, true);
+        options = serialize("anint = 498_626 + 695_544L * afloat", false, false, true);
         assertIR("equality spelling",
                 "(f32 afloat)(i64 695544L)(*)(i32 498626L)(+)(i32 anint)(sx_i64)(=)(ret)");
         assertOptionsHint("equality spelling", options, OptionsHint.WIDE_LANE);
@@ -1087,7 +1087,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // Control: drop the narrow immediate and the product stands alone. This shape never
         // tripped the assert - there is no i32 IMM to pair with the mistyped product - and must
         // keep the hint it had.
-        options = serialize("anint <> 695544L * afloat", false, false, true);
+        options = serialize("anint <> 695_544L * afloat", false, false, true);
         assertIR("no narrow immediate",
                 "(f32 afloat)(i64 695544L)(*)(i32 anint)(sx_i64)(<>)(ret)");
         assertOptionsHint("no narrow immediate", options, OptionsHint.WIDE_LANE);
@@ -2305,12 +2305,88 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testCharOrdering() throws Exception {
         // https://github.com/questdb/questdb/issues/7549
+        // Against a literal the serializer knows the literal's sign at compile time, so the
+        // unsigned-order expansion collapses to one sign test of the column and one comparison
+        // against the literal. U+FFFF reads as -1 in a signed i16 lane, so `achar < U+FFFF` is
+        // "achar is positive, OR achar is negative and below -1".
         serialize("achar < '\uffff'");
+        assertIR("(i16 0L)(i16 achar)(>)(i16 -1L)(i16 achar)(<)(||)(ret)");
+    }
+
+    @Test
+    public void testCharOrderingAgainstLiteral() throws Exception {
+        // One exact pin per literal class, operator and operand order. The two-term form depends
+        // on the literal's sign: a literal below U+8000 is positive as i16, so `achar < v` needs
+        // achar positive AND below v, while `achar > v` is above v OR negative (every negative
+        // lane sorts above every positive one in the unsigned CHAR order). A literal at or above
+        // U+8000 is negative, and the two boolean operators swap. The serializer lowers GT and GE
+        // by swapping the operands, so the two spellings of one comparison share one stream
+        // (`achar < 'a'` with `'a' > achar`, `achar > 'a'` with `'a' < achar`) and the four
+        // operators give four streams per literal class.
+        final String[][] pins = {
+                // literal below U+8000: 'a' is 97
+                {"achar < 'a'", "(i16 0L)(i16 achar)(>)(i16 97L)(i16 achar)(<)(&&)"},
+                {"achar <= 'a'", "(i16 0L)(i16 achar)(>)(i16 97L)(i16 achar)(<=)(&&)"},
+                {"achar > 'a'", "(i16 0L)(i16 achar)(<)(i16 97L)(i16 achar)(>)(||)"},
+                {"achar >= 'a'", "(i16 0L)(i16 achar)(<)(i16 97L)(i16 achar)(>=)(||)"},
+                {"'a' > achar", "(i16 0L)(i16 achar)(>)(i16 97L)(i16 achar)(<)(&&)"},
+                {"'a' >= achar", "(i16 0L)(i16 achar)(>)(i16 97L)(i16 achar)(<=)(&&)"},
+                {"'a' < achar", "(i16 0L)(i16 achar)(<)(i16 97L)(i16 achar)(>)(||)"},
+                {"'a' <= achar", "(i16 0L)(i16 achar)(<)(i16 97L)(i16 achar)(>=)(||)"},
+                // literal at the sign boundary: U+8000 is -32768, the most negative i16
+                {"achar < '\u8000'", "(i16 0L)(i16 achar)(>)(i16 -32768L)(i16 achar)(<)(||)"},
+                {"achar <= '\u8000'", "(i16 0L)(i16 achar)(>)(i16 -32768L)(i16 achar)(<=)(||)"},
+                {"achar > '\u8000'", "(i16 0L)(i16 achar)(<)(i16 -32768L)(i16 achar)(>)(&&)"},
+                {"achar >= '\u8000'", "(i16 0L)(i16 achar)(<)(i16 -32768L)(i16 achar)(>=)(&&)"},
+                {"'\u8000' > achar", "(i16 0L)(i16 achar)(>)(i16 -32768L)(i16 achar)(<)(||)"},
+                {"'\u8000' >= achar", "(i16 0L)(i16 achar)(>)(i16 -32768L)(i16 achar)(<=)(||)"},
+                {"'\u8000' < achar", "(i16 0L)(i16 achar)(<)(i16 -32768L)(i16 achar)(>)(&&)"},
+                {"'\u8000' <= achar", "(i16 0L)(i16 achar)(<)(i16 -32768L)(i16 achar)(>=)(&&)"},
+                // literal above the boundary: U+FFFF is -1
+                {"achar < '\uffff'", "(i16 0L)(i16 achar)(>)(i16 -1L)(i16 achar)(<)(||)"},
+                {"achar <= '\uffff'", "(i16 0L)(i16 achar)(>)(i16 -1L)(i16 achar)(<=)(||)"},
+                {"achar > '\uffff'", "(i16 0L)(i16 achar)(<)(i16 -1L)(i16 achar)(>)(&&)"},
+                {"achar >= '\uffff'", "(i16 0L)(i16 achar)(<)(i16 -1L)(i16 achar)(>=)(&&)"},
+                {"'\uffff' > achar", "(i16 0L)(i16 achar)(>)(i16 -1L)(i16 achar)(<)(||)"},
+                {"'\uffff' >= achar", "(i16 0L)(i16 achar)(>)(i16 -1L)(i16 achar)(<=)(||)"},
+                {"'\uffff' < achar", "(i16 0L)(i16 achar)(<)(i16 -1L)(i16 achar)(>)(&&)"},
+                {"'\uffff' <= achar", "(i16 0L)(i16 achar)(<)(i16 -1L)(i16 achar)(>=)(&&)"},
+        };
+        for (String[] pin : pins) {
+            serialize(pin[0]);
+            assertIRStackBalanced();
+            assertIR(pin[0], pin[1] + "(ret)");
+        }
+
+        // A NULL literal (U+0000) has no sign class the two-term form can express: an ordering
+        // against CHAR NULL is false for every row, and the general expansion says so through its
+        // not-null term, so the literal keeps that expansion.
+        serialize("achar < '\u0000'");
+        assertIRStackBalanced();
         assertIR(
-                "(i16 0L)(i16 achar)(<>)(i16 0L)(i16 -1L)(<>)(&&)" +
-                        "(i16 0L)(i16 achar)(>=)(i16 0L)(i16 -1L)(<)(&&)" +
-                        "(i16 0L)(i16 achar)(<)(i16 0L)(i16 -1L)(<)(=)" +
-                        "(i16 -1L)(i16 achar)(<)(&&)(||)(&&)(ret)"
+                "(i16 0L)(i16 achar)(<>)(i16 0L)(i16 0L)(<>)(&&)" +
+                        "(i16 0L)(i16 achar)(>=)(i16 0L)(i16 0L)(<)(&&)" +
+                        "(i16 0L)(i16 achar)(<)(i16 0L)(i16 0L)(<)(=)" +
+                        "(i16 0L)(i16 achar)(<)(&&)(||)(&&)(ret)"
+        );
+        serialize("'\u0000' <= achar");
+        assertIRStackBalanced();
+        assertIR(
+                "(i16 0L)(i16 0L)(<>)(i16 0L)(i16 achar)(<>)(&&)" +
+                        "(i16 0L)(i16 0L)(>=)(i16 0L)(i16 achar)(<)(&&)" +
+                        "(i16 0L)(i16 0L)(<)(i16 0L)(i16 achar)(<)(=)" +
+                        "(i16 achar)(i16 0L)(<=)(&&)(||)(&&)(ret)"
+        );
+
+        // Column against column has no compile-time sign on either side and keeps the general
+        // expansion byte for byte; the bind variable pins above cover the other non-literal operand.
+        serialize("achar < achar");
+        assertIRStackBalanced();
+        assertIR(
+                "(i16 0L)(i16 achar)(<>)(i16 0L)(i16 achar)(<>)(&&)" +
+                        "(i16 0L)(i16 achar)(>=)(i16 0L)(i16 achar)(<)(&&)" +
+                        "(i16 0L)(i16 achar)(<)(i16 0L)(i16 achar)(<)(=)" +
+                        "(i16 achar)(i16 achar)(<)(&&)(||)(&&)(ret)"
         );
     }
 
@@ -2566,7 +2642,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "'null'"
         };
 
-        // serializeIPv4Ordering() emits AND, OR, EQ, NE and LT only - never a short-circuit
+        // serializeIPv4Ordering() emits plain comparisons, AND and OR only - never a short-circuit
         // opcode - so assertIRStackBalanced() reads every spelling below. A stream that pops more
         // than it pushed reaches the user as a SIGSEGV inside questdb::avx2::emit_bin_op rather
         // than as a JIT decline, so each shape has to be judged here.
@@ -2581,28 +2657,91 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             }
         }
 
-        // Pin the exact stream for one strict and one non-strict shape, the way testCharOrdering
-        // pins its own: the balance walk above still passes on a wrong-but-well-formed expansion.
-        serialize("anipv4 < '127.255.255.255'");
+        // Pin the exact stream per literal class, the way testCharOrderingAgainstLiteral pins its
+        // own: the balance walk above still passes on a wrong-but-well-formed expansion. Native
+        // i32 LT / GT / LE / GE treat INT_MIN as the INT null sentinel, so the column's sign class
+        // reads as `> 0` (positive), `< 0` (negative other than 128.0.0.0) and `= INT_MIN`
+        // (128.0.0.0 itself), and each form spells out exactly the classes the literal admits.
+        final String[][] pins = {
+                // literal below 128.0.0.0: the column must be positive and on the right side of it
+                {"anipv4 < '127.255.255.255'", "(i32 0L)(i32 anipv4)(>)(i32 2147483647L)(i32 anipv4)(<)(&&)"},
+                {"anipv4 <= '127.255.255.255'", "(i32 0L)(i32 anipv4)(>)(i32 2147483647L)(i32 anipv4)(<=)(&&)"},
+                {"anipv4 > '127.255.255.255'", "(i32 2147483647L)(i32 anipv4)(>)(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)(||)"},
+                {"anipv4 >= '127.255.255.255'", "(i32 2147483647L)(i32 anipv4)(>=)(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)(||)"},
+                {"'10.0.0.1' > anipv4", "(i32 0L)(i32 anipv4)(>)(i32 167772161L)(i32 anipv4)(<)(&&)"},
+                {"'10.0.0.1' >= anipv4", "(i32 0L)(i32 anipv4)(>)(i32 167772161L)(i32 anipv4)(<=)(&&)"},
+                {"'10.0.0.1' < anipv4", "(i32 167772161L)(i32 anipv4)(>)(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)(||)"},
+                {"'10.0.0.1' <= anipv4", "(i32 167772161L)(i32 anipv4)(>=)(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)(||)"},
+                // literal 128.0.0.0 (INT_MIN): a comparison against it is a pure sign test
+                {"anipv4 < '128.0.0.0'", "(i32 0L)(i32 anipv4)(>)"},
+                {"anipv4 <= '128.0.0.0'", "(i32 0L)(i32 anipv4)(>)(i32 -2147483648L)(i32 anipv4)(=)(||)"},
+                {"anipv4 > '128.0.0.0'", "(i32 0L)(i32 anipv4)(<)"},
+                {"anipv4 >= '128.0.0.0'", "(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)"},
+                {"'128.0.0.0' > anipv4", "(i32 0L)(i32 anipv4)(>)"},
+                {"'128.0.0.0' >= anipv4", "(i32 0L)(i32 anipv4)(>)(i32 -2147483648L)(i32 anipv4)(=)(||)"},
+                {"'128.0.0.0' < anipv4", "(i32 0L)(i32 anipv4)(<)"},
+                {"'128.0.0.0' <= anipv4", "(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)"},
+                // literal above 128.0.0.0: every positive column and 128.0.0.0 sort below it
+                {"anipv4 < '255.255.255.255'", "(i32 0L)(i32 anipv4)(>)(i32 -2147483648L)(i32 anipv4)(=)(||)(i32 -1L)(i32 anipv4)(<)(||)"},
+                {"anipv4 <= '255.255.255.255'", "(i32 0L)(i32 anipv4)(>)(i32 -2147483648L)(i32 anipv4)(=)(||)(i32 -1L)(i32 anipv4)(<=)(||)"},
+                {"anipv4 > '255.255.255.255'", "(i32 0L)(i32 anipv4)(<)(i32 -1L)(i32 anipv4)(>)(&&)"},
+                {"anipv4 >= '255.255.255.255'", "(i32 0L)(i32 anipv4)(<)(i32 -1L)(i32 anipv4)(>=)(&&)"},
+                {"'128.0.0.1' > anipv4", "(i32 0L)(i32 anipv4)(>)(i32 -2147483648L)(i32 anipv4)(=)(||)(i32 -2147483647L)(i32 anipv4)(<)(||)"},
+                {"'128.0.0.1' >= anipv4", "(i32 0L)(i32 anipv4)(>)(i32 -2147483648L)(i32 anipv4)(=)(||)(i32 -2147483647L)(i32 anipv4)(<=)(||)"},
+                {"'128.0.0.1' < anipv4", "(i32 0L)(i32 anipv4)(<)(i32 -2147483647L)(i32 anipv4)(>)(&&)"},
+                {"'128.0.0.1' <= anipv4", "(i32 0L)(i32 anipv4)(<)(i32 -2147483647L)(i32 anipv4)(>=)(&&)"},
+        };
+        for (String[] pin : pins) {
+            serialize(pin[0]);
+            assertIRStackBalanced();
+            assertIR(pin[0], pin[1] + "(ret)");
+        }
+
+        // The NULL literal - '0.0.0.0', 'null' and the bare null keyword all parse to it - has no
+        // sign class of its own: a strict ordering against it is false for every row and the
+        // non-strict one selects exactly the NULL rows, which the general expansion's not-null
+        // term and equality arm say. It keeps that expansion, in both operand orders.
+        serialize("anipv4 < '0.0.0.0'");
         assertIR(
-                "(i32 0L)(i32 anipv4)(<>)(i32 0L)(i32 2147483647L)(<>)(&&)" +
-                        "(i32 -2147483648L)(i32 anipv4)(=)(i32 -2147483648L)(i32 2147483647L)(<>)(&&)" +
-                        "(i32 2147483647L)(i32 anipv4)(<)(||)" +
+                "(i32 0L)(i32 anipv4)(<>)(i32 0L)(i32 0L)(<>)(&&)" +
+                        "(i32 -2147483648L)(i32 anipv4)(=)(i32 -2147483648L)(i32 0L)(<>)(&&)" +
+                        "(i32 0L)(i32 anipv4)(<)(||)" +
                         "(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)" +
-                        "(i32 0L)(i32 2147483647L)(<)(i32 -2147483648L)(i32 2147483647L)(=)(||)" +
+                        "(i32 0L)(i32 0L)(<)(i32 -2147483648L)(i32 0L)(=)(||)" +
                         "(<>)(<>)(&&)(ret)"
         );
-
-        // Non-strict ordering appends the equality arm, and nothing else differs.
-        serialize("anipv4 <= '127.255.255.255'");
+        serialize("'null' <= anipv4");
         assertIR(
-                "(i32 0L)(i32 anipv4)(<>)(i32 0L)(i32 2147483647L)(<>)(&&)" +
-                        "(i32 -2147483648L)(i32 anipv4)(=)(i32 -2147483648L)(i32 2147483647L)(<>)(&&)" +
-                        "(i32 2147483647L)(i32 anipv4)(<)(||)" +
+                "(i32 0L)(i32 0L)(<>)(i32 0L)(i32 anipv4)(<>)(&&)" +
+                        "(i32 -2147483648L)(i32 0L)(=)(i32 -2147483648L)(i32 anipv4)(<>)(&&)" +
+                        "(i32 anipv4)(i32 0L)(<)(||)" +
+                        "(i32 0L)(i32 0L)(<)(i32 -2147483648L)(i32 0L)(=)(||)" +
                         "(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)" +
-                        "(i32 0L)(i32 2147483647L)(<)(i32 -2147483648L)(i32 2147483647L)(=)(||)" +
                         "(<>)(<>)(&&)" +
-                        "(i32 2147483647L)(i32 anipv4)(=)(||)(ret)"
+                        "(i32 anipv4)(i32 0L)(=)(||)(ret)"
+        );
+        serialize("anipv4 <= null");
+        assertIR(
+                "(i32 0L)(i32 anipv4)(<>)(i32 0L)(i32 0L)(<>)(&&)" +
+                        "(i32 -2147483648L)(i32 anipv4)(=)(i32 -2147483648L)(i32 0L)(<>)(&&)" +
+                        "(i32 0L)(i32 anipv4)(<)(||)" +
+                        "(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)" +
+                        "(i32 0L)(i32 0L)(<)(i32 -2147483648L)(i32 0L)(=)(||)" +
+                        "(<>)(<>)(&&)" +
+                        "(i32 0L)(i32 anipv4)(=)(||)(ret)"
+        );
+
+        // Column against column has no compile-time sign on either side and keeps the general
+        // expansion byte for byte; testIPv4OrderingBindVariableEmitsOneVarSlot pins the bind
+        // variable operand the same way.
+        serialize("anipv4 < anipv4");
+        assertIR(
+                "(i32 0L)(i32 anipv4)(<>)(i32 0L)(i32 anipv4)(<>)(&&)" +
+                        "(i32 -2147483648L)(i32 anipv4)(=)(i32 -2147483648L)(i32 anipv4)(<>)(&&)" +
+                        "(i32 anipv4)(i32 anipv4)(<)(||)" +
+                        "(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)" +
+                        "(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)" +
+                        "(<>)(<>)(&&)(ret)"
         );
 
         // serializeIPv4Ordering() swaps its operands for GT and GE and then expands them exactly as
