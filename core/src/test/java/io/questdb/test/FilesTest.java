@@ -31,6 +31,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.FdCache;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -89,6 +90,45 @@ public class FilesTest {
                     Assert.assertEquals(120, Files.length(path.$()));
                 } finally {
                     Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOpenFdDebugInfoRendersCachedPaths() throws Exception {
+        assertMemoryLeak(() -> {
+            final FdCache cache = new FdCache();
+            final File temp = temporaryFolder.newFile();
+            TestUtils.writeStringToFile(temp, "abcde");
+            final String tempPath = temp.getAbsolutePath();
+            try (Path path = new Path().of(tempPath)) {
+                long cachedFd = -1;
+                try {
+                    cachedFd = cache.openROCached(path.$());
+                    Assert.assertTrue(cachedFd > -1);
+                    // A leak report names the file that was left open; without the path the
+                    // report is a bare descriptor id the reader cannot act on.
+                    Assert.assertEquals(cachedFd + "=" + tempPath, cache.getOpenFdDebugInfo());
+                } finally {
+                    if (cachedFd > -1) {
+                        Assert.assertEquals(0, cache.close(cachedFd));
+                    }
+                }
+                Assert.assertEquals("", cache.getOpenFdDebugInfo());
+
+                final long uncachedFd = Files.openRW(path.$());
+                Assert.assertTrue(uncachedFd > -1);
+                try {
+                    // A non-cached descriptor carries no path, so it renders bare rather than
+                    // with a trailing separator.
+                    assertContains(Files.getOpenFdDebugInfo(), String.valueOf(uncachedFd));
+                    Assert.assertFalse(
+                            "a pathless descriptor must not render a separator",
+                            Chars.contains(Files.getOpenFdDebugInfo(), uncachedFd + "=")
+                    );
+                } finally {
+                    Files.close(uncachedFd);
                 }
             }
         });
