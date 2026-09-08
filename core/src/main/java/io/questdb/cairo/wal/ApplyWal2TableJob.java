@@ -1123,7 +1123,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         // WAL apply must never fiber-suspend, or an applied UPDATE that waits on WAL progress
         // would park the apply it depends on; generateUpdate rejects such statements at compile
         // time, and no caller reaches applyWal from a mounted fiber.
-        applyWal(tableToken, engine, operationExecutor, runStatus);
+        applyWal(tableToken, engine, operationExecutor, runStatus, false);
     }
 
     /**
@@ -1148,6 +1148,23 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             CairoEngine engine,
             OperationExecutor operationExecutor,
             WorkerContext runStatus
+    ) {
+        applyWal(tableToken, engine, operationExecutor, runStatus, false);
+    }
+
+    /**
+     * @param queueDriven true when a WAL notification off the queue drove this apply, so a busy
+     *                    writer has to re-publish the notification rather than drop it. A direct
+     *                    caller ({@link #applyWalDirect}) passes false: it owns the retry itself,
+     *                    and re-publishing would reset the SeqTxnTracker the caller reads back to
+     *                    find out whether its block landed.
+     */
+    public void applyWal(
+            @NotNull TableToken tableToken,
+            CairoEngine engine,
+            OperationExecutor operationExecutor,
+            WorkerContext runStatus,
+            boolean queueDriven
     ) {
         final Path tempPath = Path.PATH.get();
         SeqTxnTracker txnTracker = null;
@@ -1186,14 +1203,22 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 .$(", lockReason=").$(tableBusy.getReason())
                                 .I$();
                     }
-                    // This notification came off the queue and nothing applied it. Reset the SeqTxnTracker so
-                    // the next CheckWalTransactionsJob run re-publishes it, whatever holds the writer and whether
-                    // or not the lock was solicited. Only another WAL apply re-notifies on its own way out; every
-                    // other holder - a composite or parquet partition swap, a storage policy command, an ALTER -
-                    // owes the table nothing and leaves it lagging its sequencer until that job's own tracker
-                    // sweep, a whole cairo.sequencer.check.interval away. Re-publishing for the apply-holds-it
-                    // case as well costs one rescan and keeps this correct as new holders appear.
-                    engine.notifyWalTxnRepublisher(tableToken);
+                    if (queueDriven) {
+                        // This notification came off the queue and nothing applied it. Reset the SeqTxnTracker so
+                        // the next CheckWalTransactionsJob run re-publishes it, whatever holds the writer and
+                        // whether or not the lock was solicited. Only another WAL apply re-notifies on its own way
+                        // out; every other holder - a composite or parquet partition swap, a storage policy
+                        // command, an ALTER - owes the table nothing and leaves it lagging its sequencer until
+                        // that job's own tracker sweep, a whole cairo.sequencer.check.interval away.
+                        // Re-publishing for the apply-holds-it case as well costs one rescan and keeps this
+                        // correct as new holders appear.
+                        //
+                        // A direct caller drives its own retry and is excluded: LiveViewRefreshJob reads the
+                        // tracker back to find out whether the block it just committed landed, and the reset
+                        // to UNINITIALIZED erases exactly that answer. Its scanForLaggingViews would then see
+                        // nothing outstanding and never retry, leaving the rows off both tiers.
+                        engine.notifyWalTxnRepublisher(tableToken);
+                    }
                     // Do not suspend table. Perhaps writer will be unlocked with no transaction applied.
                     // We do not suspend table because of having initial value on writerTxn. It will either be
                     // "ignore" or last txn we applied.
@@ -1251,7 +1276,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return true;
         }
 
-        applyWal(tableToken, engine, operationExecutor, workerContext);
+        applyWal(tableToken, engine, operationExecutor, workerContext, true);
         return true;
     }
 
