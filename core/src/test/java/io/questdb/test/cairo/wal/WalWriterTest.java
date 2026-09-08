@@ -5750,15 +5750,7 @@ public class WalWriterTest extends AbstractCairoTest {
             // WalPurgeJob now sees a live-looking dropped table and pings ApplyWal2TableJob, whose sweep
             // runs on the next drain.
             engine.releaseInactive();
-            try (WalPurgeJob job = new WalPurgeJob(
-                    engine,
-                    configuration.getFilesFacade(),
-                    configuration.getMicrosecondClock())
-            ) {
-                //noinspection StatementWithEmptyBody
-                while (job.run()) {
-                }
-            }
+            drainPurgeJob();
             drainWalQueue();
 
             try (Path p = new Path()) {
@@ -5781,15 +5773,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             // Keeping the marker must not strand the dir: WalPurgeJob still reclaims the lot.
             engine.releaseInactive();
-            try (WalPurgeJob job = new WalPurgeJob(
-                    engine,
-                    configuration.getFilesFacade(),
-                    configuration.getMicrosecondClock())
-            ) {
-                //noinspection StatementWithEmptyBody
-                while (job.run()) {
-                }
-            }
+            drainPurgeJob();
             try (Path p = new Path()) {
                 Assert.assertFalse(
                         "the old table dir must still be reclaimed by WalPurgeJob",
