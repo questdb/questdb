@@ -8121,6 +8121,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // openPartition, skipped for an append-blocked partition, is also the only thing that
                     // reconfigures a BITMAP indexer's live writer.
                     configureIndexersForClosedActivePartition();
+                    // openPartition also re-syncs the writer's append horizon, and this commit may have
+                    // removed every partition above the last one - a dedup/replace that emptied them, or a
+                    // drop. Left alone, partitionTimestampHi keeps pointing at a partition that no longer
+                    // exists (processO3Block only ever raises it, to the incoming batch's max), and the next
+                    // processWalCommit trips its partitionTimestampHi-vs-maxTimestamp consistency assert.
+                    partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(txWriter.getLastPartitionTimestamp());
                 }
             }
 
