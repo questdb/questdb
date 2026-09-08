@@ -33,6 +33,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoKeywords;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.PartitionRemovalEvents;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -106,6 +107,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     // commit's applied state diverges from its raw WAL stream (dedup / skip / non-DATA op).
     // Read once by applyOutstandingWalTransactions right after processWalCommit returns.
     private boolean lastCommitDiverged;
+    // Partition removals the transactions of the current applyWal call made durable, in
+    // commit order, each stamped with its seqTxn. Reset at the start of every applyWal and
+    // appended to after every processed transaction, whether or not the batch then went on
+    // to fail: a removal the writer committed stays committed. LiveViewRefreshJob reads it
+    // right after applyWalDirect returns, before the next apply resets it.
+    private final PartitionRemovalEvents committedRemovalEvents = new PartitionRemovalEvents();
     private long lastAttemptSeqTxn;
     private long lastCommittedRows;
 
@@ -554,17 +561,30 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 assert walId == writer.getWalTnxDetails().getWalId(seqTxn);
                                 assert segmentId == writer.getWalTnxDetails().getSegmentId(seqTxn);
 
-                                final int txnCommitted = processWalCommit(
-                                        writer,
-                                        walId,
-                                        segmentId,
-                                        tempPath,
-                                        segmentTxn,
-                                        operationExecutor,
-                                        seqTxn,
-                                        commitTimestamp,
-                                        pressureControl
-                                );
+                                final int txnCommitted;
+                                try {
+                                    txnCommitted = processWalCommit(
+                                            writer,
+                                            walId,
+                                            segmentId,
+                                            tempPath,
+                                            segmentTxn,
+                                            operationExecutor,
+                                            seqTxn,
+                                            commitTimestamp,
+                                            pressureControl
+                                    );
+                                } finally {
+                                    // In a finally so a transaction that committed its removals
+                                    // and then failed further down still reports them: the
+                                    // writer publishes a removal only after its _txn commit
+                                    // returned, and nothing un-applies that commit. The writer's
+                                    // log is cleared here as well as by its own per-transaction
+                                    // reset, so a throw before that reset cannot hand the previous
+                                    // transaction's events over a second time.
+                                    committedRemovalEvents.addAll(writer.getCommittedPartitionRemovals());
+                                    writer.getCommittedPartitionRemovals().clear();
+                                }
                                 assert txnCommitted != 0;
 
                                 if (txnCommitted > 0) {
@@ -1132,6 +1152,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     /**
+     * The partition removals the last {@link #applyWal} call made durable, in commit
+     * order, with the seqTxn each removal's commit carried. Covers TTL evictions a DATA
+     * commit's housekeeping ran and {@code DROP PARTITION} SQL transactions alike, and
+     * keeps every removal committed before a later transaction in the same call failed
+     * or the call ran out of its time quota. Reset by the next {@link #applyWal}; a caller
+     * that needs the events past that must copy them.
+     */
+    public PartitionRemovalEvents getCommittedRemovalEvents() {
+        return committedRemovalEvents;
+    }
+
+    /**
      * Drives the apply loop for {@code tableToken} to best effort. Does NOT report
      * whether (or how far) it applied: it silently returns without applying when the
      * table backs off under memory pressure ({@code !isReadyToProcess()}) or the writer
@@ -1157,6 +1189,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         final Path tempPath = Path.PATH.get();
         SeqTxnTracker txnTracker = null;
         this.lastAttemptSeqTxn = -1;
+        committedRemovalEvents.clear();
         try {
             // security context is checked on writing to the WAL and can be ignored here
             final TableToken updatedToken = engine.getUpdatedTableToken(tableToken);

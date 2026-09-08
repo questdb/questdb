@@ -414,6 +414,22 @@ public final class LiveViewCheckpointLifecycle {
                 success = false;
                 logRemoveFailure(ff, path);
             }
+            // The pending-retention marker records removals the retired timeline had
+            // not accounted for. With the timeline gone there is nothing left to
+            // mis-trust: the next seal opens a fresh history over the table as it is,
+            // and a restart with no timeline rebuilds from the applied base anyway.
+            // Same staged-sibling rule as the repair marker above.
+            LiveViewCheckpointLayout.retentionMarkerPath(path, checkpointsDir);
+            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+                success = false;
+                logRemoveFailure(ff, path);
+            }
+            LiveViewCheckpointLayout.retentionMarkerPath(path, checkpointsDir);
+            path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+                success = false;
+                logRemoveFailure(ff, path);
+            }
             LiveViewCheckpointLayout.retirementQueuePath(path, checkpointsDir);
             if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
                 success = false;
@@ -544,6 +560,7 @@ public final class LiveViewCheckpointLifecycle {
                         || Chars.equals(name, "..")
                         || Chars.equals(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
                         || Chars.startsWith(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
+                        || Chars.startsWith(name, LiveViewCheckpointLayout.RETENTION_MARKER_FILE_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.RETIREMENT_QUEUE_TMP_FILE_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.META_DIR_NAME)

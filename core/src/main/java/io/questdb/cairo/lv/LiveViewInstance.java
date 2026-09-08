@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionRemovalEvents;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
@@ -581,6 +582,15 @@ public class LiveViewInstance implements QuietCloseable {
     // is active, and the agent's startCheckpoint cannot complete its latch
     // handshake while the worker holds the refresh latch.
     private String pendingInvalidationReason;
+    // Partition removals the live view's table committed - TTL evictions and DROP
+    // PARTITION - that the checkpoint timeline and the lifetime row counter have not been
+    // reconciled with yet. applyLiveViewWal transfers them here from the worker-owned
+    // apply job right after each inline apply, and the refresh job consumes them at the
+    // next safe boundary: it subtracts their rows from lvRowsTotal, disposes of the
+    // timeline and clears the log. Refresh-worker only, under the refresh latch, same
+    // discipline as lvRowsTotal. Heap-backed and grown once, so a removal costs no
+    // allocation on the steady state; the per-view memory tracker does not see it.
+    private final PartitionRemovalEvents pendingPartitionRemovals = new PartitionRemovalEvents();
     // LV-WRITER space, not base space: the live-view writer's own seqTxn of an
     // out-of-order repair's REPLACE_RANGE block that committed but whose inline
     // apply did not land. LONG_NULL when nothing is outstanding. Refresh is blocked
@@ -1542,6 +1552,14 @@ public class LiveViewInstance implements QuietCloseable {
      * that committed but did not apply, or {@link Numbers#LONG_NULL} when nothing
      * is outstanding. See {@link #pendingReplacementLvSeqTxn}.
      */
+    /**
+     * The durable partition removals the refresh job still owes a reconciliation for. See
+     * the field for ownership; only the refresh worker reads or mutates it.
+     */
+    public PartitionRemovalEvents getPendingPartitionRemovals() {
+        return pendingPartitionRemovals;
+    }
+
     public long getPendingReplacementLvSeqTxn() {
         return pendingReplacementLvSeqTxn;
     }
@@ -1688,6 +1706,10 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public boolean hasPendingInvalidationReason() {
         return pendingInvalidationReason != null;
+    }
+
+    public boolean hasPendingPartitionRemovals() {
+        return !pendingPartitionRemovals.isEmpty();
     }
 
     public boolean hasWarnedBelowLowerBoundDrop() {

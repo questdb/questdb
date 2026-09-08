@@ -38,6 +38,8 @@ import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewRetentionMarker;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
@@ -213,6 +215,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final MPSequence commandPubSeq;
     private final RingQueue<TableWriterTask> commandQueue;
     private final SCSequence commandSubSeq;
+    // Partition removals the last commit made durable, since resetWalApplyCounters().
+    // The apply job reads them after each processed transaction; see PartitionRemovalEvents.
+    private final PartitionRemovalEvents committedPartitionRemovals = new PartitionRemovalEvents();
     private final CairoConfiguration configuration;
     private final LongList coveringAddrs = new LongList();
     private final LongList coveringAuxAddrs = new LongList();
@@ -298,6 +303,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Path path;
     private final int pathRootSize;
     private final int pathSize;
+    // Partition removals dropPartitionByExactTimestamp staged in memory and the next
+    // commitRemovePartitionOperation has not made durable yet: (lo, hiExclusive, rows, source)
+    // per physical partition. Cleared on rollback so a removal that never commits is never
+    // reported as one that did.
+    private final LongList pendingPartitionRemovals = new LongList();
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     // Pending parquet->native conversions awaiting a single batched commit.
     // Three longs per entry: [partitionTimestamp, oldPartitionNameTxn, lastPartitionConvertedFlag].
@@ -2451,6 +2461,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return colTop > -1L ? colTop : defaultValue;
     }
 
+    /**
+     * The partition removals the writer committed since the last
+     * {@link #resetWalApplyCounters()}, in commit order, each with the seqTxn its commit
+     * carried. Populated by TTL enforcement and {@code DROP PARTITION} only once their
+     * {@code _txn} commit has returned; a removal that rolled back is not in it. The apply
+     * job hands the list on to a live view's refresh worker, which owes the checkpoint
+     * timeline a correction for every row the durable tier lost.
+     */
+    public PartitionRemovalEvents getCommittedPartitionRemovals() {
+        return committedPartitionRemovals;
+    }
+
     public long getDataAppendPageSize() {
         return dataAppendPageSize;
     }
@@ -3287,6 +3309,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public boolean removePartition(long timestamp) {
         partitionRemoveCandidates.clear();
+        pendingPartitionRemovals.clear();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             return false;
         }
@@ -3330,7 +3353,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.getLogicalPartitionTimestamp(
                         partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex)
                 ) == logicalPartitionTimestampToDelete) {
-            dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
+            dropped |= dropPartitionByExactTimestamp(partitionTimestamp, PartitionRemovalEvents.SOURCE_DROP_PARTITION);
         }
 
         if (dropped) {
@@ -3488,6 +3511,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         physicallyWrittenRowsSinceLastCommit.reset();
         dedupRowsRemovedSinceLastCommit.reset();
         hasTtlEvictedPartitionsSinceLastCommit = false;
+        committedPartitionRemovals.clear();
     }
 
     @Override
@@ -3497,6 +3521,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
                 partitionRemoveCandidates.clear();
+                pendingPartitionRemovals.clear();
                 rollbackDeferredPostingSealPurges();
                 o3CommitBatchTimestampMin = Long.MAX_VALUE;
                 if ((masterRef & 1) != 0) {
@@ -5640,9 +5665,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void commitRemovePartitionOperation() {
+        if (tableToken.isLiveView() && pendingPartitionRemovals.size() > 0) {
+            // Ordered before the commit below: the evidence that rows went missing has to
+            // be durable before the rows are, or a crash in between leaves a table the
+            // checkpoint timeline overstates with nothing to say so. A marker that cannot
+            // be written fails the removal instead: the partitions stay attached, the
+            // writer is discarded, and the WAL apply that drove this reports the fault.
+            writeLiveViewRetentionMarker();
+        }
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriter();
+        publishPendingPartitionRemovals();
         processPartitionRemoveCandidates();
 
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
@@ -7209,7 +7243,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private boolean dropPartitionByExactTimestamp(long timestamp) {
+    private boolean dropPartitionByExactTimestamp(long timestamp, byte removalSource) {
         final long minTimestamp = txWriter.getMinTimestamp(); // table min timestamp
         final long maxTimestamp = txWriter.getMaxTimestamp(); // table max timestamp
 
@@ -7220,6 +7254,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
+        // Before the partition list changes: the interval's upper bound and the row count
+        // both come from the neighbours this removal is about to shift.
+        stagePartitionRemoval(index, timestamp, removalSource);
 
         if (timestamp == txWriter.getPartitionTimestampByTimestamp(maxTimestamp)) {
             // removing active partition
@@ -7314,6 +7351,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         partitionRemoveCandidates.clear();
+        pendingPartitionRemovals.clear();
 
         long maxTimestamp = TableUtils.getMaxTimestamp(txWriter, timestampDriver, wallClockMicros, configuration.isTtlWallClockEnabled());
         boolean evicted = false;
@@ -7323,7 +7361,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long floorTimestamp = txWriter.getPartitionFloor(partitionTimestamp);
             if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
                 assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
-                evicted |= dropPartitionByExactTimestamp(partitionTimestamp);
+                evicted |= dropPartitionByExactTimestamp(partitionTimestamp, PartitionRemovalEvents.SOURCE_TTL);
                 continue;
             }
 
@@ -7332,7 +7370,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$("Partition's TTL expired, evicting [table=").$(metadata.getTableToken())
                         .$(", partitionTs=").microTime(partitionTimestamp)
                         .I$();
-                evicted |= dropPartitionByExactTimestamp(partitionTimestamp);
+                evicted |= dropPartitionByExactTimestamp(partitionTimestamp, PartitionRemovalEvents.SOURCE_TTL);
                 evictedPartitionTimestamp = partitionTimestamp;
             } else {
                 // Partitions are sorted by timestamp, no need to check the rest
@@ -12250,6 +12288,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         publishDeferredPostingSealPurges(currentTableTxn, true, POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT);
     }
 
+    /**
+     * Moves the removals {@link #dropPartitionByExactTimestamp} staged into
+     * {@link #committedPartitionRemovals}, stamped with the seqTxn the commit that just
+     * returned carried. Runs only after that commit, so the log never names a removal
+     * the {@code _txn} does not hold.
+     */
+    private void publishPendingPartitionRemovals() {
+        final long seqTxn = txWriter.getSeqTxn();
+        for (int i = 0, n = pendingPartitionRemovals.size(); i < n; i += 4) {
+            committedPartitionRemovals.add(
+                    seqTxn,
+                    pendingPartitionRemovals.getQuick(i),
+                    pendingPartitionRemovals.getQuick(i + 1),
+                    pendingPartitionRemovals.getQuick(i + 2),
+                    (byte) pendingPartitionRemovals.getQuick(i + 3)
+            );
+        }
+        pendingPartitionRemovals.clear();
+    }
+
     private void publishPendingPostingSealPurges(long currentTableTxn) {
         if (!hasPostingIndexers) {
             return;
@@ -14828,6 +14886,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         activeNullSetters = o3NullSetters1;
     }
 
+    /**
+     * Records the interval and row count of the physical partition at {@code index}
+     * before {@link #dropPartitionByExactTimestamp} detaches it. The interval is
+     * {@code [partitionTimestamp, hiExclusive)} where {@code hiExclusive} is the smaller of
+     * the logical partition's ceiling and the next attached partition's timestamp, so a
+     * split partition reports the sub-range it held rather than the whole logical
+     * partition, and the row count is the partition's committed size. The event becomes
+     * visible through {@link #getCommittedPartitionRemovals()} only once
+     * {@link #commitRemovePartitionOperation()} has committed it.
+     */
+    private void stagePartitionRemoval(int index, long partitionTimestamp, byte removalSource) {
+        final int partitionCount = txWriter.getPartitionCount();
+        long hiExclusive = txWriter.getNextLogicalPartitionTimestamp(partitionTimestamp);
+        if (index + 1 < partitionCount) {
+            hiExclusive = Math.min(hiExclusive, txWriter.getPartitionTimestampByIndex(index + 1));
+        }
+        final long removedRows = index == partitionCount - 1
+                ? txWriter.getTransientRowCount()
+                : txWriter.getPartitionSize(index);
+        pendingPartitionRemovals.add(partitionTimestamp, hiExclusive, removedRows, removalSource);
+    }
+
     private long swapTimestampInMemCols(int timestampIndex) {
         long timestampAddr;
         var tsMem1 = o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex));
@@ -15324,6 +15404,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.error().$("rolling back index created so far [path=").$substr(pathRootSize, path).I$();
             rollbackRemoveIndexFiles(columnName, columnIndex);
             throw th;
+        }
+    }
+
+    /**
+     * Writes the durable {@link LiveViewRetentionMarker} for a live view whose table is
+     * about to lose rows. Called before the removal's commit; see
+     * {@link #commitRemovePartitionOperation()}.
+     */
+    private void writeLiveViewRetentionMarker() {
+        try {
+            path.trimTo(pathSize).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            LiveViewRetentionMarker.write(configuration, path, tableToken.getTableId(), txWriter.getSeqTxn());
+        } finally {
+            path.trimTo(pathSize);
         }
     }
 
