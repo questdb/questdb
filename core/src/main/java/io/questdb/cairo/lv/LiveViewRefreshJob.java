@@ -5591,9 +5591,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // has actually caught up to its committed seqTxn; otherwise leave the view SEEDING with
             // the flag unset so the fallback scan re-enqueues it and the next turn re-attempts the
             // apply (a genuinely suspended LV table then blocks the seed until RESUME - correct, and
-            // strictly better than duplicating).
-            final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
-            if (lvTracker.isInitialised() && lvTracker.getSeqTxn() > lvTracker.getWriterTxn()) {
+            // strictly better than duplicating). Ask isLiveViewWalFullyApplied rather than reading
+            // the tracker's writerTxn directly: any dropped or unapplied WAL notification resets
+            // that field back to uninitialised (CairoEngine.notifyWalTxnRepublisher), and an
+            // uninitialised tracker reads as "caught up" - which is exactly the under-read floor
+            // this guard exists to prevent.
+            if (!isLiveViewWalFullyApplied(instance)) {
                 return;
             }
             instance.setSeedResumeAttempted();
@@ -8384,10 +8387,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
-        return tracker.isInitialised()
-                && !tracker.isSuspended()
+        // Suspension and memory pressure are read off the tracker - both survive an
+        // uninitialised writerTxn - but the lag itself goes through
+        // isLiveViewWalFullyApplied, which falls back to the LV table's own _txn when the
+        // tracker is cold. Reading tracker.getWriterTxn() here instead would report "nothing
+        // pending" for a view whose tracker CairoEngine.notifyWalTxnRepublisher has reset,
+        // and this scan is the only thing that re-drives a block flushLead could not apply
+        // inline, so the view would sit behind its own WAL until an unrelated base commit.
+        return !tracker.isSuspended()
                 && tracker.getMemPressureControl().isReadyToProcess()
-                && tracker.getSeqTxn() > tracker.getWriterTxn();
+                && !isLiveViewWalFullyApplied(instance);
     }
 
     /**
