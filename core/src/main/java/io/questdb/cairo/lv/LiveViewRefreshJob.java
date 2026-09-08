@@ -4365,27 +4365,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * removals {@link #applyLiveViewWal} recorded on the instance, at a boundary where the
      * caller holds no out-of-order repair capture.
      * <p>
-     * This is the conservative disposition: every removal retires the whole timeline. The
-     * removed rows are subtracted from {@link LiveViewInstance#getLvRowsTotal()} exactly
+     * The removed rows are subtracted from {@link LiveViewInstance#getLvRowsTotal()} exactly
      * once, so at a fully applied, no-lead boundary the counter again equals the table's
-     * size and the next cadence seal opens a fresh history at the corrected position -
-     * which is also what makes an ordinary eviction not register as an unexplained
-     * {@code checkpoint_row_count_mismatches}. Retiring is what the row-count guard already
-     * did on the mismatch such a removal used to cause, so this changes when the
-     * disposition happens and how it is explained, not what recovery is left with: a
-     * restart rebuilds from the applied base until fresh roots accumulate, and no
-     * localized out-of-order repair is available until then. Retiring only the roots
-     * whose output is gone and correcting the survivors' positions in place is the
-     * precise form that replaces this retire.
+     * size - which is also what makes an ordinary eviction not register as an unexplained
+     * {@code checkpoint_row_count_mismatches}. The timeline is then reconciled in place by
+     * {@link #publishCheckpointTimelineRetention}: the roots whose boundaries fall inside a
+     * removed partition retire, every surviving root above one is lowered by exactly the
+     * rows that went, and the anchors below and between the removed partitions stay
+     * addressable for restart restore and localized repair. That publication is the only
+     * thing that clears the durable retention marker.
+     * <p>
+     * The publication declines - and the whole timeline retires instead, exactly as the
+     * row-count guard used to retire it - when the head root itself lies inside a removed
+     * partition, when a removed partition lies above the head (an idle view's head can lag
+     * its table by several partitions; a restart's replay from the base would re-emit the
+     * removed rows and fail its row-count proof), when the batch's events overlap, or when
+     * the publication fails. The retire takes the marker with it: a view with no timeline
+     * rebuilds from the applied base on restart anyway, and the next cadence seal opens a
+     * fresh history at the corrected position. A retire that fails leaves the marker in
+     * place, which costs one rebuild on the next restart and nothing else.
      * <p>
      * Deferred, with the events kept, while a block the view committed is still
      * unapplied: the counter legitimately leads the table by that block, and a partial
      * apply may have committed removals whose transactions are not all in yet. Also
      * deferred for a SEEDING view: its counter doubles as the sweep's skip-write ordinal,
      * and lowering that ordinal would make later turns skip rows they never wrote. The
-     * seed sweep's own recovery owns that case. The retire removes the durable retention
-     * marker along with the timeline it guarded; a retire that fails leaves the marker in
-     * place, which costs one rebuild on the next restart and nothing else.
+     * seed sweep's own recovery owns that case.
      */
     private void reconcilePendingPartitionRemovals(LiveViewInstance instance) {
         final PartitionRemovalEvents removals = instance.getPendingPartitionRemovals();
@@ -4402,7 +4407,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final int n = removals.size();
         final long removedRows = removals.getTotalRemovedRows();
         final long emittedRows = instance.getLvRowsTotal();
-        LOG.info().$("live view durable rows removed, retiring the checkpoint timeline [view=")
+        LOG.info().$("live view durable rows removed, reconciling the checkpoint timeline [view=")
                 .$(instance.getDefinition().getViewName())
                 .$(", partitions=").$(n)
                 .$(", removedRows=").$(removedRows)
@@ -4411,9 +4416,107 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", lastSeqTxn=").$(removals.getSeqTxn(n - 1))
                 .I$();
         instance.setLvRowsTotal(emittedRows - removedRows);
-        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
-        retireCheckpointTimeline(instance);
+        if (!publishCheckpointTimelineRetention(instance, removals, tracker.getWriterTxn())) {
+            instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+            retireCheckpointTimeline(instance);
+        }
         removals.clear();
+    }
+
+    /**
+     * Publishes the timeline generation that accounts for {@code removals} and clears the
+     * durable retention marker once it is on disk. The in-memory head is left as it is: a
+     * published retention keeps the head root, whose window state describes base input
+     * rather than the output rows that went, and whose position the publication corrected.
+     *
+     * @return true when the timeline was reconciled in place; false when the caller must
+     * retire it - the view holds no valid generation, the publication declined for one of
+     * the reasons {@link LiveViewCheckpointTimelineStoreWriter.RetentionResult} names, or
+     * it failed. Nothing is published on the false path, so the previous generation and
+     * the marker are exactly as they were.
+     */
+    private boolean publishCheckpointTimelineRetention(
+            LiveViewInstance instance,
+            PartitionRemovalEvents removals,
+            long coveredLvSeqTxn
+    ) {
+        final CharSequence viewName = instance.getDefinition().getViewName();
+        try (Path checkpointsDir = new Path()) {
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            try (LiveViewCheckpointSuperblock superblock = new LiveViewCheckpointSuperblock(engine.getConfiguration())) {
+                superblock.of(checkpointsDir);
+                if (!superblock.isValid()) {
+                    LOG.info().$("live view has no checkpoint timeline to reconcile with the removal [view=")
+                            .$(viewName).I$();
+                    return false;
+                }
+            }
+            if (checkpointTimelineStoreWriter == null) {
+                checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
+                        engine.getConfiguration(),
+                        engine.getLiveViewCheckpointLifecycleState()
+                );
+                checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
+            }
+            final LiveViewCheckpointTimelineStoreWriter.RetentionResult result;
+            // Node-local publication over node-local output, on either role - see
+            // appendCheckpointTimelineRoot for why only the role read lock survives here.
+            final Lock roleLock = engine.getRoleSwitchReadLock();
+            roleLock.lock();
+            try {
+                result = checkpointTimelineStoreWriter.publishRetention(
+                        checkpointsDir,
+                        instance.getLiveViewToken().getTableId(),
+                        0,
+                        instance.getLifecycleIdentity(),
+                        coveredLvSeqTxn,
+                        removals,
+                        true
+                );
+            } finally {
+                roleLock.unlock();
+            }
+            if (!result.isPublished()) {
+                final String reason = switch (result.getOutcome()) {
+                    case LiveViewCheckpointTimelineStoreWriter.RetentionResult.NOT_PUBLISHED_HEAD_RETIRED ->
+                            "head root inside a removed partition";
+                    case LiveViewCheckpointTimelineStoreWriter.RetentionResult.NOT_PUBLISHED_REMOVAL_ABOVE_HEAD ->
+                            "removed partition above the head root";
+                    case LiveViewCheckpointTimelineStoreWriter.RetentionResult.NOT_PUBLISHED_OVERLAPPING_EVENTS ->
+                            "overlapping removal events";
+                    default -> "unknown";
+                };
+                LOG.info().$("live view checkpoint retention declined, retiring the timeline [view=")
+                        .$(viewName)
+                        .$(", reason=").$(reason)
+                        .$(", headMaxTs=").$ts(instance.getHeadCheckpointMaxTs())
+                        .$(", removedRows=").$(removals.getTotalRemovedRows())
+                        .I$();
+                return false;
+            }
+            instance.recordCheckpointTimelineWalPurgeFloor(result.getWalPurgeFloor());
+            instance.recordCheckpointTimelineStats(result.getStats());
+            // The generation is durable and every root left standing accounts for the
+            // removal, so the marker has nothing left to guard.
+            LiveViewRetentionMarker.clear(engine.getConfiguration().getFilesFacade(), checkpointsDir);
+            LOG.info().$("live view checkpoint retention published [view=")
+                    .$(viewName)
+                    .$(", generation=").$(result.getGeneration())
+                    .$(", rootsRetired=").$(result.getRetiredRootCount())
+                    .$(", corrections=").$(result.getCorrectionCount())
+                    .$(", correctedRows=").$(result.getCorrectedRows())
+                    .$(", headMaxTs=").$ts(result.getHeadMaxTimestamp())
+                    .$(", coveredLvSeqTxn=").$(coveredLvSeqTxn)
+                    .$(", newBytes=").$(result.getMetadataBytesAdded()).I$();
+            return true;
+        } catch (Throwable t) {
+            LOG.error().$("could not publish live view checkpoint retention, retiring the timeline [view=")
+                    .$(viewName)
+                    .$(", error=").$(t).I$();
+            return false;
+        }
     }
 
     /**
@@ -8029,7 +8132,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final long applyStart = System.nanoTime();
             applyLiveViewWal(instance);
             openSegmentRepairPhases.applyNanos += System.nanoTime() - applyStart;
-            if (timelineCapture != null) {
+            if (timelineCapture != null && instance.hasPendingPartitionRemovals()) {
+                // The replacement's own commit evicted TTL partitions, or the drain that
+                // applied it carried a queued DROP. The capture froze a generation that
+                // still counts those rows and the row-count proof below assumes the
+                // replacement is the only thing that changed the table, so the splice is
+                // not attempted: the retire below opens a fresh history, and the seal's
+                // own reconciliation takes the removed rows off the counter.
+                LOG.info().$("live view durable rows removed during an O3 resume repair, timeline will be retired [view=")
+                        .$(viewName)
+                        .$(", removedRows=").$(instance.getPendingPartitionRemovals().getTotalRemovedRows())
+                        .I$();
+                retireCheckpointStateOnO3(instance, true);
+                prefixMarkerLive = false;
+            } else if (timelineCapture != null) {
                 // The replacement is durable in the live view's table, so the re-versioned
                 // roots describe real output and the splice may commit. Nothing published
                 // before this point: every root the freeze produced sits in a temporary
@@ -8508,6 +8624,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         LiveViewCheckpointRepairSession session = null;
         LiveViewCheckpointTimelineStoreWriter.RepairCapture timelineCapture = null;
         boolean replayEntered = false;
+        // Set when the replacement's apply also removed durable partitions, which voids
+        // the capture and any prefix a truncate kept; see the reconcile block below.
+        boolean retentionDuringRepair = false;
         // The executor's prologue runs from here to the replay's own try/finally below,
         // and it opens the view's stored-row merge cursor on the way: the cold keyed route
         // straight away, the closed-segment keyed route once its key domain is priced. It
@@ -9750,11 +9869,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
                         instance.setLvRowsTotal(lvReader.size());
                     }
+                    // The replacement's own commit can evict TTL partitions, and the drain
+                    // that applied it can carry a queued DROP. The capture froze a generation
+                    // that still counts those rows, and the splice's row-count proof below
+                    // assumes the replacement is the only thing that changed the table, so
+                    // neither can be published: the exit path retires the timeline, and the
+                    // post-replay seal opens a fresh history over the table as it now is.
+                    if (instance.hasPendingPartitionRemovals()) {
+                        retentionDuringRepair = true;
+                        LOG.info().$("live view durable rows removed during an O3 repair, timeline will be retired [view=")
+                                .$(viewName)
+                                .$(", removedRows=").$(instance.getPendingPartitionRemovals().getTotalRemovedRows())
+                                .I$();
+                    }
                     // Sourced from the table, so every removal is in the count already.
                     instance.getPendingPartitionRemovals().clear();
                 }
                 final boolean replacementReconciled = repairPublication.isReplacementReconciled();
-                if (timelineCapture != null && replacementReconciled) {
+                if (timelineCapture != null && replacementReconciled && !retentionDuringRepair) {
                     // The replacement is applied, so the repaired roots now describe real
                     // output and the splice can commit.
                     //
@@ -9939,7 +10071,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // A splice that never published falls to neither. The exit path below
                         // retires the timeline for it, and that takes the marker with it, so
                         // this must not clear one on the strength of a seal alone.
-                        if (timelineSplice != null || (timelineCapture == null && headSealed)) {
+                        //
+                        // A truncate whose replacement apply also removed partitions kept a
+                        // prefix whose positions still count the removed rows, and the seal
+                        // above appended the fresh head to it. Retire the lot: the retire
+                        // takes both markers with it, and the next cadence seal opens a fresh
+                        // history at the corrected position.
+                        if (retentionDuringRepair && timelineCapture == null) {
+                            retireCheckpointStateOnO3(instance, true);
+                            if (session != null) {
+                                session.setRepairMarkerLive(false);
+                            }
+                        } else if (timelineSplice != null || (timelineCapture == null && headSealed)) {
                             clearCheckpointRepairMarker(instance);
                             if (session != null) {
                                 session.setRepairMarkerLive(false);

@@ -30,6 +30,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineWriter;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -498,9 +499,293 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRemoveRangesDisjointIntervalsKeepGapSurvivors() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                for (int i = 0; i < 60; i++) {
+                    h.append(i * 10L, i);
+                }
+                // Drop [100, 200) and [300, 400): keys 10..19 and 30..39 go, the
+                // survivors between them (20..29) and on either side stay.
+                Assert.assertTrue(h.removeRanges(100, 200, 300, 400));
+                Assert.assertEquals(40, h.reader.size(h.root));
+                h.assertIterateAll();
+                for (int i = 0; i < 60; i++) {
+                    if ((i >= 10 && i < 20) || (i >= 30 && i < 40)) {
+                        h.assertFindExactMissing(i * 10L, i);
+                    } else {
+                        h.assertFindExact(i * 10L, i);
+                    }
+                }
+                // Navigation across both gaps: the successor of a removed interval
+                // is the first survivor above it, its predecessor the last below.
+                h.assertSuccessor(100);
+                h.assertSuccessor(150);
+                h.assertPredecessor(200);
+                h.assertSuccessor(300);
+                h.assertPredecessor(400);
+                h.assertFloor(199);
+                h.assertFloor(399);
+                h.assertRange(50, 450);
+                h.assertRange(Long.MIN_VALUE, Long.MAX_VALUE);
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveRangesDropsInteriorKeepsPrefixAndSuffix() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                final int n = 60;
+                for (int i = 0; i < n; i++) {
+                    h.append(i * 10L, i);
+                }
+                // Drop [205, 405): keys 21..40 go, 0..20 and 41..59 stay.
+                Assert.assertTrue(h.removeRanges(205, 405));
+                Assert.assertEquals(40, h.reader.size(h.root));
+                h.assertIterateAll();
+                for (int i = 0; i <= 20; i++) {
+                    h.assertFindExact(i * 10L, i);
+                }
+                for (int i = 21; i <= 40; i++) {
+                    h.assertFindExactMissing(i * 10L, i);
+                }
+                for (int i = 41; i < n; i++) {
+                    h.assertFindExact(i * 10L, i);
+                }
+                h.assertPredecessor(205);
+                h.assertPredecessor(405);
+                h.assertSuccessor(205);
+                h.assertSuccessor(405);
+                h.assertFloor(300);
+                h.assertFloor(Long.MAX_VALUE);
+                h.assertRange(150, 500);
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveRangesDropsWholeTie() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                h.append(10, 100);
+                h.append(50, 500);
+                h.append(50, 501);
+                h.append(50, 502);
+                h.append(90, 900);
+                // An interval holding the tie drops the entire timestamp-50 group.
+                Assert.assertTrue(h.removeRanges(50, 51));
+                Assert.assertEquals(2, h.reader.size(h.root));
+                h.assertIterateAll();
+                h.assertFindExact(10, 100);
+                h.assertFindExactMissing(50, 500);
+                h.assertFindExactMissing(50, 501);
+                h.assertFindExactMissing(50, 502);
+                h.assertFindExact(90, 900);
+                h.assertSuccessor(50);
+                h.assertPredecessor(51);
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveRangesLeadingKeysUpdateChildMinimums() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                for (int i = 0; i < 40; i++) {
+                    h.append(i * 10L, i);
+                }
+                final int childCount = h.reader.rootChildCount(h.root);
+                Assert.assertTrue("expected a multi-level tree", childCount >= 2);
+                final LiveViewCheckpointPageRef child1 = new LiveViewCheckpointPageRef();
+                h.reader.rootChildRef(h.root, 1, child1);
+                // The second subtree's lowest keys start at its recorded minimum. Drop an
+                // interval that starts exactly there and ends inside the subtree: the
+                // survivors' minimum moves up, and the copied spine has to say so, or a
+                // predecessor probe into the gap would descend this subtree and miss the
+                // real predecessor in the one before it.
+                final long secondMinTs = minTimestampOf(h, child1);
+                Assert.assertTrue(h.removeRanges(secondMinTs, secondMinTs + 25));
+                h.assertIterateAll();
+                h.assertPredecessor(secondMinTs + 5);
+                h.assertPredecessor(secondMinTs + 25);
+                h.assertSuccessor(secondMinTs);
+                h.assertFloor(secondMinTs + 20);
+                for (int i = 0; i < h.oracle.size(); i++) {
+                    final long[] e = h.oracle.get(i);
+                    h.assertFindExact(e[0], e[1]);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveRangesNothingInsideReusesRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                for (int i = 0; i < 30; i++) {
+                    h.append(i * 10L, i);
+                }
+                final LiveViewCheckpointPageRef before = new LiveViewCheckpointPageRef();
+                before.of(h.root.getSegmentId(), h.root.getOffset(), h.root.getLength());
+                // Intervals that fall between keys, below the minimum and above the
+                // head: nothing drops, the root is reused and no segment is written.
+                Assert.assertTrue(h.removeRanges(-50, -1, 11, 19, 1_000, 2_000));
+                Assert.assertTrue("no key inside any interval must reuse the root", sameRef(before, h.root));
+                Assert.assertEquals(0, h.writer.getLastSegmentBytes());
+                Assert.assertEquals(0, h.writer.getLastSegmentPageCount());
+                Assert.assertEquals(0, h.writer.getLastReleasedSegmentIds().size());
+                Assert.assertEquals(30, h.reader.size(h.root));
+                h.assertIterateAll();
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveRangesReusesUntouchedSubtrees() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                for (int i = 0; i < 40; i++) {
+                    h.append(i * 10L, i);
+                }
+                final int childCount = h.reader.rootChildCount(h.root);
+                Assert.assertTrue("expected a multi-level tree", childCount >= 2);
+                final LiveViewCheckpointPageRef first = new LiveViewCheckpointPageRef();
+                final LiveViewCheckpointPageRef last = new LiveViewCheckpointPageRef();
+                h.reader.rootChildRef(h.root, 0, first);
+                h.reader.rootChildRef(h.root, childCount - 1, last);
+                final long firstMaxTs = maxTimestampOf(h, first);
+                final long lastMinTs = minTimestampOf(h, last);
+                Assert.assertTrue("the tree must have keys strictly between its outer subtrees", lastMinTs > firstMaxTs + 1);
+
+                // Remove an interior interval that touches neither outer subtree: both
+                // must be kept by reference and the copy is only the spine between them.
+                Assert.assertTrue(h.removeRanges(firstMaxTs + 1, lastMinTs));
+                final int removeWrote = h.writer.getLastSegmentPageCount();
+                final int afterChildCount = h.reader.rootChildCount(h.root);
+                final LiveViewCheckpointPageRef afterFirst = new LiveViewCheckpointPageRef();
+                final LiveViewCheckpointPageRef afterLast = new LiveViewCheckpointPageRef();
+                if (afterChildCount >= 2) {
+                    h.reader.rootChildRef(h.root, 0, afterFirst);
+                    h.reader.rootChildRef(h.root, afterChildCount - 1, afterLast);
+                    Assert.assertTrue("leftmost subtree must be reused", sameRef(first, afterFirst));
+                    Assert.assertTrue("rightmost subtree must be reused", sameRef(last, afterLast));
+                }
+                Assert.assertTrue(
+                        "a removal must copy only the spine, wrote " + removeWrote + " pages",
+                        removeWrote < h.reader.size(h.root)
+                );
+                h.assertIterateAll();
+                h.assertRange(Long.MIN_VALUE, Long.MAX_VALUE);
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveRangesThenAppendKeepsOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                for (int i = 0; i < 40; i++) {
+                    h.append(i * 10L, i);
+                }
+                Assert.assertTrue(h.removeRanges(100, 200));
+                // New keys land in the gap and above the head; the collapsed and
+                // under-full nodes the removal left behind must split and route as
+                // an append-only tree would.
+                for (int i = 0; i < 10; i++) {
+                    h.append(100 + i * 10L, 1_000 + i);
+                }
+                for (int i = 40; i < 60; i++) {
+                    h.append(i * 10L, i);
+                }
+                h.assertIterateAll();
+                for (int i = 0; i < h.oracle.size(); i++) {
+                    final long[] e = h.oracle.get(i);
+                    h.assertFindExact(e[0], e[1]);
+                }
+                h.assertRange(50, 450);
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveRangesWholeTreeReturnsEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                for (int i = 0; i < 20; i++) {
+                    h.append(i * 10L, i);
+                }
+                // Every key falls inside the intervals, so the whole tree drops and
+                // nothing is written.
+                Assert.assertFalse(h.removeRanges(0, 100, 100, 1_000));
+                Assert.assertEquals(0, h.writer.getLastSegmentBytes());
+                Assert.assertEquals(0, h.reader.size(h.root));
+                h.assertIterateAll();
+                Assert.assertFalse(h.reader.predecessor(h.root, 1_000, h.out));
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveRangesRandomAgainstOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = new Rnd(0x5EED5EEDL, 0xBEEFL);
+            try (Harness h = new Harness(3, 4)) {
+                for (int i = 0; i < 300; i++) {
+                    h.append(rnd.nextLong(200) - 20, i);
+                }
+                // Repeatedly remove one to three random disjoint intervals and re-verify
+                // the shrinking tree against the oracle, then append into the gaps so
+                // later rounds run over the under-full and collapsed nodes earlier rounds
+                // left behind.
+                for (int round = 0; round < 10 && h.reader.size(h.root) > 0; round++) {
+                    final int intervals = 1 + rnd.nextInt(3);
+                    final long[] bounds = new long[intervals * 2];
+                    long cursor = rnd.nextLong(60) - 30;
+                    for (int i = 0; i < intervals; i++) {
+                        final long lo = cursor + rnd.nextLong(20);
+                        final long hi = lo + 1 + rnd.nextLong(30);
+                        bounds[i * 2] = lo;
+                        bounds[i * 2 + 1] = hi;
+                        cursor = hi + rnd.nextLong(10);
+                    }
+                    h.removeRanges(bounds);
+                    h.assertIterateAll();
+                    for (int q = 0; q < 40; q++) {
+                        final long c = rnd.nextLong(240) - 40;
+                        h.assertPredecessor(c);
+                        h.assertSuccessor(c);
+                        h.assertFloor(c);
+                        final long lo = rnd.nextLong(240) - 40;
+                        h.assertRange(lo, lo + rnd.nextLong(60));
+                    }
+                    for (int i = 0; i < h.oracle.size(); i++) {
+                        final long[] e = h.oracle.get(i);
+                        h.assertFindExact(e[0], e[1]);
+                    }
+                    for (int i = 0; i < 20; i++) {
+                        h.append(rnd.nextLong(200) - 20, 1_000 + round * 100 + i);
+                    }
+                    h.assertIterateAll();
+                }
+            }
+        });
+    }
+
     private static Path checkpointsDir(Path path) {
         path.of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
         return path;
+    }
+
+    private static long maxTimestampOf(Harness h, LiveViewCheckpointPageRef subtree) {
+        Assert.assertTrue(h.reader.last(subtree, h.out));
+        return h.out.maxTimestamp;
+    }
+
+    private static long minTimestampOf(Harness h, LiveViewCheckpointPageRef subtree) {
+        Assert.assertTrue(h.reader.successor(subtree, Long.MIN_VALUE, h.out));
+        return h.out.maxTimestamp;
     }
 
     private static boolean sameRef(LiveViewCheckpointPageRef a, LiveViewCheckpointPageRef b) {
@@ -634,6 +919,33 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
             }
             writer.splice(root, reps, reps.size(), nextSegmentId++, tmpRoot);
             root.of(tmpRoot.getSegmentId(), tmpRoot.getOffset(), tmpRoot.getLength());
+        }
+
+        /**
+         * Removes every key inside the {@code (lo, hi)} pairs of {@code bounds}, which
+         * must be sorted and disjoint, mirroring the removal in the oracle.
+         */
+        boolean removeRanges(long... bounds) {
+            final LongList intervals = new LongList();
+            for (long bound : bounds) {
+                intervals.add(bound);
+            }
+            final boolean survived = writer.removeRanges(root, intervals, nextSegmentId++, tmpRoot);
+            if (survived) {
+                root.of(tmpRoot.getSegmentId(), tmpRoot.getOffset(), tmpRoot.getLength());
+            } else {
+                root.clear();
+            }
+            for (int i = oracle.size() - 1; i >= 0; i--) {
+                final long ts = oracle.get(i)[0];
+                for (int b = 0; b < bounds.length; b += 2) {
+                    if (ts >= bounds[b] && ts < bounds[b + 1]) {
+                        oracle.remove(i);
+                        break;
+                    }
+                }
+            }
+            return survived;
         }
 
         boolean truncate(long floor) {

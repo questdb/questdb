@@ -57,9 +57,10 @@ import org.jetbrains.annotations.NotNull;
  * first removal of a live view's partition durable, whichever job drives that apply,
  * so it covers the refresh worker's inline apply and the global apply a
  * refresh-disabled node runs alike. The refresh worker clears it only once the
- * timeline has been reconciled with the removal or safely retired, and
+ * retention publication that accounts for the removal is durable
+ * ({@code LiveViewCheckpointTimelineStoreWriter.publishRetention}), and
  * {@link LiveViewCheckpointLifecycle#retireTimeline} removes it with the timeline it
- * guarded. A restart that finds it present rebuilds from the applied base instead of
+ * guarded when the worker retires instead. A restart that finds it present rebuilds from the applied base instead of
  * restoring from the timeline. There is no staleness rule: unlike the repair marker,
  * no later generation proves a removal was accounted for, so present means live.
  * <p>

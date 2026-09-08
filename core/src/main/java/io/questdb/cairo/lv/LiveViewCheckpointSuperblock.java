@@ -197,9 +197,11 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public long pendingDirectorySegmentPages;
     /**
      * Logical boundaries this history epoch has retired: the suffix a high-side
-     * truncate dropped. Checkpoint ids are allocated from zero and monotonically, so
-     * {@link #nextCheckpointId} minus this is the number of boundaries the
-     * generation actually holds.
+     * truncate dropped, plus every boundary a retention publication dropped because
+     * its output fell inside a removed partition. Checkpoint ids are allocated from
+     * zero and monotonically, so {@link #nextCheckpointId} minus this is the number
+     * of boundaries the generation actually holds; a retention can leave that set
+     * with gaps in the id space, unlike a truncate, which only ever shortens it.
      */
     public long retiredCheckpointCount;
     /**

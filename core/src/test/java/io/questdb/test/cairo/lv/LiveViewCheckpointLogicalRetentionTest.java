@@ -36,9 +36,12 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -48,10 +51,16 @@ import org.junit.Test;
 /**
  * Acceptance coverage for the retention rule the versioned timeline replaced the
  * retained checkpoint ring with: inside one history epoch a logical checkpoint
- * entry is never removed. The ring bounded retention by count and bytes, so an
- * out-of-order row older than the surviving horizon fell back to a replay from
- * {@code START FROM}; the timeline instead keeps every boundary it ever sealed
- * and versions - rather than deletes - the roots a repair corrects.
+ * entry is removed only when the output it describes is gone. The ring bounded
+ * retention by count and bytes, so an out-of-order row older than the surviving
+ * horizon fell back to a replay from {@code START FROM}; the timeline instead
+ * keeps every boundary it ever sealed and versions - rather than deletes - the
+ * roots a repair corrects. The two removals the rule admits are a repair
+ * truncate, which drops the tail the repair is about to rewrite, and a
+ * durable-tier retention (TTL eviction or {@code DROP PARTITION}), which drops
+ * exactly the boundaries inside the removed partitions and lowers the survivors
+ * above them by the rows that went; the last case here pins that the retention
+ * loses those boundaries and nothing else.
  * <p>
  * The oracle throughout is the epoch's complete logical entry set rather than
  * its size alone. Every case reads the published generation's checkpoint ids and
@@ -70,7 +79,11 @@ import org.junit.Test;
  * to keep, but the roots below the repair floor are still correct, so a truncate
  * preserves that prefix and re-seals a fresh head above it rather than retiring
  * the whole timeline. The generation advances and the id space carries forward -
- * a pruned tail of the same epoch, not a new one restarting at zero.
+ * a pruned tail of the same epoch, not a new one restarting at zero. A fifth
+ * case drops an interior partition of the view's own table and asserts the
+ * surviving id set is the allocated run minus the boundaries inside that
+ * partition, that the survivors above it report positions lowered by exactly the
+ * removed rows, and that the timeline still restores after a restart.
  */
 public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest {
 
@@ -172,6 +185,87 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                     generation(viewInstance()) > SEALS
             );
             assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testDurableTierRetentionRemovesOnlyTheRootsInsideRemovedPartitions() throws Exception {
+        // The one removal the retention rule admits besides a repair truncate: the roots whose
+        // boundaries fall inside a partition DROP PARTITION took off the view's own table go,
+        // and nothing else does. The id set loses exactly those ids - an interior gap, not a
+        // prefix or a re-numbering - the survivors above each removed partition report positions
+        // lowered by exactly the rows it held, the epoch's retired count accounts for the gap,
+        // and a restart restores from that generation with the removed hours still gone.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms PARTITION BY HOUR START FROM NOW AS " + VIEW_SQL);
+            final int hours = 6;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int hour = 0; hour < hours; hour++) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base VALUES ('" + hourTimestamp(hour) + "', 'a', " + (hour + 1) + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+                Assert.assertEquals(hours, assertEpochRetainsEveryEntry(instance, 0, "after building the history"));
+                final long generationBefore = generation(instance);
+
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-01T02', '2026-01-01T04'");
+                driveLiveViewWalApply(job);
+
+                // Ids 2 and 4 are the boundaries inside the dropped hours; 0, 1, 3 and 5 stay.
+                assertLogicalCheckpointIds(instance, 0, 1, 3, 5);
+                Assert.assertEquals(hours, nextCheckpointId(instance));
+                Assert.assertEquals(2, retiredCheckpointCount(instance));
+                Assert.assertEquals("one publication reconciles the batch", generationBefore + 1, generation(instance));
+                // Each survivor is lowered by the rows removed below it: hour 3 by hour 2's row,
+                // hour 5 by hour 2's and hour 4's.
+                final LongList ladder = snapshotCheckpointLadder(instance);
+                final LongList expectedLadder = new LongList();
+                expectedLadder.add(ts(hourTimestamp(0)));
+                expectedLadder.add(1);
+                expectedLadder.add(ts(hourTimestamp(1)));
+                expectedLadder.add(2);
+                expectedLadder.add(ts(hourTimestamp(3)));
+                expectedLadder.add(3);
+                expectedLadder.add(ts(hourTimestamp(5)));
+                expectedLadder.add(4);
+                Assert.assertEquals(expectedLadder.toString(), ladder.toString());
+                Assert.assertEquals(4, instance.getLvRowsTotal());
+                assertViewMatchesRecomputeWithoutHours(2, 4);
+                assertNoRefreshFaults("lv");
+
+                // The next seal appends above the surviving head: the id space carries on
+                // from where the epoch left it, with the gap intact.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base VALUES ('" + hourTimestamp(hours) + "', 'a', " + (hours + 1) + ")");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                assertLogicalCheckpointIds(instance, 0, 1, 3, 5, 6);
+                Assert.assertEquals(2, retiredCheckpointCount(instance));
+            }
+
+            // Restart: the reconciled generation restores; nothing re-derives the removed hours.
+            final LogCapture capture = new LogCapture();
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            capture.start();
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(resumed);
+                capture.waitFor("restored live view from checkpoint timeline [view=lv");
+                capture.assertNotLogged("live view restart rebuilding from applied base [view=lv");
+            } finally {
+                capture.stop();
+            }
+            final LiveViewInstance restored = viewInstance();
+            Assert.assertNotEquals(Numbers.LONG_NULL, restored.getHeadCheckpointRestoreMicros());
+            assertLogicalCheckpointIds(restored, 0, 1, 3, 5, 6);
+            assertViewMatchesRecomputeWithoutHours(2, 4);
         });
     }
 
@@ -626,6 +720,10 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         return instance.getO3BoundaryReplayRows() + instance.getO3ResumeReplayRows();
     }
 
+    private static String hourTimestamp(int hour) {
+        return String.format("2026-01-01T%02d:00:10.000000Z", hour);
+    }
+
     private static String timestamp(int secondOfDay) {
         return String.format("2026-01-01T00:%02d:%02d.000000Z", secondOfDay / 60, secondOfDay % 60);
     }
@@ -663,6 +761,14 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         return ids.size();
     }
 
+    private void assertLogicalCheckpointIds(LiveViewInstance instance, long... expectedIds) {
+        final LongList expected = new LongList();
+        for (long id : expectedIds) {
+            expected.add(id);
+        }
+        Assert.assertEquals("logical checkpoint ids", expected.toString(), logicalCheckpointIds(instance).toString());
+    }
+
     private void assertPredecessorIs(
             LiveViewInstance instance,
             long correctionTimestamp,
@@ -696,6 +802,25 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                 true
         );
         assertNoRefreshFaults("lv");
+    }
+
+    // The live view must equal the window recomputed over the base table, minus the hours a
+    // DROP PARTITION removed from the view's own table. The window is computed over the full
+    // input first and filtered afterwards, so the values the surviving rows carry are the ones
+    // the removed rows fed into - which is what the durable tier holds.
+    private void assertViewMatchesRecomputeWithoutHours(int... hours) throws Exception {
+        final StringBuilder filter = new StringBuilder();
+        for (int hour : hours) {
+            filter.append(" AND hour(ts) <> ").append(hour);
+        }
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(SELECT * FROM (" + VIEW_SQL + ") WHERE 1=1" + filter + ") ORDER BY 2, 1",
+                "(lv) ORDER BY 2, 1",
+                LOG,
+                true
+        );
     }
 
     private LiveViewInstance buildHistory(LiveViewRefreshJob job) throws Exception {
@@ -756,6 +881,23 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         }
     }
 
+    // Drives the job until the live view's own WAL is applied: sequencing an ALTER resets the
+    // view's tracker, so a quiescence drive can stop one pass early.
+    private void driveLiveViewWalApply(LiveViewRefreshJob job) {
+        final LiveViewInstance instance = viewInstance();
+        for (int i = 0; i < REFRESH_QUIESCENCE_PASSES; i++) {
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
+            if (tracker.isInitialised() && tracker.getWriterTxn() >= tracker.getSeqTxn()) {
+                return;
+            }
+            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            drainWalQueue();
+            drainJob(job);
+            drainWalQueue();
+        }
+        Assert.fail("live view WAL was not fully applied within " + REFRESH_QUIESCENCE_PASSES + " passes");
+    }
+
     private void createView() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + VIEW_SQL);
@@ -809,6 +951,12 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             store.of(dir);
         }
         return store;
+    }
+
+    private long retiredCheckpointCount(LiveViewInstance instance) {
+        try (LiveViewCheckpointMetaStore store = openStore(instance)) {
+            return store.getSuperblock().retiredCheckpointCount;
+        }
     }
 
     private LiveViewCheckpointTimelineReader openTimelineReader(LiveViewInstance instance) {
