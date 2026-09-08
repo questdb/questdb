@@ -24,23 +24,27 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.ScannedColumnTopProbe;
-import io.questdb.cairo.TxReader;
-import io.questdb.cairo.TableToken;
+import io.questdb.cairo.SymbolCountProvider;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.TableModel;
+import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -49,10 +53,13 @@ import org.junit.Test;
  * Randomised cross-check of {@link ScannedColumnTopProbe} against a slow, obvious simulation of
  * the query it is standing in for.
  * <p>
- * Each round builds a {@code _txn} and a {@code _cv} directly, so it can reach states a sequence of
- * SQL statements would take a long time to stumble into: a random number of partitions across a
- * 30-day window, some of them split to start in the middle of a day, random column tops on a random
- * subset, and a random add time for the column.
+ * Each round writes a {@code _txn} and a {@code _cv} with their own writers into one scratch
+ * directory, so it can reach states a sequence of SQL statements would take a long time to stumble
+ * into: a random number of partitions across a 30-day window, some of them split to start in the
+ * middle of a day, random column tops on a random subset, and a random add time for the column.
+ * The probe reads nothing else, so no table is created and the two files are overwritten in place
+ * rather than a fresh table per round. That is also why this extends {@link AbstractTest} and
+ * builds its own configuration: it needs a directory to write into, not an engine.
  * <p>
  * The simulation walks interval by interval, finds the partitions each one overlaps, and decides
  * every partition from its own {@code _cv} record or, where it has none, from the column's add
@@ -66,44 +73,55 @@ import org.junit.Test;
  * The simulation is not fully independent: it reproduces {@code partitionEndTimestamp}, so a
  * mistake in that one expression would appear in both and this test could not see it.
  */
-public class ScannedColumnTopProbeFuzzTest extends AbstractCairoTest {
+public class ScannedColumnTopProbeFuzzTest extends AbstractTest {
 
     private static final int COLUMN_COUNT = 4;
+    private static final String CV_FILE_NAME = "_cv";
     private static final long DAY = Micros.DAY_MICROS;
+    private static final ObjList<SymbolCountProvider> NO_SYMBOLS = new ObjList<>();
     private static final int PROBED_COLUMN = 2;
     private static final int ROUNDS = 400;
+    private static final String SCRATCH_DIR = "probe_fuzz";
     private static final long START = 0;
     private static final int WINDOW_DAYS = 30;
 
     @Test
     public void testProbeMatchesTheSimulatedQuery() throws Exception {
-        assertMemoryLeak(() -> {
+        TestUtils.assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(LOG);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            final FilesFacade ff = configuration.getFilesFacade();
             int scannedTops = 0;
-            for (int round = 0; round < ROUNDS; round++) {
-                final LongList partitions = randomPartitions(rnd);
-                final LongList tops = randomTops(rnd, partitions);
-                final long addedAt = randomAddedAt(rnd, partitions);
-                final LongList intervals = randomIntervals(rnd);
-
-                final String tableName = "t_probe_fuzz_" + round;
-                final TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
-                model.timestamp();
-                AbstractCairoTest.create(model);
-                final TableToken tableToken = engine.verifyTableName(tableName);
-                try (Path path = new Path()) {
-                    final FilesFacade ff = configuration.getFilesFacade();
-                    writeTxn(ff, path, tableToken, partitions);
-                    writeCv(path, tableToken, tops, addedAt);
-                    try (
-                            TxReader tx = new TxReader(ff);
-                            ColumnVersionReader cv = new ColumnVersionReader().ofRO(
-                                    ff, path.of(configuration.getDbRoot()).concat(tableToken).concat("_cv").$())
-                    ) {
-                        tx.ofRO(path.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$(),
+            try (Path path = new Path()) {
+                final int dirLen = path.of(configuration.getDbRoot()).concat(SCRATCH_DIR).size();
+                ff.mkdirs(path.slash(), configuration.getMkDirMode());
+                createEmptyTxn(ff, path.trimTo(dirLen).concat(TableUtils.TXN_FILE_NAME).$());
+                // One set of writers and readers for the whole run. Opening a pair per round costs
+                // more than every round's own work put together, and each round rewrites both
+                // files from empty anyway, so nothing of the previous round survives into it.
+                try (
+                        TxWriter tw = new TxWriter(ff, configuration).ofRW(
+                                path.trimTo(dirLen).concat(TableUtils.TXN_FILE_NAME).$(),
                                 ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+                        ColumnVersionWriter cvw = new ColumnVersionWriter(
+                                configuration, path.trimTo(dirLen).concat(CV_FILE_NAME).$(), true);
+                        TxReader tx = new TxReader(ff);
+                        ColumnVersionReader cv = new ColumnVersionReader().ofRO(
+                                ff, path.trimTo(dirLen).concat(CV_FILE_NAME).$())
+                ) {
+                    tx.ofRO(path.trimTo(dirLen).concat(TableUtils.TXN_FILE_NAME).$(),
+                            ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+                    for (int round = 0; round < ROUNDS; round++) {
+                        final LongList partitions = randomPartitions(rnd);
+                        final LongList tops = randomTops(rnd, partitions);
+                        final long addedAt = randomAddedAt(rnd, partitions);
+                        final LongList intervals = randomIntervals(rnd);
+
+                        writeTxn(tw, partitions);
+                        writeCv(cvw, tops, addedAt);
                         tx.unsafeLoadAll();
                         cv.readUnsafe();
+                        assertRoundIsTheWholeState(tx, cv, partitions, tops);
 
                         final boolean probed = ScannedColumnTopProbe.hasAnyColumnTop(cv, tx, PROBED_COLUMN, intervals);
                         final boolean simulated = simulateQuery(tx, cv, addedAt, intervals);
@@ -129,22 +147,43 @@ public class ScannedColumnTopProbeFuzzTest extends AbstractCairoTest {
         });
     }
 
-    private static String describe(LongList partitions, LongList tops, long addedAt, LongList intervals) {
-        return " [partitions=" + partitions + ", tops=" + tops + ", addedAt=" + addedAt
-                + ", intervals=" + intervals + "]";
+    /**
+     * Fails the round if either file carries anything the round did not put there. Both writers
+     * are reused across rounds, so a reset that left something behind would quietly change the
+     * shape under test instead of failing.
+     */
+    private static void assertRoundIsTheWholeState(TxReader tx, ColumnVersionReader cv, LongList partitions, LongList tops) {
+        int expectedPartitions = 0;
+        for (int i = 0, n = partitions.size(); i < n; i++) {
+            // A split timestamp is not a partition of its own: updatePartitionSizeByTimestamp
+            // floors it, so it lands on the day it sits in and only the day floors survive.
+            if (partitions.getQuick(i) % DAY == 0) {
+                expectedPartitions++;
+            }
+        }
+        Assert.assertEquals("_txn holds partitions this round did not write", expectedPartitions, tx.getPartitionCount());
+        Assert.assertEquals(
+                "_cv holds records this round did not write",
+                COLUMN_COUNT + 3 * (tops.size() / 2L),
+                cv.getCachedColumnVersionList().size() / ColumnVersionReader.BLOCK_SIZE
+        );
     }
 
     /**
-     * Column top for {@code partitionTimestamp}, or -1 when it owns no record. {@code tops} holds
-     * flat (partitionTimestamp, columnTop) pairs.
+     * {@code TxWriter.ofRW} appends to a {@code _txn} that is already there and refuses one that
+     * is not, so the run lays down an empty transaction first -- the same call table creation
+     * makes, minus the table.
      */
-    private static long lookupTop(LongList tops, long partitionTimestamp) {
-        for (int i = 0, n = tops.size() / 2; i < n; i++) {
-            if (tops.getQuick(2 * i) == partitionTimestamp) {
-                return tops.getQuick(2 * i + 1);
-            }
+    private static void createEmptyTxn(FilesFacade ff, LPSZ txnPath) {
+        try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+            mem.smallFile(ff, txnPath, MemoryTag.MMAP_DEFAULT);
+            TableUtils.createTxn(mem, 0, 0L, 0L, TableUtils.INITIAL_TXN, 0L, 0L, 0L, 0L);
         }
-        return -1;
+    }
+
+    private static String describe(LongList partitions, LongList tops, long addedAt, LongList intervals) {
+        return " [partitions=" + partitions + ", tops=" + tops + ", addedAt=" + addedAt
+                + ", intervals=" + intervals + "]";
     }
 
     /**
@@ -254,8 +293,7 @@ public class ScannedColumnTopProbeFuzzTest extends AbstractCairoTest {
                     if (cv.getColumnTopByIndex(record) > 0) {
                         return true;
                     }
-                } else if (addedAt != ColumnVersionReader.COL_TOP_DEFAULT_PARTITION
-                        && addedAt > partitionLo
+                } else if (addedAt > partitionLo
                         && tx.getPartitionSize(p) > 0) {
                     return true;
                 }
@@ -264,33 +302,28 @@ public class ScannedColumnTopProbeFuzzTest extends AbstractCairoTest {
         return false;
     }
 
-    private static void writeCv(Path path, TableToken tableToken, LongList tops, long addedAt) {
-        try (ColumnVersionWriter w = new ColumnVersionWriter(
-                configuration, path.of(configuration.getDbRoot()).concat(tableToken).concat("_cv").$(), true)) {
-            for (int c = 0; c < COLUMN_COUNT; c++) {
-                w.upsertDefaultTxnName(c, 1, c == PROBED_COLUMN ? addedAt : START);
-            }
-            for (int i = 0, n = tops.size() / 2; i < n; i++) {
-                // Neighbouring columns share the partition timestamps, so the probed column's
-                // records are never the only ones at a given timestamp.
-                w.upsert(tops.getQuick(2 * i), PROBED_COLUMN - 1, 1, 0);
-                w.upsert(tops.getQuick(2 * i), PROBED_COLUMN, 1, tops.getQuick(2 * i + 1));
-                w.upsert(tops.getQuick(2 * i), PROBED_COLUMN + 1, 1, 0);
-            }
-            w.commit();
+    private static void writeCv(ColumnVersionWriter w, LongList tops, long addedAt) {
+        w.truncate(); // drops the previous round's partition records, keeps the default run
+        for (int c = 0; c < COLUMN_COUNT; c++) {
+            w.upsertDefaultTxnName(c, 1, c == PROBED_COLUMN ? addedAt : START);
         }
+        for (int i = 0, n = tops.size() / 2; i < n; i++) {
+            // Neighbouring columns share the partition timestamps, so the probed column's
+            // records are never the only ones at a given timestamp.
+            w.upsert(tops.getQuick(2 * i), PROBED_COLUMN - 1, 1, 0);
+            w.upsert(tops.getQuick(2 * i), PROBED_COLUMN, 1, tops.getQuick(2 * i + 1));
+            w.upsert(tops.getQuick(2 * i), PROBED_COLUMN + 1, 1, 0);
+        }
+        w.commit();
     }
 
-    private static void writeTxn(FilesFacade ff, Path path, TableToken tableToken, LongList partitions) {
-        try (TxWriter tw = new TxWriter(ff, configuration).ofRW(
-                path.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$(),
-                ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY)) {
-            for (int i = 0, n = partitions.size(); i < n; i++) {
-                tw.updatePartitionSizeByTimestamp(partitions.getQuick(i), 1 + i);
-            }
-            tw.updateMaxTimestamp(partitions.getQuick(partitions.size() - 1) + 1);
-            tw.finishPartitionSizeUpdate();
-            tw.commit(new ObjList<>());
+    private static void writeTxn(TxWriter tw, LongList partitions) {
+        tw.truncate(0, NO_SYMBOLS); // drops the previous round's partitions
+        for (int i = 0, n = partitions.size(); i < n; i++) {
+            tw.updatePartitionSizeByTimestamp(partitions.getQuick(i), 1 + i);
         }
+        tw.updateMaxTimestamp(partitions.getQuick(partitions.size() - 1) + 1);
+        tw.finishPartitionSizeUpdate();
+        tw.commit(NO_SYMBOLS);
     }
 }

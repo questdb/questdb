@@ -77,14 +77,16 @@ public final class ScannedColumnTopProbe {
      * owns no {@code _cv} record at all -- the column has no value for any of its rows, which
      * reads as a top equal to its row count.
      * <p>
-     * Two facts bound the search before it starts, and on the common shape they answer it outright:
-     * the column's add time has to come after the scan's first interval opens, or every partition
-     * the scan reads already had the column; and some partition has to start before the add, or
-     * there is nothing there to have missed it. A column present since the table was created
-     * reports {@link ColumnVersionReader#COL_TOP_DEFAULT_PARTITION} as its add time, which comes
-     * after nothing, so it fails the first.
+     * One fact bounds the search before it starts, and on the common shape it answers it outright:
+     * the column's add time has to come after the START of the first partition the scan reads, or
+     * every partition the scan reads already had the column throughout. The add time is compared
+     * against that partition's start rather than against the scan's own opening, because the
+     * partition holding the opening starts before it: a column added inside that partition leaves
+     * a top on it even though the add came before the scan opened. A column present since the
+     * table was created reports {@link ColumnVersionReader#COL_TOP_DEFAULT_PARTITION} as its add
+     * time, which comes after nothing, so it fails the test.
      * <p>
-     * Only when both hold does this walk, and then only across the partitions between the scan's
+     * Only when it holds does this walk, and then only across the partitions between the scan's
      * opening and the add -- a query reading recent data has none. A partition there that owns a
      * record is decided by that record, not here: an out-of-order write can back-fill a partition
      * that came before the add, which leaves a zero top and means the column is there in full.
@@ -104,10 +106,11 @@ public final class ScannedColumnTopProbe {
         final long scanStart = intervals == null || intervals.size() == 0
                 ? firstPartitionTimestamp
                 : intervals.getQuick(0);
-        if (addedAtPartition <= scanStart || firstPartitionTimestamp >= addedAtPartition) {
+        final int firstScannedPartition = firstScannedPartitionIndex(txReader, scanStart);
+        if (addedAtPartition <= txReader.getPartitionTimestampByIndex(firstScannedPartition)) {
             return false;
         }
-        for (int p = firstScannedPartitionIndex(txReader, scanStart); p < partitionCount; p++) {
+        for (int p = firstScannedPartition; p < partitionCount; p++) {
             final long partitionTimestamp = txReader.getPartitionTimestampByIndex(p);
             if (partitionTimestamp >= addedAtPartition) {
                 // Partitions ascend, so no later one came before the column either.

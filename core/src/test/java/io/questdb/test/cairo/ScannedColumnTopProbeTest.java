@@ -388,12 +388,40 @@ public class ScannedColumnTopProbeTest extends AbstractCairoTest {
         });
     }
 
-    // ---------- hasPartitionBeforeColumn: the two-fact test ----------
+    // ---------- hasPartitionBeforeColumn: the add-time bound ----------
+
+    @Test
+    public void testAddInsideTheFirstScannedPartitionReportsAPartitionBefore() throws Exception {
+        // The add time lands INSIDE the partition the scan opens in, not on its start. Comparing
+        // the add against the scan's own opening would clear the table outright, and miss that
+        // this partition's first rows have no value for the column at all. _cv keeps a timestamp
+        // that is no longer any partition's start once partitions move under it, so the add time
+        // has to be compared against the partition's start instead.
+        assertMemoryLeak(() -> withRawFilesForColumn(
+                "t_add_inside",
+                partitionsOf(JAN1, JAN1 + DAY, JAN1 + 2 * DAY),
+                NO_RECORDS,
+                PROBED_COLUMN,
+                JAN1 + DAY + 12 * 3600 * 1_000_000L,
+                (cv, tx) -> {
+                    // The scan opens six hours after the add, but inside the same partition.
+                    final LongList scan = intervals(JAN1 + DAY + 18 * 3600 * 1_000_000L, JAN1 + 2 * DAY - 1);
+                    Assert.assertEquals(
+                            "the partition the scan opens in starts before the add, so its first"
+                                    + " rows have no value for the column",
+                            JAN1 + DAY,
+                            tx.getPartitionTimestampByIndex(1)
+                    );
+                    Assert.assertTrue(ScannedColumnTopProbe.hasPartitionBeforeColumn(cv, tx, PROBED_COLUMN, scan));
+                    Assert.assertTrue(ScannedColumnTopProbe.hasAnyColumnTop(cv, tx, PROBED_COLUMN, scan));
+                }
+        ));
+    }
 
     @Test
     public void testColumnPresentSinceCreationHasNothingBefore() throws Exception {
-        // Add time is COL_TOP_DEFAULT_PARTITION, which comes after nothing, so the first fact
-        // fails and no partition can predate the column.
+        // Add time is COL_TOP_DEFAULT_PARTITION, which comes after nothing, so the bound fails
+        // and no partition can predate the column.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_since (ts TIMESTAMP, val DOUBLE,"
                     + " sym SYMBOL INDEX TYPE POSTING INCLUDE (val))"
@@ -417,26 +445,9 @@ public class ScannedColumnTopProbeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testScanStartingAtOrAfterTheAddHasNothingBefore() throws Exception {
-        // First fact fails: the scan opens at or after the column's add time, so every partition
-        // it reads already had the column.
-        assertMemoryLeak(() -> {
-            createAddedLaterTable("t_after_add");
-            try (TableReader reader = engine.getReader("t_after_add")) {
-                final long addedAt = reader.getColumnVersionReader()
-                        .getColumnTopPartitionTimestamp(writerIndexOf(reader, "sym"));
-                Assert.assertFalse(before(reader, intervals(addedAt, addedAt + DAY)));
-                Assert.assertFalse(before(reader, intervals(addedAt + 1, addedAt + DAY)));
-                // One microsecond earlier and the fact holds again.
-                Assert.assertTrue(before(reader, intervals(addedAt - 1, addedAt + DAY)));
-            }
-        });
-    }
-
-    @Test
     public void testNoPartitionStartsBeforeTheAdd() throws Exception {
-        // Second fact fails: the column was added on the table's very first partition, so nothing
-        // starts before it even though the scan opens earlier.
+        // The bound fails from the other side: the column was added on the table's very first
+        // partition, so nothing starts before it even though the scan opens earlier.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_add_first (ts TIMESTAMP, val DOUBLE)"
                     + " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
@@ -454,13 +465,30 @@ public class ScannedColumnTopProbeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBothFactsHoldReportsAPartitionBefore() throws Exception {
-        // Both facts hold: the scan opens before the add and a partition starts before it.
+    public void testScanOpeningBeforeTheAddReportsAPartitionBefore() throws Exception {
+        // The bound holds: the first partition the scan reads starts before the add.
         assertMemoryLeak(() -> {
             createAddedLaterTable("t_both");
             try (TableReader reader = engine.getReader("t_both")) {
                 Assert.assertTrue(before(reader, null));
                 Assert.assertTrue(before(reader, intervals(JAN1, JAN1 + DAY)));
+            }
+        });
+    }
+
+    @Test
+    public void testScanStartingAtOrAfterTheAddHasNothingBefore() throws Exception {
+        // The bound fails: the column was added on the partition the scan opens in, so that
+        // partition and every later one already had the column throughout.
+        assertMemoryLeak(() -> {
+            createAddedLaterTable("t_after_add");
+            try (TableReader reader = engine.getReader("t_after_add")) {
+                final long addedAt = reader.getColumnVersionReader()
+                        .getColumnTopPartitionTimestamp(writerIndexOf(reader, "sym"));
+                Assert.assertFalse(before(reader, intervals(addedAt, addedAt + DAY)));
+                Assert.assertFalse(before(reader, intervals(addedAt + 1, addedAt + DAY)));
+                // One microsecond earlier and the fact holds again.
+                Assert.assertTrue(before(reader, intervals(addedAt - 1, addedAt + DAY)));
             }
         });
     }
