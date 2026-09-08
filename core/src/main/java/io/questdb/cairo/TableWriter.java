@@ -3298,6 +3298,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // One logical partition may be split into multiple physical partitions.
         // For example, partition daily '2024-02-24' can be stored as 2 pieces '2024-02-24' and '2024-02-24T12'
         long logicalPartitionTimestampToDelete = txWriter.getLogicalPartitionTimestamp(timestamp);
+
+        // A live view's newest partition is the durable frontier its refresh pipeline writes into:
+        // the flush appends there and an out-of-order repair rewrites it. enforceTtl already refuses
+        // to evict it, and DROP PARTITION must refuse too. This is the authoritative check - the
+        // compiler's reader-based one runs against a snapshot the statement outlives - so it runs
+        // after the commit above, against the partition set the removal would act on. Recoverable,
+        // so a WAL replay marks the transaction committed and moves on instead of suspending the
+        // view. TTL eviction goes straight to dropPartitionByExactTimestamp and never lands here.
+        if (tableToken.isLiveView()
+                && txWriter.getPartitionCount() > 0
+                && logicalPartitionTimestampToDelete == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
+            throw CairoException.partitionManipulationRecoverable()
+                    .put("cannot drop the active partition of a live view [partition=")
+                    .ts(metadata.getTimestampType(), logicalPartitionTimestampToDelete)
+                    .put(']');
+        }
+
         int partitionIndex = txWriter.findAttachedPartitionRawIndexByLoTimestamp(logicalPartitionTimestampToDelete);
         if (partitionIndex < 0) {
             // A partition slit can exist without the partition itself.

@@ -25,11 +25,15 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -283,6 +287,153 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testDropPartitionActivePartitionRejectedAtApplyTime() throws Exception {
+        // The compile-time guard reads a TableReader snapshot the statement outlives, so it cannot
+        // be the last word. Sequencing the DROP straight into the view's WAL - which is what a
+        // replicated command or an older binary's statement amounts to - skips that guard and lets
+        // the writer's own check answer. It must reject the active target as recoverable: the
+        // transaction is marked applied and the view stays active rather than suspending.
+        assertMemoryLeak(() -> {
+            createBaseAndView("PARTITION BY DAY");
+            execute("INSERT INTO base VALUES ('1970-01-01T00:00:00.000000Z', 1), ('1970-01-03T00:00:00.000000Z', 3)");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+
+                final TableToken lvToken = engine.verifyTableName("lv");
+                sequenceRawDropPartition(lvToken, "1970-01-03");
+                driveLiveViewWalApply(job);
+
+                Assert.assertFalse(
+                        "an active-partition DROP must be tolerated, not suspend the live view",
+                        engine.getTableSequencerAPI().isSuspended(lvToken)
+                );
+                assertQuery("SELECT name FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name
+                                1970-01-01
+                                1970-01-03
+                                """);
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-03T00:00:00.000000Z\t3\t1
+                                """);
+
+                // The view keeps applying afterwards: a tolerated failure is not a stall.
+                execute("INSERT INTO base VALUES ('1970-01-04T00:00:00.000000Z', 4)");
+                driveRefreshToQuiescence(job);
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+            }
+        });
+    }
+
+    @Test
+    public void testDropPartitionAllowedOnceTargetIsNoLongerActive() throws Exception {
+        // The writer decides from the partition set the removal would act on, not from what the
+        // compiler saw, so a partition that was the frontier when it was first named becomes a
+        // legal target as soon as a newer one exists. Note this shape does NOT exercise the
+        // rejection: creating a newer partition is what makes the target droppable.
+        assertMemoryLeak(() -> {
+            createBaseAndView("PARTITION BY DAY");
+            execute("INSERT INTO base VALUES ('1970-01-01T00:00:00.000000Z', 1), ('1970-01-03T00:00:00.000000Z', 3)");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertRejected(
+                        "ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-03'",
+                        "cannot drop the active partition of a live view [partition=1970-01-03T00:00:00.000000Z]"
+                );
+
+                // A newer partition takes over the frontier.
+                execute("INSERT INTO base VALUES ('1970-01-05T00:00:00.000000Z', 5)");
+                driveUntilDurableRowCount(job, 3);
+
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-03'");
+                driveLiveViewWalApply(job);
+
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("lv")));
+                assertQuery("SELECT name FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name
+                                1970-01-01
+                                1970-01-05
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testDropPartitionRejectsActivePartitionAtCompileTime() throws Exception {
+        // The newest partition is the durable frontier the refresh pipeline appends into and an
+        // out-of-order repair rewrites, so DROP PARTITION must not name it - through either
+        // selector, and whether or not the statement also names droppable partitions.
+        assertMemoryLeak(() -> {
+            createBaseAndView("PARTITION BY DAY");
+            execute("INSERT INTO base VALUES " +
+                    "('1970-01-01T00:00:00.000000Z', 1), " +
+                    "('1970-01-02T00:00:00.000000Z', 2), " +
+                    "('1970-01-03T00:00:00.000000Z', 3)");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+
+                final TableToken lvToken = engine.verifyTableName("lv");
+                final long seqTxn = engine.getTableSequencerAPI().getTxnTracker(lvToken).getSeqTxn();
+                final String expected = "cannot drop the active partition of a live view [partition=1970-01-03T00:00:00.000000Z]";
+
+                // LIST, naming the frontier. The error points at the partition name.
+                assertRejected(
+                        "ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-03'",
+                        "ALTER LIVE VIEW lv DROP PARTITION LIST ".length(),
+                        expected
+                );
+                // A split-partition name normalizes to the logical partition it belongs to, so it
+                // cannot be used to reach the frontier through the back door.
+                assertRejected("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-03T12'", expected);
+                // Droppable partitions in the same list do not make the statement partly legal.
+                assertRejected("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-01', '1970-01-03'", expected);
+                assertRejected("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-03', '1970-01-01'", expected);
+                // WHERE, matching the frontier alone and matching it alongside older partitions.
+                assertRejected("ALTER LIVE VIEW lv DROP PARTITION WHERE ts >= '1970-01-03'", expected);
+                assertRejected("ALTER LIVE VIEW lv DROP PARTITION WHERE ts >= '1970-01-02'", expected);
+
+                Assert.assertEquals(
+                        "a rejected DROP PARTITION must not reach the live view's WAL",
+                        seqTxn,
+                        engine.getTableSequencerAPI().getTxnTracker(lvToken).getSeqTxn()
+                );
+
+                // Everything below the frontier is droppable through either selector. The two
+                // statements name disjoint partitions, so neither depends on the other's outcome.
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-01'");
+                execute("ALTER LIVE VIEW lv DROP PARTITION WHERE ts >= '1970-01-02' AND ts < '1970-01-03'");
+                driveLiveViewWalApply(job);
+                assertQuery("SELECT name FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name
+                                1970-01-03
+                                """);
+            }
+
+            // The guard is live-view only: a plain WAL table still drops its newest partition.
+            execute("CREATE TABLE plain (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO plain VALUES ('1970-01-01T00:00:00.000000Z', 1), ('1970-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            execute("ALTER TABLE plain DROP PARTITION LIST '1970-01-03'");
+            drainWalQueue();
+            assertQuery("SELECT count() FROM plain").noRandomAccess().expectSize().returns("count\n1\n");
+        });
+    }
+
     private static void assertTtl(String viewName, int expectedTtlHoursOrMonths) {
         final TableToken token = engine.verifyTableName(viewName);
         try (TableMetadata metadata = engine.getTableMetadata(token)) {
@@ -351,6 +502,53 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         execute("DROP LIVE VIEW " + viewName);
         execute(originalDdl);
         TestUtils.assertEquals(originalDdl, showCreateLiveView(viewName));
+    }
+
+    /**
+     * Drives the refresh job until the live view's own table holds at least {@code expectedRows}.
+     * <p>
+     * {@code driveRefreshToQuiescence} cannot serve here: it stops at the first pass that finds no
+     * work, which is routinely the pass before the {@code FLUSH EVERY} deadline comes round, so the
+     * newest rows are still in the un-flushed lead. They are visible to a query either way, but a
+     * partition of the durable tier only exists once the flush has written it.
+     */
+    private void driveUntilDurableRowCount(LiveViewRefreshJob job, long expectedRows) {
+        final TableToken lvToken = engine.verifyTableName("lv");
+        for (int i = 0; i < REFRESH_QUIESCENCE_PASSES; i++) {
+            try (TableReader reader = engine.getReader(lvToken)) {
+                if (reader.size() >= expectedRows) {
+                    return;
+                }
+            }
+            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            drainWalQueue();
+            drainJob(job);
+            drainWalQueue();
+        }
+        Assert.fail("the live view's table never reached " + expectedRows + " durable rows");
+    }
+
+    /**
+     * Sequences a {@code DROP PARTITION} into the live view's WAL without compiling it.
+     * <p>
+     * This is the only way to reach {@link io.questdb.cairo.TableWriter#removePartition(long)}'s own
+     * guard with an active target: {@code compileAlterLiveView} refuses one up front, and the WAL
+     * replay recompiles the same text with that reader-based check switched off. The replay reads
+     * the SQL text alone, so the operation built here only has to carry the view's table id.
+     */
+    private void sequenceRawDropPartition(TableToken lvToken, String partitionName) {
+        final int tableId;
+        try (TableMetadata metadata = engine.getTableMetadata(lvToken)) {
+            tableId = metadata.getTableId();
+        }
+        final AlterOperationBuilder builder = new AlterOperationBuilder().ofDropPartition(0, lvToken, tableId);
+        builder.addPartitionToList(ts(partitionName), 0);
+        final AlterOperation op = builder.build();
+        op.withContext(sqlExecutionContext);
+        op.withSqlStatement("ALTER LIVE VIEW " + lvToken.getTableName() + " DROP PARTITION LIST '" + partitionName + "'");
+        try (WalWriter walWriter = engine.getWalWriter(lvToken)) {
+            walWriter.apply(op, true);
+        }
     }
 
     private String showCreateLiveView(String viewName) throws SqlException {

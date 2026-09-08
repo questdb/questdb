@@ -291,6 +291,16 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         sink.putAscii('[').put(position).putAscii("]: ").put(message);
     }
 
+    /**
+     * Appends a timestamp in the column's own format, mirroring
+     * {@link io.questdb.cairo.CairoException#ts(int, long)} so a check that a compiler runs up
+     * front and a writer repeats at apply time can word its message identically.
+     */
+    public SqlException ts(int timestampType, long timestamp) {
+        ColumnType.getTimestampDriver(timestampType).append(message, timestamp);
+        return this;
+    }
+
     private SqlException errorCode(int errorCode) {
         this.error = errorCode;
         return this;

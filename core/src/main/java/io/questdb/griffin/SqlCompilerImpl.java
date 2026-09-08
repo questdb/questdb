@@ -641,6 +641,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         parser.expr(lexer, listener, this);
     }
 
+    /**
+     * Returns the logical partition that holds the reader's newest row, or {@link Long#MIN_VALUE}
+     * when the table has no partitions. The newest attached partition may be a physical split, so
+     * the caller compares logical floors rather than the split timestamp itself.
+     */
+    private static long activeLogicalPartitionTimestamp(TableReader reader) {
+        return reader.getPartitionCount() > 0
+                ? reader.getTxFile().getLogicalPartitionTimestamp(reader.getMaxTimestamp())
+                : Long.MIN_VALUE;
+    }
+
     private static void addSupportedConversion(short fromType, short... toTypes) {
         for (short toType : toTypes) {
             columnConversionSupport[fromType][toType] = true;
@@ -883,6 +894,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private static boolean isTimestampUpdateCast(int from, int to) {
         return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
+    }
+
+    /**
+     * Words the live view active-partition rejection. {@link TableWriter#removePartition(long)}
+     * raises the same sentence as a recoverable {@link CairoException} at apply time, so an
+     * operator reading the WAL-apply log sees what the compiler would have told them.
+     */
+    private static SqlException liveViewActivePartitionDropError(TableReader reader, long activePartitionTimestamp, int position) {
+        return SqlException.position(position)
+                .put("cannot drop the active partition of a live view [partition=")
+                .ts(reader.getMetadata().getTimestampType(), activePartitionTimestamp)
+                .put(']');
     }
 
     /**
@@ -1607,6 +1630,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             reader = executionContext.getReader(tableToken);
         }
 
+        // A live view's newest partition is the durable frontier its refresh pipeline writes into,
+        // so DROP PARTITION must not name it. Best effort from this reader snapshot, which the
+        // statement outlives - TableWriter.removePartition repeats the check authoritatively at
+        // apply time. Skipped under WAL application: the replay recompiles this very SQL, its
+        // reader can lag the writer that is about to run it, and a SqlException raised here is not
+        // WAL-recoverable, so a false positive would suspend the view rather than let the writer
+        // decide.
+        final boolean rejectLiveViewActivePartition = action == PartitionAction.DROP
+                && tableToken.isLiveView()
+                && reader != null
+                && !executionContext.isWalApplication();
+
         try {
             if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
                 throw SqlException.$(pos, "table is not partitioned");
@@ -1614,7 +1649,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             final CharSequence tok = expectToken(lexer, "'list' or 'where'");
             if (isListKeyword(tok)) {
-                alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, pos, action);
+                alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, pos, action, rejectLiveViewActivePartition);
             } else if (isWhereKeyword(tok)) {
                 AlterOperationBuilder alterOperationBuilder = switch (action) {
                     case PartitionAction.DROP ->
@@ -1649,6 +1684,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     throw CairoException.partitionManipulationRecoverable().position(functionPosition)
                                             .put("no partitions matched WHERE clause");
                                 }
+                                if (rejectLiveViewActivePartition) {
+                                    // filterPartitions always evaluates the newest logical partition,
+                                    // so re-running the filter on it reproduces the decision it made.
+                                    final long activePartitionTimestamp = activeLogicalPartitionTimestamp(reader);
+                                    partitionFunctionRec.setTimestamp(activePartitionTimestamp);
+                                    if (function.getBool(partitionFunctionRec)) {
+                                        throw liveViewActivePartitionDropError(reader, activePartitionTimestamp, functionPosition);
+                                    }
+                                }
                             }
                             // Check for WITH clause for CONVERT TO PARQUET
                             CharSequence nextTok = SqlUtil.fetchNext(lexer);
@@ -1682,7 +1726,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableToken tableToken,
             @Nullable TableReader reader,
             int pos,
-            int action
+            int action,
+            boolean rejectLiveViewActivePartition
     ) throws SqlException {
         final AlterOperationBuilder alterOperationBuilder;
         switch (action) {
@@ -1743,6 +1788,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // Otherwise ignore the split time part.
                 int hi = action == PartitionAction.FORCE_DROP ? partitionName.length() : -1;
                 long timestamp = PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy, 0, hi);
+                if (rejectLiveViewActivePartition) {
+                    assert reader != null;
+                    final long activePartitionTimestamp = activeLogicalPartitionTimestamp(reader);
+                    // Both sides go through the logical floor. The parsed name already drops the
+                    // split suffix, but the newest attached partition is a physical one, which for
+                    // a split logical partition carries a timestamp the name never spells.
+                    if (reader.getTxFile().getLogicalPartitionTimestamp(timestamp) == activePartitionTimestamp) {
+                        throw liveViewActivePartitionDropError(reader, activePartitionTimestamp, lastPosition);
+                    }
+                }
                 alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
             } catch (CairoException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
@@ -2183,6 +2238,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * clauses, the Parquet {@code WITH (...)} options and every error message match tables.
      * {@code FORCE DROP PARTITION} is rejected: it bypasses the WAL and writes through a directly
      * acquired TableWriter, but a live view's writer is owned by the refresh worker's inline apply.
+     * <p>
+     * One restriction is the view's own: {@code DROP PARTITION} may not name the newest partition,
+     * which is the durable frontier the refresh pipeline appends into. The check here is best
+     * effort, from a TableReader snapshot the statement outlives;
+     * {@link TableWriter#removePartition(long)} repeats it authoritatively at apply time.
      * <p>
      * The structural verbs stay rejected, since a live view's schema is a function of its SELECT.
      */
@@ -2650,7 +2710,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         tok = expectToken(lexer, "'list'");
                         if (isListKeyword(tok)) {
                             executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
-                            alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, null, lexer.lastTokenPosition(), PartitionAction.FORCE_DROP);
+                            alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, null, lexer.lastTokenPosition(), PartitionAction.FORCE_DROP, false);
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "'list' expected");
                         }
