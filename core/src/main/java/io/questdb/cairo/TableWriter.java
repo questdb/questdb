@@ -331,6 +331,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
     private final LongList partitionRemoveCandidates = new LongList();
+    /**
+     * {@code _geometry} generations retired by this transaction, in {@link io.questdb.tasks.ColumnPurgeTask}'s block
+     * layout - see {@link #setGeometryRefRetiringGenerations} and GEOMETRY_PURGE.md.
+     */
+    private final LongList retiredGeometryGenerations = new LongList();
     private final Path path;
     private final int pathRootSize;
     private final int pathSize;
@@ -3713,6 +3718,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
                 partitionRemoveCandidates.clear();
+                // The rolled-back transaction's geometry refs never reached _txn, so the generations it
+                // meant to retire are still the current ones.
+                retiredGeometryGenerations.clear();
                 rollbackDeferredPostingSealPurges();
                 o3CommitBatchTimestampMin = Long.MAX_VALUE;
                 if ((masterRef & 1) != 0) {
@@ -6034,7 +6042,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void commitTxWriter() {
         txWriter.commit(denseSymbolMapWriters);
-        publishDeferredPostingSealPurges(txWriter.getTxn(), false);
+        long currentTableTxn = txWriter.getTxn();
+        publishDeferredPostingSealPurges(currentTableTxn, false);
+        publishRetiredGeometryGenerations(currentTableTxn);
     }
 
     private void commitTxWriterAndPublishPendingPostingSealPurges() {
@@ -6042,6 +6052,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long currentTableTxn = txWriter.getTxn();
         publishPendingPostingSealPurges(currentTableTxn);
         publishDeferredPostingSealPurges(currentTableTxn, false);
+        publishRetiredGeometryGenerations(currentTableTxn);
     }
 
     /**
@@ -8207,10 +8218,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     configuration.getMicrosecondClock().getTicks(),
                     configuration.getCommitMode()
             );
-            txWriter.setPartitionGeometryRef(partitionTs, geometryRef);
+            setGeometryRefRetiringGenerations(partitionTs, geometryRef);
         } else {
             geometry.abandonUpdate();
-            txWriter.setPartitionGeometryRef(partitionTs, NO_GEOMETRY_REF);
+            setGeometryRefRetiringGenerations(partitionTs, NO_GEOMETRY_REF);
         }
         commitTxWriterAndPublishPendingPostingSealPurges();
         return true;
@@ -9376,7 +9387,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         final long liveRows = txWriter.getPartitionSize(partitionIndex);
         final long deadRows = geometry.getE(partitionIndex) - liveRows;
-        txWriter.setPartitionGeometryRef(partitionTs, NO_GEOMETRY_REF);
+        setGeometryRefRetiringGenerations(partitionTs, NO_GEOMETRY_REF);
         LOG.info().$("compacting composite partition, MAKE-PLAIN: dropping dead space above the single" +
                         " piece at row 0 [table=").$(tableToken)
                 .$(", dir=").$(formatPartitionForTimestamp(partitionTs, partitionNameTxn))
@@ -9704,7 +9715,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 configuration.getMicrosecondClock().getTicks(),
                 configuration.getCommitMode()
         );
-        txWriter.setPartitionGeometryRef(partitionTs, geometryRef);
+        setGeometryRefRetiringGenerations(partitionTs, geometryRef);
 
         // insertPartition only touches attachedPartitions.
         final boolean wasActivePartition = partitionIndex == txWriter.getPartitionCount() - 1;
@@ -10081,6 +10092,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // down this loop - so a partition that BECAME composite in this commit is not missed.
                 final boolean isComposite = geometryRef != NO_GEOMETRY_REF
                         || (partitionIndexRaw > -1 && txWriter.isPartitionCompositeByRawIndex(partitionIndexRaw));
+                // Slot 3 carries the pointer, and several of the size updates below rewrite that word, so the
+                // generation this commit rotates away from has to be read here, while it is still there.
+                final long committedGeometryRef = partitionIndexRaw > -1
+                        ? txWriter.getGeometryRef(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION)
+                        : -1L;
+                final long committedGeometryNameTxn = partitionIndexRaw > -1
+                        ? txWriter.getPartitionNameTxnByRawIndex(partitionIndexRaw)
+                        : -1L;
 
                 if (isCommitReplaceMode() && srcDataOldPartitionSize > 0 && srcDataNewPartitionSize < srcDataOldPartitionSize) {
                     if (!partitionMutates && !isComposite) {
@@ -10308,6 +10327,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Last, so it survives whichever size update ran above - several of those rewrite slot 3,
                 // where the pointer lives.
                 if (geometryRef != NO_GEOMETRY_REF) {
+                    retireGeometryGenerations(partitionTimestamp, committedGeometryNameTxn, committedGeometryRef, geometryRef);
                     txWriter.setPartitionGeometryRef(partitionTimestamp, geometryRef);
                 }
             }
@@ -13541,6 +13561,71 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Hands the generations {@link #setGeometryRefRetiringGenerations} collected to the column purge job. Async only:
+     * a rotation is rare enough that nothing is gained by trying to delete inline, and the job is what knows how to
+     * wait out the readers still resolving those records.
+     */
+    /**
+     * Publishes {@code newRef} for the partition and queues every {@code _geometry} generation the move retires. A
+     * rotation and a MAKE-PLAIN both leave the retired file in the SAME directory, so the ordinary partition purge
+     * never sees it - see GEOMETRY_PURGE.md. Call this instead of {@code txWriter.setPartitionGeometryRef} wherever
+     * the directory stays put; the sites that write a fresh directory leave the whole of the old one to
+     * {@link #safeDeletePartitionDir}.
+     */
+    private void retireGeometryGenerations(long partitionTimestamp, long partitionNameTxn, long committedRef, long newRef) {
+        if (committedRef == -1L) {
+            return;
+        }
+        final int from = TxReader.geometryGeneration(committedRef);
+        // Whatever sits below `from` was queued by the rotation that moved past it, so only what THIS move
+        // retires is new. NO_GEOMETRY_REF ends the chain, retiring the current generation.
+        final int to = newRef == NO_GEOMETRY_REF ? from + 1 : TxReader.geometryGeneration(newRef);
+        for (int generation = from; generation < to; generation++) {
+            // ColumnPurgeTask's block layout, with the generation - the file's name suffix - in the
+            // column-version slot. The txn watermark the purge job needs is in the file itself.
+            retiredGeometryGenerations.add(generation, partitionTimestamp, partitionNameTxn, 0L);
+        }
+    }
+
+    private void setGeometryRefRetiringGenerations(long partitionTimestamp, long newRef) {
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex > -1) {
+            retireGeometryGenerations(
+                    partitionTimestamp,
+                    txWriter.getPartitionNameTxn(partitionIndex),
+                    txWriter.getGeometryRef(partitionIndex),
+                    newRef
+            );
+        }
+        txWriter.setPartitionGeometryRef(partitionTimestamp, newRef);
+    }
+
+    private void publishRetiredGeometryGenerations(long currentTableTxn) {
+        if (retiredGeometryGenerations.size() == 0) {
+            return;
+        }
+        PurgingOperator.purgeColumnVersionAsync(
+                LOG,
+                messageBus,
+                tableToken,
+                TableUtils.PARTITION_GEOMETRY_FILE_NAME,
+                tableToken.getTableId(),
+                (int) getTruncateVersion(),
+                // Not a column. ColumnPurgeOperator branches on this type and treats the entry's "column
+                // version" as a geometry generation.
+                ColumnType.NULL,
+                IndexType.NONE,
+                timestampType,
+                partitionBy,
+                currentTableTxn,
+                retiredGeometryGenerations,
+                0,
+                retiredGeometryGenerations.size()
+        );
+        retiredGeometryGenerations.clear();
+    }
+
     private void publishPostingIndexesForLastPartitionFastLag() {
         // Fast-lag has no sealPostingIndexesForO3Partitions sweep to follow,
         // so this is the only place pending POSTING entries from
@@ -16154,7 +16239,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getRowCount());
             // Squashing leaves the target one contiguous piece at row 0, the ordinary shape.
-            txWriter.setPartitionGeometryRef(targetPartition, NO_GEOMETRY_REF);
+            setGeometryRefRetiringGenerations(targetPartition, NO_GEOMETRY_REF);
             txWriter.setPartitionSeqTxn(targetPartitionIndex, squashedSeqTxn);
             if (!txWriter.incrementPartitionSquashCounter(targetPartitionIndex)) {
                 // The squash counter overflew its 16 bits

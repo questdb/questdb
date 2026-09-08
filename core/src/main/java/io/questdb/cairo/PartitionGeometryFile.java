@@ -81,6 +81,14 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     }
 
     /**
+     * Package-private rather than private: {@link ColumnPurgeOperator} deletes retired generations and has to name
+     * them exactly the way {@link #append} and {@link #read} do - see GEOMETRY_PURGE.md.
+     */
+    static LPSZ geometryFileName(Path partitionDir, int generation) {
+        return partitionDir.concat(TableUtils.PARTITION_GEOMETRY_FILE_NAME).put('.').put(generation).$();
+    }
+
+    /**
      * Starts building a record in the scratch buffer.
      * @param seqTxn the partition's last-modifying seqTxn, or -1 when unknown (non-WAL table)
      */
@@ -278,10 +286,6 @@ public class PartitionGeometryFile implements Closeable, Mutable {
             h = mix(h, Unsafe.getUnsafe().getLong(p));
         }
         return h;
-    }
-
-    private static LPSZ geometryFileName(Path partitionDir, int generation) {
-        return partitionDir.concat(TableUtils.PARTITION_GEOMETRY_FILE_NAME).put('.').put(generation).$();
     }
 
     private static long mix(long h, long v) {

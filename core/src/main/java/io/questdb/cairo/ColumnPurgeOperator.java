@@ -169,6 +169,39 @@ public class ColumnPurgeOperator implements Closeable {
         }
     }
 
+    /**
+     * Whether anything can still resolve the retired {@code _geometry.<generation>} at {@code partitionDirLen}. The
+     * entry carries a generation, not a txn, so the scoreboard bound comes out of the file: the record at offset 0 is
+     * the one the rotation opened the generation with, and its writer txn is the txn the generation became current
+     * at. Below that a reader resolves an earlier generation; at {@code updateTxn} and above it resolves a later one.
+     */
+    private boolean hasReadersOnGeometryGeneration(int partitionDirLen, int generation, long updateTxn) {
+        path.trimTo(partitionDirLen);
+        final long firstWriterTxn;
+        try (PartitionGeometryFile geometryFile = new PartitionGeometryFile(MemoryTag.NATIVE_SQL_COMPILER)) {
+            geometryFile.read(ff, path, generation, 0);
+            firstWriterTxn = geometryFile.getWriterTxn();
+        } catch (CairoException ex) {
+            // No reader can resolve a record that does not verify, so nothing is holding this file.
+            LOG.info().$("unreadable geometry generation, purging [path=").$(path.trimTo(partitionDirLen))
+                    .$(", generation=").$(generation)
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
+                    .I$();
+            return false;
+        }
+        try {
+            return !txnScoreboard.isRangeAvailable(firstWriterTxn, updateTxn);
+        } catch (CairoException ex) {
+            // Same as checkScoreboardHasReadersBeforeUpdate: an over-allocated scoreboard must re-run the purge,
+            // not stall it.
+            LOG.error().$("cannot lock last txn in scoreboard, geometry purge will re-run [txn=").$(updateTxn)
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+            return true;
+        }
+    }
+
     private void closePurgeLogCompleteFile() {
         if (ff.close(purgeLogPartitionFd)) {
             LOG.info().$("closed purge log complete file [fd=").$(purgeLogPartitionFd).I$();
@@ -303,6 +336,46 @@ public class ColumnPurgeOperator implements Closeable {
                     final long partitionTimestamp = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP);
                     final long partitionTxnName = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN);
                     final long updateRowId = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID);
+                    if (task.getColumnType() == ColumnType.NULL) {
+                        // Not a column at all: a retired _geometry generation, whose file-name suffix rides in the
+                        // column-version slot. See GEOMETRY_PURGE.md.
+                        setUpPartitionPath(task.getTimestampType(), task.getPartitionBy(), partitionTimestamp, partitionTxnName);
+                        int geometryDirLen = path.size();
+                        final boolean exists = ff.exists(PartitionGeometryFile.geometryFileName(path, (int) columnVersion));
+                        path.trimTo(geometryDirLen);
+                        if (!exists) {
+                            completedRowIds.add(updateRowId);
+                            continue;
+                        }
+                        if (setupScoreboard) {
+                            if (!openScoreboardAndTxn(task)) {
+                                completedRowIds.add(updateRowId);
+                                continue;
+                            }
+                            setupScoreboard = false;
+                            // openScoreboardAndTxn mutated the path to read _txn.
+                            setUpPartitionPath(task.getTimestampType(), task.getPartitionBy(), partitionTimestamp, partitionTxnName);
+                            geometryDirLen = path.size();
+                        }
+                        // When a backup checkpoint is in progress its copied _txn may still name this generation.
+                        if (engine.getCheckpointStatus().isInProgress()
+                                || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY
+                                && hasReadersOnGeometryGeneration(geometryDirLen, (int) columnVersion, task.getUpdateTxn()))) {
+                            allDone = false;
+                            LOG.debug().$("cannot purge, geometry generation is in use [path=").$(path).I$();
+                            continue;
+                        }
+                        path.trimTo(geometryDirLen);
+                        LOG.info().$("purging retired geometry generation [path=").$(path)
+                                .$(", generation=").$(columnVersion).I$();
+                        if (couldNotRemove(ff, PartitionGeometryFile.geometryFileName(path, (int) columnVersion))) {
+                            allDone = false;
+                            continue;
+                        }
+                        completedRowIds.add(updateRowId);
+                        continue;
+                    }
+
                     int columnTypeRaw = task.getColumnType();
                     int columnType = Math.abs(columnTypeRaw);
                     // We don't know the type of the column, the files are found on the disk, but column
