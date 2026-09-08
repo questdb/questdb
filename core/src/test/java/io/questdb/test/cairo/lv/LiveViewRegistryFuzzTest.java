@@ -242,8 +242,8 @@ public class LiveViewRegistryFuzzTest extends AbstractTest {
             // Definition-less stubs live in the name map only; the conditional remove must
             // key on identity there too, without touching any fan-out list.
             final TableToken stubToken = liveViewToken("lv", 3);
-            final LiveViewInstance stub = new LiveViewInstance(stubToken, LiveViewLifecycleState.STATE_UNREADABLE);
-            final LiveViewInstance otherStub = new LiveViewInstance(stubToken, LiveViewLifecycleState.STATE_UNREADABLE);
+            final LiveViewInstance stub = new LiveViewInstance(stubToken, LiveViewLifecycleState.STATE_UNREADABLE, 3);
+            final LiveViewInstance otherStub = new LiveViewInstance(stubToken, LiveViewLifecycleState.STATE_UNREADABLE, 4);
             registry.registerStubView(stub);
             Assert.assertFalse(registry.removeView("lv", otherStub));
             Assert.assertSame(stub, registry.getViewInstance("lv"));
@@ -290,6 +290,6 @@ public class LiveViewRegistryFuzzTest extends AbstractTest {
                 new IntList(),
                 null
         );
-        return new LiveViewInstance(definition, liveViewToken(name, id));
+        return new LiveViewInstance(definition, liveViewToken(name, id), id, false, -1);
     }
 }
