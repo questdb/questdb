@@ -3118,4 +3118,3 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
     }
 }
-
