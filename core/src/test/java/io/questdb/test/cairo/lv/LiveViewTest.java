@@ -737,7 +737,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
             final TableToken lvToken = engine.verifyTableName("lv");
 
-            assertAlterLiveViewRejected("ALTER LIVE VIEW lv FREEZE WAL", "'resume' or 'suspend' expected");
+            assertAlterLiveViewRejected("ALTER LIVE VIEW lv FREEZE WAL", "'set', 'drop', 'convert', 'resume' or 'suspend' expected");
             assertAlterLiveViewRejected("ALTER LIVE VIEW lv RESUME", "'wal' expected");
             assertAlterLiveViewRejected("ALTER LIVE VIEW lv RESUME WAL bogus", "'from' expected");
             assertAlterLiveViewRejected("ALTER LIVE VIEW lv RESUME WAL FROM", "'transaction' or 'txn' expected");

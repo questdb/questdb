@@ -22209,10 +22209,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testRejectAlterLiveView() throws Exception {
-        // ALTER LIVE VIEW exists only for the WAL-control verbs (RESUME / SUSPEND WAL), which are
-        // the operator's recovery for a suspended view - see
-        // LiveViewTest.testSuspendedLiveViewCanBeResumed. Every STRUCTURAL verb stays rejected: a
-        // live view's schema is a function of its SELECT and must not be mutated in place.
+        // ALTER LIVE VIEW carries the WAL-control verbs (RESUME / SUSPEND WAL), which are the
+        // operator's recovery for a suspended view - see
+        // LiveViewTest.testSuspendedLiveViewCanBeResumed - plus the durable-tier verbs
+        // (SET TTL / DROP PARTITION / CONVERT PARTITION), covered by
+        // LiveViewDurableTierDdlTest. Every STRUCTURAL verb stays rejected: a live view's schema is
+        // a function of its SELECT and must not be mutated in place.
         // (ALTER TABLE <lv> is a separate path, covered by LiveViewTest.testRejectAlterTable with
         // "cannot modify live view".)
         assertMemoryLeak(() -> {
@@ -22222,7 +22224,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             for (String sql : new String[]{
                     "ALTER LIVE VIEW lv RENAME TO lv2",
                     "ALTER LIVE VIEW lv ADD COLUMN y INT",
-                    "ALTER LIVE VIEW lv DROP COLUMN x",
             }) {
                 try {
                     execute(sql);
@@ -22230,9 +22231,19 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 } catch (SqlException e) {
                     Assert.assertTrue(
                             sql + " -> wrong message [msg=" + e.getFlyweightMessage() + ']',
-                            Chars.contains(e.getFlyweightMessage(), "'resume' or 'suspend' expected")
+                            Chars.contains(e.getFlyweightMessage(), "'set', 'drop', 'convert', 'resume' or 'suspend' expected")
                     );
                 }
+            }
+            // DROP is accepted only as DROP PARTITION, so the column form stops one token later.
+            try {
+                execute("ALTER LIVE VIEW lv DROP COLUMN x");
+                Assert.fail("expected SqlException rejecting ALTER LIVE VIEW ... DROP COLUMN");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "'partition' expected")
+                );
             }
             // The name must still resolve to the untouched live view.
             Assert.assertNotNull(engine.getLiveViewRegistry().getViewInstance("lv"));

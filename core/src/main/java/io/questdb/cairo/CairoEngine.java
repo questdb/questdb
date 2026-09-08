@@ -1636,6 +1636,16 @@ public class CairoEngine implements Closeable, WriterSource {
         // Resolve PARTITION BY: PartitionBy.NONE is the "inherit" sentinel.
         final int partitionBy = LiveViewTableStructure.resolvePartitionBy(op.getPartitionBy(), basePartitionBy);
 
+        // TTL granularity is a property of the resolved partition scheme, and a view that omits
+        // PARTITION BY inherits it from the base table - which the parser cannot see. Validate here,
+        // against the scheme the table is about to be created with, pointing at the TTL value the
+        // user typed. The parser already ran the same check when PARTITION BY was explicit, so this
+        // repeat is a no-op for those.
+        final int ttlHoursOrMonths = op.getTtlHoursOrMonths();
+        if (ttlHoursOrMonths != 0) {
+            PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, op.getTtlPosition());
+        }
+
         // Capture base sequencer head. It is the upper bound of the initial seed
         // (seedTargetSeqTxn) and, one past it, the first base commit the incremental drain
         // is responsible for (subscribeFromSeqTxn). Whichever start mode the view uses, the
@@ -1719,7 +1729,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 metadata,
                 definition,
                 outputSymbolCacheFlags,
-                sparsePublicationKeyColumnIndex
+                sparsePublicationKeyColumnIndex,
+                ttlHoursOrMonths
         );
         if (sparsePublicationKeyColumnIndex != LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN) {
             LOG.info().$("live view carries sparse publication dedup keys [view=").$(op.getViewName())

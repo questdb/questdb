@@ -600,6 +600,47 @@ public class SecurityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDurableTierLiveViewDdlDeniedOnNoWriteAccess() throws Exception {
+        // The durable-tier verbs authorize through the same hooks ALTER TABLE uses:
+        // authorizeAlterTableSetParam for SET TTL (from AlterOperation.authorize, at sequencing
+        // time), authorizeAlterTableDropPartition for DROP PARTITION and
+        // authorizeAlterTableConvertPartitionTo{Parquet,Native} for CONVERT PARTITION (at compile
+        // time). A read-only context must be refused by each of them, and nothing may be sequenced.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view lv flush every 1s start from now as " +
+                    "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            final long seqTxnBefore = engine.getTableSequencerAPI().getTxnTracker(lvToken).getSeqTxn();
+
+            final SqlExecutionContext roContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(ReadOnlySecurityContext.INSTANCE, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            for (String sql : new String[]{
+                    "alter live view lv set ttl 1 day",
+                    "alter live view lv drop partition list '1970-01-01'",
+                    "alter live view lv convert partition to parquet list '1970-01-01'",
+                    "alter live view lv convert partition to native list '1970-01-01'",
+            }) {
+                try {
+                    engine.execute(sql, roContext);
+                    Assert.fail("expected permission denied for: " + sql);
+                } catch (Exception ex) {
+                    TestUtils.assertContains(ex.getMessage(), "permission denied");
+                }
+            }
+
+            Assert.assertEquals(
+                    "a denied durable-tier ALTER must not sequence a live view transaction",
+                    seqTxnBefore,
+                    engine.getTableSequencerAPI().getTxnTracker(lvToken).getSeqTxn()
+            );
+
+            execute("drop live view lv");
+            execute("drop table base");
+        });
+    }
+
+    @Test
     public void testDropTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             engine.execute("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);

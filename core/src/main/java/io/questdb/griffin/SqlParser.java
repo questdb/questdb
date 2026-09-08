@@ -1384,13 +1384,17 @@ public class SqlParser {
         boolean inMemorySpecified = false;
         boolean partitionBySpecified = false;
         boolean startFromSpecified = false;
+        boolean ttlSpecified = false;
+        int ttlHoursOrMonths = 0;
+        int ttlValuePos = 0;
+        int explicitPartitionBy = PartitionBy.NONE;
 
-        // Clauses: IN MEMORY <duration>, PARTITION BY <unit>, START FROM <start>.
-        // Any of the three may appear, in any order, before AS, but each at most
+        // Clauses: IN MEMORY <duration>, PARTITION BY <unit>, TTL <n> <unit>, START FROM <start>.
+        // Any of the four may appear, in any order, before AS, but each at most
         // once - a repeat is rejected so a typo'd second clause does not silently
         // overwrite the first. START FROM is the only mandatory one; the check for
         // it sits below, once AS terminates the clause list.
-        tok = tok(lexer, "'in', 'partition', 'start', or 'as'");
+        tok = tok(lexer, "'in', 'partition', 'ttl', 'start', or 'as'");
         while (true) {
             if (isInKeyword(tok)) {
                 if (inMemorySpecified) {
@@ -1442,7 +1446,18 @@ public class SqlParser {
                             "live view PARTITION BY NONE is not supported; live views must be partitioned");
                 }
                 builder.setPartitionBy(partitionBy);
+                explicitPartitionBy = partitionBy;
                 partitionBySpecified = true;
+                tok = tok(lexer, "next clause or 'as'");
+            } else if (isTtlKeyword(tok)) {
+                if (ttlSpecified) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "live view TTL clause specified more than once");
+                }
+                ttlValuePos = lexer.getPosition();
+                ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
+                ttlSpecified = true;
+                builder.setTtlHoursOrMonths(ttlHoursOrMonths);
+                builder.setTtlPosition(ttlValuePos);
                 tok = tok(lexer, "next clause or 'as'");
             } else if (isStartKeyword(tok)) {
                 if (startFromSpecified) {
@@ -1502,6 +1517,14 @@ public class SqlParser {
             }
             builder.setInMemoryInterval(inMemoryValue);
             builder.setInMemoryIntervalUnit(inMemoryUnit);
+        }
+
+        // TTL granularity must be a whole multiple of the partition unit. The parser can only
+        // check it when PARTITION BY was explicit; a view that inherits the base table's scheme
+        // is checked in CairoEngine.createLiveView, which is the first point that knows it. Both
+        // checks point at the same persisted TTL value position.
+        if (ttlSpecified && partitionBySpecified) {
+            PartitionBy.validateTtlGranularity(explicitPartitionBy, ttlHoursOrMonths, ttlValuePos);
         }
 
         // expect AS

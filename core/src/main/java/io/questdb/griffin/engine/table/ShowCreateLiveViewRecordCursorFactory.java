@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -120,6 +121,7 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
         private BlockFileReader reader;
         private byte startFromKind;
         private long startFromTimestamp;
+        private int ttlHoursOrMonths;
         private String viewSql;
         private TableToken viewToken;
 
@@ -194,6 +196,17 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
                 reader.close();
             }
 
+            // TTL is table metadata (_meta), not part of the _lv definition, so it comes from a
+            // separate read. That is also what makes ALTER LIVE VIEW ... SET TTL round-trip through
+            // SHOW CREATE without an _lv rewrite.
+            try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(viewToken)) {
+                ttlHoursOrMonths = metadata.getTtlHoursOrMonths();
+            } catch (CairoException e) {
+                throw SqlException.$(tokenPosition, "could not read live view metadata [view=").put(viewToken)
+                        .put(", msg=").put(e)
+                        .put(']');
+            }
+
             toTop();
             return this;
         }
@@ -232,6 +245,8 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
             // PARTITION BY NONE case, which would otherwise round-trip to base's
             // scheme if the clause were omitted from SHOW CREATE.
             sink.putAscii(" PARTITION BY ").put(PartitionBy.toString(partitionBy));
+            // TTL prints only when the view carries one, matching SHOW CREATE MATERIALIZED VIEW.
+            ShowCreateTableRecordCursorFactory.ttlToSink(ttlHoursOrMonths, sink);
             // START FROM is mandatory at CREATE, so it always round-trips. NOW and an
             // explicit timestamp both persist a resolved boundary in
             // viewLowerBoundTimestamp; the persisted kind is what tells them apart, so a
