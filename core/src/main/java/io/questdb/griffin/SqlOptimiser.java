@@ -2796,7 +2796,8 @@ public class SqlOptimiser implements Mutable {
             return false;
         }
         final TableToken tableToken = executionContext.getTableTokenIfExists(tableNameExpr.token);
-        if (tableToken == null) {
+        // Direct latest-by reads of live views use disk only, losing the published in-memory lead.
+        if (tableToken == null || tableToken.isLiveView()) {
             return false;
         }
         try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
