@@ -7349,6 +7349,93 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntColumnVsNarrowConstPlusLongFloatArithMatchesJava() throws Exception {
+        // Reduced from a QueryFuzzTest seed (s0=7231951392948824, s1=1788509105786), whose filter
+        // was "NOT ((-68::BYTE <= 0.014003::FLOAT OR c3 != (498626 + (695544L * c0))))" over an INT
+        // c3 and a FLOAT c0. The (i64, f32) multiply is the one pairing whose result the IR walk's
+        // type-code ordering got wrong - avx2::convert sends both sides through cvt_ltod / cvt_ftod
+        // so the product is f64, while the codes order F4 (3) below I8 (4) and Math.max answered
+        // i64 - which made the enclosing i32 immediate 498626 look like a narrow-int IMM beside an
+        // i64 operand and tripped the areWideLaneWidthsHarmonised assert. See
+        // CompiledFilterIRSerializer#arithResultTypeCode.
+        //
+        // The assert fired at COMPILE time, so the shape had no rows to be wrong about and this
+        // battery is not a divergence pin: it is the evidence that the filter the assert declined
+        // was correct all along. Every site runs the Java oracle first and pins absolute rows, so
+        // the two JIT backends agreeing with each other cannot launder a shared wrong answer, and
+        // assertJitScalarAndVectorMatchJava insists both of them really COMPILE the filter - a
+        // decline reddens this rather than passing on the Java fallback.
+        //
+        // NULL semantics, as elsewhere in this file: Numbers.intToDouble(INT_NULL) is NaN and a
+        // FLOAT NULL is NaN, NaN propagates through the arithmetic, and Numbers.equals(double,
+        // double) makes NaN equal to NaN. So an INT NULL against a value matches only <>, a value
+        // against a NULL-bearing right side likewise, and NULL against NULL matches =. The strict
+        // orderings exclude every NaN pairing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a1r (k TIMESTAMP, i INT, f FLOAT) TIMESTAMP(k) PARTITION BY DAY");
+            // 695544 * f is exact in f32 and f64 alike for every f here - the products need at most
+            // 21 mantissa bits - so the two engines cannot disagree by rounding and the rows below
+            // are the arithmetic's answer rather than a tolerance's.
+            execute("""
+                    INSERT INTO a1r VALUES
+                        (0, 498626, 0.0),
+                        (1_000_000, 1194170, 1.0),
+                        (2_000_000, 1889714, 2.0),
+                        (3_000_000, 1000000, 0.0),
+                        (4_000_000, NULL, 1.0),
+                        (5_000_000, 498626, NULL),
+                        (6_000_000, NULL, NULL),
+                        (7_000_000, -196918, -1.0),
+                        (8_000_000, 5, 0.5)
+                    """);
+            // The fixture trap the neighbouring tests document: a column that is not really INT or
+            // FLOAT would compare at f64 in both engines and pass whatever the walk reports. Pin
+            // the declared types so a later fixture edit fails loudly.
+            assertQuery("SELECT typeOf(i) it, typeOf(f) ft FROM a1r LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("it\tft\nINT\tFLOAT\n");
+
+            // 498626 + 695544 * f per row: 498626, 1194170, 1889714, 498626, 1194170, NaN, NaN,
+            // -196918, 846398.
+            final String equalRows = "k\ti\tf\n" +
+                    "1970-01-01T00:00:00.000000Z\t498626\t0.0\n" +
+                    "1970-01-01T00:00:01.000000Z\t1194170\t1.0\n" +
+                    "1970-01-01T00:00:02.000000Z\t1889714\t2.0\n" +
+                    "1970-01-01T00:00:06.000000Z\tnull\tnull\n" +
+                    "1970-01-01T00:00:07.000000Z\t-196918\t-1.0\n";
+            final String notEqualRows = "k\ti\tf\n" +
+                    "1970-01-01T00:00:03.000000Z\t1000000\t0.0\n" +
+                    "1970-01-01T00:00:04.000000Z\tnull\t1.0\n" +
+                    "1970-01-01T00:00:05.000000Z\t498626\tnull\n" +
+                    "1970-01-01T00:00:08.000000Z\t5\t0.5\n";
+            final String greaterRows = "k\ti\tf\n" +
+                    "1970-01-01T00:00:03.000000Z\t1000000\t0.0\n";
+            final String lessRows = "k\ti\tf\n" +
+                    "1970-01-01T00:00:08.000000Z\t5\t0.5\n";
+
+            // The shape the assert declined, in both spellings and both operand orders.
+            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where i = 498626 + 695544L * f", equalRows);
+            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where i <> 498626 + 695544L * f", notEqualRows);
+            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where 498626 + 695544L * f = i", equalRows);
+            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where 498626 + 695544L * f <> i", notEqualRows);
+            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where i > 498626 + 695544L * f", greaterRows);
+            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where i < 498626 + 695544L * f", lessRows);
+            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where 498626 + 695544L * f < i", greaterRows);
+            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where 498626 + 695544L * f > i", lessRows);
+
+            // Control: spell the addend 498626L and the immediate is i64 rather than a marked
+            // narrow one, which is why this sibling never tripped the assert. Same rows.
+            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where i = 498626L + 695544L * f", equalRows);
+            // Control: drop the addend and the product stands alone, with no i32 immediate to pair
+            // against it.
+            assertJitScalarAndVectorMatchJava("select k, i, f from a1r where i = 695544L * f",
+                    "k\ti\tf\n" +
+                            "1970-01-01T00:00:06.000000Z\tnull\tnull\n");
+        });
+    }
+
+    @Test
     public void testNarrowIntArithMagnitudeBoundVsFloatColumnPinsBoundaryRows() throws Exception {
         // intCmpFloatMagnitudeBound decides whether a narrow arithmetic operand may KEEP its f32
         // pairing against a FLOAT one. Reporting a bound that is too large only costs an

@@ -1799,7 +1799,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // frontend chose for the operands, what the operator leaves behind is a value
                     // the BACKEND computed, and convert() widens it exactly as it widens a column
                     // read. Dropping the marker can only remove a report, never invent one.
-                    pushType(isComparison ? UNDEFINED_CODE : Math.max(laneTypeCode(lhsType), laneTypeCode(rhsType)));
+                    // arithResultTypeCode() owns which type the result carries - the widths order
+                    // the codes, but an (i64, f32) pairing lands on f64 rather than on either.
+                    pushType(isComparison ? UNDEFINED_CODE : arithResultTypeCode(lhsType, rhsType));
                     break;
                 }
                 default:
@@ -1809,6 +1811,46 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
         return false;
+    }
+
+    /**
+     * Returns the type code the backend leaves on its value stack for an ADD, SUB, MUL or DIV over
+     * this pairing, mirroring {@code avx2::convert()}'s promotion table.
+     * <p>
+     * The type codes are ordered by width with one exception - {@code F4_TYPE} (3) sorts BELOW
+     * {@code I8_TYPE} (4) - so {@code Math.max} over them answers convert()'s result for every
+     * pairing but one. For {@code (i64, f32)} convert() sends BOTH sides through {@code cvt_ltod} /
+     * {@code cvt_ftod} and the operator lands on f64 ({@code jit/avx2.h}, the i64-with-f32 and
+     * f32-with-i64 arms), while {@code Math.max} answers i64 - the integer code - because 4 &gt; 3.
+     * <p>
+     * That one cell is not cosmetic: {@link #isWideLaneUnharmonisedPairing} keys its narrow-int
+     * IMMEDIATE arm on {@code laneTypeCode(wideEntry) == I8_TYPE} to mean "an i64 operand", so a
+     * float-producing subtree that reports itself as i64 makes an enclosing i32 immediate look
+     * unharmonised and trips the {@link #areWideLaneWidthsHarmonised} assert. The pairing it
+     * reports is really {@code (i32 imm, f64)}, which convert()'s {@code cvt_itod} arm harmonises
+     * at four lanes, so the filter it declined was correct all along -
+     * {@code CompiledFilterRegressionTest#testIntColumnVsNarrowConstPlusLongFloatArithMatchesJava}
+     * pins the rows against the Java filter and
+     * {@code CompiledFilterIRSerializerTest#testLongFloatArithUnderNarrowIntImmediateStaysWideLane}
+     * pins the IR and the hint.
+     * <p>
+     * The correction is width-neutral: {@code I8_TYPE} and {@code F8_TYPE} both measure eight bytes
+     * in {@code TypesObserver.typeSizeBytes}, so the single-size half of
+     * {@link #hasUnharmonisedOperandWidths} - the one {@link #getExecHint} reads to demote a filter
+     * to {@link #EXEC_HINT_SCALAR} - sees exactly the widths it saw before and no filter changes
+     * the loop it runs on.
+     * <p>
+     * An i8 or i16 operand needs no arm here. convert() carries no case for either width, so such a
+     * pairing declines and the filter falls back to the Java one whatever this returns; the width
+     * {@code Math.max} leaves behind is what the single-size half reads for it.
+     */
+    private static int arithResultTypeCode(int lhsEntry, int rhsEntry) {
+        final int lhs = laneTypeCode(lhsEntry);
+        final int rhs = laneTypeCode(rhsEntry);
+        if ((lhs == I8_TYPE && rhs == F4_TYPE) || (lhs == F4_TYPE && rhs == I8_TYPE)) {
+            return F8_TYPE;
+        }
+        return Math.max(lhs, rhs);
     }
 
     /**

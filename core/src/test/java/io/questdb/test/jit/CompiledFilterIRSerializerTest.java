@@ -1058,6 +1058,55 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testLongFloatArithUnderNarrowIntImmediateStaysWideLane() throws Exception {
+        // "anint <> 498626 + 695544L * afloat", reduced from a QueryFuzzTest seed. The (i64, f32)
+        // multiply is the one pairing whose result the type-code ordering gets wrong: avx2::convert
+        // sends both sides through cvt_ltod / cvt_ftod so the product is f64, while the codes order
+        // F4 (3) below I8 (4) and a plain Math.max over them answers i64. The enclosing i32
+        // immediate 498626 then looked like a narrow-int IMM beside an i64 operand -
+        // isWideLaneUnharmonisedPairing's one arm that keys on I8_TYPE - and tripped the
+        // areWideLaneWidthsHarmonised assert on a filter convert() harmonises correctly at four
+        // lanes through cvt_itod. arithResultTypeCode answers F8 for the product instead.
+        //
+        // The IR is what it always was: the fix touches only the width model the assert walks, not
+        // a single emitted instruction, so this pins the IR and the hint together.
+        int options = serialize("anint <> 498626 + 695544L * afloat", false, false, true);
+        assertIR("i64-with-f32 product under a narrow int immediate",
+                "(f32 afloat)(i64 695544L)(*)(i32 498626L)(+)(i32 anint)(sx_i64)(<>)(ret)");
+        assertOptionsHint("i64-with-f32 product under a narrow int immediate", options, OptionsHint.WIDE_LANE);
+
+        // The same shape under = rather than <>: both spellings reach the assert.
+        options = serialize("anint = 498626 + 695544L * afloat", false, false, true);
+        assertIR("equality spelling",
+                "(f32 afloat)(i64 695544L)(*)(i32 498626L)(+)(i32 anint)(sx_i64)(=)(ret)");
+        assertOptionsHint("equality spelling", options, OptionsHint.WIDE_LANE);
+
+        // Control: drop the narrow immediate and the product stands alone. This shape never
+        // tripped the assert - there is no i32 IMM to pair with the mistyped product - and must
+        // keep the hint it had.
+        options = serialize("anint <> 695544L * afloat", false, false, true);
+        assertIR("no narrow immediate",
+                "(f32 afloat)(i64 695544L)(*)(i32 anint)(sx_i64)(<>)(ret)");
+        assertOptionsHint("no narrow immediate", options, OptionsHint.WIDE_LANE);
+
+        // Control: spell the addend 498626L and the IMM is i64 rather than a marked narrow one, so
+        // the old walk let it through. Unchanged by the fix.
+        options = serialize("anint <> 498626L + 695544L * afloat", false, false, true);
+        assertIR("i64 addend",
+                "(f32 afloat)(i64 695544L)(*)(i64 498626L)(+)(i32 anint)(sx_i64)(<>)(ret)");
+        assertOptionsHint("i64 addend", options, OptionsHint.WIDE_LANE);
+
+        // Control: adouble in place of afloat makes the product an (i64, f64) pairing, which
+        // Math.max already answered f64 for. The observer sees anint at 4 bytes beside adouble at
+        // 8, so this filter is MIXED_SIZES rather than wide-lane and never reached the assert at
+        // all - areWideLaneWidthsHarmonised returns early on any hint but WIDE_LANE.
+        options = serialize("anint <> 498626 + 695544L * adouble", false, false, true);
+        assertIR("double column",
+                "(f64 adouble)(i64 695544L)(*)(i32 498626L)(+)(i32 anint)(<>)(ret)");
+        assertOptionsHint("double column", options, OptionsHint.MIXED_SIZES);
+    }
+
+    @Test
     public void testConstantTypes() throws Exception {
         // The last element is the operator: UUID only reaches the IR through an
         // equality comparison, ordering comparisons on it are declined.
