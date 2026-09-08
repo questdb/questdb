@@ -54,6 +54,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.std.CharSequenceHashSet;
@@ -515,6 +516,55 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     """;
             assertTable(expected, weather);
         }, false, 250);
+    }
+
+    @Test
+    public void testFiberHostWriterPoolIngestsWithoutMountingFibers() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE fiber_host_ilp (
+                        value LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            minIdleMsBeforeWriterRelease = 25;
+            final WorkerPool ioPool = new TestWorkerPool(
+                    "fiber-host-ilp-io",
+                    1,
+                    engine.getMetrics(),
+                    WorkerPoolMode.LEGACY
+            );
+            final WorkerPool writerPool = new TestWorkerPool(
+                    "fiber-host-ilp-writer",
+                    1,
+                    engine.getMetrics(),
+                    WorkerPoolMode.FIBER_HOST
+            );
+            final LineTcpReceiver receiver = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool);
+            try {
+                writerPool.start(LOG);
+                ioPool.start(LOG);
+                send("fiber_host_ilp", WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket("""
+                        fiber_host_ilp value=42i 1000000000
+                        fiber_host_ilp value=43i 2000000000
+                        """));
+                assertQuery("SELECT value, ts FROM fiber_host_ilp")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                value\tts
+                                42\t1970-01-01T00:00:01.000000Z
+                                43\t1970-01-01T00:00:02.000000Z
+                                """);
+                Assert.assertEquals(0L, writerPool.getFiberRuntime().getMountCount());
+            } finally {
+                ioPool.halt();
+                writerPool.halt();
+                receiver.close();
+                Path.clearThreadLocals();
+            }
+        });
     }
 
     @Test
@@ -1009,6 +1059,57 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     15);
 
         }, false, 250);
+    }
+
+    @Test
+    public void testSharedPoolsFoldIlpJobsAndStillIngestEveryTable() throws Exception {
+        // Unset ILP worker counts fold the scheduler to min(2, poolWorkerCount) jobs on a 4-worker
+        // pool; tables load balance over the job count, so every writer index must still have a job.
+        assertMemoryLeak(() -> {
+            final String[] tables = {"fold_ilp_a", "fold_ilp_b", "fold_ilp_c", "fold_ilp_d"};
+            for (String table : tables) {
+                execute("CREATE TABLE " + table + " (value LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            }
+            minIdleMsBeforeWriterRelease = 25;
+            final WorkerPool ioPool = new TestWorkerPool(
+                    "fold-ilp-io",
+                    4,
+                    engine.getMetrics(),
+                    WorkerPoolMode.FIBER_HOST
+            );
+            final WorkerPool writerPool = new TestWorkerPool(
+                    "fold-ilp-writer",
+                    4,
+                    engine.getMetrics(),
+                    WorkerPoolMode.LEGACY
+            );
+            final LineTcpReceiver receiver = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool);
+            try {
+                writerPool.start(LOG);
+                ioPool.start(LOG);
+                send(WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket("""
+                        fold_ilp_a value=1i 1000000000
+                        fold_ilp_b value=2i 2000000000
+                        fold_ilp_c value=3i 3000000000
+                        fold_ilp_d value=4i 4000000000
+                        """), tables);
+                for (int i = 0; i < tables.length; i++) {
+                    assertQuery("SELECT value, ts FROM " + tables[i])
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns("""
+                                    value\tts
+                                    %d\t1970-01-01T00:00:0%d.000000Z
+                                    """.formatted(i + 1, i + 1));
+                }
+            } finally {
+                ioPool.halt();
+                writerPool.halt();
+                receiver.close();
+                Path.clearThreadLocals();
+            }
+        });
     }
 
     @Test

@@ -98,11 +98,11 @@ import java.util.concurrent.TimeUnit;
 @Fork(0)
 public class CoveredIndexDecodeColdBenchmark {
 
+    private static final int PARALLEL_WORKERS = Integer.getInteger("covered.bench.workers", 8);
     // Linux posix_fadvise advice value; QuestDB's Files exposes fadvise() but not this constant.
     private static final int POSIX_FADV_DONTNEED = 4;
-    private static final int PARALLEL_WORKERS = Integer.getInteger("covered.bench.workers", 8);
-    private static final long ROWS = Long.getLong("covered.bench.rows", 50_000_000L);
     private static final String ROOT = System.getProperty("java.io.tmpdir") + java.io.File.separator + "covered-index-decode-bench";
+    private static final long ROWS = Long.getLong("covered.bench.rows", 50_000_000L);
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(ROOT) {
         @Override
         public int getSqlPageFrameMaxRows() {
@@ -114,21 +114,16 @@ public class CoveredIndexDecodeColdBenchmark {
             return true;
         }
     };
-
-    private static CairoEngine engine;
-    private static WorkerPool pool;
     private static SqlCompiler compiler;
     private static SqlExecutionContext ctx;
-
-    @Param({"sum", "first_last", "residual", "filter_project", "groupby_symbol", "count"})
-    public String shape;
-
+    private static CairoEngine engine;
+    private static WorkerPool pool;
     @Param({"PARALLEL_COV", "PARALLEL_REF"})
     public String config;
-
     @Param({"1", "10", "50"})
     public String selectivity;
-
+    @Param({"sum", "first_last", "residual", "filter_project", "groupby_symbol", "count"})
+    public String shape;
     private RecordCursorFactory factory;
 
     public static void main(String[] args) throws Exception {
@@ -168,6 +163,14 @@ public class CoveredIndexDecodeColdBenchmark {
                 : new OptionsBuilder().include(CoveredIndexDecodeColdBenchmark.class.getSimpleName()).build();
         new Runner(opt).run();
         LogFactory.haltInstance();
+    }
+
+    // Before EACH measured shot: drop the readers (unmap) and evict the db files from the page cache
+    // so the query that follows reads cold from disk.
+    @Setup(Level.Invocation)
+    public void goCold() {
+        engine.releaseAllReaders();
+        evictPageCache();
     }
 
     @Benchmark
@@ -213,46 +216,11 @@ public class CoveredIndexDecodeColdBenchmark {
         disk.disk_MB = (readBytes() - readBytes0) / 1_000_000;
     }
 
-    // Bytes fetched from the block device by this process since boot (Linux /proc/self/io:read_bytes).
-    // Includes mmap page-fault reads, which is how QuestDB reads columns. Returns 0 if unavailable.
-    private static long readBytes() {
-        try {
-            for (String line : java.nio.file.Files.readAllLines(java.nio.file.Paths.get("/proc/self/io"))) {
-                if (line.startsWith("read_bytes:")) {
-                    return Long.parseLong(line.substring(line.indexOf(':') + 1).trim());
-                }
-            }
-        } catch (Exception ignore) {
-        }
-        return 0;
-    }
-
-    // JMH secondary counter: reports disk_MB (bytes read from storage during the query) alongside the
-    // wall-clock score. This is the cold metric that matters -- see run()'s comment.
-    @State(Scope.Thread)
-    @org.openjdk.jmh.annotations.AuxCounters(org.openjdk.jmh.annotations.AuxCounters.Type.OPERATIONS)
-    public static class DiskCounters {
-        public long disk_MB;
-
-        @Setup(Level.Invocation)
-        public void clean() {
-            disk_MB = 0;
-        }
-    }
-
     @Setup(Level.Trial)
     public void setUpTrial() throws Exception {
         ensureEngine();
         final String table = "PARALLEL_REF".equals(config) ? "ref" : "cov";
         factory = compiler.compile(query(shape, table, keyFor(selectivity)), ctx).getRecordCursorFactory();
-    }
-
-    // Before EACH measured shot: drop the readers (unmap) and evict the db files from the page cache
-    // so the query that follows reads cold from disk.
-    @Setup(Level.Invocation)
-    public void goCold() {
-        engine.releaseAllReaders();
-        evictPageCache();
     }
 
     @TearDown(Level.Trial)
@@ -302,18 +270,6 @@ public class CoveredIndexDecodeColdBenchmark {
         }
     }
 
-    private static SqlExecutionContext newContext(CairoEngine engine, int workerCount) {
-        return new SqlExecutionContextImpl(engine, workerCount) {
-            @Override
-            public boolean shouldLogSql() {
-                return false;
-            }
-        }.with(
-                configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                null, null, -1, null
-        );
-    }
-
     private static String keyFor(String selectivity) {
         switch (selectivity) {
             case "0.1":
@@ -331,6 +287,18 @@ public class CoveredIndexDecodeColdBenchmark {
             default:
                 throw new IllegalArgumentException("unknown selectivity: " + selectivity);
         }
+    }
+
+    private static SqlExecutionContext newContext(CairoEngine engine, int workerCount) {
+        return new SqlExecutionContextImpl(engine, workerCount) {
+            @Override
+            public boolean shouldLogSql() {
+                return false;
+            }
+        }.with(
+                configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                null, null, -1, null
+        );
     }
 
     private static String query(String shape, String table, String key) {
@@ -354,6 +322,33 @@ public class CoveredIndexDecodeColdBenchmark {
                 return "SELECT ts, px, qty, grp FROM " + table + w;
             default:
                 throw new IllegalArgumentException("unknown shape: " + shape);
+        }
+    }
+
+    // Bytes fetched from the block device by this process since boot (Linux /proc/self/io:read_bytes).
+    // Includes mmap page-fault reads, which is how QuestDB reads columns. Returns 0 if unavailable.
+    private static long readBytes() {
+        try {
+            for (String line : java.nio.file.Files.readAllLines(java.nio.file.Paths.get("/proc/self/io"))) {
+                if (line.startsWith("read_bytes:")) {
+                    return Long.parseLong(line.substring(line.indexOf(':') + 1).trim());
+                }
+            }
+        } catch (Exception ignore) {
+        }
+        return 0;
+    }
+
+    // JMH secondary counter: reports disk_MB (bytes read from storage during the query) alongside the
+    // wall-clock score. This is the cold metric that matters -- see run()'s comment.
+    @State(Scope.Thread)
+    @org.openjdk.jmh.annotations.AuxCounters(org.openjdk.jmh.annotations.AuxCounters.Type.OPERATIONS)
+    public static class DiskCounters {
+        public long disk_MB;
+
+        @Setup(Level.Invocation)
+        public void clean() {
+            disk_MB = 0;
         }
     }
 }
