@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ScannedColumnTopProbe;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -276,8 +277,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     /**
      * Test-only view of {@link #hasAnyColumnTop} over the WHOLE table, so a test can compare the
-     * walk against an independent oracle without going through a query. The interval-restricted
-     * form is reachable only through a query, so its tests assert rows instead.
+     * answer against an independent oracle without going through a query.
      */
     @TestOnly
     public static boolean hasAnyColumnTopForTesting(TableReader reader, int writerIndex) {
@@ -392,124 +392,22 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     /**
-     * Whether any partition the scan reads carries a column top for {@code writerIndex} -- either
-     * an explicit one, or the whole partition predating the column, which reads as a top equal
-     * to the partition's row count.
+     * Whether any partition the scan reads lacks values for {@code writerIndex}. Delegates to
+     * {@link ScannedColumnTopProbe}, which reads {@code _cv} and {@code _txn} only, so no
+     * partition is opened.
      * <p>
      * {@code intervals} is the scan's designated-timestamp filter, or null for a whole-table
-     * scan; see {@link #scannedIntervals}. Partitions outside it hold no row this scan returns,
+     * scan; see {@link #scannedIntervals}. A partition outside it holds no row this scan returns,
      * which is what lets {@code WHERE sym = null AND ts IN '<top-free day>'} keep the covering
-     * plan on a table whose older partitions do carry a top.
-     * <p>
-     * Reads {@code _cv} only, which {@link ColumnVersionReader} holds in memory, so no partition
-     * is opened. The walk mirrors {@code TableReader.reloadColumnAt}'s present/absent decision,
-     * so a column added long ago and since rewritten into every partition still takes the
-     * covering path.
-     * <p>
-     * The walk runs even with no {@code COL_TOP_DEFAULT_PARTITION} record: ATTACH PARTITION of a
-     * directory missing the column upserts a per-partition top and writes no default record
-     * ({@code TableWriter.attachPrepare()}), so short-circuiting on {@code Long.MIN_VALUE} would
-     * drop that partition's rows from a NULL-key scan. With no default record
-     * {@code addedAtPartition} is {@code Long.MIN_VALUE}, below no partition timestamp, so the
-     * predates branch never fires -- correct, since such a column predates nothing.
+     * plan on a table whose older partitions do lack values.
      */
     private static boolean hasAnyColumnTop(TableReader reader, int writerIndex, @Nullable LongList intervals) {
-        final ColumnVersionReader cv = reader.getColumnVersionReader();
-        final long addedAtPartition = cv.getColumnTopPartitionTimestamp(writerIndex);
-        // Both lists ascend by partition timestamp -- the reader's partitions strictly, _cv's
-        // records by (timestamp, column index) -- so one merged pass answers what a
-        // getRecordIndex() binary search per partition answers, reading each _cv block at most
-        // once instead of paying binarySearchBlock's up-to-66-block linear tail per partition.
-        // The forward-only pointer is also what steps over the two pseudo-partition records _cv
-        // keeps below every real timestamp, and over partitions the reader no longer lists.
-        final LongList records = cv.getCachedColumnVersionList();
-        final int recordCount = records.size();
-        final int partitionCount = reader.getPartitionCount();
-        int recordIndex = 0;
-        if (intervals == null) {
-            for (int i = 0; i < partitionCount; i++) {
-                recordIndex = probeColumnTop(
-                        records, recordCount, recordIndex, reader.getPartitionTimestampByIndex(i),
-                        writerIndex, addedAtPartition, reader.getPartitionRowCountFromMetadata(i)
-                );
-                if (recordIndex < 0) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        // Interval-restricted scan: only the partitions the filter admits can contribute a row.
-        // Intervals ascend and are disjoint and getPartitionIndexByTimestamp is monotonic, so the
-        // visited partition indices still ascend -- what the forward-only _cv pointer needs.
-        // nextPartition keeps two intervals inside one partition from walking it twice.
-        final long minTimestamp = reader.getMinTimestamp();
-        final long maxTimestamp = reader.getMaxTimestamp();
-        int nextPartition = 0;
-        for (int i = 0, n = intervals.size() / 2; i < n && nextPartition < partitionCount; i++) {
-            // Clamp to the reader's data range, as
-            // AbstractIntervalPartitionFrameCursor.computeFrameCountUpperBound() does: an
-            // open-ended interval must not walk the partition search off either end.
-            final long intervalLo = Math.max(intervals.getQuick(2 * i), minTimestamp);
-            final long intervalHi = Math.min(intervals.getQuick(2 * i + 1), maxTimestamp);
-            if (intervalLo > intervalHi) {
-                continue;
-            }
-            final int partitionLo = Math.max(reader.getPartitionIndexByTimestamp(intervalLo), nextPartition);
-            final int partitionHi = Math.min(reader.getPartitionIndexByTimestamp(intervalHi), partitionCount - 1);
-            for (int p = partitionLo; p <= partitionHi; p++) {
-                recordIndex = probeColumnTop(
-                        records, recordCount, recordIndex, reader.getPartitionTimestampByIndex(p),
-                        writerIndex, addedAtPartition, reader.getPartitionRowCountFromMetadata(p)
-                );
-                if (recordIndex < 0) {
-                    return true;
-                }
-            }
-            nextPartition = partitionHi + 1;
-        }
-        return false;
-    }
-
-    /**
-     * One partition's step of {@link #hasAnyColumnTop}'s merged walk: advances the {@code _cv}
-     * pointer to this partition's record for {@code writerIndex}, if it has one, and decides it.
-     *
-     * @return {@code -1} when the partition carries a column top, otherwise the advanced
-     * {@code _cv} cursor for the next partition to resume from
-     */
-    private static int probeColumnTop(
-            LongList records,
-            int recordCount,
-            int recordIndex,
-            long partitionTimestamp,
-            int writerIndex,
-            long addedAtPartition,
-            long partitionRowCount
-    ) {
-        while (recordIndex < recordCount && records.getQuick(recordIndex) < partitionTimestamp) {
-            recordIndex += ColumnVersionReader.BLOCK_SIZE;
-        }
-        // Within one timestamp the records ascend by column index, so stop at the first
-        // one at or above ours -- exactly where getRecordIndex() stops.
-        while (recordIndex < recordCount
-                && records.getQuick(recordIndex) == partitionTimestamp
-                && records.getQuick(recordIndex + ColumnVersionReader.COLUMN_INDEX_OFFSET) < writerIndex) {
-            recordIndex += ColumnVersionReader.BLOCK_SIZE;
-        }
-        if (recordIndex < recordCount
-                && records.getQuick(recordIndex) == partitionTimestamp
-                && records.getQuick(recordIndex + ColumnVersionReader.COLUMN_INDEX_OFFSET) == writerIndex) {
-            if (records.getQuick(recordIndex + ColumnVersionReader.COLUMN_TOP_OFFSET) > 0) {
-                return -1;
-            }
-        } else if (addedAtPartition > partitionTimestamp && partitionRowCount > 0) {
-            // No record and the partition predates the column: no value for any of its rows,
-            // i.e. a top equal to its row count. An empty partition has no row to be wrong
-            // about, and the caller takes that count from the transaction file -- openPartitionInfo
-            // answers -1 until a partition is opened, and none are, this early.
-            return -1;
-        }
-        return recordIndex;
+        return ScannedColumnTopProbe.hasAnyColumnTop(
+                reader.getColumnVersionReader(),
+                reader.getTxFile(),
+                writerIndex,
+                intervals
+        );
     }
 
     @Override

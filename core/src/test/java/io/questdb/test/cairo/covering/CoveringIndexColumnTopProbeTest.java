@@ -37,26 +37,28 @@ import org.junit.Test;
 /**
  * {@code CoveringIndexRecordCursorFactory.hasAnyColumnTop()} answers, per open of a NULL key,
  * whether the covering plan has to step aside for its backup. It reads {@code _cv} and the
- * reader's partition list, and it walks every partition whenever the answer is false -- which is
- * the common case, because most tables carry no column top at all.
+ * reader's partition list, and opens no partition.
  * <p>
- * The walk merges two lists that both ascend by partition timestamp instead of binary-searching
- * {@code _cv} once per partition. This class pins its answer: it stays bit-for-bit what a
- * per-partition {@link ColumnVersionReader#getRecordIndex} walk answers, over the shapes that
- * decide where the merge's forward pointer comes to rest -- a partition carrying a zero top
- * record in front of one that carries a real top, a partition wholly predating the column, a
- * dropped partition whose records {@code ColumnVersionWriter.removePartition} erased outright, a
- * split partition whose timestamp is not a day floor, Parquet partitions, a non-partitioned table
- * whose single partition sits at timestamp 0 just above the pseudo-partition records, and a
- * partition that owns records for columns on BOTH sides of the probed one.
+ * The probe is driven by {@code _cv}, not by the partition list: it visits this column's records
+ * that carry a non-zero top and asks whether the scan reads that partition, then settles the
+ * partitions that came before the column from the column's add time alone. This class pins its
+ * answer against a per-partition {@link ColumnVersionReader#getRecordIndex} walk, over the shapes
+ * that decide it -- a partition carrying a zero top record in front of one that carries a real
+ * top, a partition wholly predating the column, a dropped partition whose records
+ * {@code ColumnVersionWriter.removePartition} erased outright, a split partition whose timestamp
+ * is not a day floor, Parquet partitions, a non-partitioned table whose single partition sits at
+ * timestamp 0 just after the pseudo-partition records, and a partition that owns records for
+ * columns on BOTH sides of the probed one.
  * <p>
- * Only that last shape drives the merge's intra-timestamp advance, and only
- * {@link #testRecordsEitherSideOfProbedColumnMatchSearchWalk} builds it: every other fixture here
- * gives a real partition timestamp at most one record, {@code sym}'s own or a higher column's, so
- * the pointer moves on timestamp alone.
+ * The two answers agree everywhere, including the shape that most easily breaks that: a partition
+ * that came before the column and was later back-filled by an O3 write owns a zero-top record, so
+ * the column is there in full. {@link #testDroppedPartitionMatchesSearchWalk} and
+ * {@link #testRecordsEitherSideOfProbedColumnMatchSearchWalk} build it, and the probe has to read
+ * that record rather than settle the answer from the column's add time alone.
  * <p>
- * A wrong answer here is not slow, it is wrong rows: a false negative sends a NULL key down the
- * covering plan over a partition the posting chain holds nothing for.
+ * Under-reporting is the worse direction -- a false negative sends a NULL key down the covering
+ * plan over a partition the posting chain holds nothing for, which is wrong rows, not a slow
+ * query -- but the probe is exact, so both directions fail here.
  * <p>
  * Every case states the decision it expects as {@code BRANCH@partitionIndex} (see
  * {@link #searchWalkDecision}), so a fixture that drifts into short-circuiting somewhere else --
@@ -505,8 +507,11 @@ public class CoveringIndexColumnTopProbeTest extends AbstractCairoTest {
                     expectedDecision,
                     decision
             );
+            // Under-reporting is the dangerous direction: a false negative sends a NULL key down
+            // the covering plan over a partition the posting chain holds nothing for. Over-reporting
+            // only runs the backup for nothing, but the probe is exact, so both fail here.
             Assert.assertEquals(
-                    "the merged walk disagrees with a per-partition binary search",
+                    "the probe disagrees with a per-partition binary search",
                     !decision.startsWith("NO_TOP@"),
                     CoveringIndexRecordCursorFactory.hasAnyColumnTopForTesting(reader, writerIndex)
             );

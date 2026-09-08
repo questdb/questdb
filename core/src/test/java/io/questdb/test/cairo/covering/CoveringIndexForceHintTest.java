@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.covering;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
@@ -239,6 +240,55 @@ public class CoveringIndexForceHintTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHintHoldsOnLatestOn() throws Exception {
+        // The LATEST ON codegen sites build their own backup, so the hint has to suppress it
+        // there too. Promise kept: sym has existed since the first partition, so the NULL key
+        // has postings and the covering scan answers it.
+        assertMemoryLeak(() -> {
+            createFlatTable("t_fc_lo_ok");
+            final String sql = "SELECT /*+ force_use_covering */ sym, val FROM t_fc_lo_ok"
+                    + " WHERE sym = null LATEST ON ts PARTITION BY sym";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .withPlanNotContaining("backup: true")
+                    .returns("sym\tval\n\t30.0\n");
+            assertSqlCursors(sql, sql.replace("/*+ force_use_covering */", "/*+ no_covering */"));
+        });
+    }
+
+    @Test
+    public void testHintThrowsOnLatestOnOverColumnTop() throws Exception {
+        // Promise broken on the LATEST ON path. Without the hint this open takes the LATEST ON
+        // backup; with it there is none, and the sidecar holds no value for a row below the
+        // column top, so it has to throw rather than drop those rows.
+        assertMemoryLeak(() -> {
+            createTopTable("t_fc_lo_throw");
+            assertThrowsForcedNullKey("SELECT /*+ force_use_covering */ sym, val FROM t_fc_lo_throw"
+                    + " WHERE sym = null LATEST ON ts PARTITION BY sym");
+            // The LATEST ON IN-list site has its own backup and its own check.
+            assertThrowsForcedNullKey("SELECT /*+ force_use_covering */ sym, val FROM t_fc_lo_throw"
+                    + " WHERE sym IN (null, 'A') LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testHintServesNullResolvingKeyOnPageFrames() throws Exception {
+        // The promise-KEPT half of the page-frame check. testHintThrowsFromPageFrameCursorWhenBoundKeyIsNull
+        // pins the throw; nothing pinned the branch where the key DOES resolve to NULL and the
+        // scan is allowed to proceed. That is the branch the covered decode actually runs with
+        // resolvedKey == VALUE_IS_NULL, and the one parallel GROUP BY comes in through.
+        assertMemoryLeak(() -> {
+            createFlatTable("t_fc_pf_ok");
+            bindVariableService.setStr(0, null);
+            assertServesOnPageFrames("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_pf_ok WHERE sym = $1", 2);
+            // The IN-list cursor carries VALUE_IS_NULL in multiKeys and has its own check.
+            assertServesOnPageFrames("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_pf_ok WHERE sym IN ($1, 'A')", 3);
+        });
+    }
+
+    @Test
     public void testHintThrowsFromPageFrameCursorWhenBoundKeyIsNull() throws Exception {
         // The promise is enforced on both openings, and getPageFrameCursor() is the one the
         // hint exists to keep reachable -- parallel filter and vectorized GROUP BY come in
@@ -265,6 +315,27 @@ public class CoveringIndexForceHintTest extends AbstractCairoTest {
             Assert.fail("expected a CairoException naming the force_use_covering hint");
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "force_use_covering");
+        }
+    }
+
+    /**
+     * Drives the page-frame cursor to completion and counts the rows it yields, so a NULL-resolving
+     * key under the hint is asserted to SERVE rather than merely not to throw.
+     */
+    private static void assertServesOnPageFrames(String sql, long expectedRows) throws Exception {
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertTrue(
+                    "the hint has to leave the page-frame cursor reachable, or this asserts nothing",
+                    factory.supportsPageFrameCursor()
+            );
+            long rows = 0;
+            try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                PageFrame frame;
+                while ((frame = cursor.next()) != null) {
+                    rows += frame.getPartitionHi() - frame.getPartitionLo();
+                }
+            }
+            Assert.assertEquals(expectedRows, rows);
         }
     }
 
