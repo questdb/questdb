@@ -615,6 +615,71 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     }
 
     /**
+     * The reject arm must also clamp the pipelined tail. A refused poll is
+     * consumed without an ack of its own, so {@code markSequenceUnresolved}
+     * has to run before the flush: without it a frame pipelined behind the
+     * refused poll commits and the cumulative OK ack jumps over the refused
+     * sequence. A store-and-forward sender that treats STATUS_PARSE_ERROR as
+     * terminal tears down before reading that ack, replays from its old
+     * watermark, and duplicates the tail frame's rows.
+     */
+    @Test
+    public void testDurableAckPollRejectClampsPipelinedTail() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            byte[] data = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
+            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, durableAckPollMessage());
+            byte[] tail = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L));
+            byte[] wire = concat(data, poll, tail);
+
+            PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = new QwpIngressProcessorState(
+                        RECV_BUFFER_SIZE,
+                        httpConfig.getSendBufferSize(),
+                        engine,
+                        httpConfig.getLineHttpProcessorConfiguration()
+                );
+                state.of(-1, AllowAllSecurityContext.INSTANCE);
+                // Durable ack deliberately left off: this is the reject arm.
+                getLV().set(context, state);
+
+                // All three frames in one pass, so the tail is already buffered
+                // when the poll at seq=1 is refused.
+                drive(processor, context, nf, wire.length);
+
+                Assert.assertTrue(
+                        "the refused poll must receive STATUS_PARSE_ERROR",
+                        hasResponseForSeqAndStatus(rawSocket.sentFrames, 1, QwpConstants.STATUS_PARSE_ERROR)
+                );
+                Assert.assertEquals(
+                        "the cumulative ack must stop at the frame before the refused poll",
+                        0,
+                        maxCumulativeOkAck(rawSocket.sentFrames)
+                );
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("tab")) {
+                Assert.assertEquals(
+                        "the frame pipelined behind the refused poll must not commit",
+                        1,
+                        reader.size()
+                );
+            }
+        });
+    }
+
+    /**
      * The reject arm must flush the pending cumulative ack before the error,
      * exactly like the error arm at the tail of {@code handleBinaryMessage}.
      * Both frames go out either way, but a store-and-forward sender that treats
@@ -695,9 +760,9 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     }
 
     /**
-     * True if any server-to-client BINARY frame is an error response
-     * (status != OK) carrying the given sequence. Error frames share the
-     * ACK's [status][seq LE] payload prefix.
+     * True if any server-to-client BINARY frame is a STATUS_DURABLE_ACK frame.
+     * Durable acks carry per-table watermarks rather than a sequence, so there
+     * is nothing to match on beyond the status byte.
      */
     private static boolean hasDurableAckFrame(ObjList<byte[]> frames) {
         for (int i = 0, n = frames.size(); i < n; i++) {
@@ -709,6 +774,11 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         return false;
     }
 
+    /**
+     * True if any server-to-client BINARY frame is an error response
+     * (status != OK) carrying the given sequence. Error frames share the
+     * ACK's [status][seq LE] payload prefix.
+     */
     private static boolean hasErrorResponseForSeq(ObjList<byte[]> frames, long seq) {
         for (int i = 0, n = frames.size(); i < n; i++) {
             byte[] f = frames.getQuick(i);
