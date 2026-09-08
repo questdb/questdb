@@ -4923,39 +4923,44 @@ public class WalWriterTest extends AbstractCairoTest {
                     .wal();
             tableToken = createTable(model);
 
-            try (TableWriter tableWriter = getWriter(tableToken)) {
+            final String walName;
+            final IntList walSymbolCounts = new IntList();
+            // Seed the table's symbol maps with keys 0-4, so the segment under test has to start its
+            // symbol diff at key 5. A WAL table takes no direct TableWriter row appends, so the seed goes
+            // through a WAL of its own. It stays open while the segment under test is written, which keeps
+            // that segment on a second WAL at segment 0, the shape the WalReader assertions below expect.
+            try (WalWriter seedWriter = engine.getWalWriter(tableToken)) {
                 for (int i = 0; i < 5; i++) {
-                    TableWriter.Row row = tableWriter.newRow(0);
+                    TableWriter.Row row = seedWriter.newRow(0);
                     row.putByte(0, (byte) i);
                     row.putSym(1, "sym" + i);
                     row.putSym(2, "s" + i % 2);
                     row.putSym(3, "symbol" + i % 2);
                     row.append();
                 }
-                tableWriter.commit();
-            }
+                seedWriter.commit();
+                drainWalQueue();
 
-            final String walName;
-            final IntList walSymbolCounts = new IntList();
-            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                walName = walWriter.getWalName();
-                for (int i = 0; i < 10; i++) {
-                    TableWriter.Row row = walWriter.newRow(0);
-                    row.putByte(0, (byte) i);
-                    row.putSym(1, "sym" + i);
-                    row.putSym(2, "s" + i % 2);
-                    row.putSym(3, "symbol" + i % 3);
-                    row.append();
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    for (int i = 0; i < 10; i++) {
+                        TableWriter.Row row = walWriter.newRow(0);
+                        row.putByte(0, (byte) i);
+                        row.putSym(1, "sym" + i);
+                        row.putSym(2, "s" + i % 2);
+                        row.putSym(3, "symbol" + i % 3);
+                        row.append();
+                    }
+
+                    assertNull(walWriter.getSymbolMapReader(0));
+                    walSymbolCounts.add(walWriter.getSymbolMapReader(1).getSymbolCount());
+                    walSymbolCounts.add(walWriter.getSymbolMapReader(2).getSymbolCount());
+                    walSymbolCounts.add(walWriter.getSymbolMapReader(3).getSymbolCount());
+
+                    assertNull(walWriter.getSymbolMapReader(1).valueOf(10));
+
+                    walWriter.commit();
                 }
-
-                assertNull(walWriter.getSymbolMapReader(0));
-                walSymbolCounts.add(walWriter.getSymbolMapReader(1).getSymbolCount());
-                walSymbolCounts.add(walWriter.getSymbolMapReader(2).getSymbolCount());
-                walSymbolCounts.add(walWriter.getSymbolMapReader(3).getSymbolCount());
-
-                assertNull(walWriter.getSymbolMapReader(1).valueOf(10));
-
-                walWriter.commit();
             }
 
             try (

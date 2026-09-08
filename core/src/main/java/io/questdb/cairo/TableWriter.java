@@ -3212,14 +3212,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3TimestampSetter(timestamp);
                 return row;
             case ROW_ACTION_OPEN_PARTITION:
+                if (metadata.isWalEnabled()) {
+                    // A WAL table is written through its WalWriter and applied by ApplyWal2TableJob, which
+                    // always goes through the O3 path. Nothing appends rows to it in place: the last
+                    // partition is deliberately left closed, so this would write through unmapped columns
+                    // and over the file rows a relocated piece owns.
+                    throw CairoException.nonCritical().put("cannot append rows directly to a WAL table [table=")
+                            .put(tableToken.getTableName()).put(']');
+                }
                 if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
                     txWriter.setMinTimestamp(timestamp);
                     initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
-                }
-                if (!isEmptyTable() && isLastPartitionClosed() && !isLastPartitionParquet() && !isLastPartitionComposite()) {
-                    // Merge-append leaves the last partition closed because the WAL apply path never appends
-                    // in place. This caller does, so open it; the commit that follows closes it again.
-                    openLastPartition();
                 }
                 rowAction = ROW_ACTION_SWITCH_PARTITION;
                 // fall thru
