@@ -439,6 +439,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // rows those repairs copied forward from the view's own output instead of recomputing.
     private long keyedReplayMergedRows;
     private long keyedReplaySegmentCount;
+    // Key-domain splices the capture guard declined: repairs whose interval held a root
+    // the partial publication could not build on, taken to the truncate instead.
+    private long keyDomainSpliceDeclineCount;
     // The keyed publication, and what it left alone: segments published as an upsert onto
     // the view's own dedup keys, the stored rows those publications did not have to
     // rewrite, and the attempts abandoned because the output repeated a pair the upsert
@@ -521,6 +524,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // false in production.
     @TestOnly
     private boolean simulateColdKeyedTimelineFaultForTest;
+    // Test-only: when armed, the next keyed repair's hand-back of its isolated
+    // accumulators to the primary runtime throws before it moves a key, standing in for
+    // the allocation failure a refresh memory limit raises there. One-shot (self-clears
+    // on fire); always false in production.
+    @TestOnly
+    private boolean simulateKeyedTransplantFaultForTest;
     // Test-only: when armed, a forward live-view commit goes out at the default dedup
     // mode instead of NO_DEDUP, which is what the ordinary path did before it was
     // stamped. On a view whose table carries the (timestamp, key) dedup keys the apply
@@ -829,6 +838,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public long keyedReplaySegmentCountForTest() {
         return keyedReplaySegmentCount;
+    }
+
+    /**
+     * How many key-domain splices this worker declined because a boundary in the repaired
+     * interval held a root the partial publication could not build on.
+     */
+    @TestOnly
+    public long keyDomainSpliceDeclineCountForTest() {
+        return keyDomainSpliceDeclineCount;
     }
 
     /**
@@ -1198,6 +1216,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Test-only: arms one failure of the keyed repair's hand-back of its isolated
+     * accumulators to the primary runtime, the point a refresh memory limit can fault
+     * after the repair's publication is already durable. One-shot, so the rebuild the
+     * failure forces runs against a healthy transplant. Production never calls this.
+     */
+    @TestOnly
+    public void setSimulateKeyedTransplantFaultForTest(boolean simulate) {
+        this.simulateKeyedTransplantFaultForTest = simulate;
+    }
+
+    /**
      * Test-only: makes every forward live-view commit go out at the default dedup mode
      * rather than {@code WAL_DEDUP_MODE_NO_DEDUP}, which is what the ordinary path did
      * before the mode was stamped. On a dedup-keyed view the apply then collapses two
@@ -1229,6 +1258,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public boolean isRepairCleanupFaultArmedForTest() {
         return simulateRepairCleanupFaultCountdownForTest >= 0;
+    }
+
+    @TestOnly
+    public boolean isKeyedTransplantFaultArmedForTest() {
+        return simulateKeyedTransplantFaultForTest;
     }
 
     /**
@@ -1578,6 +1612,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *                        repair's descriptor. The localized rebuild walks those
      *                        stages; the resume replay has its own, shorter ordering and
      *                        keeps the descriptor for its staged segment alone
+     * @param keyedOutputKeys {@code Q} for a keyed replay, whose state describes the keys
+     *                        the correction touched and no others, or null
+     * @param functions       the compiled window functions the capture will freeze
+     * @param anchorWindow    the anchor window they run under, or null. With
+     *                        {@code functions}, what the key-domain guard compares the
+     *                        interval's roots against
      * @return the open capture, or null when this repair cannot splice - which is
      * not a failure of the repair, only of its ability to keep the timeline. The
      * caller then retires the timeline as an unlocalized repair does.
@@ -1590,7 +1630,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long highTsExclusive,
             boolean chained,
             boolean armPublication,
-            @Nullable LiveViewCheckpointOutputKeyDomain keyedOutputKeys
+            @Nullable LiveViewCheckpointOutputKeyDomain keyedOutputKeys,
+            ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow
     ) {
         final ObjList<LiveViewCheckpointTimelineEntry> repairBoundaries = session.getBoundaries();
         final LiveViewCheckpointRepairState repairState = session.getDescriptor();
@@ -1631,6 +1673,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     chained
             );
             capture.collectBoundaries(lowTsInclusive, highTsExclusive, repairBoundaries);
+            if (!capture.isKeyDomainSpliceable(repairBoundaries, functions, anchorWindow)) {
+                // A boundary in the interval holds a root the partial publication cannot
+                // build on - one the fused shape or a function's state format has moved
+                // past since it was sealed. The builders would start that root over from
+                // the keys the replay describes and drop every other one, so decline the
+                // splice and leave the truncate in place: its head seal images the whole
+                // runtime and converts the root, and the next repair splices again.
+                keyDomainSpliceDeclineCount++;
+                LOG.info().$("live view checkpoint repair declined the key domain splice over an incompatible root, retiring instead [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", boundaries=").$(repairBoundaries.size())
+                        .$(", lowTsInclusive=").$ts(lowTsInclusive)
+                        .$(", highTsExclusive=").$ts(highTsExclusive).I$();
+                Misc.free(capture);
+                repairBoundaries.clear();
+                return null;
+            }
             // The repair is named after the snapshot it pinned, so a repair that is
             // repeated against the same E - a deferred replacement the next turn
             // re-materialises - rewrites its own descriptor rather than leaving a
@@ -5955,6 +6014,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             throw CairoException.critical(0)
                     .put("live view keyed resume cannot hand back state without a window state plan");
         }
+        if (simulateKeyedTransplantFaultForTest) {
+            simulateKeyedTransplantFaultForTest = false;
+            throw CairoException.critical(0).put("simulated live view keyed repair transplant fault");
+        }
         transplantKeys.clear();
         transplantPayloads.clear();
         transplantValues.clear();
@@ -7362,7 +7425,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // that root's entry for every key Q does not name.
                     !keyed,
                     false,
-                    keyed ? keyedReplay.getOutputKeys() : null
+                    keyed ? keyedReplay.getOutputKeys() : null,
+                    replayWindowFactory.getWindowFunctions(),
+                    replayAnchorWindow
             );
             final ObjList<LiveViewCheckpointTimelineEntry> repairBoundaries = session.getBoundaries();
             final int maxChainedBoundaries =
@@ -7953,8 +8018,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // A transplant that throws part way is the one fault this route cannot
                 // absorb: the durable output is already correct for every key and the
                 // primary would be holding some corrected accumulators and some stale ones,
-                // which no later cycle detects. Mark the state dirty and let the next cycle
-                // recompute rather than sealing a runtime nothing can describe.
+                // which no later cycle detects. Mark the state dirty and unwind: the head
+                // seal below images the primary, and a restart off a seal of this runtime
+                // would restore it as clean with the dirty mark gone with the process. The
+                // refresh's own failure path pays the debt now, rebuilding the window state
+                // from the applied base before anything is sealed over it.
                 final long transplantStart = System.nanoTime();
                 try {
                     final int transplantedKeys = transplantKeyedRepairState(instance, replayAnchorWindow);
@@ -7965,6 +8033,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     markWindowStateDirty(instance);
                     LOG.critical().$("live view open segment resume could not hand its keys back [view=")
                             .$(viewName).$(", error=").$(t).I$();
+                    throw t;
                 } finally {
                     openSegmentRepairPhases.transplantNanos += System.nanoTime() - transplantStart;
                 }
@@ -8545,7 +8614,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // first, and the one that chains.
                         false,
                         true,
-                        keyedRoute ? repairKeyedReplay.getOutputKeys() : null
+                        keyedRoute ? repairKeyedReplay.getOutputKeys() : null,
+                        replayWindowFactory.getWindowFunctions(),
+                        replayAnchorWindow
                 );
                 final int maxRepairedBoundaries =
                         engine.getConfiguration().getLiveViewCheckpointRepairMaxChainedBoundaries();
@@ -9651,7 +9722,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // The repair publication is durable, but the replay ran beside the primary
                     // and followed only Q. Hand those finished accumulators back before
                     // the head seal images the primary. A partial failure leaves durable output
-                    // correct but runtime state ambiguous, so force the next cycle to rebuild it.
+                    // correct but runtime state ambiguous, so mark it dirty and unwind: sealing
+                    // the head over it would let a restart restore that runtime as clean, with
+                    // the dirty mark gone with the process. The refresh's failure path rebuilds
+                    // the window state from the applied base instead, before any seal.
                     try {
                         final int transplantedKeys = transplantKeyedRepairState(instance, replayAnchorWindow);
                         LOG.info().$("live view cold keyed repair handed its keys back [view=")
@@ -9660,6 +9734,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         markWindowStateDirty(instance);
                         LOG.critical().$("live view cold keyed repair could not hand its keys back [view=")
                                 .$(viewName).$(", error=").$(t).I$();
+                        throw t;
                     }
                 }
                 settleRepairRuntime(

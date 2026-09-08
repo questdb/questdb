@@ -159,8 +159,8 @@ jobs:
           includeTests: "**/cairo/**"
           # Exclude O3 tests: run in windows-other-2
           # Exclude Fuzz tests: run in windows-fuzz1 (cairo/fuzz) and windows-fuzz2 (other fuzz)
-          # Exclude mv/o3 subdirs: run in windows-cairo-2
-          excludeTests: "**/O3*Test**,**/**Fuzz**,**/cairo/mv/**,**/cairo/o3/**"
+          # Exclude mv/o3 subdirs and the live view checkpoint suites: run in windows-cairo-2
+          excludeTests: "**/O3*Test**,**/**Fuzz**,**/cairo/mv/**,**/cairo/o3/**,**/cairo/lv/LiveViewCheckpoint**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-cairo-2:
@@ -170,7 +170,8 @@ jobs:
           os: Windows
           jdk: "1.25"
           testset: "all"
-          includeTests: "**/cairo/mv/**,**/cairo/o3/**"
+          # The live view checkpoint suites balance wall-clock with windows-cairo-1
+          includeTests: "**/cairo/mv/**,**/cairo/o3/**,**/cairo/lv/LiveViewCheckpoint**"
           # Exclude Fuzz tests: run in windows-fuzz2
           excludeTests: "**/**Fuzz**"
           javadoc_step: ""

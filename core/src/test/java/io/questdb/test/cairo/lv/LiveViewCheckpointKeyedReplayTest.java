@@ -307,6 +307,86 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAKeyedRepairOverLegacyRootsDeclinesTheSpliceAndKeepsEveryKey() throws Exception {
+        // A keyed repair's splice images the keys the correction touched and leaves every
+        // other key's entry to the root it re-versions. A root sealed by an earlier build in
+        // the unfused shape is not one the fused builder can build on: it starts the root
+        // over from the imaged keys alone, and the replay, which followed those keys and no
+        // others, holds nothing to put the rest back with. Ten legacy roots of eight keys
+        // each would come out of the conversion holding one, and a later resume off any of
+        // them would answer a fresh account's amount rather than its running total.
+        //
+        // The guard declines the splice for such an interval and takes the truncate, whose
+        // head seal images the whole runtime. Per-segment repair is switched off for the
+        // last correction so that it resumes off a sealed root rather than re-repairing the
+        // segment - the route that masked the loss before the guard existed.
+        armKeyedReplay();
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
+        try {
+            assertMemoryLeak(() -> {
+                createView(row(2, 1, "acct-1"));
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    // Ten commits of eight accounts each on the second, one root per commit,
+                    // all sealed in the legacy shape.
+                    for (int minute = 0; minute < 10; minute++) {
+                        commit(eightAccountsOnTheSecond(minute), job);
+                    }
+                    // Closes the second below the head.
+                    commit(row(3, 1, "acct-1"), job);
+                }
+
+                // The upgrade: the runtime fuses, and the next refresh restores off the
+                // legacy roots rather than rebuilding from the base.
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, (String) null);
+                restartCycle();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    Assert.assertTrue(
+                            "the upgrade must restore off the legacy roots, or the case converts nothing",
+                            viewInstance().isCheckpointRestoreSucceeded()
+                    );
+                    // Below every row the second holds, on one account: a keyed correction
+                    // whose interval is exactly the ten legacy roots.
+                    commit(row(2, 0, 30, 0, "acct-1"), job);
+                    Assert.assertEquals(
+                            "a partial key domain must not be spliced into roots that need converting",
+                            1,
+                            job.keyDomainSpliceDeclineCountForTest()
+                    );
+                    assertViewMatchesRecompute();
+                }
+
+                // A resume off a converted root is what reads the conversion back. With the
+                // per-segment route off, the correction below resumes from the newest root
+                // beneath it instead of re-repairing the segment.
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, "false");
+                restartCycle();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    commit(row(2, 1, 5, 30, "acct-2"), job);
+                    assertViewMatchesRecompute();
+                    assertQuery("SELECT cumulative_sum FROM lv WHERE account_id = 'acct-2' AND created_at >= '2026-01-02T01:05:30' ORDER BY created_at")
+                            .returns("cumulative_sum\n" +
+                                    "7.0\n" +
+                                    "8.0\n" +
+                                    "9.0\n" +
+                                    "10.0\n" +
+                                    "11.0\n");
+                    Assert.assertEquals(
+                            "the roots the conversion seal published are fused, so a later splice must go through",
+                            0,
+                            job.keyDomainSpliceDeclineCountForTest()
+                    );
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, (String) null);
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, (String) null);
+        }
+    }
+
+    @Test
     public void testAKeyedRepairParksOnItsReplayBudget() throws Exception {
         armKeyedReplay();
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
@@ -765,6 +845,21 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
      * above them would leave the segment's stored rows outside the replaced range and the
      * merge with nothing to do.
      */
+    /**
+     * One row of each of the eight accounts at 01:{@code minute}:0a on 2026-01-02, account
+     * {@code a} on second {@code a}, as one INSERT's tuples.
+     */
+    private String eightAccountsOnTheSecond(int minute) {
+        final StringBuilder rows = new StringBuilder();
+        for (int account = 1; account <= ACCOUNTS; account++) {
+            if (rows.length() > 0) {
+                rows.append(", ");
+            }
+            rows.append(row(2, 1, minute, account, "acct-" + account));
+        }
+        return rows.toString();
+    }
+
     private String seedEightAccountsOverThreeDays() {
         final StringBuilder rows = new StringBuilder();
         for (int day = 2; day <= 4; day++) {

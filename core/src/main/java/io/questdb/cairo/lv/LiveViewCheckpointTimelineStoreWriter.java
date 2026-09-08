@@ -157,6 +157,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * post-splice frontier seal runs while that capture is still open.
      */
     private final RootPreviousBoundary sealPreviousBoundary;
+    // The reader shells RepairCapture.isKeyDomainSpliceable walks a repair's boundaries
+    // with: one checkpoint root, its function directory and the previous-boundary view
+    // over its state root. Owned here so the guard allocates nothing per repair.
+    private final LiveViewCheckpointRoot keyDomainRoot;
+    private final LiveViewCheckpointFunctionDirectory keyDomainFunctionDirectory;
+    private final LiveViewCheckpointPageRef keyDomainFunctionDirectoryRef = new LiveViewCheckpointPageRef();
+    private final RootPreviousBoundary keyDomainPreviousBoundary;
+    private final LiveViewCheckpointPageRef keyDomainStateRootRef = new LiveViewCheckpointPageRef();
     // The key domain one bucket's shared walk produces, common to every member in it.
     private final LiveViewCheckpointPartitionMapObjectPool partitionMapObjectPool =
             new LiveViewCheckpointPartitionMapObjectPool();
@@ -209,6 +217,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         // has only just assigned, so a field initializer would see it null.
         this.publicationShells = new PublicationScratch();
         this.sealPreviousBoundary = new RootPreviousBoundary();
+        this.keyDomainRoot = new LiveViewCheckpointRoot(configuration);
+        this.keyDomainFunctionDirectory = new LiveViewCheckpointFunctionDirectory(configuration);
+        this.keyDomainPreviousBoundary = new RootPreviousBoundary();
     }
 
     /**
@@ -420,6 +431,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         superblock.generation,
                         superblock.timelineRootRef,
                         superblock.rowPositionDeltaRootRef,
+                        superblock.segmentDirectoryRootRef,
                         outputKeys,
                         chained,
                         scratch
@@ -444,6 +456,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         Misc.free(publicationShells);
         Misc.free(publicationScratch);
         sealPreviousBoundary.free();
+        keyDomainPreviousBoundary.free();
+        Misc.free(keyDomainRoot);
+        Misc.free(keyDomainFunctionDirectory);
         Misc.freeObjList(repairScratchPool);
         Misc.free(ringSeal);
         partitionMapObjectPool.clear();
@@ -1862,6 +1877,52 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             bytes = checkedAdd(bytes, entry.getStatePageRef(i).getDecodedLength());
         }
         return bytes;
+    }
+
+    /**
+     * The per-root half of {@link RepairCapture#isKeyDomainSpliceable}: whether
+     * {@code old} holds, for every root a freeze of this runtime writes, a predecessor
+     * the builder keeps rather than starts over from. Mirrors the freeze: the fused
+     * window root when the anchored window compiled a plan, and a root per
+     * checkpoint-capable function the plan does not fold into it. The legacy anchor root
+     * needs no check - that path images every key whatever the domain - and neither does
+     * a scalar-state function, which has no keys to lose.
+     */
+    private static boolean isKeyDomainSpliceableOver(
+            RootPreviousBoundary old,
+            ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow,
+            @Nullable LiveViewWindowStatePlan plan
+    ) {
+        if (plan != null && !old.isCompatibleWindowRoot(
+                plan.borrowWindowIdentity(),
+                anchorWindow.getAnchorValueType(),
+                anchorWindow.borrowCheckpointKeySchema(),
+                plan.getManifest().borrowEncoded()
+        )) {
+            return false;
+        }
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final WindowFunction function = functions.getQuick(i);
+            if (!function.supportsCheckpointState()
+                    || isDurableGroupedProjection(plan, function)
+                    || function.getPartitionMap() == null) {
+                continue;
+            }
+            final LiveViewCheckpointFunctionIdentity identity = function.checkpointFunctionIdentity();
+            if (identity == null) {
+                // The freeze refuses such a function outright, so there is nothing to build on.
+                return false;
+            }
+            if (!old.hasCompatibleFunctionRoot(
+                    identity.borrowEncoded(),
+                    function.checkpointStateFormatVersion(),
+                    identity.borrowEncodedKeySchema()
+            )) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -4192,6 +4253,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 new LiveViewCheckpointTimelineEntry();
         private final LiveViewCheckpointPageRef rowPositionDeltaRootRef = new LiveViewCheckpointPageRef();
         private final FreezeScratch scratch;
+        // The pinned generation's segment directory, which the key-domain guard's
+        // previous-boundary reader resolves data pages against.
+        private final LiveViewCheckpointPageRef segmentDirectoryRootRef = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointPageRef timelineRootRef = new LiveViewCheckpointPageRef();
         // The merged view of everything below the boundary being frozen - published
         // predecessor plus the boundaries this capture has already staged over it -
@@ -4208,6 +4272,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 long generation,
                 LiveViewCheckpointPageRef timelineRootRef,
                 LiveViewCheckpointPageRef rowPositionDeltaRootRef,
+                LiveViewCheckpointPageRef segmentDirectoryRootRef,
                 @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
                 boolean chained,
                 FreezeScratch scratch
@@ -4219,6 +4284,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             this.scratch = scratch;
             copy(timelineRootRef, this.timelineRootRef);
             copy(rowPositionDeltaRootRef, this.rowPositionDeltaRootRef);
+            copy(segmentDirectoryRootRef, this.segmentDirectoryRootRef);
             if (outputKeys != null) {
                 this.outputKeys = new LiveViewCheckpointOutputKeyDomain();
                 this.outputKeys.copyFrom(outputKeys);
@@ -4353,6 +4419,73 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     releaseRepairScratch(scratch);
                 }
             }
+        }
+
+        /**
+         * Whether every boundary in {@code entries} holds a root this capture's key domain
+         * may be spliced into.
+         * <p>
+         * A capture opened with {@code Q} images the keys in it and leaves every other
+         * key's entry to the root it re-versions, which only works when the publication
+         * can build on that root: the same fused window shape, and the same function
+         * roots, byte for byte. A root that needs conversion - a legacy anchor root under
+         * a fused runtime, a component codec bump, a function whose state format or key
+         * schema moved - is one the builders start from empty, so every key outside
+         * {@code Q} would vanish from it, and the replay, which followed {@code Q} alone,
+         * holds no state to put back. The caller declines the splice for such a repair and
+         * takes the truncate, whose head seal images the whole runtime and converts the
+         * root for good. A complete capture has no such dependency and is always
+         * spliceable.
+         * <p>
+         * One root read per boundary, through the same readers the publication resolves
+         * the roots with: a capture over K boundaries reads K root headers here and K
+         * again when it publishes. Answers false, rather than throwing, for a root the
+         * readers cannot open - the publication would refuse it anyway.
+         *
+         * @param entries      the boundaries {@link #collectBoundaries} returned
+         * @param functions    the compiled window functions the replay freezes
+         * @param anchorWindow the anchor window those functions run under, or null
+         */
+        public boolean isKeyDomainSpliceable(
+                @NotNull ObjList<LiveViewCheckpointTimelineEntry> entries,
+                @NotNull ObjList<WindowFunction> functions,
+                @Nullable LiveViewWindow anchorWindow
+        ) {
+            if (outputKeys == null) {
+                return true;
+            }
+            final LiveViewWindowStatePlan plan = anchorWindow == null
+                    ? null
+                    : anchorWindow.getCheckpointWindowStatePlan();
+            for (int i = 0, n = entries.size(); i < n; i++) {
+                final LiveViewCheckpointTimelineEntry entry = entries.getQuick(i);
+                try {
+                    keyDomainRoot.of(checkpointsDir, entry.rootRef);
+                    keyDomainRoot.getStateRootRef(keyDomainStateRootRef);
+                    keyDomainRoot.getFunctionDirectoryRef(keyDomainFunctionDirectoryRef);
+                    keyDomainFunctionDirectory.of(checkpointsDir, keyDomainFunctionDirectoryRef);
+                    try (RootPreviousBoundary old = keyDomainPreviousBoundary.of(
+                            checkpointsDir,
+                            keyDomainFunctionDirectory,
+                            segmentDirectoryRootRef,
+                            keyDomainStateRootRef,
+                            entry.maxTimestamp
+                    )) {
+                        if (!isKeyDomainSpliceableOver(old, functions, anchorWindow, plan)) {
+                            return false;
+                        }
+                    }
+                } catch (CairoException e) {
+                    LOG.info().$("live view checkpoint repair could not read a boundary root for its key domain [checkpointId=")
+                            .$(entry.checkpointId)
+                            .$(", error=").$safe(e.getFlyweightMessage()).I$();
+                    return false;
+                } finally {
+                    keyDomainFunctionDirectory.detach();
+                    keyDomainRoot.detach();
+                }
+            }
+            return true;
         }
 
         /**
@@ -5144,6 +5277,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * A seal freezes each function's partitions in one run, so the resolution
          * is memoised on the identity and the root is read once per function.
          */
+        /**
+         * {@link #hasFunctionRoot} with the key schema held to the same standard the
+         * function root builder applies: it starts over from empty on a schema mismatch,
+         * so a partial key domain cannot build on such a root either.
+         */
+        private boolean hasCompatibleFunctionRoot(byte[] functionIdentity, int stateFormatVersion, byte[] keySchema) {
+            return resolveFunction(functionIdentity, stateFormatVersion)
+                    && Arrays.equals(keySchema, functionRoot.getKeySchema());
+        }
+
         private boolean resolveFunction(byte[] functionIdentity, int stateFormatVersion) {
             if (Arrays.equals(resolvedIdentity, functionIdentity)) {
                 return true;

@@ -233,6 +233,75 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAColdKeyedHeadMissWhoseTransplantFaultsRebuildsBeforeSealingAndSurvivesARestart() throws Exception {
+        // The cold keyed route replays the corrected keys in an isolated runtime and hands
+        // their accumulators back to the primary just before the head seal images it. A
+        // hand-back that throws - a refresh memory limit reached over the primary's map -
+        // leaves the durable output correct and the primary holding stale accumulators for
+        // exactly the corrected keys. Marking the runtime dirty and carrying on used to seal
+        // the head over that runtime: a restart then restored it as clean, the dirty mark
+        // gone with the process, and every later row on those keys extended the stale total.
+        //
+        // The failure now unwinds the turn before the seal, and the refresh's own failure
+        // path rebuilds the window state from the applied base. What the case pins is the
+        // restart: no base commit runs between the fault and the restore, so the only thing
+        // standing between the restored runtime and the stale one is what the turn sealed.
+        // The splice is switched off for the same reason: with it, the restart could restore
+        // off the re-versioned roots the replay froze and never touch the head seal at all.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        try {
+            assertMemoryLeak(() -> {
+                createView(seedFourAccountsOverTwoDays(), true);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    final LiveViewInstance instance = viewInstance();
+
+                    // Same correction as the cold keyed route's own case, so the replay runs
+                    // beside the primary and owes it a hand-back. One refresh turn only, the way
+                    // a worker would run it: driving to quiescence would let a later tick read
+                    // the dirty mark and rebuild, which is the recovery a restart never sees.
+                    job.setSimulateKeyedTransplantFaultForTest(true);
+                    execute("insert into tx values " + row(3, 2, 35, "acct-1"));
+                    drainWalQueue();
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    Assert.assertTrue("the turn must find the correction", job.run());
+                    Assert.assertFalse(
+                            "the injected transplant fault never fired, so the case pinned nothing",
+                            job.isKeyedTransplantFaultArmedForTest()
+                    );
+                    Assert.assertEquals(
+                            "the failed hand-back must cost exactly one refresh fault",
+                            1,
+                            instance.getRefreshFaultCount()
+                    );
+                    Assert.assertFalse(
+                            "the rebuild the fault forces must have paid the debt within the turn",
+                            instance.isWindowStateDirty()
+                    );
+                }
+
+                // The restart, with nothing committed in between: whatever the faulted turn
+                // sealed is what the restore comes back on.
+                restartCycle();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    Assert.assertFalse("the restored view must not come back dirty", viewInstance().isWindowStateDirty());
+                    // Forward rows on both the corrected key and an untouched one: each extends
+                    // the running total the restored runtime holds for its account.
+                    commit(row(3, 12, 30, "acct-1"), job);
+                    commit(row(3, 12, 31, "acct-2"), job);
+                    assertViewMatchesRecomputeIgnoringFaults();
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, (String) null);
+        }
+    }
+
+    @Test
     public void testAColdKeyedHeadMissWhosePrologueCleanupFaultsReleasesItsRepairSession() throws Exception {
         // The head-miss executor's third cleanup chain, and the only one that runs when the replay
         // never started: the prologue's own finally, gated on replayEntered. It closes the stored-row
