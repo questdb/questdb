@@ -100,6 +100,51 @@ public class QwpBrowserNegotiationWireTest extends AbstractQwpBootstrapTest {
         });
     }
 
+    /**
+     * The two carriers share a value grammar but not a delivery path: the
+     * header arrives verbatim, the URL goes through
+     * {@code HttpHeaderParser.urlDecode}, which re-keys a parameter on every
+     * unescaped {@code '='}. The percent-encoded form must therefore reach the
+     * negotiator with its level intact, and the raw form must be dropped whole
+     * rather than half-applied -- if it were ever half-applied the server would
+     * compress while telling the client it had not.
+     */
+    @Test
+    public void testBrowserUrlAcceptEncodingRequiresPercentEncodedLevel() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain ignored = startFragmented()) {
+                byte[] encoded = readServerInfo("?qwp_accept_encoding=zstd%3Blevel%3D5");
+                Assert.assertNotEquals(
+                        "a percent-encoded carrier must still advertise CAP_COMPRESSION",
+                        0,
+                        readCapabilities(encoded) & QwpEgressMsgKind.CAP_COMPRESSION
+                );
+                Assert.assertEquals(
+                        "the trailer must name the negotiated codec",
+                        QwpConstants.COMPRESSION_ZSTD,
+                        encoded[encoded.length - 2]
+                );
+                Assert.assertEquals(
+                        "the ;level=N parameter must survive percent-encoding",
+                        5,
+                        encoded[encoded.length - 1]
+                );
+
+                // The same value unescaped: urlDecode re-keys on the second
+                // '=', so qwp_accept_encoding is absent and the request reads
+                // as "no preference". The wire is then genuinely raw, and
+                // CAP_COMPRESSION stays clear so the client is told so rather
+                // than left decoding uncompressed frames as zstd.
+                byte[] unescaped = readServerInfo("?qwp_accept_encoding=zstd;level=5");
+                Assert.assertEquals(
+                        "an unescaped ';level=N' loses the whole parameter, so no codec may be advertised",
+                        0,
+                        readCapabilities(unescaped) & QwpEgressMsgKind.CAP_COMPRESSION
+                );
+            }
+        });
+    }
+
     @Test
     public void testBrowserUrlHandshakePushesIngressServerInfo() throws Exception {
         // The ingress counterpart of the two egress carriers below. The unit

@@ -73,6 +73,12 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     public static final Utf8String HEADER_X_QWP_REQUEST_DURABLE_ACK = new Utf8String("X-QWP-Request-Durable-Ack");
     // Browser-safe durable-ack opt-in and confirmation. Browser JavaScript can
     // offer and inspect WebSocket subprotocols but cannot set/read X-QWP-* headers.
+    //
+    // These values are NOT delivered verbatim like their header counterparts:
+    // HttpHeaderParser.urlDecode re-keys a parameter on every unescaped '=', so
+    // a value carrying one (qwp_accept_encoding=zstd;level=5) loses its key
+    // entirely and reads as absent. Clients must percent-encode the value; see
+    // QwpEgressUpgradeProcessor.negotiateAcceptEncoding.
     public static final Utf8String URL_PARAM_QWP_ACCEPT_ENCODING = new Utf8String("qwp_accept_encoding");
     public static final Utf8String URL_PARAM_QWP_BROWSER_HANDSHAKE = new Utf8String("qwp_browser_handshake");
     public static final Utf8String URL_PARAM_QWP_MAX_BATCH_ROWS = new Utf8String("qwp_max_batch_rows");
@@ -122,8 +128,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // frames, so the client must fail at handshake rather than wait forever.
     private static final byte[] RESPONSE_DURABLE_ACK_ENABLED =
             "\r\nX-QWP-Durable-Ack: enabled".getBytes(StandardCharsets.US_ASCII);
-    private static final byte[] RESPONSE_WEBSOCKET_PROTOCOL_DURABLE_ACK =
-            "\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1".getBytes(StandardCharsets.US_ASCII);
     // Advertises the server's hard cap on QWP message payload bytes so the
     // ingest client can size its batches without trial-and-error. Without this
     // hint a wide-row sender would have to discover the cap by sending an
@@ -136,6 +140,11 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     private static final byte[] RESPONSE_ROLE_PREFIX = "\r\nX-QuestDB-Role: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_SESSION_COOKIE_PREFIX = ("\r\nSet-Cookie: " + HttpConstants.SESSION_COOKIE_NAME + "=").getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_SUFFIX = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
+    // Browser-carrier counterpart of RESPONSE_DURABLE_ACK_ENABLED: echoed only
+    // when the client offered the subprotocol AND the registry is enabled, so
+    // the server never names a subprotocol the client did not offer.
+    private static final byte[] RESPONSE_WEBSOCKET_PROTOCOL_DURABLE_ACK =
+            "\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1".getBytes(StandardCharsets.US_ASCII);
     private static final int SHA1_BASE64_SIZE = 28;
     private static final CarrierLocal<byte[]> BASE64_SCRATCH = CarrierLocal.withInitial(() -> new byte[SHA1_BASE64_SIZE]);
     // Thread-local SHA-1 digest for computing Sec-WebSocket-Accept
@@ -409,10 +418,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         return responseSize(acceptKey, qwpVersion, null, false, null, null, null);
     }
 
-    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes) {
-        return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, null, null);
-    }
-
     /**
      * Same as {@link #responseSize(byte[], int)} but accounts for an optional
      * {@code X-QWP-Content-Encoding} header echoing the negotiated compression
@@ -558,10 +563,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      */
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion) {
         return writeResponse(buf, acceptKey, qwpVersion, null, false, null, null, null);
-    }
-
-    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes) {
-        return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, null, null);
     }
 
     /**
