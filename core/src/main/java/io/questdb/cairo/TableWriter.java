@@ -3216,6 +3216,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.setMinTimestamp(timestamp);
                     initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
                 }
+                if (!isEmptyTable() && isLastPartitionClosed() && !isLastPartitionParquet() && !isLastPartitionComposite()) {
+                    // Merge-append leaves the last partition closed because the WAL apply path never appends
+                    // in place. This caller does, so open it; the commit that follows closes it again.
+                    openLastPartition();
+                }
                 rowAction = ROW_ACTION_SWITCH_PARTITION;
                 // fall thru
             case ROW_ACTION_SWITCH_PARTITION:
@@ -9142,7 +9147,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * has to go through the O3 path instead.
      */
     private boolean isLastPartitionAppendBlocked() {
-        return isLastPartitionParquet() || isLastPartitionComposite();
+        return isLastPartitionParquet() || isLastPartitionComposite() || isMergeAppendLastPartitionBlocked();
     }
 
     private boolean isLastPartitionClosed() {
@@ -9163,6 +9168,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean isLastPartitionParquet() {
         int partitionCount = txWriter.getPartitionCount();
         return partitionCount > 0 && txWriter.isPartitionParquet(partitionCount - 1);
+    }
+
+    /**
+     * True when this table's last partition is closed only because merge-append WAS on. The setting can be
+     * turned off under a pooled writer, and from that commit on the partition has to take in-place appends
+     * again, so the caller reopens it. {@link #foldCompositePartitionsWhenMergeAppendDisabled()} covers the
+     * same flip for the partitions that are still COMPOSITE, but it only runs when the writer opens.
+     */
+    private boolean isMergeAppendJustDisabled() {
+        return !configuration.isO3PartitionMergeAppendEnabled()
+                && metadata.isWalEnabled()
+                && PartitionBy.isPartitioned(partitionBy);
+    }
+
+    /**
+     * A WAL table with merge-append on never appends in place, whatever shape its last partition currently has.
+     * Every commit goes through the O3 path, which writes at the files' physical extent and records what it wrote
+     * in the geometry - so the writer keeps {@code columns[]} closed and leaves the partition's row count alone,
+     * exactly as it does for a partition that is already COMPOSITE. Keeping the two regimes apart would mean the
+     * last partition flips between open and closed on every commit that happens to tile into one piece.
+     * <p>
+     * An empty table is excluded, same as the parquet and composite terms: the first commit still opens the
+     * partition it creates, and {@code newRow} needs {@code partitionTimestampHi} set before it can place a row.
+     */
+    private boolean isMergeAppendLastPartitionBlocked() {
+        return txWriter.getPartitionCount() > 0
+                && metadata.isWalEnabled()
+                && configuration.isO3PartitionMergeAppendEnabled()
+                && PartitionBy.isPartitioned(partitionBy);
     }
 
     /**
@@ -10122,6 +10156,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (isComposite || partitionMutates) {
                         // The last partition is rewritten.
                         closeActivePartition(!isComposite);
+                    } else if (isMergeAppendLastPartitionBlocked()) {
+                        // A merge-append plan whose pieces tile publishes no geometry, so the partition
+                        // stays plain NATIVE - but the writer still never opened it, and the executor wrote
+                        // the rows through its own mappings. Repositioning columns[] here would read a
+                        // column top against a partition that was never opened; truncating would cut the
+                        // files back to a length only an in-place append would have produced.
+                        closeActivePartition(false);
                     } else if (!isLastWrittenPartition) {
                         // The last partition is appended, and it is not the last partition anymore.
                         closeActivePartition(srcDataNewPartitionSize);
@@ -10187,7 +10228,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // columns[] never wrote a byte of a relocated piece, so reading a position through
                         // its stale mapping is the hazard doClose's composite guard exists to avoid.
                         long committedLastPartitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
-                        closeActivePartition(committedLastPartitionSize, isComposite);
+                        closeActivePartition(committedLastPartitionSize, isComposite || isMergeAppendLastPartitionBlocked());
                     }
                 }
 
@@ -11514,7 +11555,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     // We're appending onto the last (active) partition.
                     // Cannot append to parquet partitions - they must go through the O3 merge path.
-                    final boolean append = last && !isParquet && !isComposite && (srcDataMax == 0 || (isCommitDedupMode() && o3Timestamp > maxTimestamp) || (!isCommitDedupMode() && o3Timestamp >= maxTimestamp))
+                    final boolean append = last && !isParquet && !isComposite && !isMergeAppendLastPartitionBlocked() && (srcDataMax == 0 || (isCommitDedupMode() && o3Timestamp > maxTimestamp) || (!isCommitDedupMode() && o3Timestamp >= maxTimestamp))
                             // If it's replace commit, the append is only possible if the last partition data is
                             // before the replace range.
                             && (!isCommitReplaceMode() || o3TimestampMin > txWriter.getMaxTimestamp());
@@ -11921,10 +11962,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Add the partition to the list of partitions with 0 size.
                 txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1);
             } else if (!isLastPartitionAppendBlocked()) {
-                // A closed last partition is only a problem because the LAG is parked inside its column
-                // files, and the partitions that refuse an in-place append take no LAG.
-                throw CairoException.critical(0).put("system error, cannot resolve WAL table last partition [path=")
-                        .put(path).put(']');
+                if (isMergeAppendJustDisabled()) {
+                    openLastPartition();
+                } else {
+                    // A closed last partition is only a problem because the LAG is parked inside its column
+                    // files, and the partitions that refuse an in-place append take no LAG.
+                    throw CairoException.critical(0).put("system error, cannot resolve WAL table last partition [path=")
+                            .put(path).put(']');
+                }
             }
         }
 
