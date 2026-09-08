@@ -92,6 +92,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final CairoConfiguration configuration;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
     private final boolean deferred;
+    private final LowerCaseCharSequenceHashSet passthroughTimestampColumnNames = new LowerCaseCharSequenceHashSet();
     private final int periodDelay;
     private final char periodDelayUnit;
     private final int refreshType;
@@ -384,6 +385,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // We do not know types of columns at this stage.
         // Compiler must put table together using query metadata.
         createColumnModelMap.clear();
+        passthroughTimestampColumnNames.clear();
         final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augColumnMetadataMap =
                 createTableOperation.getAugmentedColumnMetadata();
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -523,8 +525,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                             baseTableName,
                             baseTableMetadata
                     );
+                    final String columnName = SqlUtil.toColumnName(column.getName());
                     if (baseColumnIndex > -1 && passthroughColumnNames.getQuick(baseColumnIndex) == null) {
-                        passthroughColumnNames.setQuick(baseColumnIndex, SqlUtil.toColumnName(column.getName()));
+                        passthroughColumnNames.setQuick(baseColumnIndex, columnName);
+                    }
+                    // The projection AST references the input model, not its own output aliases.
+                    if (resolveBaseColumnIndex(column.getAst(), queryModel.getNestedModel(), baseTableName, baseTableMetadata)
+                            == baseTableMetadata.getTimestampIndex()) {
+                        passthroughTimestampColumnNames.add(columnName);
                     }
                 }
             }
@@ -612,6 +620,18 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
         if (passthrough) {
+            // Refresh uses base-table intervals as output replacement ranges, so the designated
+            // timestamp must pass through unchanged, including through aliases and nested selects.
+            final String timestampName = createTableOperation.getTimestampColumnName() != null
+                    ? createTableOperation.getTimestampColumnName()
+                    : selectMetadata.getColumnName(selectMetadata.getTimestampIndex());
+            if (!passthroughTimestampColumnNames.contains(timestampName)) {
+                final int timestampPosition = createTableOperation.getTimestampColumnName() != null
+                        ? createTableOperation.getTimestampColumnNamePosition()
+                        : selectTextPosition + createColumnModelMap.get(timestampName).getColumnNamePos();
+                throw SqlException.$(timestampPosition,
+                        "passthrough materialized view timestamp must reference the base table designated timestamp without transformation");
+            }
             setPassthroughChunkInterval(baseTableMetadata.getPartitionBy());
         }
         updateMatViewTablePartitionBy(createTableOperation.getTimestampType(), baseTableMetadata.getPartitionBy());

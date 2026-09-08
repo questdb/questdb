@@ -1085,6 +1085,82 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewPassthroughPreservesTimestamp() throws Exception {
+        assertPassthroughTimestampAccepted("SELECT * FROM base", "ts", false, "TIMESTAMP");
+        assertPassthroughTimestampAccepted("SELECT b.ts, v * 2 AS v FROM base b WHERE v > 0", "ts", true, "TIMESTAMP");
+        assertPassthroughTimestampAccepted("SELECT ts AS event_ts, v FROM base", "event_ts", false, "TIMESTAMP");
+        assertPassthroughTimestampAccepted("SELECT ts AS \"in\", v FROM base", "\"in\"", true, "TIMESTAMP");
+        assertPassthroughTimestampAccepted(
+                "SELECT x AS event_ts, v FROM (SELECT ts AS x, v FROM base)", "event_ts", true, "TIMESTAMP"
+        );
+        assertPassthroughTimestampAccepted(
+                "SELECT other AS ts, ts AS event_ts, v FROM base", "event_ts", true, "TIMESTAMP"
+        );
+        assertPassthroughTimestampAccepted(
+                "SELECT ts, dateadd('d', 1, ts) AS shifted, v FROM base", "ts", false, "TIMESTAMP"
+        );
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughPreservesTimestampNanos() throws Exception {
+        assertPassthroughTimestampAccepted("SELECT ts AS event_ts, v FROM base", "event_ts", true, "TIMESTAMP_NS");
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughRejectsConstantTimestamp() throws Exception {
+        assertPassthroughTimestampRejected("SELECT '2026-01-01'::TIMESTAMP AS ts, v FROM base", "TIMESTAMP");
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughRejectsImplicitTransformedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String sql = "CREATE MATERIALIZED VIEW shifted AS ("
+                    + "SELECT ts, v FROM (SELECT dateadd('d', 1, ts) AS ts, v FROM base) TIMESTAMP(ts)) PARTITION BY DAY";
+            assertQuery(sql).noLeakCheck().fails(
+                    sql.indexOf("SELECT ts") + "SELECT ".length(),
+                    "passthrough materialized view timestamp must reference the base table designated timestamp without transformation"
+            );
+            assertNull(engine.getTableTokenIfExists("shifted"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughRejectsNonDesignatedTimestamp() throws Exception {
+        assertPassthroughTimestampRejected("SELECT other AS ts, v FROM base", "TIMESTAMP");
+        assertPassthroughTimestampRejected("SELECT other AS ts, v FROM base", "TIMESTAMP_NS");
+        assertPassthroughTimestampRejected("SELECT ts AS other, other AS ts, v FROM base", "TIMESTAMP");
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughRejectsNullTimestamp() throws Exception {
+        assertPassthroughTimestampRejected("SELECT null::TIMESTAMP AS ts, v FROM base", "TIMESTAMP");
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughRejectsTimestampCast() throws Exception {
+        assertPassthroughTimestampRejected("SELECT ts::TIMESTAMP_NS AS ts, v FROM base", "TIMESTAMP");
+        assertPassthroughTimestampRejected("SELECT ts::TIMESTAMP AS ts, v FROM base", "TIMESTAMP_NS");
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughRejectsTransformedTimestamp() throws Exception {
+        assertPassthroughTimestampRejected("SELECT dateadd('d', 1, ts) AS ts, v FROM base", "TIMESTAMP");
+        assertPassthroughTimestampRejected("SELECT dateadd('d', -1, ts) AS ts, v FROM base", "TIMESTAMP");
+        assertPassthroughTimestampRejected("SELECT dateadd('d', 1, ts) AS ts, v FROM base", "TIMESTAMP_NS");
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughRejectsTransformedTimestampNested() throws Exception {
+        assertPassthroughTimestampRejected(
+                "SELECT x AS ts, v FROM (SELECT dateadd('d', 1, ts) AS x, v FROM base)", "TIMESTAMP"
+        );
+        assertPassthroughTimestampRejected(
+                "WITH shifted AS (SELECT dateadd('d', 1, ts) AS ts, v FROM base) SELECT * FROM shifted", "TIMESTAMP"
+        );
+    }
+
+    @Test
     public void testCreateMatViewRewrittenSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -2671,6 +2747,48 @@ public class CreateMatViewTest extends AbstractCairoTest {
             return null;
         }
         return engine.getDependentViewGraph().getViewDefinition(matViewToken);
+    }
+
+    private void assertPassthroughTimestampAccepted(String query, String timestampName, boolean hasExplicitTimestamp, String timestampType) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts " + timestampType + ", other " + timestampType
+                    + ", v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2026-01-01', '2026-02-01', 10), ('2026-01-02', null, 20)");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW test AS (" + query + ")"
+                    + (hasExplicitTimestamp ? " TIMESTAMP(" + timestampName + ")" : "") + " PARTITION BY DAY");
+            final String select = "SELECT " + timestampName + " AS ts, v FROM ";
+            for (int i = 0; i < 3; i++) {
+                if (i == 1) {
+                    execute("INSERT INTO base VALUES ('2026-01-01T12:00', null, 30)");
+                } else if (i == 2) {
+                    execute("REFRESH MATERIALIZED VIEW test FULL");
+                }
+                drainQueues();
+                sink.clear();
+                printSql(select + "(" + query + ") ORDER BY ts", sink);
+                assertQuery(select + "test ORDER BY ts").timestamp("ts").expectSize().noLeakCheck().returns(sink.toString());
+            }
+            execute("DROP MATERIALIZED VIEW test");
+            execute("DROP TABLE base");
+        });
+    }
+
+    private void assertPassthroughTimestampRejected(String query, String timestampType) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts " + timestampType + ", other " + timestampType
+                    + ", v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2026-01-01', '2026-02-01', 10), ('2026-01-02', null, 20)");
+            drainWalQueue();
+            final String sql = "CREATE MATERIALIZED VIEW shifted AS (" + query + ") TIMESTAMP(ts) PARTITION BY DAY";
+            assertQuery(sql).noLeakCheck().fails(
+                    sql.lastIndexOf("TIMESTAMP(") + "TIMESTAMP(".length(),
+                    "passthrough materialized view timestamp must reference the base table designated timestamp without transformation"
+            );
+            assertNull(engine.getTableTokenIfExists("shifted"));
+            assertNull(getMatViewDefinition("shifted"));
+            execute("DROP TABLE base");
+        });
     }
 
     private void assertQuery0(String expected, String query, String expectedTimestamp) throws Exception {
