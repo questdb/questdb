@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.TableNameRegistryStore;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
@@ -34,11 +35,16 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.std.Files;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.mig.EngineMigrationTest;
 import org.junit.Assert;
 
 import java.io.IOException;
+import java.io.RandomAccessFile;
+
+import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 
 /**
  * Shared harness for the cases that read a checkpoint tree some <i>other</i> build wrote:
@@ -60,7 +66,8 @@ public abstract class AbstractLiveViewCheckpointCompatTest extends AbstractLiveV
      * Unpacks a database root over the test's own and points the engine at it. The unpack
      * and the name-registry reload are {@link EngineMigrationTest#replaceDbContent} - the
      * same routine the migration fixtures use - so a fix there reaches this caller too.
-     * Only the live-view-specific steps stay here, on either side of that call.
+     * This harness also aligns the extracted name registry to the host page size and
+     * restores the live-view catalogue.
      * <p>
      * The resource check goes first because the shared routine asserts non-null without a
      * message: a fixture that failed to build, or one a rename left behind, otherwise fails
@@ -86,6 +93,22 @@ public abstract class AbstractLiveViewCheckpointCompatTest extends AbstractLiveV
         engine.getLiveViewRegistry().clear();
 
         EngineMigrationTest.replaceDbContent(resourcePath);
+
+        // Linux fixtures can carry a 4 KiB name registry on a host with 16 KiB pages.
+        // QueryAssertion cleanup recreates it at the host page size, which otherwise
+        // looks like a leak to the query's memory check. Pad only the registry before
+        // taking that baseline; preserve the checkpoint files exactly as released.
+        engine.closeNameRegistry();
+        try (Path registryPath = new Path().of(engine.getConfiguration().getDbRoot())) {
+            final int version = TableNameRegistryStore.findLastTablesFileVersion(
+                    engine.getConfiguration().getFilesFacade(), registryPath, new StringSink()
+            );
+            registryPath.concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(version);
+            try (RandomAccessFile registry = new RandomAccessFile(registryPath.toString(), "rw")) {
+                registry.setLength(Files.ceilPageSize(registry.length()));
+            }
+        }
+        engine.reloadTableNames();
 
         try (MetadataCacheWriter cacheRW = engine.getMetadataCache().writeLock()) {
             cacheRW.clearCache();
