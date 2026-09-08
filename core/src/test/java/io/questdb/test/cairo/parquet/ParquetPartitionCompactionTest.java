@@ -524,39 +524,39 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
      * and untouched since. The fixture both all-types schema tests are calibrated against.
      */
     private void createAllColumnTypesParquetPartition() throws Exception {
-            execute("""
-                    CREATE TABLE t AS (
-                      SELECT
-                        (x % 5 = 0) c_bool,
-                        x::byte c_byte,
-                        x::short c_short,
-                        rnd_char() c_char,
-                        x::int c_int,
-                        x::long c_long,
-                        x::float c_float,
-                        x::double c_double,
-                        cast(x as date) c_date,
-                        rnd_uuid4() c_uuid,
-                        rnd_long256() c_l256,
-                        rnd_ipv4() c_ip,
-                        rnd_bin(10, 20, 2) c_bin,
-                        rnd_geohash(5) c_gh5,
-                        rnd_geohash(15) c_gh15,
-                        rnd_geohash(31) c_gh31,
-                        rnd_geohash(60) c_gh60,
-                        ('s' || (x % 3))::symbol c_sym,
-                        ('str' || x)::string c_str,
-                        rnd_varchar(1, 5, 1) c_vch,
-                        ARRAY[[x::double, x + 0.5]] c_arr,
-                        (x::double)::decimal(10, 2) c_dec64,
-                        (x::double)::decimal(30, 4) c_dec128,
-                        (x * 1000)::timestamp_ns c_ts_ns,
-                        cast(x * 1000 as timestamp) c_ts_micro,
-                        timestamp_sequence('2024-01-01', 60_000_000) ts
-                      FROM long_sequence(20)
-                    ) TIMESTAMP(ts) PARTITION BY DAY""");
-            execute("INSERT INTO t(c_int, ts) VALUES (1, '2024-01-02T00:00:00.000000Z')");
-            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+        execute("""
+                CREATE TABLE t AS (
+                  SELECT
+                    (x % 5 = 0) c_bool,
+                    x::byte c_byte,
+                    x::short c_short,
+                    rnd_char() c_char,
+                    x::int c_int,
+                    x::long c_long,
+                    x::float c_float,
+                    x::double c_double,
+                    cast(x as date) c_date,
+                    rnd_uuid4() c_uuid,
+                    rnd_long256() c_l256,
+                    rnd_ipv4() c_ip,
+                    rnd_bin(10, 20, 2) c_bin,
+                    rnd_geohash(5) c_gh5,
+                    rnd_geohash(15) c_gh15,
+                    rnd_geohash(31) c_gh31,
+                    rnd_geohash(60) c_gh60,
+                    ('s' || (x % 3))::symbol c_sym,
+                    ('str' || x)::string c_str,
+                    rnd_varchar(1, 5, 1) c_vch,
+                    ARRAY[[x::double, x + 0.5]] c_arr,
+                    (x::double)::decimal(10, 2) c_dec64,
+                    (x::double)::decimal(30, 4) c_dec128,
+                    (x * 1000)::timestamp_ns c_ts_ns,
+                    cast(x * 1000 as timestamp) c_ts_micro,
+                    timestamp_sequence('2024-01-01', 60_000_000) ts
+                  FROM long_sequence(20)
+                ) TIMESTAMP(ts) PARTITION BY DAY""");
+        execute("INSERT INTO t(c_int, ts) VALUES (1, '2024-01-02T00:00:00.000000Z')");
+        execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
         engine.releaseInactive();
     }
 

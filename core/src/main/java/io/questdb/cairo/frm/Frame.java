@@ -33,8 +33,9 @@ public interface Frame extends Closeable {
 
     /**
      * Appends {@code [sourceLo, sourceHi)} of {@code source} to this frame's tail, one column at a time.
+     *
      * @param upcomingTableTxn tags posting-index chain entries published during this append, so a partial publish is
-     * droppable by recovery.
+     *                         droppable by recovery.
      */
     void appendColumns(Frame source, long sourceLo, long sourceHi, long upcomingTableTxn, int commitMode);
 

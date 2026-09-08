@@ -55,11 +55,12 @@ public class WalTxnClusterer implements Mutable {
      * Computes cut timestamps for one partition against the buffered transaction ranges. Cuts are bounded by the size
      * of the pieces they produce, not by a cut count: every piece the returned cuts carve out holds at least
      * {@code minPieceRows} estimated rows.
-     * @param t0 first existing row timestamp of the partition (piece)
-     * @param t1 last existing row timestamp, inclusive; {@code t1 >= t0}
-     * @param minBinDuration finest bin duration (e.g.
-     * @param maxBins bin-count cap, bounding work and cut precision
-     * @param minPieceRows minimum estimated existing rows in any piece a cut produces
+     *
+     * @param t0                first existing row timestamp of the partition (piece)
+     * @param t1                last existing row timestamp, inclusive; {@code t1 >= t0}
+     * @param minBinDuration    finest bin duration (e.g.
+     * @param maxBins           bin-count cap, bounding work and cut precision
+     * @param minPieceRows      minimum estimated existing rows in any piece a cut produces
      * @param partitionRowCount existing rows in [t0, t1], for the uniform-density estimate
      * @return ascending, de-duplicated cut timestamps; a cut at ts {@code X} puts rows {@code < X} left of the cut and
      * rows {@code >= X} right of it.

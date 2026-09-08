@@ -119,6 +119,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     /**
      * Plans what this commit does to ONE COMPOSITE partition - the direct analogue of {@link #processParquetPartition},
      * with a piece playing the part of a row group.
+     *
      * @return {@code plan}, for a fluent call at the use site
      */
     public static O3CompositeMergeStrategy.Plan processCompositePartition(
@@ -540,15 +541,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     /**
      * Publishes the rows a write put at {@code [fromRow, toRow)} of a partition into every COVERING posting index the
      * partition has, as one new generation per index carrying its own covered values.
-     * @param partitionDir the partition directory; trimmed back to its own length on return
-     * @param versions the column versions the write left behind: tops and name txns of the indexed and the covered
-     * columns
-     * @param coverNames scratch for the covered-column description, owned by the calling thread
+     *
+     * @param partitionDir  the partition directory; trimmed back to its own length on return
+     * @param versions      the column versions the write left behind: tops and name txns of the indexed and the covered
+     *                      columns
+     * @param coverNames    scratch for the covered-column description, owned by the calling thread
      * @param coverNameTxns scratch, see {@code coverNames}
-     * @param coverTops scratch, see {@code coverNames}
-     * @param coverShifts scratch, see {@code coverNames}
-     * @param coverIndices scratch, see {@code coverNames}
-     * @param coverTypes scratch, see {@code coverNames}
+     * @param coverTops     scratch, see {@code coverNames}
+     * @param coverShifts   scratch, see {@code coverNames}
+     * @param coverIndices  scratch, see {@code coverNames}
+     * @param coverTypes    scratch, see {@code coverNames}
      * @return true when every covering index of the partition is now complete, so the seal sweep can leave them alone;
      * false when at least one still needs the sweep's rebuild
      */
@@ -1220,6 +1222,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     /**
      * Resolves {@code cutTs} to a row of the piece by searching its own slice of the designated-timestamp column, then
      * cuts there.
+     *
      * @param minRowsBelow drop the cut when fewer real rows than this sit below it, whatever the estimate promised
      * @param minRowsAbove drop the cut when fewer real rows than this sit above it
      * @return true when the cut was applied
@@ -2041,11 +2044,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     /**
      * Copies every live row group of a Parquet partition into a fresh {@code data.parquet} and {@code _pm} in {@code
      * dstPartitionDir}, dropping the dead bytes in-place O3 updates left behind.
+     *
      * @param srcPartitionDir the live partition directory, {@code <partition>.<nameTxn>}; trimmed back on return
      * @param dstPartitionDir the staging directory to build into, created here; trimmed back on return
-     * @param seqTxn stamped into the new {@code _pm}: the reader snapshot's own
-     * @param command carries the source generation in ({@link ParquetPartitionSwapCommand#getExpectedParquetFileSize})
-     * and the build's result out ({@link ParquetPartitionSwapCommand#setResult})
+     * @param seqTxn          stamped into the new {@code _pm}: the reader snapshot's own
+     * @param command         carries the source generation in ({@link ParquetPartitionSwapCommand#getExpectedParquetFileSize})
+     *                        and the build's result out ({@link ParquetPartitionSwapCommand#setResult})
      */
     static void compactParquetPartition(
             CairoConfiguration configuration,

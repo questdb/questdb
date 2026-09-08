@@ -401,6 +401,7 @@ public class WriterPool extends AbstractPool {
      * Resolves the reason a holder took {@code e}, waiting out the window between the holder taking the entry and
      * stamping its reason - {@code owner} and {@code ownershipReason} are two separate stores, so a reader can land
      * between them however early the stamp happens.
+     *
      * @return the holder's reason, or {@link #OWNERSHIP_REASON_NONE} if it released while we waited - the entry is no
      * longer busy and the caller should retry rather than report it as such
      */
