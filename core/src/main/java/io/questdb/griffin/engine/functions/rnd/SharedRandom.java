@@ -25,9 +25,9 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
-import io.questdb.std.CarrierLocal;
 
 public class SharedRandom {
     // async random is used by SQL Async implementation in order to
