@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.log.Log;
@@ -304,7 +305,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             }
             serialExporter.of(localTaskCopy);
             final SqlExecutionContextImpl executionContext = serialExporter.getSqlExecutionContext();
-            final long ownerId = engine.beginSqlExecution(entry.getSqlText(), executionContext);
+            final long ownerId = engine.beginSqlExecution(entry.getSqlText(), executionContext, CompiledQuery.SELECT);
             activeOwnerContext = executionContext;
             activeOwnerId = ownerId;
             final MemoryTracker memoryTracker;

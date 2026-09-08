@@ -210,7 +210,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // PostgresSQL wire.
     private Utf8Sequence preparedStatementNameToDeallocate;
     private MemoryTracker queryMemoryTracker;
-    private boolean resourceGroupBypassed;
     private boolean selectIsCacheable = true;
     private long sqlAffectedRowCount = 0;
     private SqlExecutionContext sqlExecutionOwnerContext;
@@ -368,7 +367,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         preparedStatementNameToDeallocate = null;
         queryCancellation.clear();
         queryMemoryTracker = null;
-        resourceGroupBypassed = false;
         sqlAffectedRowCount = 0;
         endSqlExecutionOwner();
         sqlExecutionOwnerContext = null;
@@ -511,7 +509,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     // variables.
                     msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
                 }
-                CompiledQuery cq = compileWithResourceGroupBypass(compiler, sqlText, sqlExecutionContext);
+                CompiledQuery cq = compiler.compile(sqlText, sqlExecutionContext);
                 // copy actual bind variable types as supplied by the client + defined by the SQL compiler
                 msgParseCopyOutTypeDescriptionTypeOIDs(sqlExecutionContext.getBindVariableService());
                 setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
@@ -587,10 +585,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public boolean isError() {
         return error;
-    }
-
-    public boolean isFactory() {
-        return factory != null;
     }
 
     public boolean isPortal() {
@@ -1177,20 +1171,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     @TestOnly
     public static void setSyncCommitObserver(Runnable observer) {
         syncCommitObserver = observer;
-    }
-
-    private static CompiledQuery compileWithResourceGroupBypass(
-            SqlCompiler compiler,
-            CharSequence query,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        final boolean previousBypass = executionContext.isResourceGroupBypassed();
-        executionContext.setResourceGroupBypassed(true);
-        try {
-            return compiler.compile(query, executionContext);
-        } finally {
-            executionContext.setResourceGroupBypassed(previousBypass);
-        }
     }
 
     private static void fireParkedUpdateMintObserver() {
@@ -3544,7 +3524,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             throw new IllegalStateException("PG pipeline entry already has a SQL execution owner");
         }
         final long ownerId = engine.beginSqlExecution(query, executionContext, compiledQueryType);
-        resourceGroupBypassed = executionContext.isResourceGroupBypassed();
         sqlExecutionOwnerContext = executionContext;
         sqlExecutionOwnerId = ownerId;
         sqlExecutionOwnerMounted = ownerId > -1;
@@ -3715,7 +3694,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 sqlExecutionOwnerContext = null;
                 sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
                 sqlExecutionOwnerMounted = false;
-                resourceGroupBypassed = false;
             }
         }
     }
@@ -3728,10 +3706,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return sqlExecutionOwnerMounted;
     }
 
-    boolean isSqlTextSecret() {
-        return sqlTextHasSecret;
-    }
-
     void mountSqlExecutionOwner() {
         if (sqlExecutionOwnerId > -1 && !sqlExecutionOwnerMounted) {
             engine.mountSqlExecution(sqlExecutionOwnerId, sqlExecutionOwnerContext);
@@ -3740,7 +3714,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     void mountSqlExecutionOwnerForSync() {
-        if (cursor != null) {
+        if (cursor != null && !error) {
             resumeSqlExecutionOwner();
         }
     }
@@ -3765,9 +3739,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     void resumeSqlExecutionOwner() {
-        sqlExecutionOwnerContext.setResourceGroupBypassed(resourceGroupBypassed);
-        resumeCursorTimer();
-        mountSqlExecutionOwner();
+        try {
+            resumeCursorTimer();
+            mountSqlExecutionOwner();
+        } catch (Throwable th) {
+            try {
+                suspendCursorTimer();
+            } catch (Throwable cleanupFailure) {
+                if (cleanupFailure != th) {
+                    th.addSuppressed(cleanupFailure);
+                }
+            }
+            throw th;
+        }
     }
 
     void unmountSqlExecutionOwner() {

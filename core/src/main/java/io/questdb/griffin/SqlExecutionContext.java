@@ -165,14 +165,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return null;
     }
 
-    /**
-     * Returns the protocol execution owner currently mounted on this context, or {@code -1}.
-     * Enterprise uses this identity to retain one managed owner across protocol execution segments.
-     */
-    default long getQueryRegistryOwnerId() {
-        return -1;
-    }
-
     default @NotNull MessageBus getMessageBus() {
         return getCairoEngine().getMessageBus();
     }
@@ -204,6 +196,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     int getPageFrameMinRows();
 
     QueryFutureUpdateListener getQueryFutureUpdateListener();
+
+    /**
+     * Returns the protocol execution owner currently mounted on this context, or {@code -1}.
+     */
+    default long getQueryRegistryOwnerId() {
+        return -1;
+    }
 
     Rnd getRandom();
 
@@ -259,18 +258,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
     }
 
-    /**
-     * Tells the context which name the statement being compiled uses for the table it targets - the
-     * table named by {@code UPDATE <name>} or {@code ALTER TABLE <name>}. Called before that name,
-     * or any other table in the statement, is resolved.
-     * <p>
-     * Only contexts that resolve a target differently from the name in the SQL need this; for
-     * everything else it is a no-op. See {@code WalApplySqlExecutionContext}, where the stored SQL
-     * may name a table that has since been renamed, or whose name now belongs to a different table.
-     */
-    default void setStatementTargetTableName(CharSequence tableName) {
-    }
-
     WindowContext getWindowContext();
 
     int hasInterval();
@@ -322,19 +309,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * longer match the current table format; the ordinary row filter still preserves SQL semantics.
      */
     default boolean isPartitionFormatChangeTolerated() {
-        return false;
-    }
-
-    default boolean isResourceGroupBypassed() {
-        return false;
-    }
-
-    /**
-     * Returns {@code true} for engine-owned SQL that is run as part of bootstrap or background
-     * maintenance rather than on behalf of a client query. Such work is governed by its owning
-     * subsystem instead of client-query admission and scheduling.
-     */
-    default boolean isSystemSql() {
         return false;
     }
 
@@ -431,12 +405,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     default void setMemoryTracker(@Nullable MemoryTracker tracker) {
     }
 
-    /**
-     * Binds the protocol execution owner for nested QueryRegistry registrations on this context.
-     */
-    default void setQueryRegistryOwnerId(long queryRegistryOwnerId) {
-    }
-
     void setNowAndFixClock(long now, int nowTimestampType);
 
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
@@ -453,6 +421,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled);
 
+    /**
+     * Binds the protocol execution owner for nested QueryRegistry registrations on this context.
+     */
+    default void setQueryRegistryOwnerId(long queryRegistryOwnerId) {
+    }
+
     void setRandom(Rnd rnd);
 
     /**
@@ -465,7 +439,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     default void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
     }
 
-    default void setResourceGroupBypassed(boolean resourceGroupBypassed) {
+    /**
+     * Tells the context which name the statement being compiled uses for the table it targets - the
+     * table named by {@code UPDATE <name>} or {@code ALTER TABLE <name>}. Called before that name,
+     * or any other table in the statement, is resolved.
+     * <p>
+     * Only contexts that resolve a target differently from the name in the SQL need this; for
+     * everything else it is a no-op. See {@code WalApplySqlExecutionContext}, where the stored SQL
+     * may name a table that has since been renamed, or whose name now belongs to a different table.
+     */
+    default void setStatementTargetTableName(CharSequence tableName) {
     }
 
     void setUseSimpleCircuitBreaker(boolean value);

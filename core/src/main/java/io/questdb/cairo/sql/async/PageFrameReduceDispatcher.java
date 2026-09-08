@@ -45,6 +45,7 @@ import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -62,6 +63,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     static final int BATCH_CONTINUE = 0;
     static final int BATCH_RETURN = 2;
     static final int BATCH_YIELD = 1;
+    static final long DEFAULT_BATCH_CHECK_ROWS = 262_144L;
     static final long DEFAULT_BATCH_NANOS = 10_000_000L;
     static final long DEFAULT_BATCH_SLICE_NANOS = 2_000_000L;
     private static final Log LOG = LogFactory.getLog(PageFrameReduceDispatcher.class);
@@ -75,6 +77,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private final LongAdder batchSliceYieldCount = new LongAdder();
     private final LongAdder batchTimeoutCount = new LongAdder();
     private final MessageBus messageBus;
+    private final NanosecondClock nanosecondClock;
     private final AtomicLong progressVersion = new AtomicLong();
     private final FiberEventWaitQueue progressWaitQueue =
             new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
@@ -85,12 +88,24 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private final MillisecondClock timerClock;
     private final long timerIntervalMillis;
     private final TimerShards timerShards;
+    private volatile long batchCheckRows = DEFAULT_BATCH_CHECK_ROWS;
     private volatile long batchNanos = DEFAULT_BATCH_NANOS;
     private volatile long batchSliceNanos = DEFAULT_BATCH_SLICE_NANOS;
     private volatile boolean isClosed;
 
     public PageFrameReduceDispatcher(CairoEngine engine, MessageBus messageBus, FiberRuntime runtime) {
+        this(engine, messageBus, runtime, System::nanoTime);
+    }
+
+    @TestOnly
+    public PageFrameReduceDispatcher(
+            CairoEngine engine,
+            MessageBus messageBus,
+            FiberRuntime runtime,
+            NanosecondClock nanosecondClock
+    ) {
         this.messageBus = messageBus;
+        this.nanosecondClock = nanosecondClock;
         this.runtime = runtime;
         this.taskPool = new FiberTaskPool<>(
                 runtime.getMaxLiveFiberCount(),
@@ -388,6 +403,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         }
     }
 
+    public long getBatchCheckRows() {
+        return batchCheckRows;
+    }
+
     public long getBatchNanos() {
         return batchNanos;
     }
@@ -469,6 +488,11 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         synchronized (taskPool) {
             action.run();
         }
+    }
+
+    @TestOnly
+    public void setBatchCheckRowsForTesting(long batchCheckRows) {
+        this.batchCheckRows = batchCheckRows >= 0 ? batchCheckRows : DEFAULT_BATCH_CHECK_ROWS;
     }
 
     @TestOnly
@@ -833,7 +857,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     }
 
     int checkBatch(long batchStartNanos) {
-        final long elapsedNanos = System.nanoTime() - batchStartNanos;
+        final long elapsedNanos = getBatchClockTicks() - batchStartNanos;
         if (elapsedNanos >= batchNanos) {
             batchTimeoutCount.increment();
             return BATCH_RETURN;
@@ -843,6 +867,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             return BATCH_YIELD;
         }
         return BATCH_CONTINUE;
+    }
+
+    long getBatchClockTicks() {
+        return nanosecondClock.getTicks();
     }
 
     boolean isProgressWaitTerminated(

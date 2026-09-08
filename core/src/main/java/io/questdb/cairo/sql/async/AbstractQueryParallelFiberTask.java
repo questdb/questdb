@@ -49,6 +49,7 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
     private long batchDispatchOwnerId;
     private Fiber batchFiber;
     private long batchMountVersion;
+    private long batchRowsSinceCheck;
     private long batchStartNanos;
     private MCSequence batchSubSeq;
     private int batchWorkerId = -1;
@@ -167,9 +168,11 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
         batchFiber = Fiber.current();
         batchMountVersion = batchFiber.getMountVersion();
         batchStartNanos = System.nanoTime();
+        batchRowsSinceCheck = 0;
         if (!runTask()) {
             return false;
         }
+        batchRowsSinceCheck += batchRowCount();
         final MCSequence subSeq = batchSubSeq;
         if (subSeq != null) {
             while (continueBatch()) {
@@ -187,9 +190,18 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
                 if (!runTask()) {
                     return false;
                 }
+                batchRowsSinceCheck += batchRowCount();
             }
         }
         return true;
+    }
+
+    /**
+     * Rows processed by the task that just ran; the batch check runs once this many rows accumulate.
+     * Tasks whose size is not measured in rows count as a full check interval.
+     */
+    protected long batchRowCount() {
+        return dispatcher.getBatchCheckRows();
     }
 
     protected abstract void cancelOwner();
@@ -239,6 +251,10 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
     }
 
     private boolean continueBatch() {
+        if (batchRowsSinceCheck < dispatcher.getBatchCheckRows()) {
+            return true;
+        }
+        batchRowsSinceCheck = 0;
         refreshBatchClock();
         return switch (dispatcher.checkBatch(batchStartNanos)) {
             case PageFrameReduceDispatcher.BATCH_CONTINUE -> true;

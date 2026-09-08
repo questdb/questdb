@@ -35,7 +35,6 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.SystemSqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
@@ -85,7 +84,7 @@ public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
             this.clock = configuration.getMicrosecondClock();
 
             // Set sharedQueryWorkerCount as 0, no need to do parallel query execution in this job,
-            this.sqlExecutionContext = new SystemSqlExecutionContext(engine, 0);
+            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 0);
             this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
             final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
             try (SqlCompiler compiler = engine.getSqlCompiler()) {

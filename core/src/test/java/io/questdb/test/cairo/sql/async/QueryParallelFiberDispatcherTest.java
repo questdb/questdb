@@ -607,6 +607,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
 
                     final long batchNanos = TimeUnit.MILLISECONDS.toNanos(1);
                     dispatcher.setBatchNanosForTesting(batchNanos);
+                    dispatcher.setBatchCheckRowsForTesting(0);
                     final int taskCount = 65;
                     // the first entry alone uses up the batch time budget; the rest form one batch
                     publishLatestByTask(
@@ -643,6 +644,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     Assert.assertEquals(ownerProgressBefore + 1, progressState.getVersion());
                     Assert.assertEquals(pubSeq.current() - (taskCount - 1), subSeq.current());
 
+                    dispatcher.setBatchNanosForTesting(Long.MAX_VALUE);
                     Assert.assertFalse(dispatcher.consumeLatestBy(-1));
                     Assert.assertEquals(1, runtime.drain(1));
                     Assert.assertEquals(taskCount, releaseCount.get());
@@ -2031,6 +2033,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 try {
                     final long batchNanos = TimeUnit.MILLISECONDS.toNanos(4);
                     dispatcher.setBatchNanosForTesting(batchNanos);
+                    dispatcher.setBatchCheckRowsForTesting(0);
                     // nothing is queued, so only the host budget can make the owner give the carrier up
                     final SpinningOwnerTask owner = new SpinningOwnerTask(dispatcher, 10, batchNanos / 2);
                     Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(owner));
@@ -2083,6 +2086,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     };
                     dispatcher.setBatchNanosForTesting(Long.MAX_VALUE);
                     dispatcher.setBatchSliceNanosForTesting(sliceNanos);
+                    dispatcher.setBatchCheckRowsForTesting(0);
                     for (int i = 0; i < 3; i++) {
                         publishVectorAggregateTask(
                                 queue,
@@ -2143,6 +2147,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     final RingQueue<VectorAggregateTask> queue = messageBus.getVectorAggregateQueue();
                     final long batchNanos = TimeUnit.MILLISECONDS.toNanos(1);
                     dispatcher.setBatchNanosForTesting(batchNanos);
+                    dispatcher.setBatchCheckRowsForTesting(0);
                     // the first entry alone uses up the batch time budget
                     publishVectorAggregateTask(
                             queue,
@@ -2178,6 +2183,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     Assert.assertEquals(ownerProgressBefore + 1, progressState.getVersion());
                     Assert.assertEquals(pubSeq.current() - 2, subSeq.current());
 
+                    dispatcher.setBatchNanosForTesting(Long.MAX_VALUE);
                     Assert.assertFalse(dispatcher.consumeVectorAggregate(-1));
                     Assert.assertEquals(globalProgressBefore + 2, dispatcher.getProgressVersion());
                     Assert.assertEquals(ownerProgressBefore + 1, progressState.getVersion());

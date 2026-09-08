@@ -518,11 +518,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             for (int retries = 0; ; retries++) {
                 final long compilationStart = nanosecondClock.getTicks();
-                final CompiledQuery cc = compileWithResourceGroupBypass(
-                        compiler,
-                        state.getQuery(),
-                        sqlExecutionContext
-                );
+                final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
                 state.setQueryType(cc.getType());
                 if (!state.isSqlExecutionOwnerStarted()) {
                     try {
@@ -586,20 +582,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             }
         } finally {
             state.setContainsSecret(sqlExecutionContext.containsSecret());
-        }
-    }
-
-    private static CompiledQuery compileWithResourceGroupBypass(
-            SqlCompiler compiler,
-            CharSequence query,
-            SqlExecutionContextImpl executionContext
-    ) throws SqlException {
-        final boolean previousBypass = executionContext.isResourceGroupBypassed();
-        executionContext.setResourceGroupBypassed(true);
-        try {
-            return compiler.compile(query, executionContext);
-        } finally {
-            executionContext.setResourceGroupBypassed(previousBypass);
         }
     }
 

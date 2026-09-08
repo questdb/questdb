@@ -39,6 +39,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
@@ -101,7 +102,7 @@ public class PGPipelineEntryResourceLifecycleTest extends AbstractTest {
     }
 
     @Test
-    public void testManagedSuspendedCursorRestoresStatementBypass() throws Exception {
+    public void testFailedOwnerResumeStopsTimerAndDoesNotRemountForErrorSync() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final DefaultTestCairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
@@ -119,16 +120,58 @@ public class PGPipelineEntryResourceLifecycleTest extends AbstractTest {
                             executionContext,
                             CompiledQuery.SELECT
                     );
-                    Assert.assertFalse(executionContext.isResourceGroupBypassed());
+                    invoke(entry, "unmountSqlExecutionOwnerAfterExecute", new Class<?>[0]);
+                    engine.mountFailure = new IllegalStateException("owner mount failed");
+                    final InvocationTargetException failure = Assert.assertThrows(
+                            InvocationTargetException.class,
+                            () -> invoke(entry, "resumeSqlExecutionOwner", new Class<?>[0])
+                    );
+                    Assert.assertSame(engine.mountFailure, failure.getCause());
+                    final List<String> failedResumeEvents = List.of(
+                            "owner.begin", "cursor.suspend", "owner.unmount",
+                            "cursor.resume", "owner.mount", "cursor.suspend"
+                    );
+                    Assert.assertEquals(failedResumeEvents, engine.events);
+
+                    entry.getErrorMessageSink().put(engine.mountFailure.getMessage());
+                    invoke(entry, "mountSqlExecutionOwnerForSync", new Class<?>[0]);
+                    Assert.assertEquals(failedResumeEvents, engine.events);
+                }
+                Assert.assertEquals(
+                        List.of(
+                                "owner.begin", "cursor.suspend", "owner.unmount",
+                                "cursor.resume", "owner.mount", "cursor.suspend",
+                                "cursor.close", "owner.end"
+                        ),
+                        engine.events
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testManagedSuspendedCursorResumesOwner() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final DefaultTestCairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            try (
+                    TrackingCairoEngine engine = new TrackingCairoEngine(configuration);
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)
+                            .with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                try (PGPipelineEntry entry = new PGPipelineEntry(engine)) {
+                    setCursor(entry, new TrackingRecordCursor(engine.events));
+                    invoke(
+                            entry,
+                            "beginSqlExecutionOwner",
+                            new Class<?>[]{CharSequence.class, SqlExecutionContext.class, short.class},
+                            "SELECT 1",
+                            executionContext,
+                            CompiledQuery.SELECT
+                    );
                     invoke(entry, "unmountSqlExecutionOwnerAfterExecute", new Class<?>[0]);
 
-                    // Another protocol statement can reuse and mutate the connection context while
-                    // this portal is suspended. Restoring from ownerId would be wrong here: a
-                    // managed statement has a positive owner but must restore bypass=false.
-                    executionContext.setResourceGroupBypassed(true);
                     invoke(entry, "mountSqlExecutionOwnerForSync", new Class<?>[0]);
 
-                    Assert.assertFalse(executionContext.isResourceGroupBypassed());
                     Assert.assertEquals(
                             List.of(
                                     "owner.begin",
@@ -140,7 +183,6 @@ public class PGPipelineEntryResourceLifecycleTest extends AbstractTest {
                             engine.events
                     );
                 }
-                Assert.assertFalse(executionContext.isResourceGroupBypassed());
             }
         });
     }
@@ -206,11 +248,11 @@ public class PGPipelineEntryResourceLifecycleTest extends AbstractTest {
     }
 
     @Test
-    public void testUnmanagedSuspendedCursorRestoresStatementBypass() throws Exception {
+    public void testUnmanagedSuspendedCursorResumesWithoutOwnerMount() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final DefaultTestCairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
-                    TrackingCairoEngine engine = new TrackingCairoEngine(configuration, -1, true);
+                    TrackingCairoEngine engine = new TrackingCairoEngine(configuration, -1);
                     SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)
                             .with(AllowAllSecurityContext.INSTANCE)
             ) {
@@ -224,17 +266,11 @@ public class PGPipelineEntryResourceLifecycleTest extends AbstractTest {
                             executionContext,
                             CompiledQuery.PSEUDO_SELECT
                     );
-                    Assert.assertTrue(executionContext.isResourceGroupBypassed());
 
-                    // Another protocol statement may reset the shared connection context while this
-                    // cursor is suspended. Its own statement classification must win when it resumes.
-                    executionContext.setResourceGroupBypassed(false);
                     invoke(entry, "mountSqlExecutionOwnerForSync", new Class<?>[0]);
 
-                    Assert.assertTrue(executionContext.isResourceGroupBypassed());
                     Assert.assertEquals(List.of("owner.begin", "cursor.resume"), engine.events);
                 }
-                Assert.assertFalse(executionContext.isResourceGroupBypassed());
             }
         });
     }
@@ -253,27 +289,18 @@ public class PGPipelineEntryResourceLifecycleTest extends AbstractTest {
 
     private static final class TrackingCairoEngine extends CairoEngine {
         private short compiledQueryType;
-        private final boolean bypassOnBegin;
         private long endedOwnerId = Long.MIN_VALUE;
         private final List<String> events = new ArrayList<>();
+        private RuntimeException mountFailure;
         private final long ownerId;
 
         private TrackingCairoEngine(DefaultTestCairoConfiguration configuration) {
-            this(configuration, 23, false);
+            this(configuration, 23);
         }
 
         private TrackingCairoEngine(DefaultTestCairoConfiguration configuration, long ownerId) {
-            this(configuration, ownerId, false);
-        }
-
-        private TrackingCairoEngine(
-                DefaultTestCairoConfiguration configuration,
-                long ownerId,
-                boolean bypassOnBegin
-        ) {
             super(configuration);
             this.ownerId = ownerId;
-            this.bypassOnBegin = bypassOnBegin;
         }
 
         @Override
@@ -283,7 +310,6 @@ public class PGPipelineEntryResourceLifecycleTest extends AbstractTest {
                 short compiledQueryType
         ) {
             this.compiledQueryType = compiledQueryType;
-            executionContext.setResourceGroupBypassed(bypassOnBegin);
             events.add("owner.begin");
             return ownerId;
         }
@@ -291,13 +317,15 @@ public class PGPipelineEntryResourceLifecycleTest extends AbstractTest {
         @Override
         public void endSqlExecution(long ownerId, SqlExecutionContext executionContext) {
             endedOwnerId = ownerId;
-            executionContext.setResourceGroupBypassed(false);
             events.add("owner.end");
         }
 
         @Override
         public void mountSqlExecution(long ownerId, SqlExecutionContext executionContext) {
             events.add("owner.mount");
+            if (mountFailure != null) {
+                throw mountFailure;
+            }
         }
 
         @Override

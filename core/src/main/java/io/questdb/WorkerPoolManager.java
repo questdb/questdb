@@ -105,6 +105,10 @@ public abstract class WorkerPoolManager implements Target {
         return sharedPoolQuery;
     }
 
+    public WorkerPool getSharedPoolWrite() {
+        return sharedPoolWrite;
+    }
+
     public WorkerPool getSharedPoolWrite(@NotNull WorkerPoolConfiguration config, @NotNull RequesterName requesterName) {
         return getWorkerPool(config, requesterName, sharedPoolWrite);
     }

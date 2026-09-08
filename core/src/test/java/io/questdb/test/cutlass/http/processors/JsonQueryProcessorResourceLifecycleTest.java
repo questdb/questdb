@@ -106,26 +106,6 @@ public class JsonQueryProcessorResourceLifecycleTest extends AbstractTest {
     }
 
     @Test
-    public void testResourceGroupBypassReset() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root);
-            final DefaultHttpServerConfiguration httpConfiguration =
-                    new DefaultHttpServerConfiguration(cairoConfiguration);
-            try (
-                    TrackingCairoEngine engine = new TrackingCairoEngine(cairoConfiguration);
-                    HttpConnectionContext context = new HttpConnectionContext(httpConfiguration, PlainSocketFactory.INSTANCE)
-            ) {
-                final SqlExecutionContext executionContext = context.getOrCreateSqlExecutionContext(engine, 1);
-                Assert.assertFalse(executionContext.isResourceGroupBypassed());
-                executionContext.setResourceGroupBypassed(true);
-                Assert.assertTrue(executionContext.isResourceGroupBypassed());
-                executionContext.reset();
-                Assert.assertFalse(executionContext.isResourceGroupBypassed());
-            }
-        });
-    }
-
-    @Test
     public void testResponseOnlyResumeDoesNotMountOwner() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root);

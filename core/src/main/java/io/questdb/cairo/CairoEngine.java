@@ -126,7 +126,7 @@ import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.griffin.SqlCompilerFactoryImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SystemSqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
@@ -764,26 +764,13 @@ public class CairoEngine implements Closeable, WriterSource {
                 .put(", writerTxn=").put(writerTxn);
     }
 
-    /**
-     * Extension point at an authenticated SQL execution boundary. A non-negative return value
-     * identifies an owner that remains active until the matching
-     * {@link #endSqlExecution(long, SqlExecutionContext)} call. The OSS engine has no protocol-level
-     * admission policy and returns {@code -1}.
-     */
-    public long beginSqlExecution(CharSequence query, SqlExecutionContext executionContext) {
-        return -1;
-    }
-
-    /**
-     * Starts an authenticated SQL execution after compilation has classified the statement.
-     * Implementations that do not distinguish statement types retain the legacy behavior.
-     */
+    /** Starts a classified statement; a non-negative owner ID must be ended with endSqlExecution(). */
     public long beginSqlExecution(
             CharSequence query,
             SqlExecutionContext executionContext,
             short compiledQueryType
     ) {
-        return beginSqlExecution(query, executionContext);
+        return -1;
     }
 
     public void buildViewGraphs() {
@@ -4981,7 +4968,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     protected SqlExecutionContext createRootExecutionContext() {
-        return new SystemSqlExecutionContext(this, 0).with(AllowAllSecurityContext.INSTANCE);
+        return new SqlExecutionContextImpl(this, 0).with(AllowAllSecurityContext.INSTANCE);
     }
 
     protected @NotNull TableNameRegistry createTableNameRegistry(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {

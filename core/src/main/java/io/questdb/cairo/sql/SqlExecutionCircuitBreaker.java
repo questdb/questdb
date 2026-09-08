@@ -42,7 +42,9 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
      */
     int COOPERATIVE_POLL_STRIDE = 128;
 
-    /** Number of healthy visits between cooperative clock samples on hot stateful paths. */
+    /**
+     * Number of healthy visits between cooperative clock samples on hot stateful paths.
+     */
     int STATEFUL_COOPERATIVE_POLL_STRIDE = 1024;
     int STATE_OK = 0;
     SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
@@ -147,25 +149,15 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
      */
     void cancel();
 
-    default void clearCancelledFlag(AtomicBoolean expected) {
-        synchronized (this) {
-            if (getCancelledFlag() == expected) {
-                setCancelledFlag((AtomicBoolean) null);
-            }
-        }
-    }
-
-    default void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
-        clearCancelledFlag(expected);
-    }
-
-    default void copyCancelledFlagTo(CancellationBinding target) {
-        synchronized (this) {
-            target.set(getCancelledFlag());
-        }
-    }
-
     boolean checkIfTripped(long millis, long fd);
+
+    /**
+     * Same as {@link #checkIfTripped()} but bypasses the connection-probe throttle. Meant for cold
+     * error paths that classify an abort after the fact and need a current connection verdict.
+     */
+    default boolean checkIfTrippedNoThrottle() {
+        return checkIfTripped();
+    }
 
     /**
      * Boolean breaker check followed by the policy-neutral cooperative-poll extension point when
@@ -185,12 +177,22 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
         return checkIfTripped(millis, fd);
     }
 
-    /**
-     * Same as {@link #checkIfTripped()} but bypasses the connection-probe throttle. Meant for cold
-     * error paths that classify an abort after the fact and need a current connection verdict.
-     */
-    default boolean checkIfTrippedNoThrottle() {
-        return checkIfTripped();
+    default void clearCancelledFlag(AtomicBoolean expected) {
+        synchronized (this) {
+            if (getCancelledFlag() == expected) {
+                setCancelledFlag((AtomicBoolean) null);
+            }
+        }
+    }
+
+    default void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        clearCancelledFlag(expected);
+    }
+
+    default void copyCancelledFlagTo(CancellationBinding target) {
+        synchronized (this) {
+            target.set(getCancelledFlag());
+        }
     }
 
     AtomicBoolean getCancelledFlag();

@@ -171,7 +171,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             state.recordCursorFactory = context.getSelectCache().poll(state.sqlText);
             if (state.recordCursorFactory == null) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    CompiledQuery cc = compileWithResourceGroupBypass(compiler, state.sqlText, sqlExecutionContext);
+                    CompiledQuery cc = compiler.compile(state.sqlText, sqlExecutionContext);
                     if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
                         state.recordCursorFactory = cc.getRecordCursorFactory();
                     } else if (isExpRequest) {
@@ -252,7 +252,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
                             CompiledQuery cc;
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                                cc = compileWithResourceGroupBypass(compiler, state.sqlText, sqlExecutionContext);
+                                cc = compiler.compile(state.sqlText, sqlExecutionContext);
                                 if (cc.getType() != CompiledQuery.SELECT && isExpRequest) {
                                     // Close CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER unsupported operations
                                     cc.closeAllButSelect();
@@ -364,20 +364,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 logInternalError(e, state);
             }
             throw ServerDisconnectException.INSTANCE;
-        }
-    }
-
-    private static CompiledQuery compileWithResourceGroupBypass(
-            SqlCompiler compiler,
-            CharSequence query,
-            SqlExecutionContextImpl executionContext
-    ) throws SqlException {
-        final boolean previousBypass = executionContext.isResourceGroupBypassed();
-        executionContext.setResourceGroupBypassed(true);
-        try {
-            return compiler.compile(query, executionContext);
-        } finally {
-            executionContext.setResourceGroupBypassed(previousBypass);
         }
     }
 

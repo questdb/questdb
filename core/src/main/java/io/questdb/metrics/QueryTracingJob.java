@@ -33,7 +33,6 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.SystemSqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.ConcurrentQueue;
@@ -79,7 +78,7 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
         this.queue = engine.getMessageBus().getQueryTraceQueue();
         this.buffer = new ValueHolderList<>(QueryTrace.ITEM_FACTORY, INITIAL_CAPACITY);
         this.engine = engine;
-        this.sqlExecutionContext = new SystemSqlExecutionContext(engine, 1).with(
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
                 engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
                 null,
                 null

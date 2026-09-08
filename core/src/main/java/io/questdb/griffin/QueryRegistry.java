@@ -81,6 +81,15 @@ public class QueryRegistry {
         }
     }
 
+    public static long getCurrentOwnerId(SqlExecutionContext executionContext) {
+        final long contextOwnerId = executionContext.getQueryRegistryOwnerId();
+        if (contextOwnerId > -1) {
+            return contextOwnerId;
+        }
+        final FiberDispatchContext dispatchContext = Fiber.captureDispatchContext();
+        return dispatchContext != null ? dispatchContext.getQueryRegistryOwnerId() : -1;
+    }
+
     /**
      * Cancels command with given id.
      * Running commands observe cancellation at their next circuit-breaker check. A fiber
@@ -246,13 +255,49 @@ public class QueryRegistry {
      */
     public void mountOwner(long queryId, SqlExecutionContext executionContext) {
         final Entry entry = getOwnerEntry(queryId, executionContext);
-        final QuietCloseable executionLease = entry.executionLease;
-        if (executionLease instanceof SqlExecutionLease lease) {
-            lease.mount();
+        if (entry.ownerMounted) {
+            throw new IllegalStateException("query registry owner is already mounted [id=" + queryId + ']');
         }
-        final MemoryTracker memoryTracker = entry.memoryTracker;
-        if (memoryTracker != null) {
-            executionContext.setMemoryTracker(memoryTracker);
+        final QuietCloseable executionLease = entry.executionLease;
+        final MemoryTracker outerTracker = executionContext.getMemoryTracker();
+        boolean leaseMounted = false;
+        executionContext.copyCancelledFlagsTo(entry.previousCancelledBinding, entry.previousSimpleCancelledBinding);
+        try {
+            executionContext.setCancelledFlag(entry.cancelled, entry.cancelledGeneration);
+            if (executionLease instanceof SqlExecutionLease lease) {
+                lease.mount();
+                leaseMounted = true;
+            }
+            if (entry.memoryTracker != null) {
+                executionContext.setMemoryTracker(entry.memoryTracker);
+            }
+            bindOwner(queryId, entry);
+        } catch (Throwable th) {
+            try {
+                restoreOwner(queryId, entry);
+            } catch (Throwable cleanupFailure) {
+                suppressCleanupFailure(th, cleanupFailure);
+            }
+            try {
+                restoreCancellation(entry);
+            } catch (Throwable cleanupFailure) {
+                suppressCleanupFailure(th, cleanupFailure);
+            }
+            try {
+                if (entry.memoryTracker != null && executionContext.getMemoryTracker() == entry.memoryTracker) {
+                    executionContext.setMemoryTracker(outerTracker);
+                }
+            } catch (Throwable cleanupFailure) {
+                suppressCleanupFailure(th, cleanupFailure);
+            }
+            if (leaseMounted) {
+                try {
+                    ((SqlExecutionLease) executionLease).unmount();
+                } catch (Throwable cleanupFailure) {
+                    suppressCleanupFailure(th, cleanupFailure);
+                }
+            }
+            throw th;
         }
     }
 
@@ -278,18 +323,14 @@ public class QueryRegistry {
      * @return non-negative id assigned to given query. It may be used to look query up in registry.
      */
     public long register(CharSequence query, SqlExecutionContext executionContext) {
-        final long contextOwnerId = executionContext.getQueryRegistryOwnerId();
-        if (contextOwnerId > -1) {
-            return retainOwner(contextOwnerId, executionContext);
+        final long ownerId = getCurrentOwnerId(executionContext);
+        if (executionContext.getQueryRegistryOwnerId() > -1) {
+            return retainOwner(ownerId, executionContext);
         }
-        final FiberDispatchContext dispatchContext = Fiber.captureDispatchContext();
-        if (dispatchContext != null) {
-            final long ownerId = dispatchContext.getQueryRegistryOwnerId();
-            if (ownerId > -1) {
-                final long retainedOwnerId = tryRetainDispatchedOwner(ownerId, executionContext);
-                if (retainedOwnerId > -1) {
-                    return retainedOwnerId;
-                }
+        if (ownerId > -1) {
+            final long retainedOwnerId = tryRetainDispatchedOwner(ownerId, executionContext);
+            if (retainedOwnerId > -1) {
+                return retainedOwnerId;
             }
         }
         return register0(query, executionContext, false);
@@ -314,6 +355,9 @@ public class QueryRegistry {
      */
     public void unmountOwner(long queryId, SqlExecutionContext executionContext) {
         final Entry entry = getOwnerEntry(queryId, executionContext);
+        if (!entry.ownerMounted) {
+            throw new IllegalStateException("query registry owner is not mounted [id=" + queryId + ']');
+        }
         Throwable cleanupFailure = null;
         try {
             MemoryTracker.detachResourceMemoryCurrentThread();
@@ -343,6 +387,16 @@ public class QueryRegistry {
             } else if (cleanupFailure != th) {
                 cleanupFailure.addSuppressed(th);
             }
+        }
+        try {
+            restoreOwner(queryId, entry);
+        } catch (Throwable th) {
+            cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+        }
+        try {
+            restoreCancellation(entry);
+        } catch (Throwable th) {
+            cleanupFailure = appendCleanupFailure(cleanupFailure, th);
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
@@ -380,21 +434,12 @@ public class QueryRegistry {
                 cleanupFailure = th;
             }
             try {
-                clearStaleSignalBinding(e.previousCancelledBinding);
+                restoreOwner(queryId, e);
             } catch (Throwable th) {
                 cleanupFailure = appendCleanupFailure(cleanupFailure, th);
             }
             try {
-                clearStaleSignalBinding(e.previousSimpleCancelledBinding);
-            } catch (Throwable th) {
-                cleanupFailure = appendCleanupFailure(cleanupFailure, th);
-            }
-            try {
-                executionContext.restoreCancelledFlag(
-                        e.cancelled,
-                        e.previousCancelledBinding,
-                        e.previousSimpleCancelledBinding
-                );
+                restoreCancellation(e);
             } catch (Throwable th) {
                 cleanupFailure = appendCleanupFailure(cleanupFailure, th);
             }
@@ -458,12 +503,42 @@ public class QueryRegistry {
         return primary;
     }
 
+    private static void bindOwner(long queryId, Entry entry) {
+        entry.previousOwnerId = entry.executionContext.getQueryRegistryOwnerId();
+        entry.ownerMounted = true;
+        entry.executionContext.setQueryRegistryOwnerId(queryId);
+    }
+
     private static void clearStaleSignalBinding(CancellationBinding binding) {
         final AtomicBoolean flag = binding.getFlag();
         if (flag instanceof FiberCancellationSignal signal
                 && signal.getGeneration() != binding.getGeneration(flag)) {
             binding.clear();
         }
+    }
+
+    private static void restoreCancellation(Entry entry) {
+        Throwable failure = null;
+        try {
+            clearStaleSignalBinding(entry.previousCancelledBinding);
+        } catch (Throwable th) {
+            failure = th;
+        }
+        try {
+            clearStaleSignalBinding(entry.previousSimpleCancelledBinding);
+        } catch (Throwable th) {
+            failure = appendCleanupFailure(failure, th);
+        }
+        try {
+            entry.executionContext.restoreCancelledFlag(
+                    entry.cancelled,
+                    entry.previousCancelledBinding,
+                    entry.previousSimpleCancelledBinding
+            );
+        } catch (Throwable th) {
+            failure = appendCleanupFailure(failure, th);
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static void suppressCleanupFailure(Throwable primary, Throwable failure) {
@@ -562,12 +637,14 @@ public class QueryRegistry {
             executionContext.copyCancelledFlagsTo(e.previousCancelledBinding, e.previousSimpleCancelledBinding);
             executionContext.setCancelledFlag(e.cancelled, e.cancelledGeneration);
             isCancellationBound = true;
-            e.executionLease = executionContext.getCairoEngine().onSqlExecutionRegistered(
-                    queryId,
-                    executionContext,
-                    e.cancelled,
-                    e.cancelledGeneration
-            );
+            if (deferQueryText) {
+                e.executionLease = executionContext.getCairoEngine().onSqlExecutionRegistered(
+                        queryId,
+                        executionContext,
+                        e.cancelled,
+                        e.cancelledGeneration
+                );
+            }
 
             // Acquire a per-workload memory tracker only after an optional engine admission hook
             // has committed. A queued Enterprise query therefore owns its registry descriptor and
@@ -591,6 +668,9 @@ public class QueryRegistry {
                 }
                 executionContext.setMemoryTracker(tracker);
                 e.memoryTracker = tracker;
+            }
+            if (deferQueryText) {
+                bindOwner(queryId, e);
             }
 
             // Registration listeners observe a fully initialized execution: admission has
@@ -617,23 +697,14 @@ public class QueryRegistry {
             } catch (Throwable cleanupFailure) {
                 suppressCleanupFailure(th, cleanupFailure);
             }
+            try {
+                restoreOwner(queryId, e);
+            } catch (Throwable cleanupFailure) {
+                suppressCleanupFailure(th, cleanupFailure);
+            }
             if (isCancellationBound) {
                 try {
-                    clearStaleSignalBinding(e.previousCancelledBinding);
-                } catch (Throwable cleanupFailure) {
-                    suppressCleanupFailure(th, cleanupFailure);
-                }
-                try {
-                    clearStaleSignalBinding(e.previousSimpleCancelledBinding);
-                } catch (Throwable cleanupFailure) {
-                    suppressCleanupFailure(th, cleanupFailure);
-                }
-                try {
-                    executionContext.restoreCancelledFlag(
-                            e.cancelled,
-                            e.previousCancelledBinding,
-                            e.previousSimpleCancelledBinding
-                    );
+                    restoreCancellation(e);
                 } catch (Throwable cleanupFailure) {
                     suppressCleanupFailure(th, cleanupFailure);
                 }
@@ -691,6 +762,25 @@ public class QueryRegistry {
             throw th;
         }
         return queryId;
+    }
+
+    private void restoreOwner(long queryId, Entry entry) {
+        if (entry.ownerMounted) {
+            final SqlExecutionContext context = entry.executionContext;
+            if (context.getQueryRegistryOwnerId() == queryId) {
+                final Entry previousOwner = entry.previousOwnerId > -1 ? registry.get(entry.previousOwnerId) : null;
+                context.setQueryRegistryOwnerId(
+                        previousOwner != null
+                                && previousOwner.executionContext == context
+                                && previousOwner.ownerMounted
+                                && Entry.isActiveLifecycle(entry.previousOwnerId, previousOwner.lifecycle)
+                                ? entry.previousOwnerId
+                                : -1
+                );
+            }
+            entry.ownerMounted = false;
+            entry.previousOwnerId = -1;
+        }
     }
 
     private long retainOwner(long ownerId, SqlExecutionContext executionContext) {
@@ -776,7 +866,9 @@ public class QueryRegistry {
         // (freed only when the provider closes), so a stale read returns a
         // valid-but-wrong number, never a fault.
         private MemoryTracker memoryTracker;
+        private boolean ownerMounted;
         private CharSequence poolName;
+        private long previousOwnerId = -1;
         private CharSequence principal;
         private boolean protocolOwner;
         private volatile CharSequence queryText = query;
@@ -802,8 +894,10 @@ public class QueryRegistry {
             executionContext = null;
             executionLease = null;
             memoryTracker = null;
+            ownerMounted = false;
             poolName = null;
             previousCancelledBinding.clear();
+            previousOwnerId = -1;
             previousSimpleCancelledBinding.clear();
             protocolOwner = false;
             queryText = query;

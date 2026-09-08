@@ -950,20 +950,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         sendExecDone(context, state, requestId, type, rowsAffected);
     }
 
-    private static CompiledQuery compileWithResourceGroupBypass(
-            SqlCompiler compiler,
-            CharSequence query,
-            SqlExecutionContextImpl executionContext
-    ) throws SqlException {
-        final boolean previousBypass = executionContext.isResourceGroupBypassed();
-        executionContext.setResourceGroupBypassed(true);
-        try {
-            return compiler.compile(query, executionContext);
-        } finally {
-            executionContext.setResourceGroupBypassed(previousBypass);
-        }
-    }
-
     private static void freeCompiledQueryAfterOwnerStartFailure(CompiledQuery cq, Throwable ownerStartFailure) {
         Throwable cleanupFailure = null;
         try {
@@ -1264,7 +1250,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     }
                     if (factory == null) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                            CompiledQuery cq = compileWithResourceGroupBypass(compiler, decoder.sql, sqlCtx);
+                            CompiledQuery cq = compiler.compile(decoder.sql, sqlCtx);
                             short type = cq.getType();
                             compiledQueryType = type;
                             queryCacheable = type == CompiledQuery.SELECT && cq.isCacheable();

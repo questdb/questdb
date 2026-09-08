@@ -118,7 +118,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
-    private boolean resourceGroupBypassed;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
     private SecurityContext validationSecurityContext;
@@ -462,11 +461,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public boolean isResourceGroupBypassed() {
-        return resourceGroupBypassed;
-    }
-
-    @Override
     public boolean isParallelTopKEnabled() {
         return parallelTopKEnabled;
     }
@@ -688,11 +682,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void setResourceGroupBypassed(boolean resourceGroupBypassed) {
-        this.resourceGroupBypassed = resourceGroupBypassed;
-    }
-
-    @Override
     public void setUseSimpleCircuitBreaker(boolean value) {
         this.useSimpleCircuitBreaker = value;
     }
@@ -826,7 +815,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         // cursor open; reset() is a backstop for reused per-connection contexts if that
         // restore is ever bypassed.
         this.readerPoolSupervisor = null;
-        this.resourceGroupBypassed = false;
         this.clockUseNow = false;
         this.nowTimestampType = ColumnType.TIMESTAMP_MICRO;
         this.intervalFunctionType = IntervalUtils.getIntervalType(nowTimestampType);

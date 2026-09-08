@@ -275,15 +275,12 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
 
             final AtomicInteger registrationCount = new AtomicInteger();
             queryRegistry.setListener((query, queryId, context) -> {
-                // CopyExportContext may lazily initialize its system log table. Enterprise
-                // excludes SystemSqlExecutionContext from Resource Group admission, so model
-                // a max-concurrency-one group by counting only foreground registrations.
-                if (!context.isSystemSql() && registrationCount.incrementAndGet() > 1) {
+                if ("<PENDING>".contentEquals(query) && registrationCount.incrementAndGet() > 1) {
                     throw new AssertionError("TEMP_TABLE export attempted a second query admission");
                 }
             });
             ownerId = queryRegistry.registerOwner(entry.getSqlText(), parentExecutionContext);
-            parentExecutionContext.setQueryRegistryOwnerId(ownerId);
+            Assert.assertEquals(ownerId, parentExecutionContext.getQueryRegistryOwnerId());
             final MemoryTracker ownerMemoryTracker = parentExecutionContext.getMemoryTracker();
             final SecurityContext ownerSecurityContext = parentExecutionContext.getSecurityContext();
             task.setMemoryTracker(ownerMemoryTracker);
@@ -315,8 +312,8 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
                     task.close();
                 } finally {
                     if (ownerId > -1) {
-                        parentExecutionContext.setQueryRegistryOwnerId(-1);
                         queryRegistry.unregister(ownerId, parentExecutionContext);
+                        Assert.assertEquals(-1, parentExecutionContext.getQueryRegistryOwnerId());
                     }
                     copyExportContext.releaseEntry(entry);
                 }
