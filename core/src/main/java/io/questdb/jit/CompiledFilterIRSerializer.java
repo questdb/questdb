@@ -1081,11 +1081,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // other two are a comparison of the reserved BOOLEAN keywords - `(true = false) = b0` -
             // and a comparison the bind variable service types rather than the predicate, as in
             // `(:tv > '2020-01-01') = (t2 > '2020-06-01')` or `(:tv > :tv2) = (t2 > '2020-06-01')`.
-            // Every operand of those is a LITERAL, so the comparison holds one constant value for
-            // the whole scan and no predicate that reaches a column pays for the decline. The
-            // verdict declines them rather than carving out the pairs that happen to agree: that
-            // agreement rests on the VALUES, and every type the ordering, symbol and bind variable
-            // paths gain would have to re-establish it.
+            // Every operand of those is a constant or a bind variable, so the comparison holds one
+            // value for the whole scan. The predicate it sits in still reaches a column through its
+            // OTHER comparison, though, and the decline takes the whole filter to the Java one, so
+            // that column's scan pays the Java-filter cost for a comparison that was never wrong.
+            // For the bind variable family the typing is sound on its own terms rather than by
+            // luck of the values: serializeBindVariable types a non-STRING bind variable from the
+            // bind variable service, which is where the Java filter types it too. The verdict
+            // declines it all the same rather than carving it out: the CHAR and BOOLEAN pairs agree
+            // on the VALUES only, every type the ordering, symbol and bind variable paths gain
+            // would have to re-establish a carve-out, and the bind variable pair has a spelling
+            // that compiles already - the AND conjunct the single-comparison exemption in
+            // onNodeDescended admits.
             if (columnFreeComparisonNode != null
                     && predicateContext.columnType != ColumnType.UNDEFINED
                     && !isNumeric(ColumnType.tagOf(predicateContext.columnType))) {
