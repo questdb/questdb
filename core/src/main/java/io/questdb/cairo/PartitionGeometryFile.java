@@ -119,7 +119,8 @@ public class PartitionGeometryFile implements Closeable, Mutable {
 
     /**
      * Appends the record built since {@link #beginRecord(long, long, int)} at {@code offset} of {@code
-     * <partitionDir>/_geometry.<generation>}, creating the file when it does not exist, and syncs it per {@code
+     * <partitionDir>/_geometry.<generation>}, creating the file when it does not exist, and syncs it per
+     * {@code commitMode}.
      */
     public long append(FilesFacade ff, Path partitionDir, int generation, long offset, int commitMode) {
         final long size = recordSize(pieceCount);

@@ -82,7 +82,8 @@ public interface ColumnIndexer extends QuietCloseable {
     /**
      * Same as {@link #configureFollowerAndWriter(Path, CharSequence, long, MemoryMA, long, long, long)}, but lets the
      * caller opt into skipping the underlying writer's key-file existence probe when it has already established the
-     * column had no data before this reopen's writer session began - see {@link
+     * column had no data before this reopen's writer session began - see
+     * {@link IndexWriter#of(Path, CharSequence, long, long, long, boolean)}.
      */
     default void configureFollowerAndWriter(
             Path path,
