@@ -56,6 +56,10 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
@@ -97,6 +101,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final StringSink errorMsgSink = new StringSink();
+    private final @Nullable FiberRuntime fiberRuntime;
+    private final @Nullable FiberRefreshTask fiberTask;
     private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
     private final DependentViewGraph graph;
     private final LongList intervals = new LongList();
@@ -122,21 +128,37 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private volatile Runnable onRefreshTaskDequeuedForTesting;
 
     public MatViewRefreshJob(int workerId, CairoEngine engine, int sharedQueryWorkerCount) {
-        // workerId is accepted for source-compatibility; the rotation framework
-        // makes the per-worker invariant a per-cont-snapshot invariant instead.
         this(engine, sharedQueryWorkerCount);
     }
 
     public MatViewRefreshJob(CairoEngine engine, int sharedQueryWorkerCount) {
-        this(engine, sharedQueryWorkerCount, engine.getMatViewStateStore());
+        this(engine, sharedQueryWorkerCount, engine.getMatViewStateStore(), null, false);
+    }
+
+    public MatViewRefreshJob(CairoEngine engine, int sharedQueryWorkerCount, @NotNull FiberRuntime fiberRuntime) {
+        this(engine, sharedQueryWorkerCount, engine.getMatViewStateStore(), fiberRuntime, false);
     }
 
     @TestOnly
     public MatViewRefreshJob(CairoEngine engine, int sharedQueryWorkerCount, MatViewStateStore stateStore) {
+        this(engine, sharedQueryWorkerCount, stateStore, null, false);
+    }
+
+    private MatViewRefreshJob(
+            CairoEngine engine,
+            int sharedQueryWorkerCount,
+            MatViewStateStore stateStore,
+            @Nullable FiberRuntime fiberRuntime,
+            boolean isFiberExecutor
+    ) {
         try {
             this.engine = engine;
+            this.fiberRuntime = fiberRuntime;
             this.sharedQueryWorkerCount = sharedQueryWorkerCount;
             this.refreshSqlExecutionContext = new MatViewRefreshSqlExecutionContext(engine, sharedQueryWorkerCount);
+            this.fiberTask = fiberRuntime != null && !isFiberExecutor
+                    ? new FiberRefreshTask(engine, sharedQueryWorkerCount, stateStore, fiberRuntime)
+                    : null;
             this.graph = engine.getDependentViewGraph();
             this.stateStore = stateStore;
             this.configuration = engine.getConfiguration();
@@ -196,33 +218,23 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     @Override
     public Job cloneInstance() {
-        return new MatViewRefreshJob(engine, sharedQueryWorkerCount);
+        final FiberRuntime runtime = fiberRuntime;
+        return runtime != null
+                ? new MatViewRefreshJob(engine, sharedQueryWorkerCount, runtime)
+                : new MatViewRefreshJob(engine, sharedQueryWorkerCount);
     }
 
     @Override
     public void close() {
         LOG.debug().$("materialized view refresh job closing").$();
+        Misc.free(fiberTask);
         Misc.free(refreshSqlExecutionContext);
         Misc.free(txnRangeLoader);
     }
 
     @Override
     public void closeInstance() {
-        // cloneInstance() mints a fresh job per generation, so the pool frees
-        // each instance's native resources through this hook at halt. Misc.free
-        // nulls the fields, keeping the call idempotent.
         close();
-    }
-
-    @Override
-    public void recycleInstance() {
-        // Per-iteration scratch is overwritten on entry to each refresh task.
-        // Clearing here is defensive against stale state surviving into the
-        // snapshot's next reuse.
-        childViewSink.clear();
-        childViewSink2.clear();
-        errorMsgSink.clear();
-        intervals.clear();
     }
 
     @Override
@@ -601,16 +613,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             //   2. Period range refresh triggered by period timer
 
             // First, do a range replace commit.
-            fencedMatViewCommit(() -> walWriter.commitWithParams(
+            fencedCommitWithParams(
+                    walWriter,
                     replacementTimestampLo,
                     replacementTimestampHi,
                     WAL_DEDUP_MODE_REPLACE_RANGE
-            ));
+            );
             // Second, if it's a period range refresh, we need to persist state
             // with the new lastPeriodHi, but the same base txn and cached txn intervals.
             // If we did a mat view data commit, we'd unintentionally reset the cached intervals.
             if (refreshContext.periodHi != Numbers.LONG_NULL) {
-                fencedMatViewCommit(() -> walWriter.resetMatViewState(
+                fencedResetMatViewState(
+                        walWriter,
                         viewState.getLastRefreshBaseTxn(),
                         refreshFinishTimestampUs,
                         false,
@@ -618,7 +632,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         commitPeriodHi,
                         viewState.getRefreshIntervals(),
                         viewState.getRefreshIntervalsBaseTxn()
-                ));
+                );
             }
             viewState.rangeRefreshSuccess(
                     factory,
@@ -633,13 +647,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // It's an incremental/full refresh.
             // Easy job: first commit data along with the mat view state and then update the in-memory state.
             // The mat view data commit will reset cached txn intervals since we want to evict them.
-            fencedMatViewCommit(() -> walWriter.commitMatView(
+            fencedCommitMatView(
+                    walWriter,
                     refreshContext.toBaseTxn,
                     refreshFinishTimestampUs,
                     commitPeriodHi,
                     replacementTimestampLo,
                     replacementTimestampHi
-            ));
+            );
             viewState.refreshSuccess(
                     factory,
                     copier,
@@ -668,7 +683,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // externalization only -- the MatViewState.closed flag, the refresh latch and the state-store redirect
     // that defend the native cursor are untouched. The fence is a strict no-op for non-replicating
     // deployments: the read lock is uncontended and the read-only flag is static.
-    private void fencedMatViewCommit(Runnable commit) {
+    private Lock acquireMatViewCommitFence() {
         if (engine.isReadOnlyMode()) {
             throw CairoException.readOnlyAccess();
         }
@@ -679,7 +694,79 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 throw CairoException.readOnlyAccess();
             }
             engine.fireRoleSwitchMintObserver();
-            commit.run();
+            return lock;
+        } catch (Throwable th) {
+            lock.unlock();
+            throw th;
+        }
+    }
+
+    private void fencedCommitMatView(
+            WalWriter walWriter,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long lastPeriodHi,
+            long lastReplaceRangeLowTs,
+            long lastReplaceRangeHiTs
+    ) {
+        final Lock lock = acquireMatViewCommitFence();
+        try {
+            walWriter.commitMatView(
+                    lastRefreshBaseTxn,
+                    lastRefreshTimestamp,
+                    lastPeriodHi,
+                    lastReplaceRangeLowTs,
+                    lastReplaceRangeHiTs
+            );
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void fencedCommitWithParams(
+            WalWriter walWriter,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode
+    ) {
+        final Lock lock = acquireMatViewCommitFence();
+        try {
+            walWriter.commitWithParams(replaceRangeLowTs, replaceRangeHiTs, dedupMode);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void fencedResetMatViewState(
+            WalWriter walWriter,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean isInvalid,
+            @Nullable CharSequence invalidationReason,
+            long lastPeriodHi,
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn
+    ) {
+        final Lock lock = acquireMatViewCommitFence();
+        try {
+            walWriter.resetMatViewState(
+                    lastRefreshBaseTxn,
+                    lastRefreshTimestamp,
+                    isInvalid,
+                    invalidationReason,
+                    lastPeriodHi,
+                    refreshIntervals,
+                    refreshIntervalsBaseTxn
+            );
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void fencedTruncateSoft(WalWriter walWriter) {
+        final Lock lock = acquireMatViewCommitFence();
+        try {
+            walWriter.truncateSoft();
         } finally {
             lock.unlock();
         }
@@ -1058,7 +1145,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         return false;
                     }
                     runBaseReaderSnapshotSeamForTesting();
-                    fencedMatViewCommit(walWriter::truncateSoft);
+                    fencedTruncateSoft(walWriter);
                     resetInvalidState(viewState, walWriter);
 
                     // Seam fires after resetInvalidState, modelling an INVALIDATE that arrives during the
@@ -1633,11 +1720,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 final long commitStart = System.nanoTime();
                                 final long lo = replacementTimestampLo;
                                 final long hi = replacementTimestampHi;
-                                fencedMatViewCommit(() -> walWriter.commitWithParams(
+                                fencedCommitWithParams(
+                                        walWriter,
                                         lo,
                                         hi,
                                         WAL_DEDUP_MODE_REPLACE_RANGE
-                                ));
+                                );
                                 viewState.recordCommitNanos(System.nanoTime() - commitStart);
                                 if (pendingScanRangeTsUnits > 0) {
                                     viewState.recordScanMetrics(pendingScanSampleNanos, pendingScanRangeTsUnits);
@@ -1720,11 +1808,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 } else {
                                     final long lo = replacementTimestampLo;
                                     final long hi = replacementTimestampHi;
-                                    fencedMatViewCommit(() -> walWriter.commitWithParams(
+                                    fencedCommitWithParams(
+                                            walWriter,
                                             lo,
                                             hi,
                                             WAL_DEDUP_MODE_REPLACE_RANGE
-                                    ));
+                                    );
                                 }
                                 viewState.recordCommitNanos(System.nanoTime() - commitStart);
                                 viewState.recordScanMetrics(pendingScanSampleNanos, pendingScanRangeTsUnits);
@@ -2145,9 +2234,37 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return configuration.isWalApplySuspendedWriteDenied() && engine.isWalApplySuspended(viewToken);
     }
 
+    private boolean launchRefreshOnFiber(
+            FiberRefreshTask task,
+            MatViewRefreshTask notification,
+            Fiber fiber,
+            long reservationEpoch
+    ) {
+        final FiberRuntime runtime = fiberRuntime;
+        if (runtime == null) {
+            throw new IllegalStateException("materialized view refresh fiber runtime is not configured");
+        }
+        if (!task.prepare(notification)) {
+            return false;
+        }
+        final LaunchResult result = runtime.launchReserved(
+                fiber,
+                reservationEpoch,
+                task,
+                task.getIncarnation()
+        );
+        if (result == LaunchResult.LAUNCHED) {
+            return true;
+        }
+        task.releaseAfterLaunchFailure();
+        return false;
+    }
+
     private boolean processNotifications() {
         boolean refreshed = false;
         refreshQueueDeferred = false;
+        final FiberRuntime runtime = fiberRuntime;
+        final FiberRefreshTask fiberTask = this.fiberTask;
         if (engine.isMatViewRefreshSuspended()) {
             // A role promote has hydrated the real store but not yet opened writes. Do not dequeue or
             // execute any task while the engine is still read-only -- executing here would refuse the
@@ -2156,45 +2273,90 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         stateStore.reenqueueFailedPendingTasks();
-        while (!refreshQueueDeferred && stateStore.tryDequeueRefreshTask(refreshTask)) {
-            runRefreshTaskDequeuedSeamForTesting();
-            // Re-read the suspend gate AFTER the dequeue. A promote can set the gate, swap in the real
-            // store, and enqueue the hydrate kickstart between this pass's top-of-method gate read and
-            // this dequeue. The dequeue synchronizes-with that enqueue, which the promoter ordered
-            // after the gate-set, so this read is guaranteed to observe the set gate -- a re-check in
-            // the while condition would NOT (it is ordered before the dequeue). Put the task back and
-            // stop: executing it now would refuse the view WalWriter on the still-read-only engine and
-            // drop it. It runs after the gate clears (writes open).
-            if (engine.isMatViewRefreshSuspended()) {
-                stateStore.reenqueueRefreshTask(refreshTask);
+        while (!refreshQueueDeferred && (fiberTask == null || fiberTask.isAvailable())) {
+            // onDone publishes the outcome before making the task available. Consume it once,
+            // even when the fiber completed after the dispatch pass that launched it returned.
+            if (fiberTask != null && fiberTask.consumeRefreshDeferred()) {
                 break;
             }
-            if (checkIfBaseTableDropped(refreshTask)) {
-                continue;
-            }
+            Fiber reservedFiber = null;
+            long reservedFiberEpoch = 0;
+            try {
+                if (!stateStore.tryDequeueRefreshTask(refreshTask)) {
+                    break;
+                }
+                runRefreshTaskDequeuedSeamForTesting();
+                // Re-read the suspend gate AFTER the dequeue. A promote can set the gate, swap in the real
+                // store, and enqueue the hydrate kickstart between this pass's top-of-method gate read and
+                // this dequeue. The dequeue synchronizes-with that enqueue, which the promoter ordered
+                // after the gate-set, so this read is guaranteed to observe the set gate -- a re-check in
+                // the while condition would NOT (it is ordered before the dequeue). Put the task back and
+                // stop: executing it now would refuse the view WalWriter on the still-read-only engine and
+                // drop it. It runs after the gate clears (writes open).
+                if (engine.isMatViewRefreshSuspended()) {
+                    stateStore.reenqueueRefreshTask(refreshTask);
+                    break;
+                }
+                if (checkIfBaseTableDropped(refreshTask)) {
+                    continue;
+                }
 
-            final int operation = refreshTask.operation;
-            switch (operation) {
-                case MatViewRefreshTask.INCREMENTAL_REFRESH:
-                    refreshed |= incrementalRefresh(refreshTask);
-                    break;
-                case MatViewRefreshTask.RANGE_REFRESH:
-                    refreshed |= rangeRefresh(refreshTask);
-                    break;
-                case MatViewRefreshTask.FULL_REFRESH:
-                    refreshed |= fullRefresh(refreshTask);
-                    break;
-                case MatViewRefreshTask.INVALIDATE:
-                    invalidate(refreshTask);
-                    break;
-                case MatViewRefreshTask.UPDATE_REFRESH_INTERVALS:
-                    updateRefreshIntervals(refreshTask);
-                    break;
-                default:
-                    throw new RuntimeException("unexpected operation: " + operation);
+                final int operation = refreshTask.operation;
+                switch (operation) {
+                    case MatViewRefreshTask.FULL_REFRESH:
+                    case MatViewRefreshTask.INCREMENTAL_REFRESH:
+                    case MatViewRefreshTask.RANGE_REFRESH:
+                        if (fiberTask != null) {
+                            if (runtime == null || (reservedFiber = runtime.tryReserveFiber()) == null) {
+                                stateStore.reenqueueRefreshTask(refreshTask);
+                                return refreshed;
+                            }
+                            reservedFiberEpoch = reservedFiber.getReservationEpoch();
+                            if (!launchRefreshOnFiber(
+                                    fiberTask,
+                                    refreshTask,
+                                    reservedFiber,
+                                    reservedFiberEpoch
+                            )) {
+                                stateStore.reenqueueRefreshTask(refreshTask);
+                                return refreshed;
+                            }
+                            refreshed = true;
+                        } else {
+                            refreshed |= switch (operation) {
+                                case MatViewRefreshTask.FULL_REFRESH -> fullRefresh(refreshTask);
+                                case MatViewRefreshTask.INCREMENTAL_REFRESH -> incrementalRefresh(refreshTask);
+                                default -> rangeRefresh(refreshTask);
+                            };
+                        }
+                        break;
+                    case MatViewRefreshTask.INVALIDATE:
+                        invalidate(refreshTask);
+                        break;
+                    case MatViewRefreshTask.UPDATE_REFRESH_INTERVALS:
+                        updateRefreshIntervals(refreshTask);
+                        break;
+                    default:
+                        throw new RuntimeException("unexpected operation: " + operation);
+                }
+            } finally {
+                releaseReservedFiber(runtime, reservedFiber, reservedFiberEpoch);
             }
         }
         return refreshed;
+    }
+
+    private static void releaseReservedFiber(
+            @Nullable FiberRuntime runtime,
+            @Nullable Fiber fiber,
+            long reservationEpoch
+    ) {
+        if (fiber != null) {
+            if (runtime == null) {
+                throw new IllegalStateException("materialized view refresh fiber runtime is not configured");
+            }
+            runtime.releaseReservedFiber(fiber, reservationEpoch);
+        }
     }
 
     private boolean rangeRefresh(MatViewRefreshTask refreshTask) {
@@ -2502,7 +2664,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // derived state, so the new primary recomputes it forward.
         if (walWriter != null && !engine.isReadOnlyMode()) {
             try {
-                fencedMatViewCommit(() -> walWriter.resetMatViewState(
+                fencedResetMatViewState(
+                        walWriter,
                         viewState.getLastRefreshBaseTxn(),
                         viewState.getLastRefreshFinishTimestampUs(),
                         true,
@@ -2510,7 +2673,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         viewState.getLastPeriodHi(),
                         viewState.getRefreshIntervals(),
                         viewState.getRefreshIntervalsBaseTxn()
-                ));
+                );
             } catch (CairoException refused) {
                 // A demote landed between the eager check above and the fence's in-lock re-check, so the
                 // fence refused the mint. This is the abandon-on-demote outcome -- swallow it here (this is
@@ -2710,7 +2873,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long periodHi
     ) {
         if (walWriter != null) {
-            fencedMatViewCommit(() -> walWriter.resetMatViewState(
+            fencedResetMatViewState(
+                    walWriter,
                     baseTableTxn,
                     refreshFinishedTimestamp,
                     false,
@@ -2718,7 +2882,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     periodHi,
                     null,
                     -1
-            ));
+            );
         }
         viewState.refreshSuccessNoRows(
                 refreshFinishedTimestamp,
@@ -2739,7 +2903,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         viewState.getRefreshIntervals().clear();
         viewState.setLastRefreshTimestampUs(Numbers.LONG_NULL);
         viewState.setLastPeriodHi(Numbers.LONG_NULL);
-        fencedMatViewCommit(() -> walWriter.resetMatViewState(
+        fencedResetMatViewState(
+                walWriter,
                 viewState.getLastRefreshBaseTxn(),
                 viewState.getLastRefreshFinishTimestampUs(),
                 invalid,
@@ -2747,7 +2912,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 viewState.getLastPeriodHi(),
                 null,
                 -1
-        ));
+        );
     }
 
     // Re-throws a read-only authorization refusal so the surrounding outer catch routes it through
@@ -2808,7 +2973,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         viewState.markAsInvalid(invalidationReason);
         viewState.setLastRefreshTimestampUs(invalidationTimestamp);
         viewState.setLastRefreshStartTimestampUs(invalidationTimestamp);
-        fencedMatViewCommit(() -> walWriter.resetMatViewState(
+        fencedResetMatViewState(
+                walWriter,
                 viewState.getLastRefreshBaseTxn(),
                 viewState.getLastRefreshFinishTimestampUs(),
                 true,
@@ -2816,7 +2982,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 viewState.getLastPeriodHi(),
                 viewState.getRefreshIntervals(),
                 viewState.getRefreshIntervalsBaseTxn()
-        ));
+        );
     }
 
     private void updateRefreshIntervals(@NotNull MatViewRefreshTask refreshTask) {
@@ -2979,7 +3145,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
                 viewState.setRefreshIntervalsBaseTxn(lastBaseTxn);
 
-                fencedMatViewCommit(() -> walWriter.resetMatViewState(
+                fencedResetMatViewState(
+                        walWriter,
                         viewState.getLastRefreshBaseTxn(),
                         viewState.getLastRefreshFinishTimestampUs(),
                         false,
@@ -2987,7 +3154,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         viewState.getLastPeriodHi(),
                         viewState.getRefreshIntervals(),
                         viewState.getRefreshIntervalsBaseTxn()
-                ));
+                );
 
                 return viewState.getRefreshIntervals();
             } catch (CairoException ex) {
@@ -3069,6 +3236,98 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return null;
         }
         return baseTableToken;
+    }
+
+    private static class FiberRefreshTask extends FiberTask implements QuietCloseable {
+        private final MatViewRefreshJob executor;
+        private volatile boolean isAvailable = true;
+        private boolean isRefreshDeferred;
+        private final MatViewRefreshTask notification = new MatViewRefreshTask();
+
+        private FiberRefreshTask(
+                CairoEngine engine,
+                int sharedQueryWorkerCount,
+                MatViewStateStore stateStore,
+                FiberRuntime fiberRuntime
+        ) {
+            this.executor = new MatViewRefreshJob(engine, sharedQueryWorkerCount, stateStore, fiberRuntime, true);
+        }
+
+        @Override
+        public void close() {
+            executor.close();
+        }
+
+        @Override
+        protected void onAbandoned() {
+            executor.stateStore.reenqueueRefreshTask(notification);
+        }
+
+        @Override
+        protected void onDone() {
+            notification.clear();
+            isRefreshDeferred = executor.refreshQueueDeferred;
+            isAvailable = true;
+        }
+
+        @Override
+        protected void onError(Throwable th) {
+            LOG.critical().$("materialized view refresh failed on fiber [view=").$(notification.matViewToken)
+                    .$(", ex=").$(th)
+                    .I$();
+            executor.engine.getMetrics().healthMetrics().incrementUnhandledErrors();
+        }
+
+        @Override
+        protected boolean runStep() {
+            switch (notification.operation) {
+                case MatViewRefreshTask.INCREMENTAL_REFRESH -> executor.incrementalRefresh(notification);
+                case MatViewRefreshTask.RANGE_REFRESH -> executor.rangeRefresh(notification);
+                case MatViewRefreshTask.FULL_REFRESH -> executor.fullRefresh(notification);
+                default -> throw new IllegalStateException(
+                        "unexpected materialized view refresh operation [operation=" + notification.operation + ']'
+                );
+            }
+            return true;
+        }
+
+        private boolean consumeRefreshDeferred() {
+            final boolean isDeferred = isRefreshDeferred;
+            isRefreshDeferred = false;
+            return isDeferred;
+        }
+
+        private boolean isAvailable() {
+            return isAvailable;
+        }
+
+        private boolean prepare(MatViewRefreshTask source) {
+            if (!isAvailable) {
+                return false;
+            }
+            if (isDone() && !tryReopen()) {
+                return false;
+            }
+            isAvailable = false;
+            executor.refreshQueueDeferred = false;
+            boolean isPrepared = false;
+            try {
+                source.copyTo(notification);
+                isPrepared = true;
+                return true;
+            } finally {
+                if (!isPrepared) {
+                    isAvailable = true;
+                }
+            }
+        }
+
+        private void releaseAfterLaunchFailure() {
+            if (isIdle(getIncarnation())) {
+                notification.clear();
+                isAvailable = true;
+            }
+        }
     }
 
     private static class RefreshContext implements Mutable {

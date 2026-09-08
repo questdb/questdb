@@ -29,6 +29,7 @@ import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.WorkerPoolManager;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
@@ -40,6 +41,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.ConcurrentIntHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
@@ -65,7 +67,9 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.tools.TestUtils.*;
 import static java.util.Arrays.asList;
@@ -167,9 +171,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             final Thread hook;
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                Assert.assertFalse(serverMain.isCloseComplete());
                 serverMain.start(true);
                 hook = serverMain.testGetShutdownHookThread();
                 Assert.assertNotNull("start(true) must register a shutdown hook", hook);
+                serverMain.close();
+                Assert.assertTrue(serverMain.isCloseComplete());
             }
             // close() must deregister the hook: the JVM-static hook map would otherwise pin
             // the full engine graph per boot in a long-lived JVM (e.g. a reused test fork).
@@ -178,6 +185,251 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     "close() must deregister the shutdown hook",
                     Runtime.getRuntime().removeShutdownHook(hook)
             );
+        });
+    }
+
+    @Test
+    public void testCloseDispatchesTerminalLifecycleStop() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger terminalCloseCount = new AtomicInteger();
+            final ServerMain serverMain = new ServerMain(getServerMainArgs()) {
+                @Override
+                protected io.questdb.lifecycle.LifecycleOrchestrator newOrchestrator(
+                        io.questdb.log.Log log,
+                        WorkerPoolManager workerPoolManager,
+                        Object tokioRuntime
+                ) {
+                    return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
+                        @Override
+                        public void close() {
+                            if (!isStopComplete()) {
+                                terminalCloseCount.incrementAndGet();
+                            }
+                            super.close();
+                        }
+                    };
+                }
+            };
+            try {
+                serverMain.start();
+                serverMain.close();
+
+                Assert.assertEquals(1, terminalCloseCount.get());
+                Assert.assertTrue(serverMain.isCloseComplete());
+                Assert.assertTrue(serverMain.hasBeenClosed());
+            } finally {
+                serverMain.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCloseSignalsBlockedBootBeforeWaitingForLifecycleLock() throws Exception {
+        assertMemoryLeak(() -> {
+            final SOCountDownLatch bootEntered = new SOCountDownLatch(1);
+            final SOCountDownLatch stopRequested = new SOCountDownLatch(1);
+            final ServerMain serverMain = new ServerMain(getServerMainArgs()) {
+                @Override
+                protected io.questdb.lifecycle.LifecycleOrchestrator newOrchestrator(
+                        io.questdb.log.Log log,
+                        WorkerPoolManager workerPoolManager,
+                        Object tokioRuntime
+                ) {
+                    return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
+                        @Override
+                        public void requestStop() {
+                            super.requestStop();
+                            stopRequested.countDown();
+                        }
+
+                        @Override
+                        public void run() {
+                            bootEntered.countDown();
+                            stopRequested.await();
+                        }
+                    };
+                }
+            };
+            final AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+            final AtomicReference<Throwable> startFailure = new AtomicReference<>();
+            final Thread closeThread = new Thread(() -> {
+                try {
+                    serverMain.close();
+                } catch (Throwable th) {
+                    closeFailure.set(th);
+                }
+            });
+            final Thread startThread = new Thread(() -> {
+                try {
+                    serverMain.start();
+                } catch (Throwable th) {
+                    startFailure.set(th);
+                }
+            });
+            startThread.start();
+            try {
+                Assert.assertTrue(bootEntered.await(TimeUnit.SECONDS.toNanos(10)));
+                closeThread.start();
+                Assert.assertTrue(stopRequested.await(TimeUnit.SECONDS.toNanos(10)));
+            } finally {
+                stopRequested.countDown();
+                startThread.join(10_000L);
+                closeThread.join(10_000L);
+                if (!startThread.isAlive() && !closeThread.isAlive() && !serverMain.isCloseComplete()) {
+                    serverMain.close();
+                }
+            }
+            Assert.assertFalse(startThread.isAlive());
+            Assert.assertFalse(closeThread.isAlive());
+            Assert.assertNull(startFailure.get());
+            Assert.assertNull(closeFailure.get());
+        });
+    }
+
+    @Test
+    public void testCloseSignalsOrchestratorPublishedAfterRequest() throws Exception {
+        assertMemoryLeak(() -> {
+            final SOCountDownLatch constructionEntered = new SOCountDownLatch(1);
+            final SOCountDownLatch releaseConstruction = new SOCountDownLatch(1);
+            final SOCountDownLatch stopRequested = new SOCountDownLatch(1);
+            final ServerMain serverMain = new ServerMain(getServerMainArgs()) {
+                @Override
+                protected io.questdb.lifecycle.LifecycleOrchestrator newOrchestrator(
+                        io.questdb.log.Log log,
+                        WorkerPoolManager workerPoolManager,
+                        Object tokioRuntime
+                ) {
+                    constructionEntered.countDown();
+                    releaseConstruction.await();
+                    return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
+                        @Override
+                        public void requestStop() {
+                            super.requestStop();
+                            stopRequested.countDown();
+                        }
+
+                        @Override
+                        public void run() {
+                            stopRequested.await();
+                        }
+                    };
+                }
+            };
+            final AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+            final AtomicReference<Throwable> startFailure = new AtomicReference<>();
+            final Thread closeThread = new Thread(() -> {
+                try {
+                    serverMain.close();
+                } catch (Throwable th) {
+                    closeFailure.set(th);
+                }
+            });
+            final Thread startThread = new Thread(() -> {
+                try {
+                    serverMain.start();
+                } catch (Throwable th) {
+                    startFailure.set(th);
+                }
+            });
+            startThread.start();
+            try {
+                Assert.assertTrue(constructionEntered.await(TimeUnit.SECONDS.toNanos(10)));
+                closeThread.start();
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                while (!serverMain.hasBeenClosed() && System.nanoTime() < deadline) {
+                    Os.pause();
+                }
+                Assert.assertTrue(serverMain.hasBeenClosed());
+                releaseConstruction.countDown();
+                Assert.assertTrue(stopRequested.await(TimeUnit.SECONDS.toNanos(10)));
+            } finally {
+                releaseConstruction.countDown();
+                stopRequested.countDown();
+                startThread.join(10_000L);
+                closeThread.join(10_000L);
+                if (!startThread.isAlive() && !closeThread.isAlive() && !serverMain.isCloseComplete()) {
+                    serverMain.close();
+                }
+            }
+            Assert.assertFalse(startThread.isAlive());
+            Assert.assertFalse(closeThread.isAlive());
+            Assert.assertNull(startFailure.get());
+            Assert.assertNull(closeFailure.get());
+        });
+    }
+
+    @Test
+    public void testConcurrentCloseWaitsForCurrentAttempt() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger closeAttempts = new AtomicInteger();
+            final SOCountDownLatch closeThreadsDone = new SOCountDownLatch(2);
+            final SOCountDownLatch firstCloseEntered = new SOCountDownLatch(1);
+            final SOCountDownLatch releaseFirstClose = new SOCountDownLatch(1);
+            final SOCountDownLatch secondCloseStarted = new SOCountDownLatch(1);
+            final ServerMain serverMain = new ServerMain(getServerMainArgs()) {
+                @Override
+                protected io.questdb.lifecycle.LifecycleOrchestrator newOrchestrator(
+                        io.questdb.log.Log log,
+                        WorkerPoolManager workerPoolManager,
+                        Object tokioRuntime
+                ) {
+                    return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
+                        @Override
+                        public void close() {
+                            if (!isStopComplete() && closeAttempts.incrementAndGet() == 1) {
+                                firstCloseEntered.countDown();
+                                releaseFirstClose.await();
+                            }
+                            super.close();
+                        }
+                    };
+                }
+            };
+            final AtomicReference<Throwable> firstCloseFailure = new AtomicReference<>();
+            final AtomicReference<Throwable> secondCloseFailure = new AtomicReference<>();
+            final Thread firstCloseThread = new Thread(() -> {
+                try {
+                    serverMain.close();
+                } catch (Throwable th) {
+                    firstCloseFailure.set(th);
+                } finally {
+                    closeThreadsDone.countDown();
+                }
+            });
+            final Thread secondCloseThread = new Thread(() -> {
+                secondCloseStarted.countDown();
+                try {
+                    serverMain.close();
+                } catch (Throwable th) {
+                    secondCloseFailure.set(th);
+                } finally {
+                    closeThreadsDone.countDown();
+                }
+            });
+            try {
+                serverMain.start();
+                firstCloseThread.start();
+                Assert.assertTrue(firstCloseEntered.await(TimeUnit.SECONDS.toNanos(10)));
+                secondCloseThread.start();
+                Assert.assertTrue(secondCloseStarted.await(TimeUnit.SECONDS.toNanos(10)));
+                Assert.assertTrue(secondCloseThread.isAlive());
+                Assert.assertEquals(2, closeThreadsDone.getCount());
+                releaseFirstClose.countDown();
+                Assert.assertTrue(closeThreadsDone.await(TimeUnit.SECONDS.toNanos(10)));
+                firstCloseThread.join();
+                secondCloseThread.join();
+
+                Assert.assertNull(firstCloseFailure.get());
+                Assert.assertNull(secondCloseFailure.get());
+                Assert.assertEquals(1, closeAttempts.get());
+                Assert.assertTrue(serverMain.isCloseComplete());
+            } finally {
+                releaseFirstClose.countDown();
+                if (firstCloseThread.isAlive() || secondCloseThread.isAlive()) {
+                    closeThreadsDone.await(TimeUnit.SECONDS.toNanos(10));
+                }
+                serverMain.close();
+            }
         });
     }
 
@@ -427,16 +679,21 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 TestUtils.drainWalQueue(serverMain.getEngine());
 
                 // Wait for WAL transactions to be applied
-                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
-                }, "select wait_wal_table('tracker_test1')")
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns("wait_wal_table('tracker_test1')\ntrue\n");
-                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
-                }, "select wait_wal_table('tracker_test2')")
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns("wait_wal_table('tracker_test2')\ntrue\n");
+                final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
+                try {
+                    new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                    }, "select wait_wal_table('tracker_test1')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("wait_wal_table('tracker_test1')\ntrue\n");
+                    new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                    }, "select wait_wal_table('tracker_test2')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("wait_wal_table('tracker_test2')\ntrue\n");
+                } finally {
+                    SuspensionScope.restore(previousMode);
+                }
             }
 
             // Second server: verify tracker is hydrated from existing tables
@@ -726,7 +983,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.analytic.tree.max.pages\tQDB_CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.analytic.tree.page.size\tQDB_CAIRO_SQL_ANALYTIC_TREE_PAGE_SIZE\t524288\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.bind.variable.pool.size\tQDB_CAIRO_SQL_BIND_VARIABLE_POOL_SIZE\t8\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.query.registry.pool.size\tQDB_CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE\t32\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.query.registry.pool.size\tQDB_CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE\t256\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.purge.queue.capacity\tQDB_CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.purge.retry.delay\tQDB_CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.purge.retry.delay.limit\tQDB_CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT\t60000000\tdefault\tfalse\tfalse\n" +
@@ -961,6 +1218,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.query.cache.block.count\tQDB_HTTP_QUERY_CACHE_BLOCK_COUNT\t32\tdefault\tfalse\tfalse\n" +
                                     "http.query.cache.enabled\tQDB_HTTP_QUERY_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "http.query.cache.row.count\tQDB_HTTP_QUERY_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
+                                    "http.worker.fiber.enabled\tQDB_HTTP_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "http.worker.fiber.max.live\tQDB_HTTP_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
+                                    "http.worker.fiber.max.retained\tQDB_HTTP_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
+                                    "http.worker.fiber.mount.budget\tQDB_HTTP_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
                                     "http.request.header.buffer.size\tQDB_HTTP_REQUEST_HEADER_BUFFER_SIZE\t64448\tdefault\tfalse\ttrue\n" +
                                     "http.security.interrupt.on.closed.connection\tQDB_HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION\ttrue\tdefault\tfalse\tfalse\n" +
                                     "http.security.max.response.rows\tQDB_HTTP_SECURITY_MAX_RESPONSE_ROWS\t9223372036854775807\tdefault\tfalse\tfalse\n" +
@@ -1069,6 +1330,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.mat.view.refresh.memory.limit.bytes\tQDB_CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES\t0\tdefault\tfalse\ttrue\n" +
                                     "mat.view.refresh.worker.nap.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.affinity\tQDB_MAT_VIEW_REFRESH_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "mat.view.refresh.worker.fiber.enabled\tQDB_MAT_VIEW_REFRESH_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "mat.view.refresh.worker.fiber.max.live\tQDB_MAT_VIEW_REFRESH_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
+                                    "mat.view.refresh.worker.fiber.max.retained\tQDB_MAT_VIEW_REFRESH_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
+                                    "mat.view.refresh.worker.fiber.mount.budget\tQDB_MAT_VIEW_REFRESH_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
                                     "mat.view.refresh.worker.sleep.timeout\tQDB_MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.haltOnError\tQDB_MAT_VIEW_REFRESH_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.yield.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
@@ -1125,6 +1390,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.recv.buffer.size\tQDB_PG_RECV_BUFFER_SIZE\t1048576\tdefault\tfalse\ttrue\n" +
                                     "pg.security.readonly\tQDB_PG_SECURITY_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "pg.select.cache.block.count\tQDB_PG_SELECT_CACHE_BLOCK_COUNT\t32\tdefault\tfalse\tfalse\n" +
+                                    "pg.worker.fiber.enabled\tQDB_PG_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "pg.worker.fiber.max.live\tQDB_PG_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
+                                    "pg.worker.fiber.max.retained\tQDB_PG_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
+                                    "pg.worker.fiber.mount.budget\tQDB_PG_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
                                     "pg.select.cache.enabled\tQDB_PG_SELECT_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "pg.select.cache.row.count\tQDB_PG_SELECT_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
                                     "pg.send.buffer.size\tQDB_PG_SEND_BUFFER_SIZE\t1048576\tdefault\tfalse\ttrue\n" +
@@ -1164,10 +1433,22 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "shared.worker.yield.threshold\tQDB_SHARED_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
                                     "shared.network.worker.affinity\tQDB_SHARED_NETWORK_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "shared.network.worker.count\tQDB_SHARED_NETWORK_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
+                                    "shared.network.worker.fiber.enabled\tQDB_SHARED_NETWORK_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "shared.network.worker.fiber.max.live\tQDB_SHARED_NETWORK_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
+                                    "shared.network.worker.fiber.max.retained\tQDB_SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
+                                    "shared.network.worker.fiber.mount.budget\tQDB_SHARED_NETWORK_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
                                     "shared.query.worker.affinity\tQDB_SHARED_QUERY_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "shared.query.worker.count\tQDB_SHARED_QUERY_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
+                                    "shared.query.worker.fiber.enabled\tQDB_SHARED_QUERY_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "shared.query.worker.fiber.max.live\tQDB_SHARED_QUERY_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
+                                    "shared.query.worker.fiber.max.retained\tQDB_SHARED_QUERY_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
+                                    "shared.query.worker.fiber.mount.budget\tQDB_SHARED_QUERY_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
                                     "shared.write.worker.affinity\tQDB_SHARED_WRITE_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "shared.write.worker.count\tQDB_SHARED_WRITE_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
+                                    "shared.write.worker.fiber.enabled\tQDB_SHARED_WRITE_WORKER_FIBER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "shared.write.worker.fiber.max.live\tQDB_SHARED_WRITE_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
+                                    "shared.write.worker.fiber.max.retained\tQDB_SHARED_WRITE_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
+                                    "shared.write.worker.fiber.mount.budget\tQDB_SHARED_WRITE_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
                                     "table.type.conversion.enabled\tQDB_TABLE_TYPE_CONVERSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "telemetry.disable.completely\tQDB_TELEMETRY_DISABLE_COMPLETELY\tfalse\tconf\tfalse\tfalse\n" +
                                     "telemetry.enabled\tQDB_TELEMETRY_ENABLED\ttrue\tconf\tfalse\tfalse\n" +

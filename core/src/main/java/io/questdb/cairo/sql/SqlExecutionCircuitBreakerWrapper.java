@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -38,6 +39,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 // However, the `delegate` circuit breaker instance referenced by the wrapper has to be thread-safe
 // if it is used by multiple threads (i.e. set as a delegate in multiple wrappers at the same time).
 public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBreaker, Closeable {
+    private final CancellationBinding cancellationBinding = new CancellationBinding();
     private SqlExecutionCircuitBreaker delegate;
     private NetworkSqlExecutionCircuitBreaker networkSqlExecutionCircuitBreaker;
 
@@ -65,10 +67,30 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         return delegate.checkIfTrippedNoThrottle();
     }
 
+    public void clear() {
+        networkSqlExecutionCircuitBreaker.setCancelledFlag((AtomicBoolean) null);
+        delegate = networkSqlExecutionCircuitBreaker;
+    }
+
+    @Override
+    public void clearCancelledFlag(AtomicBoolean expected) {
+        delegate.clearCancelledFlag(expected);
+    }
+
+    @Override
+    public void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        delegate.clearCancelledFlag(expected, expectedGeneration);
+    }
+
     @Override
     public void close() {
         networkSqlExecutionCircuitBreaker = Misc.free(networkSqlExecutionCircuitBreaker);
         delegate = null;
+    }
+
+    @Override
+    public void copyCancelledFlagTo(CancellationBinding target) {
+        delegate.copyCancelledFlagTo(target);
     }
 
     @Override
@@ -117,7 +139,8 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
             networkSqlExecutionCircuitBreaker.of(executionContextCircuitBreaker.getFd());
             networkSqlExecutionCircuitBreaker.setTimeout(executionContextCircuitBreaker.getTimeout());
             networkSqlExecutionCircuitBreaker.rearmTimer();
-            networkSqlExecutionCircuitBreaker.setCancelledFlag(executionContextCircuitBreaker.getCancelledFlag());
+            executionContextCircuitBreaker.copyCancelledFlagTo(cancellationBinding);
+            networkSqlExecutionCircuitBreaker.setCancelledFlag(cancellationBinding);
             delegate = networkSqlExecutionCircuitBreaker;
         }
     }
@@ -140,6 +163,16 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     @Override
     public void setCancelledFlag(AtomicBoolean cancelled) {
         delegate.setCancelledFlag(cancelled);
+    }
+
+    @Override
+    public void setCancelledFlag(CancellationBinding source) {
+        delegate.setCancelledFlag(source);
+    }
+
+    @Override
+    public void setCancelledFlag(AtomicBoolean cancelled, long generation) {
+        delegate.setCancelledFlag(cancelled, generation);
     }
 
     @Override
