@@ -7,6 +7,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -15,7 +16,9 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadFactory;
@@ -61,25 +64,15 @@ public class LifecycleOrchestrator implements QuietCloseable {
     protected ObjList<Component> reverseTopoOrder;
     @Nullable
     protected ObjList<Component> topoOrder;
-    // The thread that called run() and is walking the boot topo order (each component's start()
-    // runs serially on this thread, including a long-running PITR restore that holds it for the
-    // whole boot). close() bounded-joins it before the reverse-topo stop loop so a SIGTERM that
-    // arrives mid-boot cannot free engine resources from under an in-flight start(). null before
-    // run() starts and after run() returns. volatile gives the close thread the happens-before
-    // edge to observe the captured (or cleared) reference.
+    private final CountDownLatch bootComplete = new CountDownLatch(1);
+    // run() publishes the boot thread while it walks the component graph. Shutdown uses the
+    // identity to avoid waiting on itself and bootComplete to rendezvous with an in-flight start
+    // before the reverse-topological stop loop releases component resources.
     @Nullable
     private volatile Thread bootThread;
     private final Object closeLock = new Object();
     @Nullable
     private Thread closeOwner;
-    // Bound on how long close() waits for the boot thread to observe shutdown and unwind. The boot
-    // walk checks closed.get() between components and the in-flight start() (the restore) polls its
-    // own cancel flag, so a clean unwind is prompt; the bound only caps a wedged start() so close()
-    // can never block forever. A survivor past this bound is rendered safe by the engine's own
-    // isClosing() guards (a woken start() refuses to build native state on a closing engine), not by
-    // racing the free -- so this is a bounded join with an ownership backstop, never a bounded-join
-    // that then frees under a live writer.
-    private static final long BOOT_JOIN_BUDGET_MS = 30_000L;
     private final AtomicBoolean closed = new AtomicBoolean();
     // When a component's start() throws, the orchestrator retains the first such throwable and
     // the component name so run() can chain them into the LifecycleStartupException. Retaining
@@ -89,27 +82,24 @@ public class LifecycleOrchestrator implements QuietCloseable {
     private String firstFailedComponentName;
     private Throwable firstFailedComponentThrowable;
     private final Log injectedLog;
-    private boolean isCloseComplete;
+    private boolean isStopComplete;
     // latestProgress and lastTransitionMicros are read by the /lifecycle HTTP handler
     // thread via snapshot() while concurrently written by the lifecycle/main thread (publishInternal
     // and ContextImpl.progress). Use ConcurrentHashMap so reads see a consistent point-in-time view
     // and writers never race the hashmap's rehash boundary.
     private final ConcurrentHashMap<String, Long> lastTransitionMicros = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ProgressEvent> latestProgress = new ConcurrentHashMap<>();
-    // Runs in close() after the executor drain and BEFORE the bounded boot-thread join, so a
-    // SIGTERM landing during a long-running boot start() (a PITR restore) spends the join budget
-    // unwinding the work instead of waiting it out: without this hook the join burns its full
-    // budget first, because the reverse-topo stop loop that reaches the component's
-    // stop() -> cancel signalling runs only AFTER the join. The enterprise overlay installs a
-    // restore-cancel signaller here. The hook MUST NOT BLOCK: it runs unbounded on the close
-    // thread AHEAD of the bounded join, so the boundedness of close() rests on the hook being a
-    // pure atomic flag write / signal. Resource teardown belongs in stop().
+    // Runs after the executor drain and before the boot-thread rendezvous, so a shutdown landing
+    // during a long-running boot start() can signal that work to unwind before waiting for it. The
+    // enterprise overlay installs a restore-cancel signaller here. The hook must be non-blocking and
+    // idempotent. Resource teardown belongs in stop().
     @Nullable
     private volatile Runnable preJoinCancelHook;
     // Runs after the executor drain but before the reverse-topo stop loop. ServerMain installs
-    // a worker-pool halt here: the stop loop frees component resources (e.g. the http dispatcher's
-    // native FDSet) dependents-first, and on a boot-failure rollback shared pool workers are still
-    // running at that point -- they must stop touching those resources before the loop frees them.
+    // worker-pool halt hooks here: the stop loop frees component resources (e.g. the http
+    // dispatcher's native FDSet) dependents-first, and on a boot-failure rollback shared pool
+    // workers are still running at that point -- they must stop touching those resources before
+    // the loop frees them.
     @Nullable
     private volatile Runnable preStopHook;
     @Nullable
@@ -120,6 +110,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicLong stableWatchIdSeq = new AtomicLong();
     private final ConcurrentHashMap<Long, StableWatch> stableWatchers = new ConcurrentHashMap<>();
+    private final ObjHashSet<String> startedComponentNames = new ObjHashSet<>();
     private final ConcurrentHashMap<String, AtomicReference<State>> states = new ConcurrentHashMap<>();
     @Nullable
     private final Object tokioRuntime;
@@ -154,17 +145,12 @@ public class LifecycleOrchestrator implements QuietCloseable {
 
     @Override
     public void close() {
-        if (!acquireCloseOwnership(false, 0)) {
-            return;
-        }
-        // Capture the entry interrupt and accumulate interrupts consumed by the bounded
-        // executor and boot waits, so neither rendezvous loses its safety budget. Restore
-        // the consumed status after the stop attempts. The base executor wait and boot join
-        // each have an independent 30-second budget; component stops can add their own.
-        boolean isComplete = false;
+        close0();
+    }
+
+    private boolean closeOnce() {
         boolean isInterrupted = Thread.interrupted();
         try {
-            closed.set(true);
             // Shut down + await the executor BEFORE the reverse-topo stop loop. Previously the
             // stop loop ran first and executor.shutdown ran after -- which left a window where an
             // in-flight switchRole on the lifecycle executor thread could touch a component that
@@ -173,63 +159,46 @@ public class LifecycleOrchestrator implements QuietCloseable {
             // closed.get() short-circuit at the top of startAllInTopologicalOrder fires first and
             // the task exits without progressing further.
             executor.shutdown();
-            // Rendezvous with any in-flight executor work (an enterprise role-switch cascade) before
-            // the stop loop frees component resources. The base implementation just awaits the executor
-            // for the default budget; the enterprise overlay overrides awaitInFlightWork to extend the
-            // await to the ACTIVE switch budget and to nudge the cascade (interrupt its drain sleep) so
-            // it observes shutdown promptly and exits at its next isClosing() boundary check. The bound
-            // is the switch budget, never an unbounded join -- a wedged cascade that exceeds even the
-            // budget falls through to the stop loop logged, not blocked forever.
-            final boolean hasDrained = awaitInFlightWork();
-            // Overrides may restore the flag when their wait is interrupted. Consume it here so the
-            // boot join can still wait, then restore the accumulated state after all resources stop.
+            // Rendezvous with any in-flight executor work before the stop loop frees component
+            // resources. Enterprise overrides this hook to nudge an active role-switch cascade.
+            final boolean isInFlightWorkComplete = awaitInFlightWork();
             isInterrupted |= Thread.interrupted();
-            if (!hasDrained) {
-                injectedLog.error()
-                        .$("lifecycle executor did not drain within the close budget; proceeding to the "
-                                + "reverse-topo stop loop (in-flight task, if any, must self-terminate at its "
-                                + "next closed boundary check)").I$();
-            }
-            // Signal cooperative cancellation to any in-flight boot work BEFORE the bounded join
-            // below, so the join is spent unwinding the work rather than waiting it out.
+            // Signal cooperative cancellation to any in-flight boot work before waiting for the
+            // boot thread to unwind. The hook is an atomic signal only; resource teardown belongs
+            // in the reverse-topological stop pass below.
             final Runnable cancelHook = preJoinCancelHook;
             if (cancelHook != null) {
                 try {
                     cancelHook.run();
                 } catch (Throwable t) {
-                    injectedLog.error().$("pre-join cancel hook failed ").$(t).$();
+                    try {
+                        injectedLog.error().$("pre-join cancel hook failed ").$(t).$();
+                    } catch (Throwable ignore) {
+                    }
                 }
             }
-            // Rendezvous with an in-flight BOOT walk before the stop loop frees engine resources. The
-            // boot thread runs each component's start() serially (a PITR restore can hold it for the
-            // whole boot); a SIGTERM hook firing mid-boot must not let freeOnExit free the engine while
-            // an engine.load()/native restore is still running on the boot thread. closed is already
-            // true above, so the boot walk's between-components check exits and the in-flight start()
-            // observes shutdown (the restore polls its cancel flag, the SWITCHING/STARTING stop predicate
-            // routes a mid-restore component through stop()->signalRestoreCancel). The join is bounded:
-            // a wedged start() that ignores shutdown only delays close() by the budget, after which the
-            // stop loop proceeds and the engine's own isClosing() guards keep a late-woken start() from
-            // building native state on the closing engine -- ownership, not the race, is the backstop.
-            // Never self-join: run() calls close() on its own thread on a boot-essential failure.
-            final Thread boot = bootThread;
-            if (boot != null && boot != Thread.currentThread() && boot.isAlive()) {
-                final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(BOOT_JOIN_BUDGET_MS);
-                while (boot.isAlive()) {
-                    final long remaining = deadline - System.nanoTime();
-                    if (remaining <= 0) {
-                        break;
-                    }
-                    try {
-                        TimeUnit.NANOSECONDS.timedJoin(boot, remaining);
-                    } catch (InterruptedException e) {
-                        isInterrupted = true;
-                    }
-                }
-                if (boot.isAlive()) {
+            if (!isInFlightWorkComplete) {
+                try {
                     injectedLog.error()
-                            .$("boot thread did not unwind within the close budget; proceeding to the "
-                                    + "reverse-topo stop loop (a late-woken start() is refused by the "
-                                    + "engine's closing guards, not freed under)").I$();
+                            .$("lifecycle executor did not drain; retaining component graph").I$();
+                } catch (Throwable ignore) {
+                }
+                return false;
+            }
+            // requestStop() has already signalled cancellable startup work. Wait for the active start()
+            // call to unwind before the stop loop releases its resources. Never wait on the boot thread
+            // itself: run() may perform rollback after a boot-essential failure.
+            final Thread boot = bootThread;
+            if (boot != null && boot != Thread.currentThread()) {
+                final boolean isBootComplete = awaitBootComplete();
+                isInterrupted |= Thread.interrupted();
+                if (!isBootComplete) {
+                    try {
+                        injectedLog.error()
+                                .$("boot thread did not unwind; retaining component graph").I$();
+                    } catch (Throwable ignore) {
+                    }
+                    return false;
                 }
             }
             // reverseTopoOrder is null if validateAndComputeOrder() never ran (or threw before
@@ -237,22 +206,54 @@ public class LifecycleOrchestrator implements QuietCloseable {
             // loop and just shut down the executor. This makes close() safe to call after a validation
             // failure in run() and on an orchestrator that was never run() at all.
             if (reverseTopoOrder != null) {
-                final Runnable hook = preStopHook;
-                if (hook != null) {
-                    try {
+                boolean isEveryComponentStopped = true;
+                final ObjHashSet<String> retainedComponentNames = new ObjHashSet<>();
+                try {
+                    final Runnable hook = preStopHook;
+                    if (hook != null) {
                         hook.run();
-                    } catch (Throwable t) {
+                    }
+                } catch (Throwable t) {
+                    if (retainPreStopFailureComponents(retainedComponentNames)) {
+                        isEveryComponentStopped = false;
+                    }
+                    try {
                         injectedLog.error().$("pre-stop hook failed ").$(t).$();
+                    } catch (Throwable ignore) {
                     }
                 }
                 for (int i = 0, n = reverseTopoOrder.size(); i < n; i++) {
                     Component c = reverseTopoOrder.getQuick(i);
+                    if (retainedComponentNames.contains(c.name())) {
+                        isEveryComponentStopped = false;
+                        continue;
+                    }
                     State current = stateOf(c.name());
+                    if (current == State.FAILED) {
+                        if (!startedComponentNames.contains(c.name())) {
+                            continue;
+                        }
+                        try {
+                            c.stop();
+                            startedComponentNames.remove(c.name());
+                        } catch (Throwable t) {
+                            isEveryComponentStopped = false;
+                            retainHardDependencies(c, retainedComponentNames);
+                            try {
+                                final String name = safeName(c);
+                                injectedLog.error()
+                                        .$("failed component cleanup failed [component=").$(name)
+                                        .$(", error=").$(t).I$();
+                            } catch (Throwable ignore) {
+                            }
+                        }
+                        continue;
+                    }
                     // STARTING is included so a SIGTERM that arrives while a long-running start
                     // is in flight (e.g. BackupRestoreEnvelope mid-PITR-restore, which can run for
                     // minutes) still routes through the component's stop() method. The component's
                     // stop() is the only path that invokes signalRestoreCancel + awaitRestoreCancel,
-                    // and without this the 30s SIGTERM window hangs until SIGKILL. The transition table
+                    // and without this shutdown hangs until that work finishes. The transition table
                     // permits STARTING -> STOPPING for this case.
                     //
                     // SWITCHING is included for the same reason: a SIGTERM that arrives while an
@@ -271,14 +272,25 @@ public class LifecycleOrchestrator implements QuietCloseable {
                             c.stop();
                             publishInternal(c.name(), State.STOPPED, null);
                         } catch (Throwable t) {
-                            publishInternal(c.name(), State.FAILED, "stop failed: " + t.getMessage());
+                            isEveryComponentStopped = false;
+                            retainHardDependencies(c, retainedComponentNames);
+                            try {
+                                final String name = safeName(c);
+                                injectedLog.error()
+                                        .$("component stop failed [component=").$(name)
+                                        .$(", error=").$(t).I$();
+                            } catch (Throwable ignore) {
+                            }
                         }
                     }
                 }
+                if (!isEveryComponentStopped) {
+                    return false;
+                }
             }
-            isComplete = true;
+            return true;
+
         } finally {
-            releaseCloseOwnership(isComplete);
             if (isInterrupted) {
                 Thread.currentThread().interrupt();
             }
@@ -351,7 +363,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
 
     public boolean isCloseComplete() {
         synchronized (closeLock) {
-            return isCloseComplete;
+            return isStopComplete;
         }
     }
 
@@ -380,6 +392,12 @@ public class LifecycleOrchestrator implements QuietCloseable {
         return preJoinCancelHook;
     }
 
+    public boolean isStopComplete() {
+        synchronized (closeLock) {
+            return isStopComplete;
+        }
+    }
+
     public void register(Component component) {
         if (running.get() || closed.get()) {
             throw new IllegalStateException("can only register components before run");
@@ -392,6 +410,17 @@ public class LifecycleOrchestrator implements QuietCloseable {
         registry.add(component);
         registryByName.put(n, component);
         states.put(n, new AtomicReference<>(State.INIT));
+    }
+
+    /**
+     * Publishes shutdown without waiting for lifecycle work or releasing resources. ServerMain
+     * calls this before acquiring its lifecycle lock so a blocked start can observe cancellation.
+     */
+    public void requestStop() {
+        closed.set(true);
+        if (ran.get()) {
+            requestComponentStops();
+        }
     }
 
     public void run() {
@@ -409,13 +438,13 @@ public class LifecycleOrchestrator implements QuietCloseable {
             throw new IllegalStateException("LifecycleOrchestrator.run may only be called once");
         }
         running.set(true);
-        // Publish the boot thread so a concurrent close() (the SIGTERM shutdown hook runs on a
-        // different thread) can bounded-join the in-flight boot walk before freeing engine state.
-        // Cleared in the finally so a completed boot leaves no stale handle for a later close().
+        // Publish the boot thread so a concurrent close can wait for startup work without waiting
+        // on itself after a boot failure.
         bootThread = Thread.currentThread();
         try {
             startAllInTopologicalOrder();
         } finally {
+            bootComplete.countDown();
             bootThread = null;
         }
         if (anyFailed()) {
@@ -437,13 +466,11 @@ public class LifecycleOrchestrator implements QuietCloseable {
     }
 
     /**
-     * Installs a hook that {@link #close()} runs after the executor drain and BEFORE the bounded
-     * boot-thread join, mirroring {@link #setPreStopHook(Runnable)}. The enterprise overlay
-     * installs a restore-cancel signaller so a SIGTERM landing during a long PITR restore spends
-     * the join budget unwinding the restore instead of waiting it out. The hook MUST NOT block:
-     * it runs unbounded on the close thread ahead of the bounded join, so the boundedness of
-     * close() rests on the hook being a pure atomic signal. It must not free resources either
-     * (that belongs in the component's stop()).
+     * Installs a hook that shutdown runs after the executor drain and before the boot-thread
+     * rendezvous, mirroring {@link #setPreStopHook(Runnable)}. The enterprise overlay installs a
+     * restore-cancel signaller so shutdown can ask a long PITR restore to unwind before waiting for
+     * it. The hook must be non-blocking and idempotent. It must not free resources; that belongs in
+     * the component's {@code stop()} method.
      */
     public void setPreJoinCancelHook(@Nullable Runnable hook) {
         this.preJoinCancelHook = hook;
@@ -451,9 +478,8 @@ public class LifecycleOrchestrator implements QuietCloseable {
 
     /**
      * Installs a hook that {@link #close()} runs after the executor drain and before the
-     * reverse-topo stop loop. ServerMain supplies a bounded worker-pool halt so no pool worker
-     * still touches component resources (native fd sets, queues) while the stop loop frees them
-     * on a boot-failure rollback. The hook must be idempotent with the normal shutdown path.
+     * reverse-topo stop loop. The hook must complete the operation before it returns and must be
+     * idempotent with the normal shutdown path.
      */
     public void setPreStopHook(@Nullable Runnable hook) {
         this.preStopHook = hook;
@@ -490,45 +516,38 @@ public class LifecycleOrchestrator implements QuietCloseable {
         return ref != null ? ref.get() : State.INIT;
     }
 
-    /**
-     * Rendezvous hook invoked from {@link #close()} after {@code executor.shutdown()} and before
-     * the reverse-topo stop loop. The base implementation simply awaits the executor for the
-     * default 30s close budget so an in-flight task completes (or self-terminates at its next
-     * {@code closed.get()} boundary check) before any component is stopped.
-     * <p>
-     * Enterprise overlays override this to extend the await to the ACTIVE role-switch budget (a
-     * switch cascade can legitimately run longer than 30s while draining busy writers) and to nudge
-     * the cascade -- interrupt its drain sleep -- so it observes shutdown promptly. The bound is
-     * always finite (the switch budget, itself capped), never an unbounded join.
-     *
-     * @return {@code true} if the executor terminated within the budget; {@code false} if it
-     * timed out, in which case {@link #close()} logs and proceeds to the stop loop.
-     */
-    protected boolean awaitInFlightWork() {
-        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+    protected boolean awaitBootComplete() {
         boolean isInterrupted = false;
-        try {
-            while (!executor.isTerminated()) {
-                final long remaining = deadline - System.nanoTime();
-                if (remaining <= 0) {
-                    return false;
+        while (true) {
+            try {
+                bootComplete.await();
+                if (isInterrupted) {
+                    Thread.currentThread().interrupt();
                 }
-                try {
-                    if (executor.awaitTermination(remaining, TimeUnit.NANOSECONDS)) {
-                        return true;
-                    }
-                } catch (InterruptedException e) {
-                    // Preserve the close budget, but do not let an interrupt move teardown
-                    // ahead of work that may still access component-owned resources.
-                    isInterrupted = true;
-                }
-            }
-            return true;
-        } finally {
-            if (isInterrupted) {
-                Thread.currentThread().interrupt();
+                return true;
+            } catch (InterruptedException e) {
+                isInterrupted = true;
             }
         }
+    }
+
+    /**
+     * Terminal rendezvous hook invoked from {@link #close()} after {@code executor.shutdown()} and
+     * before the reverse-topological stop loop.
+     */
+    protected boolean awaitInFlightWork() {
+        boolean isInterrupted = false;
+        while (!executor.isTerminated()) {
+            try {
+                executor.awaitTermination(1, TimeUnit.DAYS);
+            } catch (InterruptedException e) {
+                isInterrupted = true;
+            }
+        }
+        if (isInterrupted) {
+            Thread.currentThread().interrupt();
+        }
+        return true;
     }
 
     protected boolean awaitInFlightWork(long deadlineNanos) {
@@ -579,8 +598,14 @@ public class LifecycleOrchestrator implements QuietCloseable {
      * Protected so {@code LifecycleOrchestratorTest} (different package) can subclass and override it.
      */
     protected void closeLogAndExit(int code) {
-        LogFactory.closeInstance();
-        System.exit(code);
+        try {
+            LogFactory.closeInstance();
+        } catch (Throwable th) {
+            //noinspection CallToPrintStackTrace
+            th.printStackTrace();
+        } finally {
+            System.exit(code);
+        }
     }
 
     /**
@@ -599,10 +624,13 @@ public class LifecycleOrchestrator implements QuietCloseable {
             // The early return preserves the silent-no-op contract that LifecycleStateTest relies on
             // (minting a context for "a" before run()), but the log line ensures typos do not
             // disappear silently.
-            injectedLog.info()
-                    .$("publish for unregistered component name=").$(name)
-                    .$(" attempted to=").$(next)
-                    .I$();
+            try {
+                injectedLog.info()
+                        .$("publish for unregistered component name=").$(name)
+                        .$(" attempted to=").$(next)
+                        .I$();
+            } catch (Throwable ignore) {
+            }
             return;
         }
         State prev;
@@ -701,6 +729,15 @@ public class LifecycleOrchestrator implements QuietCloseable {
      * registration prevents a future typo or accidental control character from emitting
      * malformed JSON over the wire.
      */
+    private static String safeName(Component component) {
+        try {
+            final String name = component.name();
+            return name != null ? name : "<unnamed>";
+        } catch (Throwable ignore) {
+            return "<unnamed>";
+        }
+    }
+
     private static void validateComponentName(String name) {
         if (name == null || name.isEmpty()) {
             throw new LifecycleStartupException("component name must be non-empty");
@@ -737,22 +774,12 @@ public class LifecycleOrchestrator implements QuietCloseable {
         }
     }
 
-    private void requestComponentStops() {
-        for (int i = 0, n = registry.size(); i < n; i++) {
-            try {
-                registry.getQuick(i).requestStop();
-            } catch (Throwable t) {
-                injectedLog.error().$("component stop request failed [error=").$(t).I$();
-            }
-        }
-    }
-
     private boolean acquireCloseOwnership(boolean isBounded, long deadlineNanos) {
         final Thread currentThread = Thread.currentThread();
         boolean isInterrupted = Thread.interrupted();
         try {
             synchronized (closeLock) {
-                while (closeOwner != null && !isCloseComplete) {
+                while (closeOwner != null && !isStopComplete) {
                     if (closeOwner == currentThread) {
                         return false;
                     }
@@ -770,7 +797,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
                         isInterrupted = true;
                     }
                 }
-                if (isCloseComplete) {
+                if (isStopComplete) {
                     return false;
                 }
                 closeOwner = currentThread;
@@ -786,7 +813,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
     private void releaseCloseOwnership(boolean isComplete) {
         synchronized (closeLock) {
             if (isComplete) {
-                isCloseComplete = true;
+                isStopComplete = true;
             }
             closeOwner = null;
             closeLock.notifyAll();
@@ -817,6 +844,46 @@ public class LifecycleOrchestrator implements QuietCloseable {
             }
         }
         return false;
+    }
+
+    private void close0() {
+        final Thread currentThread = Thread.currentThread();
+        boolean isCloseComplete = false;
+        boolean isInterrupted = Thread.interrupted();
+        boolean hasStopOwnership = false;
+        try {
+            synchronized (closeLock) {
+                while (closeOwner != null && !isStopComplete) {
+                    if (closeOwner == currentThread) {
+                        return;
+                    }
+                    try {
+                        closeLock.wait();
+                    } catch (InterruptedException e) {
+                        isInterrupted = true;
+                    }
+                }
+                if (isStopComplete) {
+                    return;
+                }
+                closeOwner = currentThread;
+                closed.set(true);
+                hasStopOwnership = true;
+            }
+            requestStop();
+            isCloseComplete = closeOnce();
+        } finally {
+            if (hasStopOwnership) {
+                synchronized (closeLock) {
+                    isStopComplete = isCloseComplete;
+                    closeOwner = null;
+                    closeLock.notifyAll();
+                }
+            }
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     private void dispatchStateChange(String componentName, State previous, State current) {
@@ -933,15 +1000,18 @@ public class LifecycleOrchestrator implements QuietCloseable {
                         // threads and cannot serve requests. Publishing FAILED here ensures
                         // anyFailed() trips in run(), so boot throws instead of returning a
                         // DEGRADED zombie that passes readiness probes but cannot do any work.
-                        injectedLog.error()
-                                .$("stable-below callback failed for ").$(w.componentName)
-                                .$(": ").$(t.getMessage())
-                                .I$();
-                        publishInternal(w.componentName, State.FAILED, "stage-2 callback failed: " + t.getMessage());
                         // Retain the failure so run() can chain it into LifecycleStartupException.
                         if (firstFailedComponentThrowable == null) {
                             firstFailedComponentThrowable = t;
                             firstFailedComponentName = w.componentName;
+                        }
+                        publishInternal(w.componentName, State.FAILED, "stage-2 callback failed: " + t.getMessage());
+                        try {
+                            injectedLog.error()
+                                    .$("stable-below callback failed for ").$(w.componentName)
+                                    .$(": ").$(t.getMessage())
+                                    .I$();
+                        } catch (Throwable ignore) {
                         }
                     }
                 }
@@ -955,27 +1025,110 @@ public class LifecycleOrchestrator implements QuietCloseable {
             Thread t = new Thread(r, "lifecycle-" + counter.incrementAndGet());
             t.setDaemon(true);
             // Exit-55 path: an uncaught throwable from any orchestrator-executed task
-            // (LifecycleStartupException or any other Throwable) lands here. Run reverse-topo stop +
-            // freeOnExit release via close(), then close the log subsystem, then exit. The native
-            // handles release invariant requires close() to run the reverse-topo stop loop that
-            // honors this. closeLogAndExit() is a test seam so unit tests can observe the exit
-            // code without actually terminating the JVM.
+            // (LifecycleStartupException or any other Throwable) lands here. Attempt
+            // reverse-topological cleanup, then close the log subsystem and exit.
             t.setUncaughtExceptionHandler((thread, ex) -> {
-                injectedLog.error()
-                        .$("lifecycle thread uncaught exception thread=").$(thread.getName())
-                        .$(" failure=").$(ex)
-                        .I$();
                 try {
-                    close();
-                } catch (Throwable closeFailure) {
-                    injectedLog.error()
-                            .$("orchestrator close failed after switch exception failure=").$(closeFailure)
-                            .I$();
+                    try {
+                        injectedLog.error()
+                                .$("lifecycle thread uncaught exception thread=").$(thread.getName())
+                                .$(" failure=").$(ex)
+                                .I$();
+                    } catch (Throwable logFailure) {
+                        try {
+                            ex.printStackTrace();
+                            logFailure.printStackTrace();
+                        } catch (Throwable ignore) {
+                        }
+                    }
+                    try {
+                        close();
+                    } catch (Throwable closeFailure) {
+                        try {
+                            injectedLog.error()
+                                    .$("orchestrator close failed after switch exception failure=").$(closeFailure)
+                                    .I$();
+                        } catch (Throwable logFailure) {
+                            try {
+                                closeFailure.printStackTrace();
+                                logFailure.printStackTrace();
+                            } catch (Throwable ignore) {
+                            }
+                        }
+                    }
+                } finally {
+                    closeLogAndExit(55);
                 }
-                closeLogAndExit(55);
             });
             return t;
         };
+    }
+
+    private void requestComponentStops() {
+        for (int i = 0, n = registry.size(); i < n; i++) {
+            final Component component = registry.getQuick(i);
+            try {
+                component.requestStop();
+            } catch (Throwable t) {
+                try {
+                    final String name = safeName(component);
+                    injectedLog.error()
+                            .$("component stop request failed [component=").$(name)
+                            .$(", error=").$(t).I$();
+                } catch (Throwable ignore) {
+                }
+            }
+        }
+    }
+
+    private void retainHardDependencies(Component component, ObjHashSet<String> retainedComponentNames) {
+        final ObjList<String> dependencies = component.hardRequiredDependencies();
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            final String dependencyName = dependencies.getQuick(i).toString();
+            if (retainedComponentNames.add(dependencyName)) {
+                final Component dependency = registryByName.get(dependencyName);
+                if (dependency != null) {
+                    retainHardDependencies(dependency, retainedComponentNames);
+                }
+            }
+        }
+    }
+
+    private void retainHardDependents(
+            String dependencyName,
+            ObjHashSet<String> retainedComponentNames,
+            ObjHashSet<String> visitedComponentNames
+    ) {
+        if (!visitedComponentNames.add(dependencyName)) {
+            return;
+        }
+        for (int i = 0, n = registry.size(); i < n; i++) {
+            final Component component = registry.getQuick(i);
+            final ObjList<String> dependencies = component.hardRequiredDependencies();
+            for (int j = 0, m = dependencies.size(); j < m; j++) {
+                if (dependencyName.contentEquals(dependencies.getQuick(j))) {
+                    retainedComponentNames.add(component.name());
+                    retainHardDependencies(component, retainedComponentNames);
+                    retainHardDependents(component.name(), retainedComponentNames, visitedComponentNames);
+                    break;
+                }
+            }
+        }
+    }
+
+    private boolean retainPreStopFailureComponents(ObjHashSet<String> retainedComponentNames) {
+        final Component workerPoolManagerComponent = registryByName.get("worker-pool-manager");
+        if (workerPoolManagerComponent == null) {
+            return false;
+        }
+        retainedComponentNames.add(workerPoolManagerComponent.name());
+        retainHardDependencies(workerPoolManagerComponent, retainedComponentNames);
+        retainHardDependents(
+                workerPoolManagerComponent.name(),
+                retainedComponentNames,
+                new ObjHashSet<>()
+        );
+        return true;
     }
 
     private void startAllInTopologicalOrder() {
@@ -1009,15 +1162,22 @@ public class LifecycleOrchestrator implements QuietCloseable {
                 continue;
             }
             publishInternal(c.name(), State.STARTING, null);
+            startedComponentNames.add(c.name());
             try {
                 c.start(contextFor(c.name()));
                 State after = stateOf(c.name());
                 if (after == State.STARTING) {
+                    if (closed.get()) {
+                        return;
+                    }
                     // Component returned normally without explicitly publishing a terminal state;
                     // auto-promote to READY per convention.
                     publishInternal(c.name(), State.READY, null);
                 }
             } catch (Throwable t) {
+                if (closed.get() && t instanceof CancellationException && t.getSuppressed().length == 0) {
+                    return;
+                }
                 publishInternal(c.name(), State.FAILED, t.toString());
                 // Retain the first failure so run() can chain it into LifecycleStartupException.
                 if (firstFailedComponentThrowable == null) {

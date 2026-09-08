@@ -111,8 +111,8 @@ import java.util.concurrent.TimeUnit;
 public class CoveredIndexDecodeBenchmark {
 
     private static final int PARALLEL_WORKERS = Integer.getInteger("covered.bench.workers", 8);
-    private static final long ROWS = Long.getLong("covered.bench.rows", 50_000_000L);
     private static final String ROOT = System.getProperty("java.io.tmpdir") + java.io.File.separator + "covered-index-decode-bench";
+    private static final long ROWS = Long.getLong("covered.bench.rows", 50_000_000L);
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(ROOT) {
         @Override
         public int getSqlPageFrameMaxRows() {
@@ -125,19 +125,8 @@ public class CoveredIndexDecodeBenchmark {
             return true;
         }
     };
-
-    @Param({"sum", "multi_agg", "first_last", "count", "residual", "filter_project", "groupby_symbol", "groupby_varchar"})
-    public String shape;
-
-    @Param({"PARALLEL_COV", "SERIAL_COV", "PARALLEL_REF"})
-    public String config;
-
-    // Selectivity of the filtered key, as a percentage of rows. Each value maps to a distinct
-    // symbol present at exactly that fraction (see the data generator), so the sweep isolates how
-    // covered-vs-scan changes with selectivity.
-    @Param({"0.1", "1", "5", "10", "25", "50"})
-    public String selectivity;
-
+    private static SqlCompiler parCompiler;
+    private static SqlExecutionContext parCtx;
     // Engines/pools/contexts are built ONCE per forked JVM and shared across every trial (a fresh
     // CairoEngine loads ~1100 functions + opens readers, and a WorkerPool start/stop is not free —
     // doing that per @Param combo dominated the run). Only the per-trial factory is recompiled.
@@ -145,15 +134,21 @@ public class CoveredIndexDecodeBenchmark {
     // separate invocations), so the two engines never open the same root concurrently.
     private static CairoEngine parEngine;
     private static WorkerPool parPool;
-    private static SqlCompiler parCompiler;
-    private static SqlExecutionContext parCtx;
-    private static CairoEngine serEngine;
-    private static WorkerPool serPool;
     private static SqlCompiler serCompiler;
     private static SqlExecutionContext serCtx;
-
-    private RecordCursorFactory factory;
+    private static CairoEngine serEngine;
+    private static WorkerPool serPool;
+    @Param({"PARALLEL_COV", "SERIAL_COV", "PARALLEL_REF"})
+    public String config;
+    // Selectivity of the filtered key, as a percentage of rows. Each value maps to a distinct
+    // symbol present at exactly that fraction (see the data generator), so the sweep isolates how
+    // covered-vs-scan changes with selectivity.
+    @Param({"0.1", "1", "5", "10", "25", "50"})
+    public String selectivity;
+    @Param({"sum", "multi_agg", "first_last", "count", "residual", "filter_project", "groupby_symbol", "groupby_varchar"})
+    public String shape;
     private SqlExecutionContext ctx;
+    private RecordCursorFactory factory;
 
     public static void main(String[] args) throws Exception {
         // The engine requires its root directory to exist before it opens.
@@ -266,6 +261,13 @@ public class CoveredIndexDecodeBenchmark {
         factory = compiler.compile(query(shape, table, keyFor(selectivity)), ctx).getRecordCursorFactory();
     }
 
+    @TearDown(Level.Trial)
+    public void tearDown() {
+        // Only the per-trial factory is released here; the shared engines/pool live for the JVM
+        // and are reclaimed when the forked benchmark JVM exits.
+        factory = Misc.free(factory);
+    }
+
     private static synchronized void ensureParallel() {
         if (parEngine != null) {
             return;
@@ -329,13 +331,6 @@ public class CoveredIndexDecodeBenchmark {
             default:
                 throw new IllegalArgumentException("unknown selectivity: " + selectivity);
         }
-    }
-
-    @TearDown(Level.Trial)
-    public void tearDown() {
-        // Only the per-trial factory is released here; the shared engines/pool live for the JVM
-        // and are reclaimed when the forked benchmark JVM exits.
-        factory = Misc.free(factory);
     }
 
     private static SqlExecutionContext newContext(CairoEngine engine, int workerCount) {

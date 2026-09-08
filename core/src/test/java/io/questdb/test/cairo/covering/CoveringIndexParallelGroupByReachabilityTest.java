@@ -36,6 +36,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -99,10 +100,10 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
         // would trip on a later query. A clean run confirms covered buffers stay off the per-query
         // tracker and the limit path is leak-free.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
-                    (engine, _, sqlExecutionContext) -> {
+                    (engine, compiler, sqlExecutionContext) -> {
                         engine.execute(
                                 "CREATE TABLE t (" +
                                         "  ts TIMESTAMP," +
@@ -113,7 +114,7 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
                                 sqlExecutionContext
                         );
                         engine.execute(
-                                "INSERT INTO t SELECT (x * 200000000L)::timestamp, 'A', 'g' || (x % 4), x" +
+                                "INSERT INTO t SELECT (x * 200_000_000L)::timestamp, 'A', 'g' || (x % 4), x" +
                                         " FROM long_sequence(8000)",
                                 sqlExecutionContext
                         );
@@ -140,7 +141,7 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
     @Test
     public void testKeyedParallelGroupByOverCoveringIndexDispatchesCoveredFrames() throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -214,7 +215,7 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
         // freeze remains correct hardening: it matches the base PageFrameSequence path and
         // keeps F3's frozen-only openRequiredSidecars no-op effective.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -307,7 +308,7 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
         // cursor, so no async GROUP BY can sit above it. The assertion below pins that down
         // instead of leaving it implied.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
