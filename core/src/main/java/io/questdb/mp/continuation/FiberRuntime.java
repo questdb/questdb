@@ -48,6 +48,7 @@ public final class FiberRuntime {
     // also leaves room for a global probe within the default mount budget of 64.
     private static final int GLOBAL_PROBE_INTERVAL = 61;
     private static final Log LOG = LogFactory.getLog(FiberRuntime.class);
+    private static final long OWNED_DRAIN_TIME_BUDGET_NANOS = 10_000_000L;
     private static final int PROCESS_OWNED = 2;
     private static final int PROCESS_RELEASED = 1;
     private static final int PROCESS_TERMINATED = 0;
@@ -461,13 +462,20 @@ public final class FiberRuntime {
             return 0;
         }
         int attempts = 0;
+        long drainStartNanos = 0;
         while (attempts < attemptBudget) {
             final Fiber fiber = selectOwned(shard);
             if (fiber == null) {
                 break;
             }
+            if (attempts == 0) {
+                drainStartNanos = System.nanoTime();
+            }
             attempts++;
             processSelected(fiber, ownerContext, false);
+            if (System.nanoTime() - drainStartNanos >= OWNED_DRAIN_TIME_BUDGET_NANOS) {
+                break;
+            }
         }
         if (attempts == attemptBudget && hasQueuedWork()) {
             budgetExhaustionCount.increment();
