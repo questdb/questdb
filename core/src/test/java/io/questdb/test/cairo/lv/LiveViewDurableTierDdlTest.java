@@ -26,10 +26,13 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionRemovalEvents;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
@@ -39,6 +42,7 @@ import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlException;
@@ -277,6 +281,110 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                             """);
             assertShowCreateContains("lv1", " PARTITION BY DAY TTL 3 DAYS START FROM NOW");
             assertShowCreateRoundTrips("lv1");
+        });
+    }
+
+    @Test
+    public void testCreateLiveViewTtlLandsInBothDefinitionCopies() throws Exception {
+        // The TTL reaches _meta and both _lv copies. The sequencer-directory copy is the one that
+        // travels: a replica rebuilds the view's table from it alone - _meta does not ship with it
+        // and LV WAL never replicates - so a TTL held only in _meta would be lost in the crossing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s TTL 3 DAYS PARTITION BY DAY START FROM NOW AS " +
+                    "(SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+            // A view with no TTL clause persists the same 0 the table's _meta carries, so the two
+            // stay comparable without a separate "unset" state.
+            execute("CREATE LIVE VIEW lv_no_ttl FLUSH EVERY 1s PARTITION BY DAY START FROM NOW AS " +
+                    "(SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+
+            assertTtl("lv", 72);
+            assertDefinitionTtl("lv", 72);
+            assertTtl("lv_no_ttl", 0);
+            assertDefinitionTtl("lv_no_ttl", 0);
+        });
+    }
+
+    @Test
+    public void testSetTtlRewritesBothDefinitionCopies() throws Exception {
+        // _lv is no longer write-once: SET TTL rewrites it, or the definition would describe the
+        // TTL the view had at CREATE for the rest of its life - and it is the definition, not
+        // _meta, that a replica genesises its own copy of the view from.
+        assertMemoryLeak(() -> {
+            createBaseAndView("PARTITION BY DAY");
+            execute("INSERT INTO base VALUES ('1970-01-01T00:00:00.000000Z', 1)");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDefinitionTtl("lv", 0);
+
+                execute("ALTER LIVE VIEW lv SET TTL 4 WEEKS");
+                driveLiveViewWalApply(job);
+                assertTtl(28 * 24);
+                assertDefinitionTtl("lv", 28 * 24);
+                // The registered instance's own definition is the object the rewrite went through,
+                // so the running refresh worker sees the new value without re-reading _lv.
+                Assert.assertEquals(
+                        28 * 24,
+                        engine.getLiveViewRegistry().getViewInstance("lv").getDefinition().getTtlHoursOrMonths()
+                );
+
+                // Months take the negative encoding through the definition too.
+                execute("ALTER LIVE VIEW lv SET TTL 1 YEAR");
+                driveLiveViewWalApply(job);
+                assertTtl(-12);
+                assertDefinitionTtl("lv", -12);
+
+                // Clearing is a rewrite like any other: 0 has to land, not be skipped as "unset".
+                execute("ALTER LIVE VIEW lv SET TTL 0 HOURS");
+                driveLiveViewWalApply(job);
+                assertTtl(0);
+                assertDefinitionTtl("lv", 0);
+
+                execute("ALTER LIVE VIEW lv SET TTL 2d");
+                driveLiveViewWalApply(job);
+                assertDefinitionTtl("lv", 48);
+            }
+
+            // A restart loads the definition off disk, which is what proves the rewrite was
+            // durable rather than an in-memory patch.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            Assert.assertEquals(
+                    48,
+                    engine.getLiveViewRegistry().getViewInstance("lv").getDefinition().getTtlHoursOrMonths()
+            );
+        });
+    }
+
+    @Test
+    public void testSetTtlRewritesDefinitionWithNoRegisteredInstance() throws Exception {
+        // The shape a node with refresh disabled applies every ALTER in: no instance in the
+        // registry, the global ApplyWal2TableJob driving the apply. The writer has no in-memory
+        // definition to lend it, so it reads _lv back off disk; without that fallback the rewrite
+        // would silently skip exactly the nodes that cannot repair it later.
+        assertMemoryLeak(() -> {
+            createBaseAndView("PARTITION BY DAY");
+            execute("INSERT INTO base VALUES ('1970-01-01T00:00:00.000000Z', 1)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertDefinitionTtl("lv", 0);
+
+            engine.getLiveViewRegistry().clear();
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            execute("ALTER LIVE VIEW lv SET TTL 4 WEEKS");
+            try (ApplyWal2TableJob applyJob = new ApplyWal2TableJob(engine, 1)) {
+                applyJob.applyWalDirect(lvToken, Job.RUNNING_STATUS);
+            }
+            assertTtl(28 * 24);
+            assertDefinitionTtl("lv", 28 * 24);
+
+            engine.buildViewGraphs();
+            Assert.assertEquals(
+                    28 * 24,
+                    engine.getLiveViewRegistry().getViewInstance("lv").getDefinition().getTtlHoursOrMonths()
+            );
         });
     }
 
@@ -1533,6 +1641,36 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                     "live view '" + viewName + "' TTL",
                     expectedTtlHoursOrMonths,
                     metadata.getTtlHoursOrMonths()
+            );
+        }
+    }
+
+    /**
+     * Asserts both {@code _lv} copies - the view's own table directory and the sequencer directory
+     * that replicates - carry {@code expectedTtlHoursOrMonths}. The two are written from the same
+     * definition object, so a test that read only one would pass while the copy that actually
+     * crosses to a replica stayed stale.
+     */
+    private static void assertDefinitionTtl(String viewName, int expectedTtlHoursOrMonths) {
+        final TableToken token = engine.verifyTableName(viewName);
+        try (
+                BlockFileReader reader = new BlockFileReader(configuration);
+                Path path = new Path()
+        ) {
+            path.of(configuration.getDbRoot()).concat(token).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+            Assert.assertEquals(
+                    "table-directory _lv TTL of '" + viewName + "'",
+                    expectedTtlHoursOrMonths,
+                    LiveViewDefinition.readFromPath(reader, path, token, null, new GenericRecordMetadata())
+                            .getTtlHoursOrMonths()
+            );
+            path.of(configuration.getDbRoot()).concat(token).concat(WalUtils.SEQ_DIR)
+                    .concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+            Assert.assertEquals(
+                    "sequencer-directory _lv TTL of '" + viewName + "'",
+                    expectedTtlHoursOrMonths,
+                    LiveViewDefinition.readFromPath(reader, path, token, null, new GenericRecordMetadata())
+                            .getTtlHoursOrMonths()
             );
         }
     }

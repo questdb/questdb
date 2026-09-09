@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
@@ -39,6 +40,8 @@ import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRetentionMarker;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -3689,6 +3692,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit();
         metadata.setTtlHoursOrMonths(ttlHoursOrMonths);
         writeMetadataToDisk();
+        if (tableToken.isLiveView()) {
+            updateLiveViewDefinitionTtl(ttlHoursOrMonths);
+        }
     }
 
     public void setSeqTxn(long seqTxn) {
@@ -15502,6 +15508,67 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // object here, after updating the definition file.
         engine.getDependentViewGraph().updateViewDefinition(tableToken, newDefinition);
         engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
+    }
+
+    /**
+     * Mirrors the {@code _meta} TTL {@link #setMetaTtl(int)} has just written into the view's two
+     * {@code _lv} copies, so the definition never disagrees with the table it describes.
+     * <p>
+     * The sequencer-directory copy is the one that matters beyond this node: a replica rebuilds a
+     * live view's table from it - LV WAL never replicates, so the replica's own writer never sees
+     * this ALTER - and a stale copy there would hand a freshly genesised replica the TTL the view
+     * had at CREATE. The table-directory copy is what this node's own boot scan and
+     * {@code SHOW CREATE LIVE VIEW} read.
+     * <p>
+     * Runs after {@code _meta}, not before, so the surviving divergence after a crash is always
+     * the harmless direction: {@code _lv} lagging means a replica retains more than the primary,
+     * where {@code _lv} leading would have it evict data the primary still holds. The window is
+     * closed rather than merely narrowed - {@link #apply(AbstractOperation, long)} commits the
+     * ALTER's seqTxn only after the operation returns, and this runs inside the operation, so a
+     * crash here replays the whole ALTER and rewrites both copies.
+     * <p>
+     * A write failure fails the ALTER, which suspends the view; a RESUME replays it. That is the
+     * same treatment {@code writeLiveViewRetentionMarker} gets, and for the same reason: silently
+     * carrying on would leave a definition nothing later reconciles.
+     */
+    private void updateLiveViewDefinitionTtl(int ttlHoursOrMonths) {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(tableToken.getTableName());
+        // A registered view lends its own definition, which is both the object the rewrite needs
+        // and the in-memory copy that has to end up carrying the new value. With refresh disabled
+        // the registry holds nothing (CairoEngine.buildViewGraphs skips registration) and the
+        // global ApplyWal2TableJob drives this apply, so read the definition back off disk - the
+        // metadata it is handed is inert here, since append() writes none of it.
+        LiveViewDefinition definition = instance != null ? instance.getDefinition() : null;
+        if (blockFileWriter == null) {
+            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
+        }
+        try {
+            if (definition == null) {
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    path.trimTo(pathSize).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+                    definition = LiveViewDefinition.readFromPath(
+                            reader,
+                            path,
+                            tableToken,
+                            null,
+                            GenericRecordMetadata.copyOfNew(metadata)
+                    );
+                }
+            }
+            definition.updateTtl(ttlHoursOrMonths);
+            path.trimTo(pathSize).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+            try (BlockFileWriter definitionWriter = blockFileWriter) {
+                definitionWriter.of(path.$());
+                LiveViewDefinition.append(definition, definitionWriter);
+            }
+            path.trimTo(pathSize).concat(WalUtils.SEQ_DIR).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+            try (BlockFileWriter definitionWriter = blockFileWriter) {
+                definitionWriter.of(path.$());
+                LiveViewDefinition.append(definition, definitionWriter);
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
     }
 
     private void updateMaxTimestamp(long timestamp) {

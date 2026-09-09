@@ -286,6 +286,7 @@ public class LiveViewRegistryFuzzTest extends AbstractTest {
                 0,
                 0,
                 (byte) 0,
+                0,
                 null,
                 new ObjList<>(),
                 new IntList(),

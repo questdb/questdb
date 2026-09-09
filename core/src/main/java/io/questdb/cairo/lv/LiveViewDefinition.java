@@ -45,10 +45,11 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Immutable definition of a live view, persisted in the {@code _lv} block file.
+ * Definition of a live view, persisted in the {@code _lv} block file.
  * <p>
- * Mirrors {@link io.questdb.cairo.mv.MatViewDefinition} — written once at CREATE,
- * never rewritten (ALTER LIVE VIEW is deferred). New schema bumps land as new
+ * Mirrors {@link io.questdb.cairo.mv.MatViewDefinition}. Every field the user wrote at
+ * CREATE is immutable except {@code ttlHoursOrMonths}, which {@code ALTER LIVE VIEW ...
+ * SET TTL} rewrites through {@code TableWriter.setMetaTtl}. New schema bumps land as new
  * block types; old readers ignore unknown blocks.
  * <p>
  * Block types:
@@ -65,11 +66,18 @@ public class LiveViewDefinition {
     public static final int LIVE_VIEW_DEFINITION_CORE_MSG_TYPE = 0;
     // Format version stamped as the first field of the CORE block. A reader that
     // finds a higher value refuses to load the view and surfaces it as
-    // version_unsupported. Live views ship at version 1: while the feature is
-    // unreleased, any CORE layout change edits the v1 layout in place with no
-    // back-compat read path. Bump this only for a post-release incompatible
-    // change, and add explicit per-version read handling then.
-    public static final int LIVE_VIEW_DEFINITION_FORMAT_VERSION = 1;
+    // version_unsupported.
+    //
+    // Version 1 is what shipped: it ends the fixed prefix at startFromKind and goes
+    // straight into the dependency-column count. Version 2 inserts ttlHoursOrMonths
+    // between the two. Reading a v1 file with the v2 offsets takes the old depCount
+    // as the TTL and the first dependency column's length header as the count, so the
+    // versions cannot share a read path - and they do not have to, since the clause
+    // that sets a TTL did not exist in v1 and 0 is the right value for every v1 view.
+    // Any further CORE layout change needs the same treatment.
+    public static final int LIVE_VIEW_DEFINITION_FORMAT_VERSION = 2;
+    // The last version whose CORE block ends at startFromKind, with no TTL field.
+    private static final int LIVE_VIEW_DEFINITION_VERSION_NO_TTL = 1;
     // _lv.drop is the "DROP in progress" sentinel. dropLiveView creates it (and
     // fsyncs it) before any in-memory or on-disk teardown so a crash mid-drop
     // leaves an unambiguous signal for the startup loader to reap. Sits in the LV
@@ -121,6 +129,16 @@ public class LiveViewDefinition {
     // The START FROM mode the user wrote at CREATE: one of START_FROM_NOW,
     // START_FROM_BEGINNING, START_FROM_TIMESTAMP.
     private final byte startFromKind;
+    // The view's retention, in the same hours-or-months encoding the table's _meta uses:
+    // positive is hours, negative is months, 0 is no TTL. The table's _meta is the value TTL
+    // enforcement reads; this copy exists so the definition alone describes the view.
+    //
+    // Not final, and volatile for the same reason baseTableToken and viewName are: SET TTL is
+    // applied on a WAL apply thread (the refresh worker's inline apply, or the global
+    // ApplyWal2TableJob when refresh is off) while refresh workers and the catalogue read the
+    // definition. The value is written in place rather than by swapping the definition object,
+    // so a refresh cycle holding a reference never sees a half-built replacement.
+    private volatile int ttlHoursOrMonths;
     // Not final: a replica can register a downloaded live view under a pending temp name when its
     // real name is still taken, and CairoEngine.applyTableRename later moves it to the real one.
     // Volatile: the rename runs on the WAL transfer / CheckWalTransactions thread while refresh
@@ -153,6 +171,7 @@ public class LiveViewDefinition {
             int partitionBy,
             long viewLowerBoundTimestamp,
             byte startFromKind,
+            int ttlHoursOrMonths,
             @Nullable LvAnchorSpec anchorSpec,
             ObjList<String> dependencyColumnNames,
             IntList dependencyColumnTypes,
@@ -170,6 +189,7 @@ public class LiveViewDefinition {
         this.partitionBy = partitionBy;
         this.viewLowerBoundTimestamp = viewLowerBoundTimestamp;
         this.startFromKind = startFromKind;
+        this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.anchorSpec = anchorSpec;
         this.dependencyColumnNames = dependencyColumnNames;
         this.dependencyColumnTypes = dependencyColumnTypes;
@@ -189,6 +209,7 @@ public class LiveViewDefinition {
         block.putInt(definition.partitionBy);
         block.putLong(definition.viewLowerBoundTimestamp);
         block.putByte(definition.startFromKind);
+        block.putInt(definition.ttlHoursOrMonths);
         final int depCount = definition.dependencyColumnNames.size();
         block.putInt(depCount);
         for (int i = 0; i < depCount; i++) {
@@ -376,6 +397,21 @@ public class LiveViewDefinition {
             @NotNull GenericRecordMetadata metadata
     ) {
         path.trimTo(rootLen).concat(liveViewToken.getDirName()).concat(LIVE_VIEW_DEFINITION_FILE_NAME);
+        return readFromPath(reader, path, liveViewToken, baseTableToken, metadata);
+    }
+
+    /**
+     * Reads a definition from an explicit {@code _lv} path, for a caller holding a copy that does
+     * not sit directly in the view's table directory - the sequencer-directory copy, which is the
+     * one that replicates and which {@code TableWriter.setMetaTtl} rewrites alongside it.
+     */
+    public static LiveViewDefinition readFromPath(
+            @NotNull BlockFileReader reader,
+            @NotNull Path path,
+            @NotNull TableToken liveViewToken,
+            @Nullable TableToken baseTableToken,
+            @NotNull GenericRecordMetadata metadata
+    ) {
         reader.of(path.$());
 
         boolean coreFound = false;
@@ -389,6 +425,7 @@ public class LiveViewDefinition {
         int partitionBy = 0;
         long viewLowerBoundTimestamp = 0;
         byte startFromKind = START_FROM_NOW;
+        int ttlHoursOrMonths = 0;
         ObjList<String> dependencyColumnNames = new ObjList<>();
         IntList dependencyColumnTypes = new IntList();
         LvAnchorSpec anchorSpec = null;
@@ -426,6 +463,10 @@ public class LiveViewDefinition {
                 offset += Long.BYTES;
                 startFromKind = block.getByte(offset);
                 offset += Byte.BYTES;
+                if (onDiskVersion > LIVE_VIEW_DEFINITION_VERSION_NO_TTL) {
+                    ttlHoursOrMonths = block.getInt(offset);
+                    offset += Integer.BYTES;
+                }
                 int depCount = block.getInt(offset);
                 offset += Integer.BYTES;
                 dependencyColumnNames = new ObjList<>(depCount);
@@ -495,6 +536,7 @@ public class LiveViewDefinition {
                 partitionBy,
                 viewLowerBoundTimestamp,
                 startFromKind,
+                ttlHoursOrMonths,
                 anchorSpec,
                 dependencyColumnNames,
                 dependencyColumnTypes,
@@ -562,6 +604,10 @@ public class LiveViewDefinition {
         return startFromKind;
     }
 
+    public int getTtlHoursOrMonths() {
+        return ttlHoursOrMonths;
+    }
+
     public String getViewName() {
         return viewName;
     }
@@ -583,6 +629,18 @@ public class LiveViewDefinition {
      */
     public void resolveBaseTableToken(TableToken baseTableToken) {
         this.baseTableToken = baseTableToken;
+    }
+
+    /**
+     * Re-points the definition at the view's retention after {@code ALTER LIVE VIEW ... SET TTL}.
+     * Called by {@code TableWriter.setMetaTtl}, which has already written the new value into the
+     * table's {@code _meta} - the copy TTL enforcement reads - and writes the {@code _lv} copies
+     * from this object immediately afterwards. A rewrite that then fails suspends the view and the
+     * RESUME replays the whole ALTER, so this field never ends up describing a TTL the table does
+     * not have.
+     */
+    public void updateTtl(int ttlHoursOrMonths) {
+        this.ttlHoursOrMonths = ttlHoursOrMonths;
     }
 
     /**

@@ -25,9 +25,16 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -249,6 +256,78 @@ public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewCheckpo
      * Unpacks the fixture and registers its live view, without refreshing it yet, so a case may
      * inspect the released tree before this branch's runtime has touched it.
      */
+    @Test
+    public void testAReleasedDefinitionReadsWithoutTtlAndUpgradesOnSetTtl() throws Exception {
+        // The released _lv block ends at startFromKind: 10.0.1 has neither the CREATE LIVE VIEW
+        // TTL clause nor ALTER LIVE VIEW SET TTL, so there is no TTL field to read. This build
+        // inserts one before the dependency-column count, which means reading a released block at
+        // this build's offsets would take the old count as the TTL and the first column name's
+        // length header as the count - garbage, and the whole view with it. The version gate is
+        // what keeps the released definition readable; the first SET TTL rewrites it as v2.
+        assertMemoryLeak(() -> {
+            openFixture();
+            Assert.assertEquals("a released definition carries no TTL", 0, definitionTtl());
+            Assert.assertEquals(0, tableTtl());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                execute("ALTER LIVE VIEW lv SET TTL 2 HOURS");
+                applyLiveViewWal(job);
+            }
+            Assert.assertEquals(2, tableTtl());
+            Assert.assertEquals("the rewrite must upgrade the released definition in place", 2, definitionTtl());
+
+            // Reading back what this build wrote, at the bumped version.
+            restartCycle();
+            Assert.assertEquals(2, definitionTtl());
+            Assert.assertFalse("the upgraded view must stay valid", instance("lv").isInvalid());
+        });
+    }
+
+    /**
+     * Drives the refresh job until the view's own WAL is fully applied. {@code
+     * driveRefreshToQuiescence} stops at the first pass that finds no work, and sequencing an
+     * ALTER resets the view's {@link SeqTxnTracker} to UNINITIALIZED, which makes the lagging scan
+     * skip the view for exactly one pass.
+     */
+    private void applyLiveViewWal(LiveViewRefreshJob job) {
+        final TableToken lvToken = engine.verifyTableName("lv");
+        for (int i = 0; i < 200; i++) {
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+            if (tracker.isInitialised() && tracker.getWriterTxn() >= tracker.getSeqTxn()) {
+                return;
+            }
+            setCurrentMicros(currentMicros + 100_000L);
+            drainWalQueue();
+            drainJob(job);
+            drainWalQueue();
+        }
+        Assert.fail("the live view's WAL was not fully applied");
+    }
+
+    /**
+     * The TTL the view's own {@code _lv} carries, which is the copy that describes the view to a
+     * node rebuilding it - not the {@code _meta} value {@link #tableTtl()} reads.
+     */
+    private int definitionTtl() {
+        final TableToken token = engine.verifyTableName("lv");
+        try (
+                BlockFileReader reader = new BlockFileReader(configuration);
+                Path path = new Path()
+        ) {
+            path.of(configuration.getDbRoot()).concat(token)
+                    .concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+            return LiveViewDefinition.readFromPath(reader, path, token, null, new GenericRecordMetadata())
+                    .getTtlHoursOrMonths();
+        }
+    }
+
+    private int tableTtl() {
+        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("lv"))) {
+            return metadata.getTtlHoursOrMonths();
+        }
+    }
+
     private void openFixture() throws IOException {
         replaceDbContent(FIXTURE_RESOURCE);
         engine.buildViewGraphs();

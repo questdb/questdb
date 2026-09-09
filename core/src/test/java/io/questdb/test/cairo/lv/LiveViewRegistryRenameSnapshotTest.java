@@ -240,6 +240,7 @@ public class LiveViewRegistryRenameSnapshotTest {
                 PartitionBy.DAY,
                 0,
                 LiveViewDefinition.START_FROM_NOW,
+                0,
                 null,
                 new ObjList<>(),
                 new IntList(),

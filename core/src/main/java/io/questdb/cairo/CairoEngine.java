@@ -1717,6 +1717,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 partitionBy,
                 viewLowerBoundTimestamp,
                 op.getStartFromKind(),
+                // The same value LiveViewTableStructure below stamps into _meta. _lv carries it
+                // too because the sequencer-directory copy is what replicates, and a replica
+                // rebuilds the view's table from that copy alone - _meta does not ship with it,
+                // so a TTL that lived only in _meta would not survive the crossing.
+                ttlHoursOrMonths,
                 op.getAnchorSpec(),
                 dependencyColumnNames,
                 dependencyColumnTypes,
