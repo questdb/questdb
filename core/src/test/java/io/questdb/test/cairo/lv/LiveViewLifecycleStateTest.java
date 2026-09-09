@@ -59,38 +59,54 @@ public class LiveViewLifecycleStateTest {
 
     @Test
     public void testCatalogueNamesAreStableLowerCase() {
-        // The exact strings surfaced by live_views().view_status. Locks all six, including the two
-        // transient/internal states that no SQL query can observe.
+        // The exact strings surfaced by live_views().view_status. Locks every state, including
+        // the two transient/internal states that no SQL query can observe.
         Assert.assertEquals("creating", LiveViewLifecycleState.CREATING.catalogueName());
         Assert.assertEquals("active", LiveViewLifecycleState.ACTIVE.catalogueName());
         Assert.assertEquals("seeding", LiveViewLifecycleState.SEEDING.catalogueName());
+        Assert.assertEquals("suspended", LiveViewLifecycleState.SUSPENDED.catalogueName());
         Assert.assertEquals("invalid", LiveViewLifecycleState.INVALID.catalogueName());
         Assert.assertEquals("dropping", LiveViewLifecycleState.DROPPING.catalogueName());
         Assert.assertEquals("version_unsupported", LiveViewLifecycleState.VERSION_UNSUPPORTED.catalogueName());
+        Assert.assertEquals("state_unreadable", LiveViewLifecycleState.STATE_UNREADABLE.catalogueName());
     }
 
     @Test
     public void testDeriveActiveAndSeeding() {
         // Registry-visible, valid: the seed signal alone chooses SEEDING vs ACTIVE.
-        Assert.assertEquals(LiveViewLifecycleState.ACTIVE, LiveViewLifecycleState.derive(true, false, false));
-        Assert.assertEquals(LiveViewLifecycleState.SEEDING, LiveViewLifecycleState.derive(true, false, true));
+        Assert.assertEquals(LiveViewLifecycleState.ACTIVE, LiveViewLifecycleState.derive(true, false, false, false));
+        Assert.assertEquals(LiveViewLifecycleState.SEEDING, LiveViewLifecycleState.derive(true, false, true, false));
     }
 
     @Test
     public void testDeriveDroppingWhenNotRegistryVisible() {
         // A not-registry-visible (marked-dropped) instance is DROPPING regardless of the other signals.
         // This is the sole producer of DROPPING, hence the authoritative check for the dropping label.
-        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, false, false));
-        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, true, false));
-        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, false, true));
-        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, true, true));
+        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, false, false, false));
+        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, true, false, false));
+        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, false, true, false));
+        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, true, true, false));
     }
 
     @Test
     public void testDeriveInvalidTakesPrecedenceOverSeeding() {
         // A registry-visible, invalid instance is INVALID even if the seed signal is still set.
-        Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, true, false));
-        Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, true, true));
+        Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, true, false, false));
+        Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, true, true, false));
+    }
+
+    @Test
+    public void testDeriveSuspendedOutranksSeedingAndYieldsToDroppingAndInvalid() {
+        // A registry-visible, valid instance whose own WAL table the sequencer has suspended
+        // is SUSPENDED whether or not the seed sweep is in progress: the sweep parks on the
+        // same unapplied block, and RESUME WAL is the operator's move either way.
+        Assert.assertEquals(LiveViewLifecycleState.SUSPENDED, LiveViewLifecycleState.derive(true, false, false, true));
+        Assert.assertEquals(LiveViewLifecycleState.SUSPENDED, LiveViewLifecycleState.derive(true, false, true, true));
+        // A dropped or invalid view has already stopped; the suspension of its table adds nothing.
+        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, false, false, true));
+        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, true, true, true));
+        Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, true, false, true));
+        Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, true, true, true));
     }
 
     @Test
@@ -140,7 +156,7 @@ public class LiveViewLifecycleStateTest {
         writer.start();
         try {
             Assert.assertTrue("writer did not start copying the reason", reasonCopyStarted.await(10, TimeUnit.SECONDS));
-            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, instance.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, instance.getLifecycleState(false));
             Assert.assertNull(instance.getInvalidationReason());
             Assert.assertEquals(Numbers.LONG_NULL, instance.getStateReader().getInvalidationTimestampUs());
         } finally {
@@ -150,7 +166,7 @@ public class LiveViewLifecycleStateTest {
 
         Assert.assertFalse("writer did not stop", writer.isAlive());
         Assert.assertNull(writerError.get());
-        Assert.assertEquals(LiveViewLifecycleState.INVALID, instance.getLifecycleState());
+        Assert.assertEquals(LiveViewLifecycleState.INVALID, instance.getLifecycleState(false));
         Assert.assertEquals("boom", instance.getInvalidationReason());
         Assert.assertEquals(42, instance.getStateReader().getInvalidationTimestampUs());
     }

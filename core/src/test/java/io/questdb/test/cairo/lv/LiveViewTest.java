@@ -673,7 +673,8 @@ public class LiveViewTest extends AbstractLiveViewTest {
         // WAL-control verbs. SUSPEND must flip the LV's sequencer to suspended AND
         // register the hard-suspend (so the apply job skips it); RESUME must clear both.
         // testSuspendedLiveViewCanBeResumed covers RESUME after a fault-induced suspend;
-        // this covers the SUSPEND verb itself and its wal_tables() visibility.
+        // this covers the SUSPEND verb itself and its wal_tables() and live_views()
+        // visibility.
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -689,6 +690,9 @@ public class LiveViewTest extends AbstractLiveViewTest {
                     engine.isWalApplySuspended(lvToken));
             assertQuery("SELECT name, suspended FROM wal_tables() WHERE name = 'lv'")
                     .noLeakCheck().noRandomAccess().returns("name\tsuspended\nlv\ttrue\n");
+            // The view's own status says so too, rather than 'active' while nothing lands.
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck().noRandomAccess().returns("view_status\nsuspended\n");
 
             execute("ALTER LIVE VIEW lv RESUME WAL");
             Assert.assertFalse("RESUME WAL must clear the suspension",
@@ -697,6 +701,8 @@ public class LiveViewTest extends AbstractLiveViewTest {
                     engine.isWalApplySuspended(lvToken));
             assertQuery("SELECT name, suspended FROM wal_tables() WHERE name = 'lv'")
                     .noLeakCheck().noRandomAccess().returns("name\tsuspended\nlv\tfalse\n");
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck().noRandomAccess().returns("view_status\nactive\n");
 
             execute("DROP LIVE VIEW lv");
             execute("DROP TABLE base");

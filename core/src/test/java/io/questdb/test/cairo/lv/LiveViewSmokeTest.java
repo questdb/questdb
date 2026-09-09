@@ -3511,6 +3511,39 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testSuspendedStatusOutranksSeedingInCatalogue() throws Exception {
+        // A SEEDING view whose own WAL table the sequencer has suspended reads "suspended"
+        // in live_views().view_status: the sweep parks on the same unapplied block that
+        // stalls an ACTIVE view, and RESUME WAL is the operator's move either way. The
+        // seed signal is untouched underneath, so RESUME WAL returns the view to "seeding".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms START FROM BEGINNING AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\nseeding\n");
+
+            execute("ALTER LIVE VIEW lv SUSPEND WAL");
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(lvToken));
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\nsuspended\n");
+
+            execute("ALTER LIVE VIEW lv RESUME WAL");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\nseeding\n");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\nactive\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testShowCreateEmitsSeedClause() throws Exception {
         // SHOW CREATE LIVE VIEW round-trips the SEED clause so the emitted
         // DDL re-creates an equivalent view.
@@ -7117,7 +7150,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final LiveViewInstance recovered = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull("a reset costs derived state, not the view", recovered);
             Assert.assertFalse(recovered.isStub());
-            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, recovered.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, recovered.getLifecycleState(engine.getTableSequencerAPI().isSuspended(recovered.getLiveViewToken())));
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
 
             // The base advances and the view refreshes forward over the rebuilt
@@ -7265,7 +7298,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull("torn _lv.s with no recoverable floor must register a stub", stub);
             Assert.assertTrue(stub.isStub());
-            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState(false));
             assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'")
                     .noLeakCheck().noRandomAccess()
                     .returns("view_name\tview_status\nlv\tstate_unreadable\n");
@@ -7321,7 +7354,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv_stub");
             Assert.assertNotNull(stub);
             Assert.assertTrue(stub.isStub());
-            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState(false));
             final LiveViewInstance ok = engine.getLiveViewRegistry().getViewInstance("lv_ok");
             Assert.assertNotNull(ok);
             Assert.assertFalse(ok.isStub());
@@ -7346,7 +7379,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final LiveViewInstance stubAfter = engine.getLiveViewRegistry().getViewInstance("lv_stub");
             Assert.assertNotNull(stubAfter);
             Assert.assertTrue(stubAfter.isStub());
-            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stubAfter.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stubAfter.getLifecycleState(false));
             assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv_stub'")
                     .noLeakCheck().noRandomAccess()
                     .returns("view_name\tview_status\nlv_stub\tstate_unreadable\n");
@@ -7411,7 +7444,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final LiveViewInstance recovered = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull("torn _lv.s must recover, not strand the view", recovered);
             Assert.assertFalse("recovered view is a real instance, not a stub", recovered.isStub());
-            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, recovered.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, recovered.getLifecycleState(engine.getTableSequencerAPI().isSuspended(recovered.getLiveViewToken())));
             assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'")
                     .noLeakCheck().noRandomAccess()
                     .returns("view_name\tview_status\nlv\tactive\n");
@@ -7441,7 +7474,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull("rewritten _lv.s must load on a clean restart", reloaded);
             Assert.assertFalse(reloaded.isStub());
-            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, reloaded.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, reloaded.getLifecycleState(engine.getTableSequencerAPI().isSuspended(reloaded.getLiveViewToken())));
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
 
             // The recovered view remains droppable via SQL - no longer a zombie.
@@ -8882,7 +8915,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull("missing _lv.s must surface a stub, not be silently skipped", stub);
             Assert.assertTrue(stub.isStub());
-            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState(false));
             assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'")
                     .noLeakCheck().noRandomAccess()
                     .returns("view_name\tview_status\nlv\tstate_unreadable\n");
@@ -16051,7 +16084,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             Assert.assertNotNull("version-unsupported view must still be registered", stub);
             Assert.assertTrue("stub must be a load-failure stub", stub.isStub());
             Assert.assertEquals("stub must report version-unsupported",
-                    LiveViewLifecycleState.VERSION_UNSUPPORTED, stub.getLifecycleState());
+                    LiveViewLifecycleState.VERSION_UNSUPPORTED, stub.getLifecycleState(false));
 
             // view_name and view_status surface; definition/state columns are NULL
             // (string columns render empty, long columns render "null").
@@ -16085,7 +16118,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(stub);
-            Assert.assertEquals(LiveViewLifecycleState.VERSION_UNSUPPORTED, stub.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.VERSION_UNSUPPORTED, stub.getLifecycleState(false));
             assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_name\tview_status\n" +
                     "lv\tversion_unsupported\n");
 

@@ -28,8 +28,9 @@ package io.questdb.cairo.lv;
  * Logical lifecycle state of a live view.
  * <p>
  * Derived state, not a persisted field. The combination of registry visibility
- * (locked / committed / marked-dropped), {@code _lv.s.invalid}, and
- * {@code _lv.s.seedState} uniquely determines the state.
+ * (locked / committed / marked-dropped), {@code _lv.s.invalid},
+ * {@code _lv.s.seedState} and the sequencer's suspension flag for the view's own
+ * WAL table uniquely determines the state.
  */
 public enum LiveViewLifecycleState {
     /**
@@ -47,6 +48,16 @@ public enum LiveViewLifecycleState {
      * completes and flips to ACTIVE.
      */
     SEEDING,
+    /**
+     * Registry committed, not invalid, but the sequencer has suspended the view's
+     * own WAL table: an inline apply failed, or an operator ran
+     * {@code ALTER LIVE VIEW ... SUSPEND WAL}. Output the refresh worker commits into
+     * the view's WAL does not land on disk until {@code ALTER LIVE VIEW ... RESUME WAL};
+     * queries serve the last applied state. A SEEDING view whose table is suspended
+     * reports this state too, since the sweep parks on the same unapplied block.
+     * {@code wal_tables()} carries the error tag and message behind the suspension.
+     */
+    SUSPENDED,
     /**
      * Registry committed, {@code _lv.s.invalid=true}; refresh stopped, last persisted state remains queryable.
      */
@@ -90,17 +101,26 @@ public enum LiveViewLifecycleState {
      *                        registry entry not marked for drop
      * @param invalid         {@code _lv.s.invalid}
      * @param seeding         {@code _lv.s.seedState == SEEDING}
+     * @param walSuspended    {@code true} iff the sequencer reports the view's own
+     *                        WAL table suspended
      */
     public static LiveViewLifecycleState derive(
             boolean registryVisible,
             boolean invalid,
-            boolean seeding
+            boolean seeding,
+            boolean walSuspended
     ) {
         if (!registryVisible) {
             return DROPPING;
         }
         if (invalid) {
             return INVALID;
+        }
+        // Suspension outranks the seed signal: a suspended table blocks the sweep
+        // exactly as it blocks incremental refresh, and RESUME WAL is the operator's
+        // move either way.
+        if (walSuspended) {
+            return SUSPENDED;
         }
         return seeding ? SEEDING : ACTIVE;
     }
@@ -113,6 +133,7 @@ public enum LiveViewLifecycleState {
             case CREATING -> "creating";
             case ACTIVE -> "active";
             case SEEDING -> "seeding";
+            case SUSPENDED -> "suspended";
             case INVALID -> "invalid";
             case DROPPING -> "dropping";
             case VERSION_UNSUPPORTED -> "version_unsupported";

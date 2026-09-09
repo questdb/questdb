@@ -1048,6 +1048,11 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 rejectMarkerPublish.set(true);
                 execute("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-01'");
                 driveUntil(job, () -> engine.getTableSequencerAPI().isSuspended(lvToken), "the live view was not suspended");
+                // A fault-induced suspension is visible on the view itself, not only on
+                // wal_tables(): the view is registered and valid, but nothing lands until
+                // RESUME WAL, and 'active' would hide that.
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\nsuspended\n");
 
                 assertQuery("SELECT name FROM table_partitions('lv') ORDER BY name")
                         .noLeakCheck()
@@ -1067,6 +1072,8 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 execute("ALTER LIVE VIEW lv RESUME WAL");
                 driveLiveViewWalApply(job);
                 Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\nactive\n");
                 assertQuery("SELECT name FROM table_partitions('lv') ORDER BY name")
                         .noLeakCheck()
                         .expectSize()

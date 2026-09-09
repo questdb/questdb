@@ -1472,7 +1472,16 @@ public class LiveViewInstance implements QuietCloseable {
         return latestSeenTs;
     }
 
-    public LiveViewLifecycleState getLifecycleState() {
+    /**
+     * Derives the lifecycle state {@code live_views().view_status} reports. The
+     * instance holds every durable signal itself except the sequencer's suspension
+     * flag for the view's own WAL table, which the caller reads off
+     * {@code TableSequencerAPI} and passes in; a stub ignores it.
+     *
+     * @param isWalSuspended {@code true} iff the sequencer reports the view's own
+     *                       WAL table suspended
+     */
+    public LiveViewLifecycleState getLifecycleState(boolean isWalSuspended) {
         if (stubState != null) {
             // Stub for an unloadable view (too-new format, or torn / corrupt state):
             // its durable signals were never read, so report the terminal state directly.
@@ -1485,7 +1494,8 @@ public class LiveViewInstance implements QuietCloseable {
         return LiveViewLifecycleState.derive(
                 !dropped && !isClosed,
                 stateReader.isInvalid(),
-                stateReader.getSeedState() == LiveViewState.SEED_STATE_SEEDING
+                stateReader.getSeedState() == LiveViewState.SEED_STATE_SEEDING,
+                isWalSuspended
         );
     }
 
@@ -1879,7 +1889,7 @@ public class LiveViewInstance implements QuietCloseable {
      * catalogue load path could not load the on-disk files (a too-new format version,
      * or a torn / corrupt {@code _lv} / {@code _lv.s} with no recoverable state). Such
      * a stub is visible in the catalogue and droppable but never refreshes. See the
-     * stub constructor and {@link #getLifecycleState()}.
+     * stub constructor and {@link #getLifecycleState(boolean)}.
      */
     public boolean isStub() {
         return stubState != null;
