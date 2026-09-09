@@ -25,11 +25,20 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
+import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapReader;
+import io.questdb.cairo.lv.LiveViewCheckpointRoot;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
+import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.LongList;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -307,19 +316,22 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testAKeyedRepairOverLegacyRootsDeclinesTheSpliceAndKeepsEveryKey() throws Exception {
+    public void testAKeyedRepairAcrossAFusionSwitchNeedsNoConversionAndKeepsEveryKey() throws Exception {
         // A keyed repair's splice images the keys the correction touched and leaves every
-        // other key's entry to the root it re-versions. A root sealed by an earlier build in
-        // the unfused shape is not one the fused builder can build on: it starts the root
-        // over from the imaged keys alone, and the replay, which followed those keys and no
-        // others, holds nothing to put the rest back with. Ten legacy roots of eight keys
-        // each would come out of the conversion holding one, and a later resume off any of
-        // them would answer a fresh account's amount rather than its running total.
+        // other key's entry to the root it re-versions, so it may only build on a root the
+        // running build can read. That used to make the fusion switch a format boundary:
+        // roots sealed with it off were a different shape, the splice over them was declined
+        // and the interval took the truncate instead.
         //
-        // The guard declines the splice for such an interval and takes the truncate, whose
-        // head seal images the whole runtime. Per-segment repair is switched off for the
-        // last correction so that it resumes off a sealed root rather than re-repairing the
-        // segment - the route that masked the loss before the guard existed.
+        // The switch is no longer a format boundary. Both settings seal a window root under
+        // the same manifest, so the ten roots below need no conversion and the splice goes
+        // through in both phases - which is what the decline counter asserts here. The guard
+        // itself stays in production for the case that can still reach it: a timeline an
+        // earlier build wrote, or a function whose state format has moved on.
+        //
+        // Per-segment repair is switched off for the last correction so that it resumes off
+        // a sealed root rather than re-repairing the segment - the route that masked the
+        // loss before the guard existed.
         armKeyedReplay();
         setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
         try {
@@ -328,7 +340,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                     driveRefreshToQuiescence(job);
                     // Ten commits of eight accounts each on the second, one root per commit,
-                    // all sealed in the legacy shape.
+                    // all sealed with map fusion off.
                     for (int minute = 0; minute < 10; minute++) {
                         commit(eightAccountsOnTheSecond(minute), job);
                     }
@@ -336,28 +348,29 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                     commit(row(3, 1, "acct-1"), job);
                 }
 
-                // The upgrade: the runtime fuses, and the next refresh restores off the
-                // legacy roots rather than rebuilding from the base.
+                // The switch goes back on. The runtime fuses and the next refresh restores
+                // off the very roots the unfused seals wrote, with nothing to convert.
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, (String) null);
                 restartCycle();
                 try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                     driveRefreshToQuiescence(job);
                     Assert.assertTrue(
-                            "the upgrade must restore off the legacy roots, or the case converts nothing",
+                            "the restart must restore off the unfused seals' roots, or the case reads nothing",
                             viewInstance().isCheckpointRestoreSucceeded()
                     );
                     // Below every row the second holds, on one account: a keyed correction
-                    // whose interval is exactly the ten legacy roots.
+                    // whose interval is exactly those ten roots.
                     commit(row(2, 0, 30, 0, "acct-1"), job);
                     Assert.assertEquals(
-                            "a partial key domain must not be spliced into roots that need converting",
-                            1,
+                            "roots sealed under the other fusion setting need no conversion, so the"
+                                    + " splice must go through",
+                            0,
                             job.keyDomainSpliceDeclineCountForTest()
                     );
                     assertViewMatchesRecompute();
                 }
 
-                // A resume off a converted root is what reads the conversion back. With the
+                // A resume off a spliced root is what reads the repair back. With the
                 // per-segment route off, the correction below resumes from the newest root
                 // beneath it instead of re-repairing the segment.
                 setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, "false");
@@ -374,7 +387,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                                     "10.0\n" +
                                     "11.0\n");
                     Assert.assertEquals(
-                            "the roots the conversion seal published are fused, so a later splice must go through",
+                            "a later splice must go through as well",
                             0,
                             job.keyDomainSpliceDeclineCountForTest()
                     );
@@ -451,6 +464,105 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
                 assertViewMatchesRecompute();
                 assertViewMatchesRecompute("lv2");
+            }
+        });
+    }
+
+    /**
+     * The reported defect, reproduced end to end: a closed-segment keyed repair used to
+     * publish a state root that dropped the anchors of every key outside its correction
+     * domain, and the next correction then restarted those keys' accumulators from zero.
+     * <p>
+     * It was reachable only with map fusion off, because that was the setting that chose
+     * the second state-root format. The legacy anchor builder treated a keyed capture as a
+     * complete snapshot and removed every entry it did not put, while the function-root
+     * builder applied the same capture's output-key domain and kept those keys' state. So
+     * the two roots of one boundary disagreed about which keys existed, and a later
+     * restore reset the accumulators of the keys only one of them still named - with no
+     * refresh fault to say so.
+     * <p>
+     * With one builder there is no second opinion to have. The window root applies the
+     * repaired output-key domain to the whole entry, so a key outside it keeps the
+     * predecessor's anchor value and components together, and the assertions below hold
+     * the ten repaired minute boundaries to exactly that.
+     * <p>
+     * The distinguishing evidence is {@code acct-3}, which no correction here ever
+     * touches: on the defective baseline its cumulative sums came back as 1.0 and 4.0
+     * instead of 7.0 and 10.0. A whole-view comparison against the oracle would catch it
+     * too, but the two rows are asserted by name so a future change that weakens the
+     * oracle cannot quietly take the case with it.
+     */
+    @Test
+    public void testAKeyedRepairWithoutFusionKeepsUntouchedAccountsAccumulating() throws Exception {
+        armKeyedReplay();
+        // The two settings the reproduction turns on top of the armed route. Per-segment
+        // repair is what produces one repaired root per minute boundary rather than one
+        // for the day; fusion off is what used to select the second root format, and is
+        // kept off across the restart below so the case never leaves the mode it is about.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            createView("('2026-01-02T00:45:00.000000Z', 'acct-1', 1.0)");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+
+                // Ten minute-boundary checkpoints, each one commit of eight accounts. One
+                // commit per minute rather than one for the lot: the ladder is what the
+                // repair re-versions, and a single commit would leave it one boundary deep.
+                for (int minute = 0; minute < 10; minute++) {
+                    commit(eightAccountsAtMinute(minute), job);
+                }
+                Assert.assertTrue(
+                        "the ten minute commits must each seal a boundary of their own",
+                        snapshotCheckpointLadder(viewInstance()).size() / 2 >= 10
+                );
+
+                // Closes the January 2 anchor segment, so the correction below lands in a
+                // closed one and takes the keyed route rather than the open-segment resume.
+                commit("('2026-01-03T01:00:00.000000Z', 'acct-1', 1.0)", job);
+
+                // The first correction, below every row January 2 holds.
+                commit("('2026-01-02T00:30:00.000000Z', 'acct-1', 1.0)", job);
+                Assert.assertTrue(
+                        "the correction must take the keyed route, or the case covers nothing",
+                        job.keyedReplaySegmentCountForTest() > 0
+                );
+                assertViewMatchesRecompute();
+                // The defect in its own terms, before any restart reads the roots back:
+                // every repaired boundary must still name all eight accounts. A root that
+                // kept only the corrected key would pass the comparison above - the live
+                // runtime still holds the right state - and fail the restore below.
+                assertEveryRepairedBoundaryKeepsAllAccounts();
+            }
+
+            // Per-segment repair off for the restart: the state has to come back off the
+            // roots the repair published rather than be re-derived by another repair.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, "false");
+            restartCycle();
+            Assert.assertFalse("the restored view must not be invalid", viewInstance().isInvalid());
+            assertNoRefreshFaults("lv");
+
+            // The second correction, on a different account. This is what read the
+            // restored accumulators on the defective baseline: acct-3 had none left.
+            //
+            // It is also what forces the restore. The drain inside restartCycle has no base
+            // transaction to apply, so the recompiled view does not rehydrate until a row
+            // needs it - which is why the route witness is asserted here rather than
+            // straight after the restart.
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                commit("('2026-01-02T01:05:30.000000Z', 'acct-2', 1.0)", resumed);
+                Assert.assertTrue(
+                        "the correction must have driven the view to restore its state",
+                        viewInstance().isCheckpointRestoreAttempted()
+                );
+                Assert.assertTrue(
+                        "the state must come back off the repaired timeline rather than a head-miss replay",
+                        viewInstance().isCheckpointRestoreSucceeded()
+                );
+                assertNoRefreshFaults("lv");
+                assertViewMatchesRecompute();
+                assertAccountSum("acct-3", "2026-01-02T01:06:00.000000Z", 7.0);
+                assertAccountSum("acct-3", "2026-01-02T01:09:00.000000Z", 10.0);
             }
         });
     }
@@ -892,6 +1004,128 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
             }
         }
         return rows.toString();
+    }
+
+    /**
+     * One commit of eight accounts at {@code 2026-01-02T01:mm:00}, a unit amount each.
+     */
+    private static String eightAccountsAtMinute(int minute) {
+        final StringBuilder rows = new StringBuilder();
+        for (int account = 1; account <= ACCOUNTS; account++) {
+            if (rows.length() > 0) {
+                rows.append(", ");
+            }
+            rows.append("('2026-01-02T01:").append(String.format("%02d", minute))
+                    .append(":00.000000Z', 'acct-").append(account).append("', 1.0)");
+        }
+        return rows.toString();
+    }
+
+    /**
+     * Asserts one account's cumulative sum at one timestamp, read from the view itself.
+     * <p>
+     * The oracle comparison covers the whole result; this names the two rows the reported
+     * defect actually moved, so the case still says what it is about when read on its own.
+     */
+    private void assertAccountSum(String account, String timestamp, double expected) throws Exception {
+        try (
+                RecordCursorFactory factory = select(
+                        "select cumulative_sum from lv where account_id = '" + account
+                                + "' and created_at = '" + timestamp + "'"
+                );
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(account + " must have a row at " + timestamp, cursor.hasNext());
+            Assert.assertEquals(
+                    account + " at " + timestamp,
+                    expected,
+                    cursor.getRecord().getDouble(0),
+                    1e-9
+            );
+            Assert.assertFalse("one row per account per timestamp", cursor.hasNext());
+        }
+    }
+
+    /**
+     * Asserts every checkpoint boundary the repair left behind names all eight accounts.
+     * <p>
+     * Read off the published roots rather than off the view: the live runtime holds the
+     * corrected state either way, so only the entries on disk can say whether a key
+     * outside the correction's output-key domain kept what the predecessor held for it.
+     * That is the exact invariant the removed anchor-root builder broke - it treated a
+     * keyed capture as a complete snapshot and removed every key the capture did not put.
+     * <p>
+     * All ten minute boundaries survive the correction as re-versioned roots, because the
+     * keyed repair splices its key domain into them rather than retiring the interval. That
+     * splice is only permitted over roots the running build can build on, which is what
+     * {@code isKeyDomainSpliceable} decides - and deciding it from the storage plan rather
+     * than the runtime one is what keeps it correct with map fusion off.
+     */
+    private void assertEveryRepairedBoundaryKeepsAllAccounts() {
+        final LiveViewInstance instance = viewInstance();
+        int boundariesRead = 0;
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            store.of(dir);
+            Assert.assertTrue(store.isValid());
+            try (
+                    LiveViewCheckpointGenerationPin pin = store.pin();
+                    LiveViewCheckpointTimelineReader timeline = new LiveViewCheckpointTimelineReader(configuration);
+                    LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
+                    LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(configuration);
+                    LiveViewCheckpointPartitionMapReader partitions =
+                            new LiveViewCheckpointPartitionMapReader(configuration)
+            ) {
+                timeline.of(dir);
+                partitions.of(dir);
+                final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
+                final LiveViewCheckpointPageRef mapRootRef = new LiveViewCheckpointPageRef();
+                final int[] read = {0};
+                // The boundaries inside the repaired anchor day, from the first commit that
+                // carried all eight accounts. The seed boundary below it legitimately holds
+                // one key - acct-1 was the only account that existed then - and the January 3
+                // boundary above the day was never in the repaired interval.
+                timeline.range(
+                        pin.getTimelineRootRef(),
+                        ts("2026-01-02T01:00:00.000000Z"),
+                        ts("2026-01-03T00:00:00.000000Z"),
+                        entry -> {
+                            root.of(dir, entry.rootRef);
+                            root.getStateRootRef(stateRootRef);
+                            Assert.assertFalse(
+                                    "an anchored boundary always has a state root",
+                                    stateRootRef.isNull()
+                            );
+                            Assert.assertTrue(
+                                    "every anchored boundary must carry a window root",
+                                    windowRoot.ofIfWindowRoot(dir, stateRootRef)
+                            );
+                            windowRoot.getPartitionMapRootRef(mapRootRef);
+                            Assert.assertEquals(
+                                    "boundary at " + entry.maxTimestamp + " must keep every account,"
+                                            + " including the ones the correction never touched",
+                                    ACCOUNTS,
+                                    partitions.size(mapRootRef)
+                            );
+                            read[0]++;
+                        }
+                );
+                boundariesRead = read[0];
+                Assert.assertEquals(
+                        "all ten minute boundaries must survive the repair as re-versioned roots",
+                        10,
+                        boundariesRead
+                );
+            }
+        }
+    }
+
+    private static Path checkpointsDir(LiveViewInstance instance) {
+        return new Path().of(configuration.getDbRoot())
+                .concat(instance.getLiveViewToken())
+                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
     }
 
     private LiveViewInstance viewInstance() {

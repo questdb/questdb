@@ -86,11 +86,13 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
             createNumericBaseTable();
             // A DECIMAL sum accumulates into a Decimal128 or Decimal256 beside a
             // null-state flag, which is a state shape the component families do not
-            // describe, so it declines and there is no group at all.
+            // describe, so it declines and there is no group at all. The window still
+            // gets its plan: the anchor-only shape, whose root carries the keys and their
+            // anchor values while the sum keeps the function root it has outside a group.
             assertPlan(
                     "select ts, sym, sum(dec) over w as d "
                             + "from nums window w as (partition by sym order by ts anchor daily '00:00')",
-                    Assert::assertNull
+                    LiveViewWindowStatePlanTest::assertAnchorOnlyPlan
             );
             // A count over a DECIMAL column is not a decimal accumulator. It is the same
             // counting implementation every other count uses, under that width's own null
@@ -720,11 +722,12 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
             );
             // An expression argument is not a direct column reference, and SQL text equality
             // is not a proof that two expressions are the same accumulator. With nothing else
-            // to group, the whole plan declines.
+            // to group, every projection declines and the window is left with the
+            // anchor-only plan.
             assertPlan(
                     "select ts, sym, sum(x + 1) over w as s "
                             + "from base window w as (partition by sym order by ts anchor daily '00:00')",
-                    Assert::assertNull
+                    LiveViewWindowStatePlanTest::assertAnchorOnlyPlan
             );
         });
     }
@@ -1254,6 +1257,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         // outright: the manifest would name a slice the runtime image does not fill, and
         // the leaf carries no length of its own to catch it.
         final LiveViewWindowStatePlan.Builder builder = new LiveViewWindowStatePlan.Builder();
+        builder.ofWindow(windowIdentity(), keyTypes());
         Assert.assertFalse(builder.addProjection(
                 new WidthStub(COUNT_STATE_BYTES),
                 component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT, 0, ColumnType.DOUBLE),
@@ -1262,7 +1266,21 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                 windowIdentity(),
                 keyTypes()
         ));
-        Assert.assertNull(builder.build());
+        // The window still gets a plan: it is named, so its storage layout exists whether
+        // or not a projection joined. Declining every projection makes it the anchor-only
+        // shape - zero components, an eight-byte payload - rather than no plan at all.
+        final LiveViewWindowStatePlan declinedPlan = builder.build();
+        Assert.assertNotNull(declinedPlan);
+        Assert.assertEquals(0, declinedPlan.getComponentCount());
+        Assert.assertEquals(0, declinedPlan.getManifest().getComponentCount());
+        Assert.assertEquals(
+                LiveViewWindowStatePlan.ANCHOR_STATE_BYTES,
+                declinedPlan.getTotalInlineStateBytes()
+        );
+
+        // A builder no window named describes nothing, which is a view with no anchored
+        // window rather than an anchored one whose functions all stayed residual.
+        Assert.assertNull(new LiveViewWindowStatePlan.Builder().build());
     }
 
     @Test
@@ -1351,6 +1369,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
      */
     private static LiveViewWindowStatePlan buildSumGroup(int componentCount) {
         final LiveViewWindowStatePlan.Builder builder = new LiveViewWindowStatePlan.Builder();
+        builder.ofWindow(windowIdentity(), keyTypes());
         for (int i = 0; i < componentCount; i++) {
             Assert.assertTrue(builder.addProjection(
                     new WidthStub(SUM_STATE_BYTES),
@@ -1373,6 +1392,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
      */
     private static LiveViewWindowStatePlan buildDescendingSumGroup(int componentCount) {
         final LiveViewWindowStatePlan.Builder builder = new LiveViewWindowStatePlan.Builder();
+        builder.ofWindow(windowIdentity(), keyTypes());
         for (int i = 0; i < componentCount; i++) {
             Assert.assertTrue(builder.addProjection(
                     new WidthStub(SUM_STATE_BYTES),
@@ -1422,6 +1442,29 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         } catch (SqlException e) {
             Assert.assertTrue(e.getMessage(), e.getMessage().contains(expectedMessage));
         }
+    }
+
+    /**
+     * Asserts the plan is the shape an anchored window with no durable component takes:
+     * a real plan naming the window, an empty component list, a manifest declaring zero
+     * components, and the eight bytes the anchor value alone occupies.
+     * <p>
+     * The manifest's encoded form is deliberately checked as non-empty. A root's decoder
+     * rejects an empty one, and an anchor-only window still has to carry a manifest that
+     * says so rather than nothing at all.
+     */
+    private static void assertAnchorOnlyPlan(LiveViewWindowStatePlan plan) {
+        Assert.assertNotNull(plan);
+        Assert.assertEquals(0, plan.getComponentCount());
+        Assert.assertEquals(0, plan.getDurableComponentCount());
+        Assert.assertEquals(0, plan.getProjectionCount());
+        Assert.assertEquals(0, plan.getManifest().getComponentCount());
+        Assert.assertTrue(plan.getManifest().getEncoded().length > 0);
+        Assert.assertEquals(LiveViewWindowStatePlan.ANCHOR_STATE_BYTES, plan.getTotalInlineStateBytes());
+        Assert.assertEquals(
+                LiveViewWindowStatePlan.ANCHOR_STATE_BYTES,
+                plan.getManifest().getTotalInlineStateBytes()
+        );
     }
 
     /**

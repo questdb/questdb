@@ -244,10 +244,13 @@ public class LiveViewCheckpointWindowRoot implements Closeable {
                     .put(", manifestLength=").put(manifestLength).put(']');
         }
         // The leaf holds no length of its own, so a payload width the root does not state
-        // is one no entry could be sliced by. The budget is deliberately not re-checked
-        // here: it is a writer-side storage choice, and a reader applying it would reject
-        // entries an earlier build legitimately wrote if the constant ever moved.
-        if (totalInlineStateBytes <= LiveViewWindowStatePlan.ANCHOR_STATE_BYTES) {
+        // is one no entry could be sliced by. The anchor value's own width is the floor
+        // rather than an excluded value: an anchored window with no durable component
+        // publishes exactly that payload and a manifest declaring zero of them. The budget
+        // is deliberately not re-checked here: it is a writer-side storage choice, and a
+        // reader applying it would reject entries an earlier build legitimately wrote if
+        // the constant ever moved.
+        if (totalInlineStateBytes < LiveViewWindowStatePlan.ANCHOR_STATE_BYTES) {
             throw LiveViewCheckpointMetadata.invalid("window state root inline payload width invalid, bytes=")
                     .put(totalInlineStateBytes);
         }

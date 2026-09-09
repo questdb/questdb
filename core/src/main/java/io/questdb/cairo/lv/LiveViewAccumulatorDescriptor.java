@@ -395,6 +395,31 @@ public final class LiveViewAccumulatorDescriptor {
     }
 
     /**
+     * Writes this component's identity image straight into a payload, which is what
+     * {@link #freezeStateInto} would produce from a value {@link #resetState} had just
+     * put to identity.
+     * <p>
+     * It exists for the one key a private-map freeze finds no entry for. Outside a fused
+     * group a function creates its map entry on the row that first contributes, so an
+     * anchor key the contributor's map does not hold is a key whose accumulator is empty
+     * rather than one whose state went missing - and an empty accumulator's image is not
+     * zero for either extremum family.
+     * <p>
+     * The two encoders are held to the same slot walk deliberately: identity is the
+     * runtime descriptor's answer, read here through
+     * {@link WindowAccumulatorDescriptor#getSlotIdentityBits} rather than restated, so a
+     * family whose empty state changes cannot leave the two disagreeing.
+     */
+    public void resetStateInto(byte @NotNull [] payload, int offset) {
+        checkPayloadBounds(payload, offset);
+        int at = offset;
+        for (int i = 0, n = getSlotCount(); i < n; i++) {
+            putLongLE(payload, at, runtime.getSlotIdentityBits(i));
+            at += Long.BYTES;
+        }
+    }
+
+    /**
      * Fills the fused map value's slots for this component from a whole-state image, the
      * exact inverse of {@link #freezeStateInto}.
      */

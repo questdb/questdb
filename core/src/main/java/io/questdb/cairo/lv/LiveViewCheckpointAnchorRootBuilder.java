@@ -40,7 +40,25 @@ import java.util.Arrays;
 
 /**
  * Builds one immutable anchor root and its changed anchor-map paths in the same
- * metadata segment.
+ * metadata segment. <b>No production path calls it.</b>
+ * <p>
+ * {@link LiveViewCheckpointWindowRoot} is the sole state root an anchored view
+ * publishes. A window with no durable component publishes one carrying a manifest that
+ * declares zero of them and the eight-byte anchor payload, rather than a root of this
+ * shape - which is what removed the second publication path, its separate repair
+ * semantics, and the divergence between them that let a keyed repair drop the anchors of
+ * keys outside its correction domain.
+ * <p>
+ * What production keeps is {@link LiveViewCheckpointAnchorRoot}'s decoder, so a timeline
+ * an earlier build wrote still restores rather than resetting the view and rebuilding it
+ * from a base table that may no longer hold the history. This builder is retained to give
+ * that decoder the coverage a released fixture cannot: a truncated payload, a mismatched
+ * key schema, a root naming a segment its own catalogue does not hold. It cannot live in
+ * the test tree because it reads package-private internals and {@code io.questdb} is a
+ * module, which forbids the split package that would need.
+ * <p>
+ * Nothing in a seal, a repair or a compaction may call it. Adding such a caller would
+ * re-introduce the second writer, not extend this one.
  * <p>
  * A complete freeze treats its puts as the whole truth and removes every old entry
  * it did not put. A forward cadence freeze may instead supply only touched keys;

@@ -165,25 +165,13 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                     );
                 }
 
-                final LiveViewWindow window = instance.getAnchorWindow();
-                Assert.assertFalse(window.bindCheckpointWindowStatePlan(null));
-                insertAccount(job, "2026-01-01T09:00:10.000000Z", "acct-2", 7.0);
-                final LiveViewCheckpointPageRef anchorRef = headStateRootRef(instance);
-                try (
-                        Path dir = checkpointsDir(instance);
-                        LiveViewCheckpointAnchorRoot root = new LiveViewCheckpointAnchorRoot(configuration)
-                ) {
-                    root.of(dir, anchorRef);
-                    final int fixedSize = 5 * Integer.BYTES + LiveViewCheckpointPageRef.BYTES;
-                    assertRestoreRejectsRootMutation(
-                            instance, anchorRef, fixedSize,
-                            "live view checkpoint anchor window name does not match the compiled runtime"
-                    );
-                    assertRestoreRejectsRootMutation(
-                            instance, anchorRef, fixedSize + root.getWindowName().length,
-                            "live view checkpoint anchor key schema does not match the compiled runtime"
-                    );
-                }
+                // The anchor root's own identity checks used to be reached from here by
+                // unbinding the plan and sealing again. No seal writes that shape any
+                // more - unbinding changes the runtime, not the layout - so a legacy root
+                // can only come from a timeline an older build wrote.
+                // LiveViewCheckpointReleaseCompatTest restores one of those from the
+                // released fixture, and LiveViewCheckpointAnchorRootTest holds the
+                // decoder's own field-by-field rejections.
             }
         });
     }
@@ -253,8 +241,165 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         });
     }
 
+    /**
+     * An anchored window whose only accumulator is a DECIMAL {@code sum} - a state shape no
+     * component family describes - still seals a window root, restores from it, and keeps
+     * accumulating across an anchor crossing.
+     * <p>
+     * This is the anchor-only shape: a normal root and key schema, a manifest declaring
+     * zero components, and the eight bytes the anchor value alone occupies, beside the
+     * function root that carries the sum's own state. Before the layout removal this view
+     * sealed the other root format entirely, which is what made the fusion switch and the
+     * projection's fusibility both able to choose a checkpoint layout.
+     */
     @Test
-    public void testALegacyHeadConvertsOnTheNextSealAndRestoresIndependently() throws Exception {
+    public void testAnAnchoredDecimalSumSealsAndRestoresAnAnchorOnlyRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tx (created_at timestamp, account_id symbol, amount decimal(18, 2)) "
+                    + "timestamp(created_at) partition by hour wal");
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, account_id, sum(amount) over w as cumulative_sum "
+                    + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertDecimal(job, "2026-01-01T09:00:00.000000Z", "acct-1", "5.00");
+                insertDecimal(job, "2026-01-01T09:00:10.000000Z", "acct-2", "7.00");
+                insertDecimal(job, "2026-01-01T09:00:20.000000Z", "acct-1", "11.00");
+
+                final LiveViewInstance instance = instance();
+                final LiveViewWindow window = instance.getAnchorWindow();
+                Assert.assertNotNull(window);
+                final LiveViewWindowStatePlan plan = window.getCheckpointStoragePlan();
+                Assert.assertNotNull("an anchored window always has a storage plan", plan);
+                Assert.assertEquals("a DECIMAL sum fuses no component", 0, plan.getComponentCount());
+                Assert.assertEquals(
+                        "the sum stays residual and keeps its own root",
+                        1,
+                        plan.getResidualFunctions().size()
+                );
+
+                Assert.assertTrue("the seal must publish a window root", isWindowRootHead());
+                Assert.assertEquals("both accounts are in the anchor tree", 2, headWindowEntryCount());
+                Assert.assertEquals("the DECIMAL sum keeps a root of its own", 1, headFunctionRootCount());
+                try (
+                        Path dir = checkpointsDir(instance);
+                        LiveViewCheckpointWindowRoot root = new LiveViewCheckpointWindowRoot(configuration)
+                ) {
+                    Assert.assertTrue(root.ofIfWindowRoot(dir, headStateRootRef(instance)));
+                    Assert.assertEquals(
+                            "an anchor-only payload is the anchor value and nothing else",
+                            LiveViewWindowStatePlan.ANCHOR_STATE_BYTES,
+                            root.getTotalInlineStateBytes()
+                    );
+                    Assert.assertTrue(
+                            "the manifest itself must not be empty, even declaring no components",
+                            root.getManifest().length > 0
+                    );
+                    Assert.assertArrayEquals(
+                            "the persisted manifest must be the compiled one",
+                            plan.getManifest().getEncoded(),
+                            root.getManifest()
+                    );
+                }
+
+                assertHeadRestoresRuntime(instance);
+
+                // Across the anchor boundary: the sum restarts for the new day while the
+                // restored state is what the same day's next row continues from.
+                insertDecimal(job, "2026-01-01T09:00:30.000000Z", "acct-1", "2.00");
+                insertDecimal(job, "2026-01-02T09:00:00.000000Z", "acct-1", "3.00");
+                // A trailing commit so the rows above are on disk when they are read: the
+                // newest row of a view sits in its in-memory tier until a later cycle
+                // flushes it.
+                insertDecimal(job, "2026-01-02T09:00:05.000000Z", "acct-2", "1.00");
+                assertNoRefreshFaults("lv");
+                assertQuery("SELECT created_at, cumulative_sum FROM lv WHERE account_id = 'acct-1' ORDER BY created_at")
+                        .timestamp("created_at")
+                        .returns("created_at\tcumulative_sum\n" +
+                                "2026-01-01T09:00:00.000000Z\t5.00\n" +
+                                "2026-01-01T09:00:20.000000Z\t16.00\n" +
+                                "2026-01-01T09:00:30.000000Z\t18.00\n" +
+                                "2026-01-02T09:00:00.000000Z\t3.00\n");
+            }
+
+            // ...and the same state comes back off the anchor-only root after a restart.
+            restartCycle();
+            Assert.assertTrue(
+                    "the restart must restore off the anchor-only root rather than rebuild",
+                    instance().isCheckpointRestoreSucceeded()
+            );
+            Assert.assertTrue(isWindowRootHead());
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                insertDecimal(resumed, "2026-01-02T09:00:10.000000Z", "acct-1", "4.00");
+                insertDecimal(resumed, "2026-01-02T09:00:20.000000Z", "acct-2", "1.00");
+                assertNoRefreshFaults("lv");
+                // 3.00 from before the restart plus this row: the restored function root is
+                // what carries the DECIMAL sum, and an anchor-only window root is what says
+                // which key it belongs to.
+                assertQuery("SELECT cumulative_sum FROM lv WHERE account_id = 'acct-1' AND created_at = '2026-01-02T09:00:10.000000Z'")
+                        .returns("cumulative_sum\n7.00\n");
+            }
+        });
+    }
+
+    /**
+     * SUM, AVG and COUNT over one argument share a single component, and the two
+     * projections that do not maintain it - AVG reads the whole component, COUNT reads the
+     * counter inside it - must come back correct after a freeze and restore in <b>both</b>
+     * runtime modes.
+     * <p>
+     * Unfused this is the case with the most to get wrong. The seal reads the component out
+     * of its contributor's private map, and the restore has to put a slice back into each
+     * projection's own map: the contributor takes the whole component, the derived COUNT
+     * takes the eight bytes at its own
+     * {@link LiveViewAccumulatorProjection#getFunctionStateOffset() function state offset},
+     * and AVG takes the same bytes the sum does. Fused, all three read one map value and
+     * only the contributor's slots exist. Restoring the component alone - which is all the
+     * fused path does - would leave the unfused runtime's derived COUNT holding whatever
+     * its map had.
+     * <p>
+     * One case per fusion/restart combination, because each needs a database of its own.
+     * Every one asserts the manifest is the same across the switch, then that every
+     * projection continues correctly from the restored state rather than restarting at its
+     * own row's value.
+     */
+    @Test
+    public void testSharedProjectionsRestoreFusedIntoFused() throws Exception {
+        assertSharedProjectionsSurviveRestart(true, true);
+    }
+
+    @Test
+    public void testSharedProjectionsRestoreFusedIntoUnfused() throws Exception {
+        assertSharedProjectionsSurviveRestart(true, false);
+    }
+
+    @Test
+    public void testSharedProjectionsRestoreUnfusedIntoFused() throws Exception {
+        assertSharedProjectionsSurviveRestart(false, true);
+    }
+
+    @Test
+    public void testSharedProjectionsRestoreUnfusedIntoUnfused() throws Exception {
+        assertSharedProjectionsSurviveRestart(false, false);
+    }
+
+    /**
+     * Unbinding and rebinding the runtime mid-flight must move the group's accumulators
+     * between the window's own map value and the functions' private maps without changing
+     * one byte of what the next seal publishes.
+     * <p>
+     * This is the fusion switch's whole footprint on the durable side, made local: the
+     * storage plan is the window's whatever the runtime does with it, so both seals below
+     * write a window root under the same manifest and neither function ever takes a root
+     * of its own back. The unfused seal reads each component out of its contributor's map
+     * and the fused one out of a single entry, and the two are required to agree.
+     * <p>
+     * The other direction of the upgrade - a head an older build wrote as an anchor root,
+     * converting on the first seal above it - needs a timeline this build cannot write.
+     * {@code LiveViewCheckpointReleaseCompatTest} covers it against the released fixture.
+     */
+    @Test
+    public void testRebindingTheRuntimeDoesNotChangeTheDurableShape() throws Exception {
         assertMemoryLeak(() -> {
             createTargetView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -267,29 +412,47 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                 Assert.assertNotNull(window);
                 final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
                 Assert.assertNotNull("the target shape must compile a plan", plan);
-                Assert.assertTrue(isFusedHead());
+                Assert.assertSame(
+                        "the storage plan is the compiled one whether or not it is bound",
+                        plan,
+                        window.getCheckpointStoragePlan()
+                );
+                Assert.assertTrue(isWindowRootHead());
+                final byte[] fusedManifest = headManifest();
 
-                // The upgrade in miniature, in both directions: a build with no plan to
-                // persist seals the legacy shape, and the build that has one converts.
-                // Neither may share a leaf with the other.
+                // Hand the group's state back to the private maps. The seal that follows
+                // gathers the same components out of those maps instead of out of one
+                // entry, so the root it writes is the same shape carrying the same layout.
                 Assert.assertFalse(window.bindCheckpointWindowStatePlan(null));
+                Assert.assertNull(window.getCheckpointWindowStatePlan());
+                Assert.assertNotNull(
+                        "unbinding the runtime must not take the storage plan away",
+                        window.getCheckpointStoragePlan()
+                );
                 insertAccount(job, "2026-01-01T09:00:10.000000Z", "acct-2", 7.0);
-                Assert.assertFalse("a view with no plan seals the legacy shape", isFusedHead());
-                Assert.assertEquals(2, headFunctionRootCount());
+                Assert.assertTrue("an unfused seal still writes a window root", isWindowRootHead());
+                Assert.assertArrayEquals(
+                        "the manifest must not depend on where the accumulators sit",
+                        fusedManifest,
+                        headManifest()
+                );
+                // Neither function takes a root back: its state is a component of the
+                // window root in both runtimes, which is what makes the two interchangeable.
+                Assert.assertEquals(0, headFunctionRootCount());
+                Assert.assertEquals(2, headWindowEntryCount());
                 assertHeadRestoresRuntime(instance);
 
+                // ...and back again, onto leaves the unfused seal wrote.
                 Assert.assertTrue(window.bindCheckpointWindowStatePlan(plan));
                 insertAccount(job, "2026-01-01T09:00:20.000000Z", "acct-1", 11.0);
-                Assert.assertTrue("the first seal above a legacy root converts it", isFusedHead());
-                // A cadence seal freezes the whole live domain, so the conversion is
-                // complete rather than trickling in over the keys the batch touched: both
-                // accounts are in the fused tree, and neither function has a root left.
+                Assert.assertTrue(isWindowRootHead());
+                Assert.assertArrayEquals(fusedManifest, headManifest());
                 Assert.assertEquals(0, headFunctionRootCount());
                 Assert.assertEquals(2, headWindowEntryCount());
 
-                // The second restore is the point: it proves the converted root is
-                // independently readable rather than merely letting this process carry on
-                // with the state it already had in memory.
+                // The second restore is the point: it proves the root is independently
+                // readable rather than merely letting this process carry on with the state
+                // it already had in memory.
                 assertHeadRestoresRuntime(instance);
                 assertNoRefreshFaults("lv");
             }
@@ -349,7 +512,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                     insertAccount(job, targetTimestamp(second), "acct-1", second / 10.0);
                 }
                 insertAccount(job, targetTimestamp(70), "acct-2", 9.0);
-                Assert.assertTrue(isFusedHead());
+                Assert.assertTrue(isWindowRootHead());
 
                 // An anchored view's repair is priced against a resume from the sealed
                 // boundary below the change, and that resume always wins here: the
@@ -361,7 +524,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                 insertAccount(job, targetTimestamp(35), "acct-1", 100.0);
                 assertRepairOutcome("anchor", "resume from anchor");
 
-                Assert.assertTrue("the re-sealed head must still be a window root", isFusedHead());
+                Assert.assertTrue("the re-sealed head must still be a window root", isWindowRootHead());
                 Assert.assertEquals(0, headFunctionRootCount());
                 Assert.assertEquals(2, headWindowEntryCount());
                 assertHeadRestoresRuntime(instance());
@@ -387,7 +550,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 insertAccount(job, "2026-01-01T09:00:00.000000Z", "acct-1", 5.0);
-                Assert.assertTrue(isFusedHead());
+                Assert.assertTrue(isWindowRootHead());
                 Assert.assertEquals("the bounded frame keeps the root it has today", 1, headFunctionRootCount());
                 Assert.assertEquals(ANCHOR_BYTES + SUM_STATE_BYTES, headWindowPayloadBytes());
                 assertHeadRestoresRuntime(instance());
@@ -448,12 +611,15 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                     "window state root identity, key schema or manifest invalid"
             );
 
-            // An inline width at or below the anchor's own leaves no room for a component,
-            // and the leaf carries no length of its own to contradict it.
+            // An inline width below the anchor's own cannot hold the anchor value the
+            // decoder reads out of every payload, and the leaf carries no length of its
+            // own to contradict it. The anchor's own width is accepted rather than
+            // rejected: that is exactly the payload an anchored window with no durable
+            // component publishes.
             assertRootFieldRejected(
                     rootRef,
                     2 * Integer.BYTES,
-                    LiveViewWindowStatePlan.ANCHOR_STATE_BYTES,
+                    LiveViewWindowStatePlan.ANCHOR_STATE_BYTES - 1,
                     "window state root inline payload width invalid"
             );
 
@@ -532,7 +698,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                 Assert.assertNotNull(plan);
                 Assert.assertEquals("one accumulator serves all three calls", 1, plan.getComponentCount());
                 Assert.assertEquals(3, plan.getProjectionCount());
-                Assert.assertTrue(isFusedHead());
+                Assert.assertTrue(isWindowRootHead());
                 Assert.assertEquals(ANCHOR_BYTES + SUM_STATE_BYTES, headWindowPayloadBytes());
                 Assert.assertEquals(3, headWindowEntryCount());
                 Assert.assertEquals("no call keeps a root of its own", 0, headFunctionRootCount());
@@ -567,7 +733,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                 insertAccount(job, "2026-01-02T09:00:00.000000Z", "acct-1", 3.0);
 
                 final LiveViewInstance instance = instance();
-                Assert.assertTrue(isFusedHead());
+                Assert.assertTrue(isWindowRootHead());
                 Assert.assertEquals(TARGET_PAYLOAD_BYTES, headWindowPayloadBytes());
                 Assert.assertEquals(2, headWindowEntryCount());
                 Assert.assertEquals("both projections are in the fused tree", 0, headFunctionRootCount());
@@ -1108,6 +1274,92 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         }
     }
 
+    /**
+     * Seals a SUM/AVG/COUNT group under {@code isFusedBeforeRestart}, restarts under
+     * {@code isFusedAfterRestart}, and asserts every projection continues from the restored
+     * state. The manifest is compared across the switch, because a layout that moved with
+     * the setting would make the restore a conversion rather than a read.
+     */
+    private void assertSharedProjectionsSurviveRestart(boolean isFusedBeforeRestart, boolean isFusedAfterRestart)
+            throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, String.valueOf(isFusedBeforeRestart));
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, account_id, sum(amount) over w as s, "
+                    + "avg(amount) over w as a, count(amount) over w as c "
+                    + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
+            final byte[] manifestBefore;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertAccount(job, "2026-01-01T09:00:00.000000Z", "acct-1", 4.0);
+                // A null contributes to no projection, so the counter and the sum must both
+                // step over it while the row still gets an output.
+                insertAccount(job, "2026-01-01T09:00:05.000000Z", "acct-1", null);
+                insertAccount(job, "2026-01-01T09:00:10.000000Z", "acct-2", 7.0);
+                insertAccount(job, "2026-01-01T09:00:20.000000Z", "acct-1", 8.0);
+
+                final LiveViewWindow window = instance().getAnchorWindow();
+                Assert.assertNotNull(window);
+                Assert.assertEquals(
+                        "the fusion switch must decide the runtime binding, and only that",
+                        isFusedBeforeRestart,
+                        window.isWindowStateFused()
+                );
+                final LiveViewWindowStatePlan plan = window.getCheckpointStoragePlan();
+                Assert.assertNotNull("the storage plan exists in both modes", plan);
+                Assert.assertEquals("sum, avg and count share one component", 1, plan.getComponentCount());
+                Assert.assertEquals(3, plan.getProjectionCount());
+
+                Assert.assertTrue("both modes seal a window root", isWindowRootHead());
+                Assert.assertEquals("no projection keeps a root of its own", 0, headFunctionRootCount());
+                Assert.assertEquals(2, headWindowEntryCount());
+                manifestBefore = headManifest();
+                assertHeadRestoresRuntime(instance());
+            }
+
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, String.valueOf(isFusedAfterRestart));
+            restartCycle();
+            Assert.assertEquals(
+                    "the restart must read the same manifest the seal wrote",
+                    true,
+                    Arrays.equals(manifestBefore, headManifest())
+            );
+            final LiveViewWindow restored = instance().getAnchorWindow();
+            Assert.assertNotNull(restored);
+            Assert.assertEquals(isFusedAfterRestart, restored.isWindowStateFused());
+
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                insertAccount(resumed, "2026-01-01T09:00:30.000000Z", "acct-1", 12.0);
+                Assert.assertTrue(
+                        "the state must come off the timeline rather than a rebuild",
+                        instance().isCheckpointRestoreSucceeded()
+                );
+                insertAccount(resumed, "2026-01-01T09:00:40.000000Z", "acct-2", 3.0);
+                // A third commit so the two rows above are on disk when they are read: the
+                // newest row of a view sits in its in-memory tier until a later cycle
+                // flushes it, and these assertions read the table.
+                insertAccount(resumed, "2026-01-01T09:00:50.000000Z", "acct-3", 1.0);
+                // Read before the assertions below: the fault check needs the view
+                // registered, and the query builder releases the engine's readers between
+                // its two cursor passes.
+                assertNoRefreshFaults("lv");
+
+                // 4 + 8 + 12 over three contributing rows, with the null counted by none of
+                // them. A restore that dropped the derived counter would answer c=1 here,
+                // and one that dropped the component a=12.0.
+                assertQuery("SELECT s, a, c FROM lv WHERE account_id = 'acct-1' "
+                        + "AND created_at = '2026-01-01T09:00:30.000000Z'")
+                        .returns("s\ta\tc\n24.0\t8.0\t3\n");
+                // The untouched account must still hold its own state too.
+                assertQuery("SELECT s, a, c FROM lv WHERE account_id = 'acct-2' "
+                        + "AND created_at = '2026-01-01T09:00:40.000000Z'")
+                        .returns("s\ta\tc\n10.0\t5.0\t2\n");
+            }
+        });
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, (String) null);
+    }
+
     private void assertHeadRestoresRuntime(LiveViewInstance instance) {
         final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
         final LiveViewWindow window = instance.getAnchorWindow();
@@ -1182,6 +1434,22 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         }
     }
 
+    /**
+     * The encoded manifest of the head boundary's window root, which is what two seals
+     * have to agree on byte for byte before either may build on the other's leaves.
+     */
+    private byte[] headManifest() {
+        final LiveViewInstance instance = instance();
+        try (
+                Path checkpointsDir = checkpointsDir(instance);
+                LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(configuration)
+        ) {
+            Assert.assertTrue(windowRoot.ofIfWindowRoot(checkpointsDir, headStateRootRef(instance)));
+            final byte[] manifest = windowRoot.getManifest();
+            return Arrays.copyOf(manifest, manifest.length);
+        }
+    }
+
     private long headWindowEntryCount() {
         final LiveViewInstance instance = instance();
         try (
@@ -1209,6 +1477,25 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         }
     }
 
+    /**
+     * Drops the registry and rebuilds the view graph, which recompiles the view's SQL and
+     * restores its runtime from the published timeline.
+     */
+    private void restartCycle() throws Exception {
+        engine.getLiveViewRegistry().clear();
+        engine.buildViewGraphs();
+        try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(resumed);
+        }
+    }
+
+    private void insertDecimal(LiveViewRefreshJob job, String timestamp, String account, String amount)
+            throws Exception {
+        execute("insert into tx values ('" + timestamp + "', '" + account + "', " + amount + "::decimal(18, 2))");
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
     private void insertAccount(LiveViewRefreshJob job, String timestamp, String account, Double amount) throws Exception {
         execute("insert into tx values ('" + timestamp + "', '" + account + "', "
                 + (amount == null ? "null" : amount.toString()) + ")");
@@ -1222,7 +1509,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         return instance;
     }
 
-    private boolean isFusedHead() {
+    private boolean isWindowRootHead() {
         final LiveViewInstance instance = instance();
         try (
                 Path checkpointsDir = checkpointsDir(instance);

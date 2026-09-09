@@ -995,12 +995,18 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         if (!isFusedStateRoot || anchorWindow == null) {
             return -1;
         }
-        final LiveViewWindowStatePlan plan = anchorWindow.getCheckpointWindowStatePlan();
+        final LiveViewWindowStatePlan plan = anchorWindow.getCheckpointStoragePlan();
         if (plan == null) {
             return -1;
         }
         final int projectionIndex = plan.indexOfProjectionFunction(function);
         if (projectionIndex < 0 || plan.isDurableProjection(projectionIndex) != isDurable) {
+            return -1;
+        }
+        if (!isDurable && !anchorWindow.isWindowStateFused()) {
+            // Unfused, a runtime-only member is an ordinary function: its root was written
+            // by walking its own map and it is restored the same way, so it is not a member
+            // of the window root's walk and keeps its directory entry as any residual does.
             return -1;
         }
         return projectionIndex;
@@ -1082,7 +1088,11 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
      * check does not do is prove the entries it never reads.
      */
     private void validateWindowStateShape(@NotNull LiveViewWindow anchorWindow) {
-        final LiveViewWindowStatePlan plan = anchorWindow.getCheckpointWindowStatePlan();
+        // The storage plan rather than the adopted runtime one: a root written with map
+        // fusion on restores into a runtime that has it off and the other way round, so
+        // what the shape has to agree with is the layout the view compiles, not the map
+        // its accumulators happen to sit in.
+        final LiveViewWindowStatePlan plan = anchorWindow.getCheckpointStoragePlan();
         if (plan == null) {
             throw invalid("window state root has no compiled window-state plan to restore into");
         }

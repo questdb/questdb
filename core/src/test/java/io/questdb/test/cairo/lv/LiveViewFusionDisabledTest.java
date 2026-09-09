@@ -53,17 +53,19 @@ import org.junit.Test;
  * <p>
  * The switch is the operational escape hatch for a shape whose Map implementation or key
  * distribution regresses in the field, and a live view fuses harder than generic SQL does:
- * the group's accumulators move into the anchor map's own value, and the seal writes one
- * fused window root where it would otherwise write a legacy root per function. So the
- * hatch has to reach the refresh runtime, the durable shape, the restart that reads it
- * back and the out-of-order repair that rewrites it - not just the generic path.
+ * the group's accumulators move into the anchor map's own value rather than staying in a
+ * private map per function. So the hatch has to reach the refresh runtime, the restart
+ * that reads a timeline back and the out-of-order repair that rewrites it - not just the
+ * generic path.
  * <p>
- * What the switch must NOT change is the compile. The group stays worked out either way,
- * exactly as {@code WindowMapState.createGroups} leaves a generic plan compiled and
- * unbound, so the cases below assert the plan is still on the factory while the window
- * declines it. That is also what makes the hatch cheap: declining is the path
- * {@code LiveViewWindow.bindCheckpointWindowStatePlan(null)} already migrates state
- * through, not a second implementation of the runtime.
+ * What the switch must NOT change is the compile <b>or the durable shape</b>. The group
+ * stays worked out either way, exactly as {@code WindowMapState.createGroups} leaves a
+ * generic plan compiled and unbound, so the cases below assert the plan is still on the
+ * factory while the window declines to bind it. And every seal writes a window root under
+ * the same manifest whichever way the switch is set: unfused, the seal reads each
+ * component out of its contributor's own map instead of out of one entry, and a restore
+ * puts them back the same way. That is what lets a view sealed under one setting restart
+ * under the other, which the off-to-on case below is.
  */
 public class LiveViewFusionDisabledTest extends AbstractLiveViewTest {
 
@@ -92,7 +94,7 @@ public class LiveViewFusionDisabledTest extends AbstractLiveViewTest {
                     insertAccount(job, timestamp(second), second % 20 == 0 ? "acct-1" : "acct-2", second + 1.0);
                 }
                 assertViewMatchesRecompute();
-                Assert.assertFalse("the seal must write a legacy anchor root", isFusedHead());
+                Assert.assertTrue("the seal must write a window root whatever the switch says", isWindowRootHead());
             }
 
             // A real restart: the registry is dropped, the view's SQL recompiles under the
@@ -110,7 +112,7 @@ public class LiveViewFusionDisabledTest extends AbstractLiveViewTest {
                     "the restart must restore off the timeline rather than rebuild from the base",
                     instance().isCheckpointRestoreSucceeded()
             );
-            Assert.assertFalse("the restored head must still be a legacy anchor root", isFusedHead());
+            Assert.assertTrue("the restored head must still be a window root", isWindowRootHead());
             assertViewMatchesRecompute();
             assertNoRefreshFaults("lv");
 
@@ -149,7 +151,7 @@ public class LiveViewFusionDisabledTest extends AbstractLiveViewTest {
                         window().getCheckpointWindowStatePlan()
                 );
                 assertViewMatchesRecompute();
-                Assert.assertFalse("the repair must republish a legacy anchor root", isFusedHead());
+                Assert.assertTrue("the repair must republish a window root", isWindowRootHead());
                 assertNoRefreshFaults("lv");
             }
         });
@@ -168,15 +170,15 @@ public class LiveViewFusionDisabledTest extends AbstractLiveViewTest {
                         "the switch must leave this seal unfused",
                         window().getCheckpointWindowStatePlan()
                 );
-                Assert.assertFalse("the seal must write a legacy anchor root", isFusedHead());
+                Assert.assertTrue("the seal must write a window root whatever the switch says", isWindowRootHead());
             }
 
             // The operator puts the hatch back. The restart recompiles under the switch, so
-            // the window adopts the plan this time and the restore has to carry each
-            // function's own legacy root up into the fused value. That upgrade adapter was
-            // reachable only across a version change before the gate landed; turning the
-            // switch back on is now a supported way to reach it, so the direction is
-            // covered here rather than left to the release it first ships in.
+            // the window adopts the plan this time and restores the very root the unfused
+            // seal wrote - the same manifest, the same component images, sliced into the
+            // fused map value instead of into each function's own. Nothing converts and
+            // nothing rebuilds: that the two settings agree on the durable shape is what
+            // this direction is here to prove.
             setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "true");
             restartCycle();
 
@@ -185,9 +187,10 @@ public class LiveViewFusionDisabledTest extends AbstractLiveViewTest {
                     window().getCheckpointWindowStatePlan()
             );
             Assert.assertTrue(
-                    "the restart must restore off the legacy roots rather than rebuild from the base",
+                    "the restart must restore off the unfused seal's window root rather than rebuild",
                     instance().isCheckpointRestoreSucceeded()
             );
+            Assert.assertTrue("the head the fused runtime restored must be a window root", isWindowRootHead());
             assertViewMatchesRecompute();
             assertNoRefreshFaults("lv");
 
@@ -239,7 +242,7 @@ public class LiveViewFusionDisabledTest extends AbstractLiveViewTest {
                 }
 
                 assertViewMatchesRecompute();
-                Assert.assertFalse("the seal must write a legacy anchor root", isFusedHead());
+                Assert.assertTrue("the seal must write a window root whatever the switch says", isWindowRootHead());
                 assertNoRefreshFaults("lv");
             }
         });
@@ -324,10 +327,10 @@ public class LiveViewFusionDisabledTest extends AbstractLiveViewTest {
     }
 
     /**
-     * Whether the newest sealed boundary carries a fused window root rather than the
-     * legacy anchor root plus function directory.
+     * Whether the newest sealed boundary's state root is a window root, which every
+     * anchored seal now writes whichever way the fusion switch is set.
      */
-    private boolean isFusedHead() {
+    private boolean isWindowRootHead() {
         final LiveViewInstance instance = instance();
         try (
                 Path checkpointsDir = checkpointsDir(instance);

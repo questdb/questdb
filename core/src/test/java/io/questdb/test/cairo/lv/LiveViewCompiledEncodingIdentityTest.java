@@ -296,6 +296,7 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
                 null,
                 null,
                 null,
+                null,
                 new ObjList<>(),
                 false,
                 null,

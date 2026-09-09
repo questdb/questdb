@@ -36,7 +36,15 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 /**
- * Checksummed metadata root for the optional anchored-window state.
+ * Checksummed metadata root for the anchored-window state of a checkpoint written by an
+ * earlier build. <b>Read-only.</b>
+ * <p>
+ * Nothing writes this shape any more. {@link LiveViewCheckpointWindowRoot} is the sole
+ * state root an anchored view publishes, and it carries the anchor value as the first
+ * eight bytes of every entry's payload - so a window whose functions are all residual
+ * writes a window root with a manifest declaring zero components rather than one of
+ * these. What remains here is the decoder, which lets a timeline this build did not write
+ * still restore rather than reset the view and rebuild it from the base table.
  * <p>
  * An anchor keeps one last-seen anchor value per partition, so the root pairs
  * the window's identity - name, partition-key schema, and anchor value type -

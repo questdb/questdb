@@ -40,11 +40,11 @@ import java.util.Arrays;
 
 /**
  * Builds one immutable {@link LiveViewCheckpointWindowRoot} and its changed
- * partition-map paths in the same metadata segment. The fused counterpart of
- * {@link LiveViewCheckpointAnchorRootBuilder}, and it works the same way: a complete
- * freeze treats its puts as the whole truth and removes every old entry it did not put,
- * a forward cadence freeze supplies only touched keys and leaves the rest where the
- * predecessor left them, and the copy-on-write writer drops equal puts either way.
+ * partition-map paths in the same metadata segment. It is the only builder of an
+ * anchored view's state root: a complete freeze treats its puts as the whole truth and
+ * removes every old entry it did not put, a forward cadence freeze supplies only touched
+ * keys and leaves the rest where the predecessor left them, and the copy-on-write writer
+ * drops equal puts either way.
  *
  * <h2>A manifest change is not an incremental seal</h2>
  * {@link #isCompatiblePredecessor} is what the caller has to ask before it may build on
@@ -349,7 +349,7 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
         isInitialized = false;
         clearBorrowedCompiled();
         if (windowIdentity.length == 0 || keySchema.length < Integer.BYTES || manifest.length == 0
-                || totalInlineStateBytes <= LiveViewWindowStatePlan.ANCHOR_STATE_BYTES) {
+                || totalInlineStateBytes < LiveViewWindowStatePlan.ANCHOR_STATE_BYTES) {
             throw CairoException.critical(0).put("live view checkpoint window state root identity or layout invalid");
         }
         LiveViewCheckpointMetadata.validateByteArrayLength(windowIdentity.length, "window state identity");

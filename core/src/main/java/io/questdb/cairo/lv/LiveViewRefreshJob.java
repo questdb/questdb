@@ -5906,12 +5906,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Whether every checkpoint-capable function of this view keeps its state inside the
-     * fused window group, as a durable projection of it.
+     * <b>fused</b> window group, as a durable projection of it.
      * <p>
      * The compiled-runtime half of the same question
      * {@code LiveViewCheckpointTimelineStoreReader.restoreKeys} asks of a root. One key's
      * entry is one key's whole state only under this shape; anything else spreads a key
      * across roots that move whole.
+     * <p>
+     * Deliberately the adopted runtime plan rather than the storage plan, and so false
+     * whenever {@code cairo.sql.window.map.fusion.enabled} is off. This gates the keyed
+     * <b>transplant</b>, which hands a replay's result back key by key through
+     * {@code LiveViewWindow.transplantCheckpointWindowEntry} - a write into the group's own
+     * map value. Unfused there is no such value to write into, and the accumulators the
+     * transplant would have to move are spread across a private map per function. A storage
+     * plan alone no longer says a key's whole state is addressable through one entry.
      */
     private static boolean isEveryFunctionDurablyGrouped(LiveViewInstance instance, LiveViewWindow anchorWindow) {
         final LiveViewWindowStatePlan statePlan = anchorWindow.getCheckpointWindowStatePlan();

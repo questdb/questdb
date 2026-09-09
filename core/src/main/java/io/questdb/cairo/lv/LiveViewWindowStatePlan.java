@@ -539,11 +539,9 @@ public final class LiveViewWindowStatePlan {
          * implementation's declared fixed width does not equal the family's state length -
          * the manifest would then name a slice the runtime image does not fill, and the leaf
          * carries no length of its own to catch it; and when it disagrees with the group's
-         * window identity or key layout, which the first projection to join fixes. A later
-         * one disagreeing with either belongs to a different window group.
-         * <p>
-         * The identity is latched only once a projection has actually joined, so a function
-         * the runtime builder turns away cannot fix the group it was not admitted to.
+         * window identity or key layout, which {@link #ofWindow} fixed from the anchored
+         * window itself. A projection disagreeing with either belongs to a different window
+         * group.
          *
          * @return true when the projection joined the group
          */
@@ -561,17 +559,13 @@ public final class LiveViewWindowStatePlan {
             if (component.getStateLength() != function.checkpointStateFixedLength()) {
                 return false;
             }
-            if (windowIdentity != null
-                    && (!Arrays.equals(windowIdentity, candidateWindowIdentity)
-                    || !isSameLayout(keyColumnTypes, candidateKeyColumnTypes))) {
+            if (windowIdentity == null
+                    || !Arrays.equals(windowIdentity, candidateWindowIdentity)
+                    || !isSameLayout(keyColumnTypes, candidateKeyColumnTypes)) {
                 return false;
             }
             if (!runtimeBuilder.addProjection(function, component.getRuntime(), projectionKind, outputPosition)) {
                 return false;
-            }
-            if (windowIdentity == null) {
-                windowIdentity = candidateWindowIdentity;
-                keyColumnTypes = candidateKeyColumnTypes;
             }
             rememberDurableComponent(component);
             return true;
@@ -586,22 +580,50 @@ public final class LiveViewWindowStatePlan {
         }
 
         /**
-         * Assembles the plan, or returns null when the group is empty, when the runtime
-         * builder declined it, or when not even its first component fits the leaf budget.
+         * Names the anchored window this plan describes, before any projection is offered.
+         * <p>
+         * The identity and key schema are the anchored window's own rather than any
+         * projection's, so a window whose every function is a residual still has them - an
+         * anchored DECIMAL {@code sum} is the standing example. A plan is the storage
+         * decision for the window, and a window that cannot say which one it is could not
+         * be compared against a predecessor root at all.
+         * <p>
+         * A projection offered later still has to agree with what is latched here: a
+         * function carrying another window's identity or another key layout belongs to a
+         * different group and is declined into the residual list, exactly as it was when
+         * the first projection to join was what latched the pair.
+         */
+        public void ofWindow(byte @NotNull [] windowIdentity, @NotNull ColumnTypes keyColumnTypes) {
+            this.windowIdentity = windowIdentity;
+            this.keyColumnTypes = keyColumnTypes;
+        }
+
+        /**
+         * Assembles the plan, or returns null when no anchored window named it through
+         * {@link #ofWindow}.
+         * <p>
+         * An anchored window whose functions all stayed residual still gets a plan: one
+         * with an empty component list, a manifest declaring zero of them and an eight-byte
+         * payload holding the anchor value alone. Storage layout is a fact about the
+         * window, not about how many of its functions happened to be fusible, and a window
+         * without a plan is a window whose checkpoints would have no single root shape.
          */
         public @Nullable LiveViewWindowStatePlan build() {
+            if (windowIdentity == null || keyColumnTypes == null) {
+                return null;
+            }
             final WindowAccumulatorPlan runtimePlan = runtimeBuilder.build(WINDOW_VALUE_SLOT_COUNT);
             if (runtimePlan == null) {
-                return null;
+                return anchorOnly(null);
             }
             final int durableComponentCount = componentsWithinTheLeafBudget(runtimePlan);
             if (durableComponentCount == 0) {
                 // Unreachable through the compiler, which admits a function only while its
                 // own declared image fits MAX_INLINE_COMPONENT_STATE_BYTES and so leaves the
-                // first component inside the leaf budget by a wide margin. Declining whole is
-                // the fail-safe answer: every function goes back to the legacy root it has
-                // outside a group.
-                return null;
+                // first component inside the leaf budget by a wide margin. The fail-safe
+                // answer keeps the window's plan and hands every function back to the root
+                // it has outside a group, which is an anchor-only shape.
+                return anchorOnly(runtimePlan);
             }
             final int componentCount = runtimePlan.getComponentCount();
             final ObjList<LiveViewAccumulatorDescriptor> components = new ObjList<>(componentCount);
@@ -672,6 +694,54 @@ public final class LiveViewWindowStatePlan {
                     ),
                     offset,
                     runtimeStateBytes
+            );
+        }
+
+        /**
+         * Assembles the plan of an anchored window that carries no durable component: the
+         * window's identity and key schema, a manifest declaring zero components, and the
+         * eight-byte payload the anchor value alone fills.
+         * <p>
+         * Every function the factory compiled is a residual here, so the shape is the one a
+         * view has always had on disk minus the separate anchor root - one root for the
+         * window's keys and anchor values, one root per function for its state. What
+         * changes is only which root type carries the first half.
+         *
+         * @param runtimePlan the group the runtime builder made, whose projections join the
+         *                    residual list because no component of theirs fits the leaf, or
+         *                    null when there was no group at all
+         */
+        private LiveViewWindowStatePlan anchorOnly(@Nullable WindowAccumulatorPlan runtimePlan) {
+            final ObjList<WindowFunction> residuals = new ObjList<>(residualFunctions.size());
+            residuals.addAll(residualFunctions);
+            if (runtimePlan != null) {
+                // Appended rather than merged back into SELECT-list order: this arm is the
+                // unreachable fail-safe above, and the list's order is what the residual
+                // walk reports rather than anything a root is keyed by.
+                for (int i = 0, n = runtimePlan.getProjectionCount(); i < n; i++) {
+                    residuals.add(runtimePlan.getProjectionFunction(i));
+                }
+            }
+            final int payloadBytes = ANCHOR_STATE_OFFSET + ANCHOR_STATE_BYTES;
+            return new LiveViewWindowStatePlan(
+                    windowIdentity,
+                    keyColumnTypes,
+                    new ObjList<>(0),
+                    0,
+                    new IntList(0),
+                    new IntList(0),
+                    new ObjList<>(0),
+                    new ObjList<>(0),
+                    residuals,
+                    new LiveViewWindowStateManifest(
+                            new ObjList<>(0),
+                            new IntList(0),
+                            ANCHOR_STATE_OFFSET,
+                            ANCHOR_STATE_BYTES,
+                            payloadBytes
+                    ),
+                    payloadBytes,
+                    0
             );
         }
 
