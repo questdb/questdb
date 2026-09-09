@@ -539,58 +539,14 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         });
     }
 
-    private static void assertBufferTooSmallFailure(
-            QwpIngressUpgradeProcessor processor,
-            TestableContext context,
-            CharSequence expectedResponseType
-    )
-            throws PeerDisconnectedException {
-        try {
-            processor.onHeadersReady(context);
-            Assert.fail("Expected HttpException");
-        } catch (HttpException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), expectedResponseType);
-            TestUtils.assertContains(e.getFlyweightMessage(), "does not fit send buffer");
-        }
-    }
-
-    private static void assertDurableAckStateAfterHandshake(
-            String headerValue,
-            DurableAckRegistry registry,
-            boolean expectedEnabled
-    ) throws Exception {
-        DurableAckRegistry previous = engine.getDurableAckRegistry();
-        engine.setDurableAckRegistry(registry);
-        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
-        LocalValue<QwpIngressProcessorState> lv = getLV();
-
-        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-        try (
-                MockHttpRequestHeader header = new MockHttpRequestHeader();
-                TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
-        ) {
-            header.setHeader("Upgrade", "websocket");
-            header.setHeader("Connection", "Upgrade");
-            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
-            header.setHeader("Sec-WebSocket-Version", "13");
-            if (headerValue != null) {
-                header.setHeader("X-QWP-Request-Durable-Ack", headerValue);
-            }
-
-            processor.onHeadersReady(context);
-            // onHeadersReady stages the 101 bytes; onRequestComplete performs
-            // the rawSocket.send and finalises the protocol switch.
-            processor.onRequestComplete(context);
-
-            Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
-            QwpIngressProcessorState state = lv.get(context);
-            Assert.assertNotNull("state must be populated after successful handshake", state);
-            Assert.assertEquals(expectedEnabled, state.isDurableAckEnabled());
-        } finally {
-            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            engine.setDurableAckRegistry(previous);
-        }
+    private static int advertisedMaxBatchSize(String response) {
+        String prefix = "\r\nX-QWP-Max-Batch-Size: ";
+        int start = response.indexOf(prefix);
+        Assert.assertTrue("101 response must advertise X-QWP-Max-Batch-Size: " + response, start >= 0);
+        start += prefix.length();
+        int end = response.indexOf('\r', start);
+        Assert.assertTrue("unterminated X-QWP-Max-Batch-Size: " + response, end > start);
+        return Integer.parseInt(response.substring(start, end));
     }
 
     /**
@@ -696,6 +652,60 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
                     expectDurableAck ? QwpConstants.SERVER_INFO_CAP_DURABLE_ACK : 0,
                     Unsafe.getByte(bufferAddr + frameOffset + 7)
             );
+        } finally {
+            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            engine.setDurableAckRegistry(previous);
+        }
+    }
+
+    private static void assertBufferTooSmallFailure(
+            QwpIngressUpgradeProcessor processor,
+            TestableContext context,
+            CharSequence expectedResponseType
+    )
+            throws PeerDisconnectedException {
+        try {
+            processor.onHeadersReady(context);
+            Assert.fail("Expected HttpException");
+        } catch (HttpException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedResponseType);
+            TestUtils.assertContains(e.getFlyweightMessage(), "does not fit send buffer");
+        }
+    }
+
+    private static void assertDurableAckStateAfterHandshake(
+            String headerValue,
+            DurableAckRegistry registry,
+            boolean expectedEnabled
+    ) throws Exception {
+        DurableAckRegistry previous = engine.getDurableAckRegistry();
+        engine.setDurableAckRegistry(registry);
+        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+        LocalValue<QwpIngressProcessorState> lv = getLV();
+
+        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (
+                MockHttpRequestHeader header = new MockHttpRequestHeader();
+                TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
+        ) {
+            header.setHeader("Upgrade", "websocket");
+            header.setHeader("Connection", "Upgrade");
+            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+            header.setHeader("Sec-WebSocket-Version", "13");
+            if (headerValue != null) {
+                header.setHeader("X-QWP-Request-Durable-Ack", headerValue);
+            }
+
+            processor.onHeadersReady(context);
+            // onHeadersReady stages the 101 bytes; onRequestComplete performs
+            // the rawSocket.send and finalises the protocol switch.
+            processor.onRequestComplete(context);
+
+            Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
+            QwpIngressProcessorState state = lv.get(context);
+            Assert.assertNotNull("state must be populated after successful handshake", state);
+            Assert.assertEquals(expectedEnabled, state.isDurableAckEnabled());
         } finally {
             Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             engine.setDurableAckRegistry(previous);
@@ -834,29 +844,23 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         }
     }
 
+    private static int findHttpHeaderEnd(long bufferAddr, int size) {
+        for (int i = 0; i <= size - 4; i++) {
+            if (Unsafe.getByte(bufferAddr + i) == '\r'
+                    && Unsafe.getByte(bufferAddr + i + 1) == '\n'
+                    && Unsafe.getByte(bufferAddr + i + 2) == '\r'
+                    && Unsafe.getByte(bufferAddr + i + 3) == '\n') {
+                return i + 4;
+            }
+        }
+        return -1;
+    }
+
     @SuppressWarnings("unchecked")
     private static LocalValue<QwpIngressProcessorState> getLV() throws Exception {
         Field lvField = QwpIngressUpgradeProcessor.class.getDeclaredField("LV");
         lvField.setAccessible(true);
         return (LocalValue<QwpIngressProcessorState>) lvField.get(null);
-    }
-
-    private static String readResponse(long bufferAddr, int size) {
-        byte[] bytes = new byte[size];
-        for (int i = 0; i < size; i++) {
-            bytes[i] = Unsafe.getByte(bufferAddr + i);
-        }
-        return new String(bytes, StandardCharsets.US_ASCII);
-    }
-
-    private static int advertisedMaxBatchSize(String response) {
-        String prefix = "\r\nX-QWP-Max-Batch-Size: ";
-        int start = response.indexOf(prefix);
-        Assert.assertTrue("101 response must advertise X-QWP-Max-Batch-Size: " + response, start >= 0);
-        start += prefix.length();
-        int end = response.indexOf('\r', start);
-        Assert.assertTrue("unterminated X-QWP-Max-Batch-Size: " + response, end > start);
-        return Integer.parseInt(response.substring(start, end));
     }
 
     /**
@@ -890,16 +894,12 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         }
     }
 
-    private static int findHttpHeaderEnd(long bufferAddr, int size) {
-        for (int i = 0; i <= size - 4; i++) {
-            if (Unsafe.getByte(bufferAddr + i) == '\r'
-                    && Unsafe.getByte(bufferAddr + i + 1) == '\n'
-                    && Unsafe.getByte(bufferAddr + i + 2) == '\r'
-                    && Unsafe.getByte(bufferAddr + i + 3) == '\n') {
-                return i + 4;
-            }
+    private static String readResponse(long bufferAddr, int size) {
+        byte[] bytes = new byte[size];
+        for (int i = 0; i < size; i++) {
+            bytes[i] = Unsafe.getByte(bufferAddr + i);
         }
-        return -1;
+        return new String(bytes, StandardCharsets.US_ASCII);
     }
 
     private static final class FakeEnabledDurableAckRegistry implements DurableAckRegistry {

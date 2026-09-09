@@ -243,6 +243,14 @@ public class QwpMessageHeaderTest {
     }
 
     @Test
+    public void testReadMagicStatic() {
+        byte[] buf = new byte[]{'Q', 'W', 'P', '1', 0, 0, 0, 0};
+        int magic = QwpMessageHeader.readMagic(buf, 0);
+        Assert.assertEquals(MAGIC_MESSAGE, magic);
+        Assert.assertTrue(QwpMessageHeader.isMessageMagic(magic));
+    }
+
+    @Test
     public void testRecognizesExactDurableAckPollFrame() {
         byte[] header = createValidHeader(VERSION, FLAG_DURABLE_ACK_POLL, 0, 0);
         long addr = Unsafe.malloc(HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -291,14 +299,6 @@ public class QwpMessageHeaderTest {
         } finally {
             Unsafe.free(addr, HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
-    }
-
-    @Test
-    public void testReadMagicStatic() {
-        byte[] buf = new byte[]{'Q', 'W', 'P', '1', 0, 0, 0, 0};
-        int magic = QwpMessageHeader.readMagic(buf, 0);
-        Assert.assertEquals(MAGIC_MESSAGE, magic);
-        Assert.assertTrue(QwpMessageHeader.isMessageMagic(magic));
     }
 
     @Test

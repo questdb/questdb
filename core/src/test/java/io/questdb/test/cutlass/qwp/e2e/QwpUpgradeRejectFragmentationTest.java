@@ -227,18 +227,13 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEgressSameOriginBrowserUpgradeIsAccepted() throws Exception {
-        runWithFragmentedSendEgress(port -> assertSameOriginUpgradeAccepted(port, "/read/v1"));
-    }
-
-    @Test
-    public void testEgressTlsTerminatedProxySameOriginBrowserUpgradeIsAccepted() throws Exception {
-        runWithFragmentedSendEgress(true, port -> assertSameOriginUpgradeAccepted(port, "/read/v1", "https"));
-    }
-
-    @Test
     public void testEgressSameAuthorityCrossSchemeBrowserUpgradeIsRejected() throws Exception {
         runWithFragmentedSendEgress(port -> assertCrossSchemeUpgradeRejected(port, "/read/v1"));
+    }
+
+    @Test
+    public void testEgressSameOriginBrowserUpgradeIsAccepted() throws Exception {
+        runWithFragmentedSendEgress(port -> assertSameOriginUpgradeAccepted(port, "/read/v1"));
     }
 
     @Test
@@ -251,8 +246,18 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEgressTlsTerminatedProxySameOriginBrowserUpgradeIsAccepted() throws Exception {
+        runWithFragmentedSendEgress(true, port -> assertSameOriginUpgradeAccepted(port, "/read/v1", "https"));
+    }
+
+    @Test
     public void testIngressSameAuthorityCrossSchemeBrowserUpgradeIsRejected() throws Exception {
         runWithFragmentedSend(port -> assertCrossSchemeUpgradeRejected(port, "/write/v4"));
+    }
+
+    @Test
+    public void testIngressSameOriginBrowserUpgradeIsAccepted() throws Exception {
+        runWithFragmentedSend(port -> assertSameOriginUpgradeAccepted(port, "/write/v4"));
     }
 
     @Test
@@ -260,11 +265,6 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
         // Ingress counterpart of the egress case: the proxy flag must not make
         // the gate scheme-agnostic.
         runWithFragmentedSend(true, port -> assertCrossSchemeUpgradeRejected(port, "/write/v4", "http"));
-    }
-
-    @Test
-    public void testIngressSameOriginBrowserUpgradeIsAccepted() throws Exception {
-        runWithFragmentedSend(port -> assertSameOriginUpgradeAccepted(port, "/write/v4"));
     }
 
     @Test
@@ -282,24 +282,6 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
                 QwpWireTestFixtures.browserUpgradeRequest(path, "localhost:" + port, scheme, ""),
                 EXPECTED_400_ORIGIN_REJECT
         );
-    }
-
-    private static void assertSameOriginUpgradeAccepted(int port, String path) throws Exception {
-        assertSameOriginUpgradeAccepted(port, path, "http");
-    }
-
-    private static void assertSameOriginUpgradeAccepted(int port, String path, String scheme) throws Exception {
-        try (Socket socket = new Socket("localhost", port)) {
-            socket.setSoTimeout(5_000);
-            String request = QwpWireTestFixtures.browserUpgradeRequest(path, "localhost:" + port, scheme, "");
-            OutputStream out = socket.getOutputStream();
-            out.write(request.getBytes(StandardCharsets.US_ASCII));
-            out.flush();
-
-            String headers = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
-            Assert.assertTrue("expected WebSocket 101 response, got: " + headers,
-                    headers.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
-        }
     }
 
     private static void assertFullRejectDelivered(int port, String request, byte[] expected) throws Exception {
@@ -321,6 +303,24 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
                     expected,
                     received
             );
+        }
+    }
+
+    private static void assertSameOriginUpgradeAccepted(int port, String path) throws Exception {
+        assertSameOriginUpgradeAccepted(port, path, "http");
+    }
+
+    private static void assertSameOriginUpgradeAccepted(int port, String path, String scheme) throws Exception {
+        try (Socket socket = new Socket("localhost", port)) {
+            socket.setSoTimeout(5_000);
+            String request = QwpWireTestFixtures.browserUpgradeRequest(path, "localhost:" + port, scheme, "");
+            OutputStream out = socket.getOutputStream();
+            out.write(request.getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+
+            String headers = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
+            Assert.assertTrue("expected WebSocket 101 response, got: " + headers,
+                    headers.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
         }
     }
 
