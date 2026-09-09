@@ -743,6 +743,41 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalToBinaryFloat() throws Exception {
+        // DECIMAL <-> DOUBLE and DECIMAL <-> FLOAT have no Rust decoder arm; ConvertOperatorImpl
+        // rewrites the parquet partition to native before converting, so both tables here take the
+        // same native path.
+        assertMemoryLeak(() -> {
+            assertPrePassMadePartitionNative("DECIMAL(18, 4)", "DOUBLE");
+            assertPrePassMadePartitionNative("DECIMAL(18, 4)", "FLOAT");
+            String values = """
+                    (12345.6789m, '2024-01-01T00:00:01.000000Z'),
+                    (0.0000m, '2024-01-01T00:00:02.000000Z'),
+                    (-99.9999m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(18, 4)", "DOUBLE", values);
+            assertConversion("DECIMAL(38, 4)", "DOUBLE", values);
+            assertConversion("DECIMAL(76, 4)", "DOUBLE", values);
+
+            String narrow = """
+                    (1.2m, '2024-01-01T00:00:01.000000Z'),
+                    (0.0m, '2024-01-01T00:00:02.000000Z'),
+                    (-9.9m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(2, 1)", "DOUBLE", narrow);
+            assertConversion("DECIMAL(4, 1)", "DOUBLE", narrow);
+            assertConversion("DECIMAL(9, 1)", "DOUBLE", narrow);
+
+            assertConversion("DECIMAL(18, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(38, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(76, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(2, 1)", "FLOAT", narrow);
+            assertConversion("DECIMAL(4, 1)", "FLOAT", narrow);
+            assertConversion("DECIMAL(9, 1)", "FLOAT", narrow);
+        });
+    }
+
+    @Test
     public void testDecimalToDecimal() throws Exception {
         assertMemoryLeak(() -> {
             // Decimal64 -> Decimal128: cross-physical widening (Int64 -> FLBA(16)),
@@ -813,6 +848,45 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (NULL, '2024-01-01T00:00:04.000000Z')""";
             assertConversion("DECIMAL(76, 4)", "DECIMAL(76, 8)", d256Values);
             assertConversion("DECIMAL(76, 4)", "DECIMAL(76, 0)", d256Values);
+        });
+    }
+
+    @Test
+    public void testDecimalToDecimalLazyUnrepresentableProducesNull() throws Exception {
+        assertMemoryLeak(() -> {
+            // Decimal->decimal conversions that stay lazy (same width, or widening) must read a value
+            // that does not fit the target as NULL on the lazy parquet path, matching the native
+            // converter (DecimalColumnTypeConverter). These all keep the same or a wider physical width,
+            // so the eager pre-pass does not materialise them - the Rust decoder must do the NULL clamp.
+            // Each case mixes an unrepresentable value (-> NULL) with one that fits (-> survives).
+
+            // Same width (Decimal128), precision reduced 38 -> 20, same scale. 18 integer digits exceed
+            // DECIMAL(20,4) (16 integer digits); 12.3400 fits.
+            assertConversion("DECIMAL(38, 4)", "DECIMAL(20, 4)", """
+                    (123456789012345678.9012m, '2024-01-01T00:00:01.000000Z'),
+                    (12.3400m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            // Widening width (Decimal32 -> Decimal128) with a lossy scale-down 3 -> 1: 1.234 drops the
+            // .034 (information loss) -> NULL; 5.600 is exact at scale 1 -> 5.6.
+            assertConversion("DECIMAL(9, 3)", "DECIMAL(38, 1)", """
+                    (1.234m, '2024-01-01T00:00:01.000000Z'),
+                    (5.600m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            // Same width (Decimal128), scale up 2 -> 30. 1234567890.12 * 10^28 overflows the target
+            // precision/width -> NULL; 0.00 stays representable.
+            assertConversion("DECIMAL(38, 2)", "DECIMAL(38, 30)", """
+                    (1234567890.12m, '2024-01-01T00:00:01.000000Z'),
+                    (0.00m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            // Same width (Decimal256), precision reduced 76 -> 40, same scale: a 50-digit value exceeds
+            // DECIMAL(40,0) but fits Decimal256 width -> must be NULL (exercises the i256 precision clamp).
+            assertConversion("DECIMAL(76, 0)", "DECIMAL(40, 0)", """
+                    (12345678901234567890123456789012345678901234567890m, '2024-01-01T00:00:01.000000Z'),
+                    (1234567890m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
         });
     }
 
@@ -1022,80 +1096,6 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (NULL, '2024-01-01T00:00:04.000000Z')""";
             assertConversion("DECIMAL(38, 4)", "DECIMAL(76, 8)", d128);
             assertConversion("DECIMAL(38, 4)", "DECIMAL(76, 2)", d128); // scale down, widen
-        });
-    }
-
-    @Test
-    public void testDecimalToDecimalLazyUnrepresentableProducesNull() throws Exception {
-        assertMemoryLeak(() -> {
-            // Decimal->decimal conversions that stay lazy (same width, or widening) must read a value
-            // that does not fit the target as NULL on the lazy parquet path, matching the native
-            // converter (DecimalColumnTypeConverter). These all keep the same or a wider physical width,
-            // so the eager pre-pass does not materialise them - the Rust decoder must do the NULL clamp.
-            // Each case mixes an unrepresentable value (-> NULL) with one that fits (-> survives).
-
-            // Same width (Decimal128), precision reduced 38 -> 20, same scale. 18 integer digits exceed
-            // DECIMAL(20,4) (16 integer digits); 12.3400 fits.
-            assertConversion("DECIMAL(38, 4)", "DECIMAL(20, 4)", """
-                    (123456789012345678.9012m, '2024-01-01T00:00:01.000000Z'),
-                    (12.3400m, '2024-01-01T00:00:02.000000Z'),
-                    (NULL, '2024-01-01T00:00:03.000000Z')""");
-
-            // Widening width (Decimal32 -> Decimal128) with a lossy scale-down 3 -> 1: 1.234 drops the
-            // .034 (information loss) -> NULL; 5.600 is exact at scale 1 -> 5.6.
-            assertConversion("DECIMAL(9, 3)", "DECIMAL(38, 1)", """
-                    (1.234m, '2024-01-01T00:00:01.000000Z'),
-                    (5.600m, '2024-01-01T00:00:02.000000Z'),
-                    (NULL, '2024-01-01T00:00:03.000000Z')""");
-
-            // Same width (Decimal128), scale up 2 -> 30. 1234567890.12 * 10^28 overflows the target
-            // precision/width -> NULL; 0.00 stays representable.
-            assertConversion("DECIMAL(38, 2)", "DECIMAL(38, 30)", """
-                    (1234567890.12m, '2024-01-01T00:00:01.000000Z'),
-                    (0.00m, '2024-01-01T00:00:02.000000Z'),
-                    (NULL, '2024-01-01T00:00:03.000000Z')""");
-
-            // Same width (Decimal256), precision reduced 76 -> 40, same scale: a 50-digit value exceeds
-            // DECIMAL(40,0) but fits Decimal256 width -> must be NULL (exercises the i256 precision clamp).
-            assertConversion("DECIMAL(76, 0)", "DECIMAL(40, 0)", """
-                    (12345678901234567890123456789012345678901234567890m, '2024-01-01T00:00:01.000000Z'),
-                    (1234567890m, '2024-01-01T00:00:02.000000Z'),
-                    (NULL, '2024-01-01T00:00:03.000000Z')""");
-        });
-    }
-
-    @Test
-    public void testDecimalToBinaryFloat() throws Exception {
-        // DECIMAL <-> DOUBLE and DECIMAL <-> FLOAT have no Rust decoder arm; ConvertOperatorImpl
-        // rewrites the parquet partition to native before converting, so both tables here take the
-        // same native path.
-        assertMemoryLeak(() -> {
-            assertPrePassMadePartitionNative("DECIMAL(18, 4)", "DOUBLE");
-            assertPrePassMadePartitionNative("DECIMAL(18, 4)", "FLOAT");
-            String values = """
-                    (12345.6789m, '2024-01-01T00:00:01.000000Z'),
-                    (0.0000m, '2024-01-01T00:00:02.000000Z'),
-                    (-99.9999m, '2024-01-01T00:00:03.000000Z'),
-                    (NULL, '2024-01-01T00:00:04.000000Z')""";
-            assertConversion("DECIMAL(18, 4)", "DOUBLE", values);
-            assertConversion("DECIMAL(38, 4)", "DOUBLE", values);
-            assertConversion("DECIMAL(76, 4)", "DOUBLE", values);
-
-            String narrow = """
-                    (1.2m, '2024-01-01T00:00:01.000000Z'),
-                    (0.0m, '2024-01-01T00:00:02.000000Z'),
-                    (-9.9m, '2024-01-01T00:00:03.000000Z'),
-                    (NULL, '2024-01-01T00:00:04.000000Z')""";
-            assertConversion("DECIMAL(2, 1)", "DOUBLE", narrow);
-            assertConversion("DECIMAL(4, 1)", "DOUBLE", narrow);
-            assertConversion("DECIMAL(9, 1)", "DOUBLE", narrow);
-
-            assertConversion("DECIMAL(18, 4)", "FLOAT", values);
-            assertConversion("DECIMAL(38, 4)", "FLOAT", values);
-            assertConversion("DECIMAL(76, 4)", "FLOAT", values);
-            assertConversion("DECIMAL(2, 1)", "FLOAT", narrow);
-            assertConversion("DECIMAL(4, 1)", "FLOAT", narrow);
-            assertConversion("DECIMAL(9, 1)", "FLOAT", narrow);
         });
     }
 
@@ -2771,59 +2771,6 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testStringToUuidHalfCorrupt() throws Exception {
-        assertMemoryLeak(() -> {
-            for (String source : new String[]{"STRING", "VARCHAR", "SYMBOL"}) {
-                assertConversion(source, "UUID", """
-                        ('a0eebc99-9c0b-4ef8-zzzz-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
-                        ('zzzzzzzz-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:02.000000Z'),
-                        ('a0eebc99-9c0b-4ef8-bb6d-zzzzzzzzzzzz', '2024-01-01T00:00:03.000000Z'),
-                        ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:04.000000Z')""");
-            }
-        });
-    }
-
-    @Test
-    public void testStringToUuidLazyScanAcrossParquetPartitions() throws Exception {
-        // Two parquet partitions form two frames whose in-frame row indexes both start at 0, so the
-        // lazy scan reuses the same (rowIndex, columnIndex) for different data across the frame
-        // switch. PageFrameMemoryRecord caches the per-row var->UUID parse keyed by (frameIndex,
-        // rowIndex, columnIndex) -- frameIndex is what keeps a partition-2 read from serving a
-        // partition-1 cached value. The half-corrupt value at partition 2 row 0 must read NULL
-        // (matching native), and the distinct valid UUIDs across partitions must each round-trip.
-        assertMemoryLeak(() -> {
-            try {
-                execute("CREATE TABLE nt (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                execute("CREATE TABLE pt (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                String rows = """
-                        ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
-                        ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:02.000000Z'),
-                        ('a0eebc99-9c0b-4ef8-zzzz-6bb9bd380a11', '2024-01-02T00:00:01.000000Z'),
-                        ('22222222-2222-2222-2222-222222222222', '2024-01-02T00:00:02.000000Z')""";
-                execute("INSERT INTO nt VALUES " + rows);
-                execute("INSERT INTO pt VALUES " + rows);
-                drainWalQueue();
-                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-02'");
-                drainWalQueue();
-                execute("ALTER TABLE nt ALTER COLUMN val TYPE UUID");
-                execute("ALTER TABLE pt ALTER COLUMN val TYPE UUID");
-                drainWalQueue();
-                // Lazy read: both partitions are still parquet, scanned frame by frame.
-                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
-                // Eager rewrite, then re-read against native files.
-                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
-                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-02'");
-                drainWalQueue();
-                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
-            } finally {
-                tryDrop("nt");
-                tryDrop("pt");
-            }
-        });
-    }
-
     /**
      * Pins parity between the lazy per-row parquet read path
      * ({@code PageFrameMemoryRecord.convertVarToXxx}) and the eager native rewrite path
@@ -2935,6 +2882,59 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 } finally {
                     tryDrop("pt");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testStringToUuidHalfCorrupt() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String source : new String[]{"STRING", "VARCHAR", "SYMBOL"}) {
+                assertConversion(source, "UUID", """
+                        ('a0eebc99-9c0b-4ef8-zzzz-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
+                        ('zzzzzzzz-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:02.000000Z'),
+                        ('a0eebc99-9c0b-4ef8-bb6d-zzzzzzzzzzzz', '2024-01-01T00:00:03.000000Z'),
+                        ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:04.000000Z')""");
+            }
+        });
+    }
+
+    @Test
+    public void testStringToUuidLazyScanAcrossParquetPartitions() throws Exception {
+        // Two parquet partitions form two frames whose in-frame row indexes both start at 0, so the
+        // lazy scan reuses the same (rowIndex, columnIndex) for different data across the frame
+        // switch. PageFrameMemoryRecord caches the per-row var->UUID parse keyed by (frameIndex,
+        // rowIndex, columnIndex) -- frameIndex is what keeps a partition-2 read from serving a
+        // partition-1 cached value. The half-corrupt value at partition 2 row 0 must read NULL
+        // (matching native), and the distinct valid UUIDs across partitions must each round-trip.
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE nt (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE pt (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                String rows = """
+                        ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
+                        ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:02.000000Z'),
+                        ('a0eebc99-9c0b-4ef8-zzzz-6bb9bd380a11', '2024-01-02T00:00:01.000000Z'),
+                        ('22222222-2222-2222-2222-222222222222', '2024-01-02T00:00:02.000000Z')""";
+                execute("INSERT INTO nt VALUES " + rows);
+                execute("INSERT INTO pt VALUES " + rows);
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-02'");
+                drainWalQueue();
+                execute("ALTER TABLE nt ALTER COLUMN val TYPE UUID");
+                execute("ALTER TABLE pt ALTER COLUMN val TYPE UUID");
+                drainWalQueue();
+                // Lazy read: both partitions are still parquet, scanned frame by frame.
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+                // Eager rewrite, then re-read against native files.
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-02'");
+                drainWalQueue();
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+            } finally {
+                tryDrop("nt");
+                tryDrop("pt");
             }
         });
     }
@@ -4249,58 +4249,6 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Runs a two-step (chained) {@code ALTER COLUMN TYPE} over a parquet partition, asserting
-     * the parquet read (pt) matches the native conversion (nt) after each step and after a final
-     * CONVERT PARTITION TO NATIVE. The first step reads the parquet lazily; the second step finds
-     * a prior conversion, so the ConvertOperatorImpl pre-pass eagerly materialises the partition
-     * to native before applying it. Mirrors {@link #assertConversionWithEncoding}.
-     */
-    private void assertTwoStepConversion(String sourceType, String midType, String targetType, String values) throws Exception {
-        try {
-            execute("CREATE TABLE nt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE pt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            execute("INSERT INTO nt(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO pt(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE nt ADD COLUMN val " + sourceType);
-            execute("ALTER TABLE pt ADD COLUMN val " + sourceType);
-            drainWalQueue();
-
-            execute("INSERT INTO nt(val, ts) VALUES " + values);
-            execute("INSERT INTO pt(val, ts) VALUES " + values);
-            drainWalQueue();
-
-            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            drainWalQueue();
-
-            // Step 1: lazy parquet read path.
-            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + midType);
-            drainWalQueue();
-            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + midType);
-            drainWalQueue();
-            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
-
-            // Step 2: chained conversion. pt now has a prior conversion, so the pre-pass
-            // eagerly converts the parquet partition to native before applying this step.
-            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + targetType);
-            drainWalQueue();
-            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
-            drainWalQueue();
-            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
-
-            // Final: any partition still parquet is materialised to native.
-            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
-            drainWalQueue();
-            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
-        } finally {
-            tryDrop("nt");
-            tryDrop("pt");
-        }
-    }
-
-    /**
      * Shared body for the M1 filtered column-top tests. 'v' is ADDed after seed rows so it
      * carries a column top (NULL) for the first 20 rows; value rows get a larger 'sel' so the
      * WHERE filter excludes them. GROUP BY v with a selective filter on sel routes v through the
@@ -4342,6 +4290,33 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     "SELECT v, count() c FROM nt WHERE sel < 10 GROUP BY v ORDER BY v",
                     "SELECT v, count() c FROM pt WHERE sel < 10 GROUP BY v ORDER BY v"
             );
+        } finally {
+            tryDrop("nt");
+            tryDrop("pt");
+        }
+    }
+
+    private void assertIntToDecimalOverflowNull(String targetType, String overflowValue) throws Exception {
+        try {
+            // nt stays native (eager ALTER); pt converts to parquet so its ALTER takes the lazy
+            // decode path. Both must read the overflowing row back as NULL.
+            execute("CREATE TABLE nt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE pt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO nt VALUES (" + overflowValue + ", '2024-01-01T00:00:01.000000Z')");
+            execute("INSERT INTO pt VALUES (" + overflowValue + ", '2024-01-01T00:00:01.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + targetType);
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            // CursorPrinter renders Decimal*_NULL as an empty cell. Neither ALTER suspends the WAL.
+            assertQuery("SELECT val FROM nt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
+            assertQuery("SELECT val FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
+            // Materialize the lazy conversion eagerly (parquet -> native rewrite) and re-assert.
+            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery("SELECT val FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
         } finally {
             tryDrop("nt");
             tryDrop("pt");
@@ -4516,33 +4491,6 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         }
     }
 
-    private void assertIntToDecimalOverflowNull(String targetType, String overflowValue) throws Exception {
-        try {
-            // nt stays native (eager ALTER); pt converts to parquet so its ALTER takes the lazy
-            // decode path. Both must read the overflowing row back as NULL.
-            execute("CREATE TABLE nt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE pt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO nt VALUES (" + overflowValue + ", '2024-01-01T00:00:01.000000Z')");
-            execute("INSERT INTO pt VALUES (" + overflowValue + ", '2024-01-01T00:00:01.000000Z')");
-            drainWalQueue();
-            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            drainWalQueue();
-            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + targetType);
-            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
-            drainWalQueue();
-            // CursorPrinter renders Decimal*_NULL as an empty cell. Neither ALTER suspends the WAL.
-            assertQuery("SELECT val FROM nt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
-            assertQuery("SELECT val FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
-            // Materialize the lazy conversion eagerly (parquet -> native rewrite) and re-assert.
-            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
-            drainWalQueue();
-            assertQuery("SELECT val FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
-        } finally {
-            tryDrop("nt");
-            tryDrop("pt");
-        }
-    }
-
     /**
      * Shared body for the SAMPLE BY first()/last() tests. Builds a native control {@code nt} and a
      * parquet {@code pt}, both with an INDEXED {@code sym} (required to produce the
@@ -4573,6 +4521,58 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     queryTemplate.replace("$T", "nt"),
                     queryTemplate.replace("$T", "pt")
             );
+        } finally {
+            tryDrop("nt");
+            tryDrop("pt");
+        }
+    }
+
+    /**
+     * Runs a two-step (chained) {@code ALTER COLUMN TYPE} over a parquet partition, asserting
+     * the parquet read (pt) matches the native conversion (nt) after each step and after a final
+     * CONVERT PARTITION TO NATIVE. The first step reads the parquet lazily; the second step finds
+     * a prior conversion, so the ConvertOperatorImpl pre-pass eagerly materialises the partition
+     * to native before applying it. Mirrors {@link #assertConversionWithEncoding}.
+     */
+    private void assertTwoStepConversion(String sourceType, String midType, String targetType, String values) throws Exception {
+        try {
+            execute("CREATE TABLE nt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE pt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            execute("INSERT INTO nt(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO pt(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE nt ADD COLUMN val " + sourceType);
+            execute("ALTER TABLE pt ADD COLUMN val " + sourceType);
+            drainWalQueue();
+
+            execute("INSERT INTO nt(val, ts) VALUES " + values);
+            execute("INSERT INTO pt(val, ts) VALUES " + values);
+            drainWalQueue();
+
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            // Step 1: lazy parquet read path.
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + midType);
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + midType);
+            drainWalQueue();
+            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+
+            // Step 2: chained conversion. pt now has a prior conversion, so the pre-pass
+            // eagerly converts the parquet partition to native before applying this step.
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+
+            // Final: any partition still parquet is materialised to native.
+            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
         } finally {
             tryDrop("nt");
             tryDrop("pt");

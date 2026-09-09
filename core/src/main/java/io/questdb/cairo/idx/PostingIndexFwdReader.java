@@ -799,11 +799,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
 
             if (coverCount > 0) {
-                int sidecarBase = 0;
-                for (int i = 0; i < start; i++) {
-                    sidecarBase += Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
-                }
-                this.sidecarOrdinal = sidecarBase;
+                // O(1) via the reader-scoped memo instead of an O(start) scan of
+                // counts[] on every cursor open; version-guarded on the gen
+                // snapshot. See SparseGenSidecarPrefixSum.
+                this.sidecarOrdinal = sidecarPrefixSum.baseOrdinal(
+                        genLookup.getCacheVersion(), genCount, gen, start, countsBase, activeKeyCount, isFrozen());
             } else {
                 this.sidecarOrdinal = 0;
             }
@@ -845,11 +845,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
 
             if (coverCount > 0) {
-                int sidecarBase = 0;
-                for (int i = 0; i < idx; i++) {
-                    sidecarBase += Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
-                }
-                this.sidecarOrdinal = sidecarBase;
+                // O(1) via the reader-scoped memo instead of an O(idx) scan of
+                // counts[] on every cursor open; version-guarded on the gen
+                // snapshot. See SparseGenSidecarPrefixSum.
+                this.sidecarOrdinal = sidecarPrefixSum.baseOrdinal(
+                        genLookup.getCacheVersion(), genCount, gen, idx, countsBase, activeKeyCount, isFrozen());
             } else {
                 this.sidecarOrdinal = 0;
             }

@@ -84,7 +84,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
     private int numOfFiles;
 
     public SQLSerialParquetExporter(CairoEngine engine) {
-        super(engine);
+        super(engine, true);
         this.configuration = engine.getConfiguration();
         this.ff = this.configuration.getFilesFacade();
         this.toParquet = new Path();

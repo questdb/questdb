@@ -76,6 +76,10 @@ public class IndexFwdNullReader implements IndexReader {
         return c;
     }
 
+    public long estimateMatches(int key, long minValue, long maxValue) {
+        return key == 0 && maxValue >= minValue ? maxValue - minValue + 1 : 0;
+    }
+
     @Override
     public IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
         return NullIndexFrameCursor.INSTANCE;

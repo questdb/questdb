@@ -82,10 +82,16 @@ steps:
       export RUSTFLAGS="-C instrument-coverage -D warnings"
       export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/parquet2-%m.profraw"
       export PARQUET2_IGNORE_PYARROW_TESTS=1
-      git submodule update --init core/rust/parquet2/testing/parquet-testing
+      # ci/submodule-update.sh authenticates the clone when it can (GH_TOKEN, or
+      # the checkout task's persisted credential) and retries with backoff when
+      # it cannot; fork PR builds never receive GIT_GITHUB_TOKEN because Azure
+      # withholds secret variables from forks.
+      bash ci/submodule-update.sh core/rust/parquet2/testing/parquet-testing
       cd core/rust/parquet2
       cargo test --all-targets --no-fail-fast
     displayName: "parquet2: cargo test (coverage)"
+    env:
+      GH_TOKEN: $(GIT_GITHUB_TOKEN)
     condition: ${{ parameters.shouldRun }}
 
   - template: install-llvm.yml

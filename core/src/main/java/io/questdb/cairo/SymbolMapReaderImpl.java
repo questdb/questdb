@@ -68,6 +68,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private boolean nullValue;
     private int symbolCapacity;
     private int symbolCount;
+    private long symbolTableGeneration;
 
     public SymbolMapReaderImpl() {
     }
@@ -111,6 +112,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     @Override
     public int getSymbolCount() {
         return symbolCount;
+    }
+
+    @Override
+    public long getSymbolTableGeneration() {
+        return symbolTableGeneration;
     }
 
     @Override
@@ -231,6 +237,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // so only the backing array survived, and extendAndSet grows that
             // geometrically anyway.
             cache.clear();
+            symbolTableGeneration = symbolTableGeneration == Long.MAX_VALUE ? 0 : symbolTableGeneration + 1;
             LOG.debug().$("open [columnName=").$(path.trimTo(plen).concat(columnName).$())
                     .$(", fd=").$(offsetMem.getFd())
                     .$(", capacity=").$(symbolCapacity)
@@ -345,6 +352,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         @Override
         public int getSymbolCount() {
             return symbolCount;
+        }
+
+        @Override
+        public long getSymbolTableGeneration() {
+            return symbolTableGeneration;
         }
 
         @Override

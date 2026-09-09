@@ -36,6 +36,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -80,7 +81,7 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
         // balanced too.
         assertMemoryLeak(() -> {
             final int workerCount = 4;
-            final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+            final WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
                 @Override
                 public String getPoolName() {
                     return "rostiAcct";
