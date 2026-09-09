@@ -1203,20 +1203,26 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 .$(", lockReason=").$(tableBusy.getReason())
                                 .I$();
                     }
-                    if (queueDriven) {
-                        // This notification came off the queue and nothing applied it. Reset the SeqTxnTracker so
-                        // the next CheckWalTransactionsJob run re-publishes it, whatever holds the writer and
-                        // whether or not the lock was solicited. Only another WAL apply re-notifies on its own way
-                        // out; every other holder - a composite or parquet partition swap, a storage policy
-                        // command, an ALTER - owes the table nothing and leaves it lagging its sequencer until
-                        // that job's own tracker sweep, a whole cairo.sequencer.check.interval away.
-                        // Re-publishing for the apply-holds-it case as well costs one rescan and keeps this
-                        // correct as new holders appear.
-                        //
-                        // A direct caller drives its own retry and is excluded: LiveViewRefreshJob reads the
-                        // tracker back to find out whether the block it just committed landed, and the reset
-                        // to UNINITIALIZED erases exactly that answer. Its scanForLaggingViews would then see
-                        // nothing outstanding and never retry, leaving the rows off both tiers.
+                    // This notification came off the queue and nothing applied it. Reset the SeqTxnTracker so
+                    // the next CheckWalTransactionsJob run re-publishes it: a composite or parquet partition
+                    // swap, a storage policy command, an ALTER - every holder but one owes the table nothing
+                    // on its way out and leaves it lagging its sequencer until that job's own tracker sweep,
+                    // a whole cairo.sequencer.check.interval away.
+                    //
+                    // The one exception is another WAL apply, and it must stay an exception. That holder DOES
+                    // re-notify on its way out - applyWal's updateWriterTxns/notifyWalTxnCommitted below - so
+                    // a re-publish here buys nothing, and it is not free: notifyWalTxnRepublisher bumps
+                    // CairoEngine's unpublishedWalTxnCount, and that is exactly what makes
+                    // CheckWalTransactionsJob skip its cairo.wal.sequencer.check.interval gate and rescan
+                    // EVERY table off disk. With more than one apply worker on one hot table this fires on
+                    // commit after commit: profiling a 100M-row ingest measured 28s of access() syscalls in
+                    // that scan, on the same worker pool the O3 merge needs.
+                    //
+                    // A direct caller drives its own retry and is excluded: LiveViewRefreshJob reads the
+                    // tracker back to find out whether the block it just committed landed, and the reset
+                    // to UNINITIALIZED erases exactly that answer. Its scanForLaggingViews would then see
+                    // nothing outstanding and never retry, leaving the rows off both tiers.
+                    if (queueDriven && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
                         engine.notifyWalTxnRepublisher(tableToken);
                     }
                     // Do not suspend table. Perhaps writer will be unlocked with no transaction applied.
