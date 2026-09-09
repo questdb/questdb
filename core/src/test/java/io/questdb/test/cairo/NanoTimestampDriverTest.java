@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TimestampDriver;
@@ -171,5 +172,44 @@ public class NanoTimestampDriverTest extends AbstractCairoTest {
         Assert.assertEquals(1577836800100000000L, driver.implicitCast("2020-01-01T00:00:00.1Z", ColumnType.STRING));
         Assert.assertEquals(1577836800120000000L, driver.implicitCast("2020-01-01T00:00:00.12Z", ColumnType.STRING));
         Assert.assertEquals(1577836800123000000L, driver.implicitCast("2020-01-01T00:00:00.123Z", ColumnType.STRING));
+    }
+
+    @Test
+    public void testValidateBounds() {
+        // null sentinel
+        try {
+            driver.validateBounds(Numbers.LONG_NULL);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getMessage(), "designated timestamp column cannot be NULL");
+        }
+
+        // negative (before epoch)
+        try {
+            driver.validateBounds(-1L);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getMessage(), "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+        }
+
+        // valid boundary values must not throw
+        driver.validateBounds(0L);
+        driver.validateBounds(CommonUtils.MAX_TIMESTAMP);
+
+        // just beyond the upper bound
+        try {
+            driver.validateBounds(CommonUtils.MAX_TIMESTAMP + 1);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getMessage(), "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+        }
+
+        // Long.MAX_VALUE - the exact repro value from issue #7389
+        try {
+            driver.validateBounds(Long.MAX_VALUE);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getMessage(), "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+        }
     }
 }
