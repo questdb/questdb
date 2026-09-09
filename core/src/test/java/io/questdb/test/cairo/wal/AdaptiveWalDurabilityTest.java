@@ -34,6 +34,7 @@ import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -1125,6 +1126,26 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         public boolean close(long fd) {
             fdToPath.remove(fd);
             return super.close(fd);
+        }
+
+        /**
+         * WAL ordering barriers must be visible here, or every assertion counting them passes vacuously.
+         * <p>
+         * Off Darwin {@code FilesFacadeImpl.barrierFsync} deliberately routes through the overridable
+         * {@code fdatasync}, so the override below has already recorded the call and recording again would
+         * double-count. On Darwin it calls the static {@code Files.barrierFsync} directly -- which is the
+         * whole point of the split, since only Darwin has a separate barrier syscall -- and a facade that
+         * does not override this method observes no WAL barrier at all.
+         */
+        @Override
+        public void barrierFsync(long fd) {
+            super.barrierFsync(fd);
+            if (Os.isOSX()) {
+                String p = fdToPath.get(fd);
+                if (p != null) {
+                    fdatasyncOrder.add(p);
+                }
+            }
         }
 
         @Override
