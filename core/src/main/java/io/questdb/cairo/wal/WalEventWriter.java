@@ -259,7 +259,7 @@ class WalEventWriter implements Closeable {
 
     private void init() {
         eventMem.putInt(0);
-        eventMem.putInt(Numbers.encodeLowHighShorts(WALE_FORMAT_VERSION, WALE_CHECKSUM_FEATURE_VERSION));
+        eventMem.putInt(WALE_FORMAT_VERSION);
         eventMem.putInt(-1);
         eventChecksumMem.putLong(WALE_CHECKSUM_MAGIC);
         eventChecksumMem.putInt(WALE_CHECKSUM_FILE_VERSION);
@@ -270,7 +270,7 @@ class WalEventWriter implements Closeable {
     }
 
     private void setEventFormat(short lowVersion) {
-        eventMem.putInt(WAL_FORMAT_OFFSET_32, Numbers.encodeLowHighShorts(lowVersion, WALE_CHECKSUM_FEATURE_VERSION));
+        eventMem.putInt(WAL_FORMAT_OFFSET_32, lowVersion);
     }
 
     private void writeSymbolMapDiffs() {

@@ -114,7 +114,6 @@ public class WalUtils {
     // The high half of the existing format word is ignored by old readers and positively declares
     // that _event.c is mandatory. The sidecar header is followed by fixed-size entries indexed by
     // segment txn: [recordOffset:long, recordLength:int, reserved:int, checksum:long].
-    public static final short WALE_CHECKSUM_FEATURE_VERSION = 1;
     public static final long WALE_CHECKSUM_MAGIC = 0x57414C45434B5331L;
     public static final int WALE_CHECKSUM_FILE_VERSION = 1;
     public static final int WALE_CHECKSUM_HEADER_SIZE = 2 * Long.BYTES;

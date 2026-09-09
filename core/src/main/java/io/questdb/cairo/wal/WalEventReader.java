@@ -92,7 +92,6 @@ public class WalEventReader implements Closeable {
             // by adding more data at the footer of each record
             final int version = eventMem.getInt(WAL_FORMAT_OFFSET_32);
             final short formatVersion = Numbers.decodeLowShort(version);
-            final short checksumFeature = Numbers.decodeHighShort(version);
             if (formatVersion != WALE_FORMAT_VERSION
                     && formatVersion != WALE_MAT_VIEW_FORMAT_VERSION
                     && formatVersion != WALE_VIEW_FORMAT_VERSION
@@ -103,15 +102,17 @@ public class WalEventReader implements Closeable {
                         .put(", ").put(WALE_VIEW_FORMAT_VERSION).put(" or ").put(WALE_LIVE_VIEW_FORMAT_VERSION)
                         .put(", actual=").put(formatVersion).put(']');
             }
+            // The sidecar's own presence is the capability. Nothing in _event promises one exists, because
+            // such a promise is exactly what a copy of this segment cannot keep: a backup that skipped the
+            // file, or a replica whose uploader enumerates segment files from a fixed list, would arrive
+            // with the promise intact and the file gone, and the table would suspend on data that is fine.
+            // Verification is therefore best-effort by construction -- present and valid means verify,
+            // absent means read unverified, and a sidecar that IS present still has to be well-formed.
             final boolean checksumRequired;
             path.trimTo(pathLen).concat(EVENT_CHECKSUM_FILE_NAME);
-            if (checksumFeature == WALE_CHECKSUM_FEATURE_VERSION) {
+            final long checksumSize = ff.length(path.$());
+            if (checksumSize >= WALE_CHECKSUM_HEADER_SIZE) {
                 checksumRequired = true;
-                final long checksumSize = ff.length(path.$());
-                if (checksumSize < WALE_CHECKSUM_HEADER_SIZE) {
-                    throw TableUtils.validationException().put("WAL event checksum sidecar is truncated [path=")
-                            .put(path).put(", size=").put(checksumSize).put(']');
-                }
                 // Map the actual sidecar length, not an untrusted _event maxTxn-derived size. The cursor
                 // validates that the requested transaction's entry is present before reading it.
                 eventChecksumMem.of(
@@ -128,14 +129,9 @@ public class WalEventReader implements Closeable {
                         || eventChecksumMem.getInt(Long.BYTES + Integer.BYTES) != WALE_CHECKSUM_ENTRY_SIZE) {
                     throw TableUtils.validationException().put("invalid WAL event checksum sidecar header [path=").put(path).put(']');
                 }
-            } else if (checksumFeature == 0) {
+            } else {
                 checksumRequired = false;
                 eventChecksumMem.close();
-                if (ff.exists(path.$())) {
-                    throw TableUtils.validationException().put("WAL checksum sidecar exists without capability marker [path=").put(path).put(']');
-                }
-            } else {
-                throw TableUtils.validationException().put("unsupported WAL event checksum feature [version=").put(checksumFeature).put(']');
             }
             eventCursor.setChecksumRequired(checksumRequired);
             path.trimTo(pathLen).concat(EVENT_FILE_NAME);

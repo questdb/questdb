@@ -37,7 +37,8 @@ public class WalEventChecksumTest extends AbstractCairoTest {
             TableToken tt = engine.verifyTableName("x");
             byte[] event = Files.readAllBytes(findWalFile(tt.getDirName(), WalUtils.EVENT_FILE_NAME));
             byte[] checksum = Files.readAllBytes(findWalFile(tt.getDirName(), WalUtils.EVENT_CHECKSUM_FILE_NAME));
-            Assert.assertEquals(WalUtils.WALE_CHECKSUM_FEATURE_VERSION, Numbers.decodeHighShort(readInt(event, WalUtils.WAL_FORMAT_OFFSET_32)));
+            // _event's high short carries no feature bit: the sidecar's own presence is the capability.
+            Assert.assertEquals(0, Numbers.decodeHighShort(readInt(event, WalUtils.WAL_FORMAT_OFFSET_32)));
             Assert.assertEquals(WalUtils.WALE_CHECKSUM_MAGIC, readLong(checksum, 0));
             final int recordLength = readInt(event, WalUtils.WALE_HEADER_SIZE);
             Assert.assertEquals(recordLength, readInt(checksum,
@@ -77,19 +78,23 @@ public class WalEventChecksumTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The inverse of what this used to assert. There is no capability marker to clear, so a segment whose
+     * {@code _event} says nothing about checksums still verifies against a sidecar that is present -- and,
+     * more importantly, a segment that arrives WITHOUT its sidecar reads unverified instead of suspending
+     * the table. See {@code OlderBinaryWriteCompatTest#testWalSegmentMissingItsEventChecksumSidecarStillApplies}.
+     */
     @Test
-    public void testCapabilityCannotBeClearedWhileSidecarExists() throws Exception {
+    public void testMissingSidecarReadsUnverifiedRatherThanSuspending() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
             TableToken tt = engine.verifyTableName("x");
-            Path eventPath = findWalFile(tt.getDirName(), WalUtils.EVENT_FILE_NAME);
-            byte[] event = Files.readAllBytes(eventPath);
-            writeInt(event, WalUtils.WAL_FORMAT_OFFSET_32,
-                    Numbers.encodeLowHighShorts(Numbers.decodeLowShort(readInt(event, WalUtils.WAL_FORMAT_OFFSET_32)), (short) 0));
-            Files.write(eventPath, event);
+            engine.releaseInactive();
+            Files.delete(findWalFile(tt.getDirName(), WalUtils.EVENT_CHECKSUM_FILE_NAME));
             drainWalQueue();
-            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tt));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+            assertQuery("select count() from x").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
         });
     }
 
