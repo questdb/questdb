@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionCompactionPolicy;
 import io.questdb.cairo.PartitionCompactionScanJob;
@@ -904,6 +905,131 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         });
     }
 
+
+    /**
+     * The table-wide rule picks the coldest composite partition. When every composite partition is hot -
+     * written by one of the last {@link CairoConfiguration#getPartitionCompactionHotCommits()} commits -
+     * "coldest" degenerates into "the one being written right now", and the rule rewrites the partition
+     * the next commit is about to dirty again. So a hot partition is not eligible to be the coldest.
+     * <p>
+     * Same fixture as {@link #testTablePressureTriggerCompactsTheColdestPartitionFirst}, minus its
+     * cooling step: that step is the only difference, so what it asserts is exactly this rule.
+     */
+    @Test
+    public void testTablePressureDoesNotPickAPartitionTheLastCommitsWrote() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+            createDayTable("x", "2024-01-01", 4_000);
+            append("x", "2024-01-02", 4_000);
+
+            backdate("x", "2024-01-01T00:30:00", 400);
+            backdate("x", "2024-01-01T00:30:00", 400);
+            backdate("x", "2024-01-01T00:30:00", 400);
+
+            setCurrentMicros(parseMicros("2024-01-10T00:30:00.000000Z"));
+            backdate("x", "2024-01-02T00:30:00", 400);
+
+            enableCompaction();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, "20");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD, "1");
+
+            final long deadBefore = deadRows("x");
+            Assert.assertTrue("fixture produced no waste", deadBefore > 0);
+
+            setCurrentMicros(parseMicros("2024-01-10T01:00:00.000000Z"));
+            // Fewer passes than the hot window is wide, so neither day leaves it.
+            Assert.assertTrue(
+                    "the fixture cannot show anything: 6 passes already clear the hot window",
+                    6 < node1.getConfiguration().getPartitionCompactionHotCommits()
+            );
+            runCompactionPasses("x");
+
+            Assert.assertEquals(
+                    "the table-wide rule rewrote a partition the last commits had written",
+                    deadBefore,
+                    deadRows("x")
+            );
+
+            // ...and the same fixture, once the days fall out of the hot window, does get compacted -
+            // so what held it back above was the hot rule and not a fixture that never qualified.
+            coolPartitions("x");
+            runCompactionPasses("x");
+            Assert.assertTrue(
+                    "the table-wide rule never fired even after the partitions cooled" +
+                            " [before=" + deadBefore + ", after=" + deadRows("x") + ']',
+                    deadRows("x") < deadBefore
+            );
+        });
+    }
+
+    /**
+     * The table-wide rule exists to catch waste SPREAD over many partitions, where no single one breaches
+     * the per-partition thresholds but the table as a whole wastes real space. A table that is one logical
+     * partition has nothing to spread over, so the rule does not apply to it: its table-wide total IS one
+     * partition's total, which the per-partition rules already judge, and at a far higher bar.
+     * <p>
+     * The hot rule is switched off here, so it cannot be what holds the rewrite back - only the
+     * single-logical-partition exception can. The two-day control at the end runs the identical fixture
+     * with the identical settings and does get compacted.
+     */
+    @Test
+    public void testTablePressureDoesNotApplyToASingleLogicalPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+            createDayTable("one", "2024-01-01", 4_000);
+            backdate("one", "2024-01-01T00:30:00", 400);
+            backdate("one", "2024-01-01T00:30:00", 400);
+            backdate("one", "2024-01-01T00:30:00", 400);
+
+            // The control: the same waste, the same settings, spread over two days instead of one. Built
+            // here rather than at the end, because once compaction is on every commit of a fixture
+            // reclaims the waste the one before it made, and the control would start out clean.
+            createDayTable("two", "2024-01-01", 4_000);
+            append("two", "2024-01-02", 4_000);
+            backdate("two", "2024-01-01T00:30:00", 400);
+            backdate("two", "2024-01-01T00:30:00", 400);
+            backdate("two", "2024-01-01T00:30:00", 400);
+
+            enableCompaction();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, "20");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD, "1");
+
+            Assert.assertEquals(
+                    "the hot rule is still on, so it and not the exception under test could be what holds"
+                            + " the rewrite back",
+                    0,
+                    node1.getConfiguration().getPartitionCompactionHotCommits()
+            );
+
+            final long deadBefore = deadRows("one");
+            final long controlDeadBefore = deadRows("two");
+            Assert.assertTrue("fixture produced no waste", deadBefore > 0);
+            Assert.assertEquals("the fixture is not one logical partition", 1, dayCount("one"));
+
+            setCurrentMicros(parseMicros("2024-01-10T01:00:00.000000Z"));
+            runCompactionPassesSameDay("one", "2024-01-01T12:00:00");
+
+            Assert.assertEquals("the table-wide rule fired on a single-logical-partition table",
+                    deadBefore, deadRows("one"));
+            Assert.assertEquals("the passes must not have split the day", 1, dayCount("one"));
+
+            Assert.assertTrue("control fixture produced no waste", controlDeadBefore > 0);
+            runCompactionPasses("two");
+            Assert.assertTrue(
+                    "the control did not compact either, so the assertion above proves nothing" +
+                            " [before=" + controlDeadBefore + ", after=" + deadRows("two") + ']',
+                    deadRows("two") < controlDeadBefore
+            );
+        });
+    }
+
     /**
      * The table-wide rule fires on the ratio of dead to live rows across the whole table and picks
      * the coldest partition. Here two days are made wasteful and the older one was written to first,
@@ -927,6 +1053,11 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
             setCurrentMicros(parseMicros("2024-01-10T00:30:00.000000Z"));
             backdate("x", "2024-01-02T00:30:00", 400);
+
+            // The table-wide rule declines a partition the last few commits wrote, so the fixture's two
+            // wasteful days have to fall out of that window before the rule can see either of them. These
+            // commits land in days of their own and add no waste; they only move the writer's txn on.
+            coolPartitions("x");
 
             // Compaction comes on only now. With it on from the start, housekeeping runs on every
             // commit of the fixture above and reclaims the waste as it is created, so there is nothing
@@ -1073,6 +1204,26 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                 " timestamp_sequence('" + day + "', 1000000L) ts" +
                 " from long_sequence(" + rows + ")) timestamp(ts) partition by DAY WAL");
         drainWalQueue();
+    }
+
+    /**
+     * Moves the writer's txn past {@link CairoConfiguration#getPartitionCompactionHotCommits()} so the
+     * partitions the fixture just wrote stop counting as hot. Each commit goes to a day of its own, so
+     * none of them adds dead space of its own.
+     */
+    private static void coolPartitions(String table) throws Exception {
+        for (int i = 0; i < node1.getConfiguration().getPartitionCompactionHotCommits() + 1; i++) {
+            execute("insert into " + table + " select cast(x as int) + 700000 + " + (passDay * 10) + " i," +
+                    " timestamp_sequence('" + nextPassDay() + "', 60*1000000L) ts from long_sequence(2)");
+            drainWalQueue();
+        }
+    }
+
+    /**
+     * How many distinct logical partitions (days) the table holds - splits of one day count once.
+     */
+    private static long dayCount(String table) throws Exception {
+        return scalar("select count_distinct(substring(name, 1, 10)) c from table_partitions('" + table + "')");
     }
 
     private static long deadRows(String table) throws Exception {
@@ -1267,6 +1418,21 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         }
         engine.releaseInactive();
         return 12; // 6 commits x 2 rows, all into partitions of their own
+    }
+
+    /**
+     * {@link #runCompactionPasses} for a table that must stay ONE logical partition: every commit appends
+     * in order inside the same day, well past the fixture's own rows, so no new day appears and no commit
+     * writes dead space of its own.
+     */
+    private static void runCompactionPassesSameDay(String table, String fromTs) throws Exception {
+        for (int i = 0; i < 6; i++) {
+            execute("insert into " + table + " select cast(x as int) + 800000 + " + (i * 10) + " i," +
+                    " timestamp_sequence('" + fromTs + "', 60*1000000L) + " + (i * 3_600_000_000L) + " ts" +
+                    " from long_sequence(2)");
+            drainWalQueue();
+        }
+        engine.releaseInactive();
     }
 
     /**

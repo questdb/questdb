@@ -899,6 +899,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPartitionCompactionHotCommits() {
+        return 10;
+    }
+
+    @Override
     public int getPartitionCompactionPieceThreshold() {
         return 20;
     }

@@ -133,6 +133,24 @@ public class PartitionCompactionPolicy implements Mutable {
                 : configuration.getPartitionCompactionDeadMinSize();
         final long idleTimeout = configuration.getPartitionCompactionIdleTimeout();
         final double ratio = configuration.getPartitionCompactionDeadRowsRatio();
+        // A partition the last few commits wrote is one the next few will write again, so a rewrite of it
+        // here only copies rows the next commit dirties straight back. The three per-partition rules below
+        // still claim such a partition - each states a condition bad enough to be worth paying that for -
+        // but the table-wide rule does not: it fires on a table-level average, at a far lower bar, and its
+        // pick is the coldest partition precisely because the hot one is the wrong one to touch. When every
+        // composite partition is hot, "coldest" degenerates into "the one being written right now", and the
+        // rule rewrites the active partition on commit after commit. A hot partition can only be the
+        // coldest of an empty field, so it is not one.
+        final int hotCommits = configuration.getPartitionCompactionHotCommits();
+        final long hotSinceTxn = txWriter.getTxn() - hotCommits;
+        // The table-wide rule catches waste SPREAD over many partitions, where no single one breaches the
+        // per-partition thresholds but the table as a whole wastes real space. A table that is one logical
+        // partition has nothing to spread over - its table-wide total IS one partition's total, which the
+        // per-partition rules above already judge - so the rule can only re-select the same partition under
+        // a second name, and at a far lower bar.
+        final boolean isOneLogicalPartition =
+                txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(0))
+                        == txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(n - 1));
 
         int chosen = -1;
         int chosenReason = REASON_NONE;
@@ -159,8 +177,11 @@ public class PartitionCompactionPolicy implements Mutable {
             deadRowsTable += dead;
             liveRowsTable += live;
 
+            // A writerTxn of -1 means no committed geometry record, so nothing says the partition is hot.
+            final long writerTxn = geometry.getWriterTxn(i);
+            final boolean isHot = hotCommits > 0 && writerTxn >= 0 && writerTxn > hotSinceTxn;
             final long lastWrite = geometry.getLastWriteMicros(i);
-            if (lastWrite < coldestMicros || (lastWrite == coldestMicros && partitionTs < coldestTs)) {
+            if (!isHot && (lastWrite < coldestMicros || (lastWrite == coldestMicros && partitionTs < coldestTs))) {
                 coldest = i;
                 coldestMicros = lastWrite;
                 coldestTs = partitionTs;
@@ -184,7 +205,11 @@ public class PartitionCompactionPolicy implements Mutable {
         // and queue a partition on every commit forever.
         final long total = deadRowsTable + liveRowsTable;
         final long deadBytes = deadRowsTable * Math.max(1, avgRecordSize);
-        if (tablePressureOn) {
+        if (isOneLogicalPartition) {
+            // Cleared, not merely ignored: a table trimmed down to one logical partition must not keep
+            // serving a latch it set while it still had many.
+            tablePressureOn = false;
+        } else if (tablePressureOn) {
             tablePressureOn = !(deadRowsTable * 100 < total * configuration.getPartitionCompactionTableDeadStopPercent()
                     && deadBytes <= configuration.getPartitionCompactionTableDeadTrigger() / 2);
         } else {

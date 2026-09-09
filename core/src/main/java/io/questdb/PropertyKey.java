@@ -659,6 +659,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_PARTITION_COMPACTION_TIME_BUDGET("cairo.partition.compaction.time.budget"),
     CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MAX("cairo.partition.compaction.decline.backoff.max"),
     CAIRO_PARTITION_COMPACTION_PREFIX_MIN_PERCENT("cairo.partition.compaction.prefix.min.percent"),
+    CAIRO_PARTITION_COMPACTION_HOT_COMMITS("cairo.partition.compaction.hot.commits"),
     CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE("cairo.write.back.off.timeout.on.mem.pressure"),
     DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete", false, true),
     RAM_USAGE_LIMIT_BYTES("ram.usage.limit.bytes"),

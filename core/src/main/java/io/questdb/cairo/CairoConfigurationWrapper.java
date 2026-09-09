@@ -880,6 +880,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPartitionCompactionHotCommits() {
+        return getDelegate().getPartitionCompactionHotCommits();
+    }
+
+    @Override
     public int getPartitionCompactionPieceThreshold() {
         return getDelegate().getPartitionCompactionPieceThreshold();
     }
