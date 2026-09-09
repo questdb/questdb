@@ -153,8 +153,12 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                 }
             } finally {
                 // Free shared resources only after workers have finished
-                Misc.free(slaveFrameCursor);
+                slaveFrameCursor = Misc.free(slaveFrameCursor);
                 Misc.free(slaveTimeFrameState);
+                // The record caches symbol tables and array buffers; both async filter cursors free
+                // theirs the same way. close() ends in clear(), so the record stays reusable when
+                // the factory reopens this cursor.
+                Misc.free(masterRecord);
                 isOpen = false;
             }
         }
@@ -221,6 +225,10 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         allFramesActive = true;
     }
 
+    private CairoException buildInterruptionException() {
+        return masterFrameSequence.buildInterruptionException();
+    }
+
     private void buildSlaveTimeFrameCacheConditionally() {
         if (!isSlaveTimeFrameCacheBuilt) {
             slaveTimeFrameState.of(
@@ -276,7 +284,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                 }
 
                 if (!allFramesActive) {
-                    throwTimeoutException();
+                    throw buildInterruptionException();
                 }
 
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
@@ -380,7 +388,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             if (th instanceof CairoException ce) {
                 if (ce.isInterruption() || ce.isCancellation()) {
                     LOG.error().$("filter error [ex=").$safe(ce.getFlyweightMessage()).I$();
-                    throwTimeoutException();
+                    throw buildInterruptionException();
                 } else {
                     LOG.error().$("filter error [ex=").$(th).I$();
                     throw ce;
@@ -427,7 +435,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
 
         if (!allFramesActive) {
-            throwTimeoutException();
+            throw buildInterruptionException();
         }
         return false;
     }
@@ -463,17 +471,9 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
 
         if (!allFramesActive) {
-            throwTimeoutException();
+            throw buildInterruptionException();
         }
         return false;
-    }
-
-    private void throwTimeoutException() {
-        if (masterFrameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
-        }
     }
 
     void of(
@@ -490,6 +490,9 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
         // Acquire after reopen() so a reopen breach leaves no slave cursor to free.
         this.slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, slaveOrder);
+        // Bind group-by function args to the slave symbol tables before the lazy time-frame cache,
+        // so a parent projection over a SYMBOL aggregate can resolve its static symbol table now.
+        atom.initOwnerGroupByFunctions(executionContext, masterFrameSequence.getSymbolTableSource(), slaveFrameCursor);
         this.executionContext = executionContext;
         allFramesActive = true;
         isSlaveTimeFrameCacheBuilt = false;

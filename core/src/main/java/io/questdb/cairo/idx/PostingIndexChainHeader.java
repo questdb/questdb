@@ -104,6 +104,11 @@ public final class PostingIndexChainHeader {
      *
      * @param keyMem             the .pk memory mapping (writable)
      * @param activePageOffset   current active page offset (PAGE_A_OFFSET or PAGE_B_OFFSET)
+     * @param formatVersion      FORMAT_VERSION to write. The caller owns this value
+     *                           and must never lower it for a given file: once the
+     *                           file holds a de-aliased covering entry, an older
+     *                           build must keep failing to open it. See
+     *                           {@link PostingIndexUtils#V3_FORMAT_VERSION}.
      * @param newHeadEntryOffset byte offset of the latest entry (V2_NO_HEAD if empty)
      * @param newEntryCount      number of live entries in the chain
      * @param newRegionBase      byte offset of the oldest live entry's start
@@ -114,6 +119,7 @@ public final class PostingIndexChainHeader {
     public static long publish(
             MemoryARW keyMem,
             long activePageOffset,
+            long formatVersion,
             long newHeadEntryOffset,
             long newEntryCount,
             long newRegionBase,
@@ -138,7 +144,7 @@ public final class PostingIndexChainHeader {
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END, stagingSeq);
 
         // Phase 2: write payload.
-        keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_FORMAT_VERSION, PostingIndexUtils.V2_FORMAT_VERSION);
+        keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_FORMAT_VERSION, formatVersion);
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET, newHeadEntryOffset);
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_ENTRY_COUNT, newEntryCount);
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_BASE, newRegionBase);
@@ -223,11 +229,19 @@ public final class PostingIndexChainHeader {
     /**
      * Re-read the seqlock pair on the page picked by an earlier
      * {@link #readUnderSeqlock} and return true if it has not advanced.
-     * Used by callers that need to extend the seqlock window past the
-     * header payload — e.g. to read chain-entry header bytes that the
-     * writer mutates in place via {@code extendHead} without an inner
-     * seqlock. If this returns false the caller must redo both the header
-     * read and the downstream entry read.
+     * A best-effort staleness check on that one page, NOT a seqlock held
+     * across the caller's downstream reads: {@link #publish} writes the
+     * page the reader did not pick, so one concurrent publish leaves this
+     * pair untouched and only a later publish that lands back on this
+     * page trips it. That makes the single publish in
+     * {@code PostingIndexChainWriter.extendHead} the case this check
+     * misses; the GEN_COUNT fence pairing documented on
+     * {@code PostingIndexChainEntry.read} covers that one instead. On
+     * false the caller redoes both the header read and the downstream
+     * entry read; true proves nothing beyond "no publish has landed back
+     * on this page yet". The sole caller,
+     * {@code AbstractPostingIndexReader}'s chain-read retry loop, works
+     * the consequences through at the call site.
      */
     public static boolean stillStable(MemoryR keyMem, long pageOffset, long expectedSeq) {
         long seqStart = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START);
@@ -270,9 +284,9 @@ public final class PostingIndexChainHeader {
         public long regionBase;
         public long regionLimit;
         // Even, monotonically-advancing seqlock value of the picked page.
-        // Callers that need to extend the seqlock window past the header
-        // payload (e.g. across an in-place chain-entry mutation) re-validate
-        // this with {@link #stillStable}.
+        // Two consumers: stillStable re-checks it as a best-effort staleness
+        // test on that page, and AbstractPostingIndexReader latches it into
+        // its chainSequence field to detect that the chain advanced.
         public long sequence;
 
         public boolean isEmpty() {

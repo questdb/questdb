@@ -112,6 +112,14 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
+    public boolean supportsKeyValueAccess() {
+        // The key is a field read and valueOf() resolves it without touching text, so a key
+        // consumer such as QWP egress should ship this constant once per batch rather than
+        // re-encoding it on every row.
+        return true;
+    }
+
+    @Override
     public boolean supportsParallelism() {
         return true;
     }

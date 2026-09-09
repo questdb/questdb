@@ -49,6 +49,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.millitime.Dates;
+import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -57,6 +58,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
 public class SqlUtilTest {
@@ -1018,12 +1020,30 @@ public class SqlUtilTest {
         Assert.assertEquals("1970-01-01T00:00:00.000200Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(new Utf8String("200"))));
         Assert.assertEquals("1969-12-31T23:59:59.999100Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(new Utf8String("-900"))));
 
+        Utf8String asciiWithoutFlag = new Utf8String("2022-11-20 Z".getBytes(StandardCharsets.UTF_8), false);
+        Assert.assertFalse(asciiWithoutFlag.isAscii());
+        Assert.assertEquals("2022-11-20T00:00:00.000000Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(asciiWithoutFlag)));
+
+        TimestampDriver nanoTimestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_NANO);
+        Assert.assertEquals("2022-11-20T00:00:00.000Z", Nanos.toString(nanoTimestampDriver.implicitCastVarchar(asciiWithoutFlag)));
+
+        Utf8String unicodeZone = new Utf8String("2022-11-20 Réunion Time");
+        Assert.assertEquals("2022-11-19T20:00:00.000000Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(unicodeZone)));
+        Assert.assertEquals("2022-11-19T20:00:00.000Z", Nanos.toString(nanoTimestampDriver.implicitCastVarchar(unicodeZone)));
+
         // not a number
         try {
             timestampDriver.implicitCastVarchar(new Utf8String("hello"));
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> TIMESTAMP]", e.getFlyweightMessage());
+        }
+
+        try {
+            timestampDriver.implicitCastVarchar(new Utf8String("héllo"));
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `héllo` [VARCHAR -> TIMESTAMP]", e.getFlyweightMessage());
         }
     }
 

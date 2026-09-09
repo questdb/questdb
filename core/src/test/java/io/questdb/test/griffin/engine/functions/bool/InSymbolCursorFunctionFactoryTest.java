@@ -24,10 +24,48 @@
 
 package io.questdb.test.griffin.engine.functions.bool;
 
+import io.questdb.cairo.TableWriter;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testMalformedVarcharInSymbolCursorMatchesNullNotPrefix() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v VARCHAR)");
+            execute("CREATE TABLE y (str STRING, sym SYMBOL)");
+            execute("""
+                    INSERT INTO y VALUES
+                        ('abc', 'abc'),
+                        (NULL, NULL)
+                    """);
+            try (TableWriter writer = getWriter("x")) {
+                TableWriter.Row row = writer.newRow();
+                row.putVarchar(0, new Utf8String(new byte[]{'a', 'b', 'c', (byte) 0xC3}, false));
+                row.append();
+                writer.commit();
+            }
+
+            assertQuery("SELECT cast(str AS symbol) IN (SELECT v FROM x) matched FROM y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            matched
+                            false
+                            true
+                            """);
+            assertQuery("SELECT sym IN (SELECT v FROM x) matched FROM y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            matched
+                            false
+                            true
+                            """);
+        });
+    }
 
     @Test
     public void testNullInCursorInFilter() throws Exception {

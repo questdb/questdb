@@ -71,6 +71,8 @@ public interface ServerConfiguration {
 
     LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
 
+    WorkerPoolConfiguration getLiveViewRefreshPoolConfiguration();
+
     WorkerPoolConfiguration getMatViewRefreshPoolConfiguration();
 
     MemoryConfiguration getMemoryConfiguration();

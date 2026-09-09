@@ -353,13 +353,14 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         @Override
         public short getDecimal16(Record rec) {
             compute(rec);
-            return (short) greatest.getValue();
+            // narrowing the 64-bit null sentinel would yield 0
+            return greatest.isNull() ? Decimals.DECIMAL16_NULL : (short) greatest.getValue();
         }
 
         @Override
         public int getDecimal32(Record rec) {
             compute(rec);
-            return (int) greatest.getValue();
+            return greatest.isNull() ? Decimals.DECIMAL32_NULL : (int) greatest.getValue();
         }
 
         @Override
@@ -371,7 +372,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         @Override
         public byte getDecimal8(Record rec) {
             compute(rec);
-            return (byte) greatest.getValue();
+            return greatest.isNull() ? Decimals.DECIMAL8_NULL : (byte) greatest.getValue();
         }
 
         @Override
@@ -456,7 +457,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
             if (ColumnType.tagOf(type) == ColumnType.DECIMAL256) {
                 arg.getDecimal256(rec, decimal256);
                 if (decimal256.isNull()) {
-                    return Double.NEGATIVE_INFINITY;
+                    return Double.NaN;
                 }
                 sink.clear();
                 decimal256.setScale(ColumnType.getDecimalScale(type));

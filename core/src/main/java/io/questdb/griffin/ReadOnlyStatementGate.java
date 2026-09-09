@@ -68,7 +68,7 @@ import io.questdb.griffin.engine.ops.Operation;
 public final class ReadOnlyStatementGate {
 
     // Bit set for every CompiledQuery type the gate refuses on a read-only node. Each type's
-    // numeric value (all <= ALTER_STORAGE_POLICY, comfortably under 64) selects one bit. DROP is
+    // numeric value (all <= CREATE_LIVE_VIEW, comfortably under 64) selects one bit. DROP is
     // included here but carries the export-temp-table exemption applied in isRefusedOnReadOnly.
     // The ReadOnlyStatementGateMatrixTest reflection sweep over CompiledQuery is the single source
     // that proves this mask classifies every declared type the same way the old ||-chain did.
@@ -84,6 +84,7 @@ public final class ReadOnlyStatementGate {
                     | bit(CompiledQuery.CREATE_MAT_VIEW)
                     | bit(CompiledQuery.REFRESH_MAT_VIEW)
                     | bit(CompiledQuery.CREATE_VIEW)
+                    | bit(CompiledQuery.CREATE_LIVE_VIEW)
                     | bit(CompiledQuery.ALTER_VIEW)
                     | bit(CompiledQuery.ALTER_STORAGE_POLICY)
                     | bit(CompiledQuery.DROP);

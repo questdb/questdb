@@ -34,6 +34,8 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFactory {
@@ -66,6 +68,15 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
             }
         }
         return EmptyRowCursor.INSTANCE;
+    }
+
+    @Override
+    public void init(PageFrameCursor pageFrameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        // Rebind symbolFunc to the executing statement's bind variable service. Without this
+        // a cached factory keeps the bind variable function of whichever execution compiled
+        // it, so prepareCursor() below resolves a stale value into symbolKey and the query
+        // returns the latest row of some previously queried key.
+        symbolFunc.init(pageFrameCursor, sqlExecutionContext);
     }
 
     @Override

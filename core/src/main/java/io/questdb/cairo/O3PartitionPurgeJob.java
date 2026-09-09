@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
@@ -64,10 +65,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         try {
             this.engine = engine;
             this.configuration = engine.getMessageBus().getConfiguration();
-            // Single-instance per-iteration scratch. Under continuation rotation
-            // the framework mints a fresh instance per snapshot via
-            // cloneInstance(); concurrent access to this instance's scratch
-            // is therefore impossible.
             this.fileNameSink = new Utf8StringSink();
             this.partitionList = new DirectLongList(
                     configuration.getPartitionPurgeListCapacity() * 2L,
@@ -80,11 +77,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         }
     }
 
-    /**
-     * Legacy constructor kept for callers that still pass a workerCount
-     * (pool-sizing hint). The hint is ignored; per-iteration scratch is
-     * single-instance now.
-     */
     public O3PartitionPurgeJob(CairoEngine engine, int workerCount) {
         this(engine);
     }
@@ -104,9 +96,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     @Override
     public void closeInstance() {
-        // cloneInstance() mints a fresh job per generation, so the pool frees
-        // each instance's native scratch through this hook at halt. The halted
-        // CAS in close() keeps the call idempotent.
         close();
     }
 
@@ -142,8 +131,12 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 long partitionTs = partitionByFormat.parse(fileNameSink.asAsciiCharSequence(), 0, index, EN_LOCALE);
                 partitionList.add(partitionTs);
             } catch (NumericException e) {
+                // A live view's table directory holds _checkpoints alongside its
+                // partitions, so without it here every discovery pass logs one
+                // "unknown directory" line per live view.
                 if (!Utf8s.startsWithAscii(fileNameSink, WalUtils.WAL_NAME_BASE) && !Utf8s.equalsAscii(WalUtils.SEQ_DIR, fileNameSink)
-                        && !Utf8s.equalsAscii("seq", fileNameSink)) {
+                        && !Utf8s.equalsAscii("seq", fileNameSink)
+                        && !Utf8s.equalsAscii(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME, fileNameSink)) {
                     LOG.info().$("unknown directory [table=").$(tableToken).$(", dir=").$(fileNameSink).I$();
                 }
                 partitionList.setPos(partitionList.size() - 1); // remove partition version record

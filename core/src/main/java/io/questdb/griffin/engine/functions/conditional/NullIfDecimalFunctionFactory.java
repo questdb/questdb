@@ -126,6 +126,9 @@ public class NullIfDecimalFunctionFactory implements FunctionFactory {
 
         public boolean store(Record record) {
             arg0.getDecimal256(record, decimal);
+            if (decimal.isNull()) {
+                return false;
+            }
             decimal.setScale(leftScale);
             arg1.getDecimal256(record, decimalRight);
             decimalRight.setScale(rightScale);

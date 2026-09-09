@@ -26,9 +26,9 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -52,13 +52,22 @@ public final class ReadOnlyUsersAwareSecurityContextFactory implements SecurityC
 
     @Override
     public SecurityContext getInstance(@Transient @NotNull PrincipalContext principalContext, byte interfaceId) {
+        final CharSequence principal = principalContext.getPrincipal();
         return switch (interfaceId) {
             case SecurityContextFactory.HTTP -> httpReadOnly
-                    ? (settingsReadOnly ? ReadOnlySecurityContext.SETTINGS_READ_ONLY : ReadOnlySecurityContext.INSTANCE)
-                    : (settingsReadOnly ? AllowAllSecurityContext.SETTINGS_READ_ONLY : AllowAllSecurityContext.INSTANCE);
+                    ? (settingsReadOnly ? ReadOnlySecurityContext.SETTINGS_READ_ONLY : ReadOnlySecurityContext.INSTANCE).forPrincipal(principal)
+                    : (settingsReadOnly ? AllowAllSecurityContext.SETTINGS_READ_ONLY : AllowAllSecurityContext.INSTANCE).forPrincipal(principal);
             case SecurityContextFactory.PGWIRE ->
-                    isReadOnlyPgWireUser(principalContext.getPrincipal()) ? ReadOnlySecurityContext.INSTANCE : AllowAllSecurityContext.INSTANCE;
-            default -> AllowAllSecurityContext.INSTANCE;
+                    isReadOnlyPgWireUser(principal) ? ReadOnlySecurityContext.INSTANCE.forPrincipal(principal) : AllowAllSecurityContext.INSTANCE.forPrincipal(principal);
+            // ILP does NOT route its principal. With a line auth db configured the ILP principal is a JWK key
+            // id -- a transport credential, not an ACL identity -- so hand back the bare shared singleton
+            // rather than deriving a per-principal context. Routing it would retain every key id in the
+            // process-lifetime per-principal cache, which hangs off a singleton shared by all three protocols:
+            // a fleet of devices would saturate the cache bound and push the HTTP and PGWire users onto the
+            // uncached, allocate-per-call path. ILP has no query surface to read current_user() back anyway.
+            // The enterprise mirror does the same -- see EntReadOnlyUsersAwareSecurityContextFactory.
+            case SecurityContextFactory.ILP -> AllowAllSecurityContext.INSTANCE;
+            default -> AllowAllSecurityContext.INSTANCE.forPrincipal(principal);
         };
     }
 

@@ -84,6 +84,26 @@ public final class Misc {
         }
     }
 
+    /**
+     * Clears the object while keeping multi-resource cleanup best-effort: a clear() failure folds
+     * into the given failure chain instead of propagating, so later resources in the same cleanup
+     * sequence still see a clear attempt. The first failure becomes the primary and later failures
+     * attach to it as suppressed. Callers thread the returned chain through the whole sequence and
+     * rethrow it at the appropriate package boundary. This is the {@link Mutable} counterpart of
+     * {@link #freeBestEffort(Throwable, Closeable)}.
+     */
+    public static <T extends Mutable> @Nullable Throwable clearBestEffort(@Nullable Throwable primary, @Nullable T object) {
+        if (object == null) {
+            return primary;
+        }
+        try {
+            object.clear();
+            return primary;
+        } catch (Throwable th) {
+            return foldCleanupFailure(primary, th);
+        }
+    }
+
     public static void clearObjList(ObjList<? extends Mutable> args) {
         if (args != null) {
             for (int i = 0, n = args.size(); i < n; i++) {
@@ -93,6 +113,39 @@ public final class Misc {
                 }
             }
         }
+    }
+
+    /**
+     * Clears every list entry while keeping cleanup best-effort, folding clear() failures into the
+     * given failure chain the same way {@link #clearBestEffort(Throwable, Mutable)} does.
+     */
+    public static @Nullable Throwable clearObjListBestEffort(
+            @Nullable Throwable primary,
+            @Nullable ObjList<? extends Mutable> list
+    ) {
+        if (list != null) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                primary = clearBestEffort(primary, list.getQuick(i));
+            }
+        }
+        return primary;
+    }
+
+    /**
+     * Folds a cleanup failure into an existing best-effort failure chain: the first failure becomes
+     * the primary and every later one attaches to it as suppressed. Use this when the cleanup step
+     * is neither a {@link Closeable} close nor a {@link Mutable} clear, so neither
+     * {@link #freeBestEffort(Throwable, Closeable)} nor {@link #clearBestEffort(Throwable, Mutable)}
+     * applies.
+     */
+    public static @NotNull Throwable foldCleanupFailure(@Nullable Throwable primary, @NotNull Throwable failure) {
+        if (primary == null) {
+            return failure;
+        }
+        if (primary != failure) {
+            primary.addSuppressed(failure);
+        }
+        return primary;
     }
 
     public static <T extends Closeable> T free(T object) {

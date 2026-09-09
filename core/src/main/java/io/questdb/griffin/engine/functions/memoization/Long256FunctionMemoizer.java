@@ -46,6 +46,12 @@ public final class Long256FunctionMemoizer extends Long256Function implements Me
     }
 
     @Override
+    public void clearMemo() {
+        validAValue = false;
+        validBValue = false;
+    }
+
+    @Override
     public Function getArg() {
         return fn;
     }
@@ -99,12 +105,6 @@ public final class Long256FunctionMemoizer extends Long256Function implements Me
     @Override
     public boolean isThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void memoize(Record record) {
-        validAValue = false;
-        validBValue = false;
     }
 
     @Override

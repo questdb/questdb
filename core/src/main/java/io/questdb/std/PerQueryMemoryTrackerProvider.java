@@ -105,6 +105,7 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
             case QUERY -> configuration.getQueryMemoryLimitBytes();
             case MAT_VIEW_REFRESH -> configuration.getMatViewRefreshMemoryLimitBytes();
             case WAL_APPLY -> configuration.getWalApplyMemoryLimitBytes();
+            case LIVE_VIEW_REFRESH -> configuration.getLiveViewRefreshMemoryLimitBytes();
         };
     }
 

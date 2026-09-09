@@ -38,6 +38,12 @@ public final class DoubleType implements FuzzColumnType {
         if (rnd.nextInt(32) == 0) {
             return FuzzConstant.nonBindable("null");
         }
+        if (rnd.nextInt(4) == 0) {
+            // 1:4 -> a bare integer value, cast so the literal stays DOUBLE-typed. The range
+            // is kept exactly representable in both float and double to avoid spurious drift.
+            String v = Integer.toString(rnd.nextInt(2_000_000) - 1_000_000);
+            return new FuzzConstant(v + "::DOUBLE", "DOUBLE", v);
+        }
         String v = String.format(java.util.Locale.ROOT, "%.6f", rnd.nextDouble());
         return new FuzzConstant(v, "DOUBLE", v);
     }

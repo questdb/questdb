@@ -29,12 +29,18 @@ import io.questdb.cairo.FullBwdPartitionFrameCursor;
 import io.questdb.cairo.FullFwdPartitionFrameCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.BwdTableReaderPageFrameCursor;
 import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.IntList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 /**
  * Tests for verifying that partitions are released when
@@ -93,7 +99,7 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
 
                 // Should still have one partition open (toTop doesn't close partitions)
                 // and releaseOpenPartitions should be a no-op since nothing new is open
-                Assert.assertTrue("Partitions should remain from previous iteration", reader.getOpenPartitionCount() >= 0);
+                Assert.assertEquals("One partition should remain open after toTop() and no-op release", 1, reader.getOpenPartitionCount());
 
                 // Cursor should still work normally
                 int frameCount = 0;
@@ -396,7 +402,7 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
                 pageFrameCursor.releaseOpenPartitions();
 
                 // Should still have one partition open (toTop doesn't close partitions)
-                Assert.assertTrue("Partitions should remain from previous iteration", reader.getOpenPartitionCount() >= 0);
+                Assert.assertEquals("One partition should remain open after toTop() and no-op release", 1, reader.getOpenPartitionCount());
 
                 // Cursor should still work normally
                 int frameCount = 0;
@@ -580,6 +586,63 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
                 }
             }
             // This will close the reader via the cursor chain
+        });
+    }
+
+    @Test
+    public void testSelectedCursorReleasesPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x AS (
+                        SELECT
+                            x::INT a,
+                            (x * 10)::LONG b,
+                            timestamp_sequence('2022-01-01', 24 * 60 * 60 * 1_000_000L) t
+                        FROM long_sequence(5)
+                    ) TIMESTAMP (t) PARTITION BY DAY
+                    """);
+
+            try (RecordCursorFactory factory = select("SELECT b, t, a, b AS b2 FROM x")) {
+                RecordCursorFactory selectedFactory = factory;
+                while (selectedFactory != null && !(selectedFactory instanceof SelectedRecordCursorFactory)) {
+                    selectedFactory = selectedFactory.getBaseFactory();
+                }
+                Assert.assertNotNull("duplicated/reordered projection must compile to SelectedRecord", selectedFactory);
+                Assert.assertTrue(selectedFactory.supportsPageFrameCursor());
+
+                try (PageFrameCursor cursor = selectedFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                    Assert.assertTrue("Selected over a table must preserve the table cursor surface", cursor instanceof TablePageFrameCursor);
+                    Assert.assertEquals("Selected cursor must expose the projected mapping", 4, cursor.getColumnMapping().getColumnCount());
+                    Assert.assertEquals(1, cursor.getColumnMapping().getColumnIndex(0));
+                    Assert.assertEquals(2, cursor.getColumnMapping().getColumnIndex(1));
+                    Assert.assertEquals(0, cursor.getColumnMapping().getColumnIndex(2));
+                    Assert.assertEquals(1, cursor.getColumnMapping().getColumnIndex(3));
+
+                    TableReader reader = ((TablePageFrameCursor) cursor).getTableReader();
+                    Assert.assertEquals(0, reader.getOpenPartitionCount());
+
+                    PageFrame frame = cursor.next();
+                    Assert.assertNotNull(frame);
+                    Assert.assertEquals(0, frame.getPartitionIndex());
+                    Assert.assertEquals(1, reader.getOpenPartitionCount());
+
+                    frame = cursor.next();
+                    Assert.assertNotNull(frame);
+                    Assert.assertEquals(1, frame.getPartitionIndex());
+                    Assert.assertEquals("completed and current partitions must be open before release", 2, reader.getOpenPartitionCount());
+
+                    cursor.releaseOpenPartitions();
+                    Assert.assertEquals("Selected must forward release to close the completed partition", 1, reader.getOpenPartitionCount());
+
+                    frame = cursor.next();
+                    Assert.assertNotNull("cursor must remain usable after releasing completed partitions", frame);
+                    Assert.assertEquals(2, frame.getPartitionIndex());
+                    Assert.assertEquals(4, frame.getColumnCount());
+                    Assert.assertEquals("duplicated projected columns must share the base page", frame.getPageAddress(0), frame.getPageAddress(3));
+                    cursor.releaseOpenPartitions();
+                    Assert.assertEquals(1, reader.getOpenPartitionCount());
+                }
+            }
         });
     }
 

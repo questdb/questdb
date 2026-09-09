@@ -82,6 +82,14 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
         return false;
     }
 
+    // Both selecting values must be stable: the deferred symbol key AND the residual index filter.
+    @Override
+    public boolean isStableWithinExecution() {
+        final Function filter = cursor.getFilter();
+        return (symbolFunction == null || symbolFunction.isStableWithinExecution())
+                && (filter == null || filter.isStableWithinExecution());
+    }
+
     @Override
     public boolean isUsingIndex() {
         return true;

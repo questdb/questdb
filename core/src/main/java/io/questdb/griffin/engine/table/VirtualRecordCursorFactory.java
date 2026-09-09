@@ -158,6 +158,29 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (functions.getQuick(i).isNonDeterministic()) {
+                return true;
+            }
+        }
+        return base.isNonDeterministic();
+    }
+
+    // Mirrors isNonDeterministic() on the weaker within-execution property: projections of
+    // now() or bind variables are non-deterministic across executions, yet re-initialize to
+    // the same execution-scoped snapshot on every open, so they keep this factory stable.
+    @Override
+    public boolean isStableWithinExecution() {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!functions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        return base.isStableWithinExecution();
+    }
+
+    @Override
     public boolean recordCursorSupportsLongTopK(int columnIndex) {
         final int baseColumnIndex = cursor.getLongTopKColumnIndex(columnIndex);
         if (baseColumnIndex != -1) {

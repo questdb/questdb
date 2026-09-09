@@ -354,6 +354,13 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            if (partitionByRecord != null) {
+                Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+            }
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), CUME_DIST_CONST);
         }
@@ -447,6 +454,17 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+            SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, recordComparator);
+        }
+
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+            // Rebuild the rank maps here too. A live view's incremental refresh calls
+            // initPartitionBy instead of init() from the second cycle onward, and a rank map
+            // encodes symbol keys against the symbol table of the cycle that built it, so reusing
+            // a cycle-1 encoding to compare cycle-2 keys silently mis-orders every row whose
+            // ORDER BY symbol was added in between.
             SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, recordComparator);
         }
 

@@ -328,10 +328,11 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * Drives one message through the state, mirroring the exact call ordering of
+     * Drives one message through the state in the commit-path ordering of
      * {@code QwpIngressUpgradeProcessor.handleBinaryMessage}: addData →
      * isDeferCommit → processMessage → commit/commitIfMaxUncommittedRowsReached →
-     * read isRoleChangeClosePending AFTER the commit calls.
+     * read isRoleChangeClosePending AFTER the commit calls. It does not model the
+     * processor's ack section, so it says nothing about which frames get acked.
      *
      * @return the roleChangeClose flag as the upgrade processor would observe it
      */
@@ -345,10 +346,12 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
         if (state.isOk() && deferCommit) {
             state.commitIfMaxUncommittedRowsReached();
             if (state.isOk()) {
-                // Mirrors the processor's deferred-ack containment: rows are
-                // buffered but uncommitted, so the cumulative-ack watermark
-                // must not advance past this frame until the group commits.
-                state.markUncommittedDeferredRows();
+                // Mirrors the processor's deferred-ack containment: the
+                // cumulative-ack watermark may not advance past this frame
+                // while any of its rows are still uncommitted, and the
+                // processor derives that from the TUD cache rather than
+                // assuming it.
+                state.refreshDeferredAckCoverage();
             }
         }
         // Read AFTER the commit calls — the ordering the containment fix
@@ -593,11 +596,12 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
         }
 
         @Override
-        public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
+        public boolean commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
             Runnable hook = maxRowsCommitHook;
             if (hook != null) {
                 hook.run();
             }
+            return false;
         }
 
         @Override

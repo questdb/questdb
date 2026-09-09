@@ -155,6 +155,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
                 return alterOperationDispatcher.execute(alterOp, sqlExecutionContext, eventSubSeq, closeOnDone);
             case CREATE_TABLE:
             case CREATE_MAT_VIEW:
+            case CREATE_LIVE_VIEW:
             case CREATE_TABLE_AS_SELECT:
             case DROP:
                 assert false;
@@ -285,6 +286,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     public void ofCreateUser() {
         of(CREATE_USER);
         this.isExecutedAtParseTime = true;
+    }
+
+    public void ofCreateLiveView(Operation createLiveViewOp) {
+        of(CREATE_LIVE_VIEW);
+        this.operation = createLiveViewOp;
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofCreateView(CreateViewOperation createViewOp) {

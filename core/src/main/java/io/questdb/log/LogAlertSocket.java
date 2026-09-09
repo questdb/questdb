@@ -29,18 +29,20 @@ import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.concurrent.locks.LockSupport;
+import java.util.function.LongConsumer;
 
 public class LogAlertSocket implements Closeable {
 
@@ -58,10 +60,11 @@ public class LogAlertSocket implements Closeable {
     private final int inBufferSize;
     private final Log log;
     private final NetworkFacade nf;
+    private final Runnable onReconnectRef = this::onReconnect;
     private final int outBufferSize;
     private final Rnd rand;
     private final long reconnectDelay;
-    private final Runnable onReconnectRef = this::onReconnect;
+    private final long reconnectDelayMillis;
     private final StringSink responseSink = new StringSink();
     private long addressInfoAddr = -1; // tcp/ip host:port address
     private int alertHostIdx;
@@ -69,6 +72,7 @@ public class LogAlertSocket implements Closeable {
     private String alertTargets; // host[:port](,host[:port])*
     private long inBufferPtr;
     private long outBufferPtr;
+    private LongConsumer reconnectSleeper = Os::sleep;
     private long socketFd = -1;
 
     public LogAlertSocket(NetworkFacade nf, String alertTargets, Log log) {
@@ -102,23 +106,24 @@ public class LogAlertSocket implements Closeable {
         this.defaultPort = defaultPort;
         parseAlertTargets();
         this.inBufferSize = inBufferSize;
-        this.inBufferPtr = Unsafe.malloc(inBufferSize, MemoryTag.NATIVE_LOGGER);
         this.outBufferSize = outBufferSize;
-        this.outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_LOGGER);
         this.reconnectDelay = reconnectDelay;
+        // Os.sleep accepts whole milliseconds. Round every positive remainder up
+        // so reconnects never run sooner than the configured nanosecond delay.
+        this.reconnectDelayMillis = reconnectDelay > 0 ? 1 + (reconnectDelay - 1) / 1_000_000 : 0;
+        try {
+            this.inBufferPtr = Unsafe.malloc(inBufferSize, MemoryTag.NATIVE_LOGGER);
+            this.outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_LOGGER);
+        } catch (Throwable th) {
+            freeBuffers();
+            throw th;
+        }
     }
 
     @Override
     public void close() {
         freeSocketAndAddress();
-        if (outBufferPtr != 0) {
-            Unsafe.free(outBufferPtr, outBufferSize, MemoryTag.NATIVE_LOGGER);
-            outBufferPtr = 0;
-        }
-        if (inBufferPtr != 0) {
-            Unsafe.free(inBufferPtr, inBufferSize, MemoryTag.NATIVE_LOGGER);
-            inBufferPtr = 0;
-        }
+        freeBuffers();
     }
 
     public void connect() {
@@ -184,6 +189,11 @@ public class LogAlertSocket implements Closeable {
 
     public int getOutBufferSize() {
         return outBufferSize;
+    }
+
+    @TestOnly
+    public long getReconnectDelayMillis() {
+        return reconnectDelayMillis;
     }
 
     @TestOnly
@@ -299,7 +309,7 @@ public class LogAlertSocket implements Closeable {
             );
             if (alertHostIdx == this.alertHostIdx) {
                 logFailOver.$(" with a delay of ")
-                        .$(reconnectDelay / 1000000)
+                        .$(reconnectDelayMillis)
                         .$(" millis (as it is the same alert manager)")
                         .$();
                 onReconnect.run();
@@ -320,6 +330,11 @@ public class LogAlertSocket implements Closeable {
                     .I$();
         }
         return success;
+    }
+
+    @TestOnly
+    public void setReconnectSleeper(@NotNull LongConsumer reconnectSleeper) {
+        this.reconnectSleeper = reconnectSleeper;
     }
 
     private static boolean isContentLength(CharSequence tok, int lo, int hi) {
@@ -348,6 +363,17 @@ public class LogAlertSocket implements Closeable {
         return $alertHost(alertHostIdx, logRecord);
     }
 
+    private void freeBuffers() {
+        if (outBufferPtr != 0) {
+            Unsafe.free(outBufferPtr, outBufferSize, MemoryTag.NATIVE_LOGGER);
+            outBufferPtr = 0;
+        }
+        if (inBufferPtr != 0) {
+            Unsafe.free(inBufferPtr, inBufferSize, MemoryTag.NATIVE_LOGGER);
+            inBufferPtr = 0;
+        }
+    }
+
     private void freeSocketAndAddress() {
         if (addressInfoAddr != -1) {
             nf.freeAddrInfo(addressInfoAddr);
@@ -364,7 +390,7 @@ public class LogAlertSocket implements Closeable {
     }
 
     private void onReconnect() {
-        LockSupport.parkNanos(reconnectDelay);
+        reconnectSleeper.accept(reconnectDelayMillis);
     }
 
     private void parseAlertTargets() {

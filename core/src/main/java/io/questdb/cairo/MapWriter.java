@@ -86,6 +86,17 @@ public interface MapWriter extends SymbolCountProvider {
 
     MemoryR getSymbolValuesMemory();
 
+    /**
+     * @return whether the value-to-key cache is allocated. Not the same question as
+     * {@link #isCached()}, which reports what the column asked for: a column configured CACHE
+     * keeps that flag after {@link SymbolMapWriter} has run the cache's key buffer out and
+     * dropped it, because the drop is an internal fallback rather than a change to the column.
+     * The two disagreeing is what tells a caller the column is missing a cache it is entitled
+     * to. An implementation that holds no cache of its own answers whatever {@link #isCached()}
+     * answers, so such a caller finds nothing to act on
+     */
+    boolean isCacheAllocated();
+
     boolean isCached();
 
     int put(char c);

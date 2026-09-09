@@ -58,10 +58,10 @@ public final class VarcharToNanoTimestampVCFunctionFactory extends ToTimestampVC
         if (arg.isConstant()) {
             return evaluateConstant(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_NANO);
         } else {
-            if ("en".equals(defaultDateLocale.getName()) || (defaultDateLocale.getName() != null && defaultDateLocale.getName().startsWith("en-"))) {
+            if (VarcharDateFunctionUtils.isAsciiOnlyPattern(pattern)) {
                 return new VarcharToTimestampVCFunctionFactory.ToAsciiTimestampFunc(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_NANO, NAME);
             }
-            return new Func(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_NANO, NAME);
+            return new VarcharToTimestampVCFunctionFactory.ToUtf8TimestampFunc(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_NANO, NAME);
         }
     }
 }

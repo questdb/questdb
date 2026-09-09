@@ -53,11 +53,10 @@ public final class SampleByClause {
     // The fuzzer tables span 30..75 hours of data (FuzzConfig stepMicros * rowsPerTable).
     // SAMPLE BY with FILL(PREV/NULL/LINEAR) emits one row per (key, bucket) -- multiplying
     // a tight bucket interval, a wide span, and a high-cardinality key produces an output
-    // row count that overruns the 128-page sort budget the test config uses (Overrides
-    // sets cairo.sql.sort.key.max.pages=128). That manifests as LimitOverflowException
-    // on otherwise legal SAMPLE BY queries. The smallest practical interval that fits
-    // 75h of data plus typical fuzzer key cardinality inside 128 * 128KB of sort memory
-    // is 5m -- below that, the LimitOverflow rate becomes noise dominating real bugs.
+    // row count that overruns the sort budget the test config uses (Overrides
+    // sets cairo.sql.sort.key.max.bytes=64m). That manifests as LimitOverflowException
+    // on otherwise legal SAMPLE BY queries. Below the 5m interval floor, the
+    // LimitOverflow rate becomes noise dominating real bugs.
     private static final String[] INTERVALS = {"5m", "15m", "1h", "1d"};
 
     private SampleByClause() {

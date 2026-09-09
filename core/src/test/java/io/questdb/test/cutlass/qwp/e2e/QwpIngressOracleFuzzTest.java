@@ -160,8 +160,8 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
 
             int producerCount = 2 + master.nextInt(2);              // 2..3
             int rowsPerProducer = 500 + master.nextInt(800);        // 500..1299
-            long sfMaxBytes = pickSfMaxBytes(master);
-            LOG.info().$("async-connect test sf_max_bytes=").$(sfMaxBytes).$();
+            long sfMaxSegmentBytes = pickSfMaxSegmentBytes(master);
+            LOG.info().$("async-connect test sf_max_segment_bytes=").$(sfMaxSegmentBytes).$();
 
             long baseTsMicros = 1_700_000_000_000_000L;
             QwpTable oracle = new QwpTable(TABLE_NAME);
@@ -212,7 +212,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                                     + ";reconnect_max_duration_millis=120000"
                                     + ";reconnect_initial_backoff_millis=20"
                                     + ";reconnect_max_backoff_millis=200"
-                                    + ";sf_max_bytes=" + sfMaxBytes
+                                    + ";sf_max_segment_bytes=" + sfMaxSegmentBytes
                                     + ";close_flush_timeout_millis=120000;";
                             long t0 = System.nanoTime();
                             try (Sender sender = Sender.fromConfig(connect)) {
@@ -290,7 +290,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
 
                 assertOracle(oracle);
-                assertSlotsPurged(sfDirs, slotCapFor(sfMaxBytes));
+                assertSlotsPurged(sfDirs, slotCapFor(sfMaxSegmentBytes));
             }
         });
     }
@@ -305,8 +305,8 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
             int producerCount = 2 + master.nextInt(3);              // 2..4
             int rowsPerProducer = 1_000 + master.nextInt(1_500);    // 1000..2499
             int bounces = 2 + master.nextInt(3);                    // 2..4
-            long sfMaxBytes = pickSfMaxBytes(master);
-            LOG.info().$("multi-sender test sf_max_bytes=").$(sfMaxBytes).$();
+            long sfMaxSegmentBytes = pickSfMaxSegmentBytes(master);
+            LOG.info().$("multi-sender test sf_max_segment_bytes=").$(sfMaxSegmentBytes).$();
 
             // Pre-generate oracle: each producer owns a contiguous slice of
             // rows. ids and timestamps are globally unique (interleaved
@@ -368,7 +368,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                                     + ";initial_connect_retry=async"
                                     + ";reconnect_max_duration_millis=120000"
                                     + ";close_flush_timeout_millis=120000"
-                                    + ";sf_max_bytes=" + sfMaxBytes
+                                    + ";sf_max_segment_bytes=" + sfMaxSegmentBytes
                                     + ";auto_flush_rows=" + autoFlush + ";";
                             try (Sender sender = Sender.fromConfig(connect)) {
                                 int written = 0;
@@ -432,7 +432,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
 
                 assertOracle(oracle);
-                assertSlotsPurged(sfDirs, slotCapFor(sfMaxBytes));
+                assertSlotsPurged(sfDirs, slotCapFor(sfMaxSegmentBytes));
             }
         });
     }
@@ -476,8 +476,8 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
             int producerCount = 2 + master.nextInt(2);              // 2..3
             int chunksPerProducer = 30 + master.nextInt(30);        // 30..59
             int chunkSize = 5 + master.nextInt(6);                  // 5..10 rows; small enough to map to one frame
-            long sfMaxBytes = pickSfMaxBytes(master);
-            LOG.info().$("poison test sf_max_bytes=").$(sfMaxBytes).$();
+            long sfMaxSegmentBytes = pickSfMaxSegmentBytes(master);
+            LOG.info().$("poison test sf_max_segment_bytes=").$(sfMaxSegmentBytes).$();
 
             long baseTsMicros = 1_700_000_000_000_000L;
             QwpTable oracle = new QwpTable(TABLE_NAME);
@@ -559,7 +559,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                                     + ";initial_connect_retry=true"
                                     + ";reconnect_max_duration_millis=120000"
                                     + ";close_flush_timeout_millis=120000"
-                                    + ";sf_max_bytes=" + sfMaxBytes
+                                    + ";sf_max_segment_bytes=" + sfMaxSegmentBytes
                                     + ";max_frame_rejections=1"
                                     + ";error_inbox_capacity=4096;";
                             CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
@@ -676,7 +676,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                         cleanDirs.add(sfDirs[p]);
                     }
                 }
-                assertSlotsPurged(cleanDirs.toArray(new String[0]), slotCapFor(sfMaxBytes));
+                assertSlotsPurged(cleanDirs.toArray(new String[0]), slotCapFor(sfMaxSegmentBytes));
 
                 // (e) Retention proof: the poisoned frame must still be on
                 // disk in producer 0's slot. Byte counting cannot
@@ -700,7 +700,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                         + ";initial_connect_retry=true"
                         + ";reconnect_max_duration_millis=120000"
                         + ";close_flush_timeout_millis=120000"
-                        + ";sf_max_bytes=" + sfMaxBytes
+                        + ";sf_max_segment_bytes=" + sfMaxSegmentBytes
                         + ";max_frame_rejections=1"
                         + ";error_inbox_capacity=4096;";
                 try (Sender ignore = Sender.builder(replayConnect).errorHandler(replayHandler).build()) {
@@ -746,8 +746,8 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
             int producerCount = 2 + master.nextInt(2);              // 2..3
             int rowsPerProducer = 600 + master.nextInt(900);        // 600..1499
             int bounces = 1 + master.nextInt(2);                    // 1..2
-            long sfMaxBytes = pickSfMaxBytes(master);
-            LOG.info().$("restart-replay test sf_max_bytes=").$(sfMaxBytes).$();
+            long sfMaxSegmentBytes = pickSfMaxSegmentBytes(master);
+            LOG.info().$("restart-replay test sf_max_segment_bytes=").$(sfMaxSegmentBytes).$();
 
             long baseTsMicros = 1_700_000_000_000_000L;
             QwpTable oracle = new QwpTable(TABLE_NAME);
@@ -807,7 +807,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                                 String connect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
                                         + ";initial_connect_retry=async"
                                         + ";reconnect_max_duration_millis=120000"
-                                        + ";sf_max_bytes=" + sfMaxBytes
+                                        + ";sf_max_segment_bytes=" + sfMaxSegmentBytes
                                         + ";close_flush_timeout_millis=0;";
                                 try (Sender sender = Sender.fromConfig(connect)) {
                                     for (int i = written; i < end; i++) {
@@ -829,7 +829,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                                     + ";initial_connect_retry=async"
                                     + ";reconnect_max_duration_millis=120000"
                                     + ";close_flush_timeout_millis=60000"
-                                    + ";sf_max_bytes=" + sfMaxBytes + ";";
+                                    + ";sf_max_segment_bytes=" + sfMaxSegmentBytes + ";";
                             try (Sender sender = Sender.fromConfig(drainConnect)) {
                                 sender.flush();
                             }
@@ -883,7 +883,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
 
                 assertOracle(oracle);
-                assertSlotsPurged(sfDirs, slotCapFor(sfMaxBytes));
+                assertSlotsPurged(sfDirs, slotCapFor(sfMaxSegmentBytes));
             }
         });
     }
@@ -928,8 +928,8 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
             int producerCount = 2 + master.nextInt(2);              // 2..3
             int rowsPerProducer = 600 + master.nextInt(900);        // 600..1499
             int bounces = 1 + master.nextInt(2);                    // 1..2
-            long sfMaxBytes = pickSfMaxBytes(master);
-            LOG.info().$("restart-replay regression sf_max_bytes=").$(sfMaxBytes)
+            long sfMaxSegmentBytes = pickSfMaxSegmentBytes(master);
+            LOG.info().$("restart-replay regression sf_max_segment_bytes=").$(sfMaxSegmentBytes)
                     .$(", recvChunk=").$(regressionRecvChunk)
                     .$(", sendChunk=").$(regressionSendChunk).$();
 
@@ -983,7 +983,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                                 String connect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
                                         + ";initial_connect_retry=async"
                                         + ";reconnect_max_duration_millis=120000"
-                                        + ";sf_max_bytes=" + sfMaxBytes
+                                        + ";sf_max_segment_bytes=" + sfMaxSegmentBytes
                                         + ";close_flush_timeout_millis=0;";
                                 try (Sender sender = Sender.fromConfig(connect)) {
                                     for (int i = written; i < end; i++) {
@@ -1003,7 +1003,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                             String drainConnect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
                                     + ";initial_connect_retry=async"
                                     + ";reconnect_max_duration_millis=120000"
-                                    + ";sf_max_bytes=" + sfMaxBytes + ";";
+                                    + ";sf_max_segment_bytes=" + sfMaxSegmentBytes + ";";
                             try (Sender sender = Sender.fromConfig(drainConnect)) {
                                 sender.flush();
                             }
@@ -1057,7 +1057,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
 
                 assertOracle(oracle);
-                assertSlotsPurged(sfDirs, slotCapFor(sfMaxBytes));
+                assertSlotsPurged(sfDirs, slotCapFor(sfMaxSegmentBytes));
             }
         });
     }
@@ -1444,13 +1444,13 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * Pick a per-test {@code sf_max_bytes} value from a fixed pool. Smaller
+     * Pick a per-test {@code sf_max_segment_bytes} value from a fixed pool. Smaller
      * segments force frequent rotation (stresses purge bookkeeping); larger
      * segments resemble the production default (4 MiB). The chosen value is
      * threaded into every Sender config string for the test and into
      * {@link #slotCapFor} so the post-close assertion scales accordingly.
      */
-    private static long pickSfMaxBytes(Rnd rnd) {
+    private static long pickSfMaxSegmentBytes(Rnd rnd) {
         // Smallest segment must comfortably fit one max-chunk frame. With all
         // the row's typed columns set (LONG256, UUID, three array dims,
         // three decimal widths, etc.) a wide row's wire payload runs around
@@ -1509,12 +1509,12 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
 
     /**
      * Per-slot residue bound after a clean close. The active segment file may
-     * still exist (sized up to {@code sf_max_bytes}) plus a few small control
+     * still exist (sized up to {@code sf_max_segment_bytes}) plus a few small control
      * files (lock, manifest). The 256 KiB slack covers control files even
      * when the segment itself is tiny.
      */
-    private static long slotCapFor(long sfMaxBytes) {
-        return sfMaxBytes + 256L * 1024;
+    private static long slotCapFor(long sfMaxSegmentBytes) {
+        return sfMaxSegmentBytes + 256L * 1024;
     }
 
     private void assertOracle(QwpTable oracle) throws Exception {

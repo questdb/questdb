@@ -302,6 +302,26 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns true unless this factory can PROVE its result is stable across two cursor opens.
+     * The contract is fail-safe: the default is {@code true} ("assume unstable") and a factory
+     * asserts determinism by overriding this to return {@code false} only when every value source
+     * it evaluates (projected/aggregate functions, retained filter, interval model, row cursor,
+     * child factories) is itself deterministic. A factory that does not override merely loses
+     * determinism-dependent optimizations; it can never cause wrong results.
+     * <p>
+     * Compile-time consumers (for example scalar-subquery timestamp bounds in
+     * {@code WhereClauseParser}) use this to avoid pruning optimizations that would re-open the
+     * cursor and observe a different value (for example {@code rnd_*} or {@code systimestamp()}).
+     * Returning {@code false} for a factory whose value is genuinely unstable across opens leads
+     * to silently dropped rows, which is why unknown shapes must report {@code true}.
+     *
+     * @return true if two cursor opens can yield different values or stability cannot be proven
+     */
+    default boolean isNonDeterministic() {
+        return true;
+    }
+
+    /**
      * Returns true if the factory stands for nothing more but a projection, so that
      * the above factory (e.g. a parallel GROUP BY one) can steal the projection.
      * <p>
@@ -313,6 +333,50 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default boolean isProjection() {
         return false;
+    }
+
+    /**
+     * Returns true if this factory is guaranteed to produce the same result for every cursor
+     * open within a single query execution (same {@code SqlExecutionContext}). This is a weaker
+     * property than {@code !isNonDeterministic()}: a factory projecting {@code now()} or a bind
+     * variable is non-deterministic across executions, yet stable within one, because those
+     * functions re-initialize to the same execution-scoped snapshot on every open.
+     * <p>
+     * Fail-safe like {@link #isNonDeterministic()}: the default claims stability only for
+     * provably deterministic factories, so unknown shapes never enable stability-dependent
+     * optimizations (for example scalar-subquery timestamp pruning in {@code WhereClauseParser}).
+     * Overriding factories must prove that every value source they evaluate is itself stable
+     * within the execution.
+     *
+     * @return true if every cursor open within one execution yields the same result
+     */
+    default boolean isStableWithinExecution() {
+        return !isNonDeterministic();
+    }
+
+    /**
+     * Returns true if this factory reads data from outside the database, i.e. from a source whose
+     * contents QuestDB neither owns nor tracks transactionally (currently {@code read_parquet()}).
+     * <p>
+     * <b>Polarity matters, and it is the opposite of {@link #isNonDeterministic()}.</b> This
+     * property is <i>fail-open</i>: the default is {@code false}, meaning "not external unless a
+     * factory says so". It exists to answer a question of <i>semantic legality</i> (may this query
+     * be persisted as a materialized view?), where a wrong {@code true} rejects SQL that users
+     * already run successfully and permanently invalidates deployed views.
+     * {@link #isNonDeterministic()} answers a question of <i>optimizer safety</i> (may we prune?),
+     * where a wrong {@code true} merely forgoes an optimization. Those two questions have opposite
+     * safe defaults, so they must never share a property: consulting the fail-safe determinism
+     * flag from a rejection gate makes every factory that simply never overrode it illegal by
+     * accident.
+     * <p>
+     * Delegates to the base factory so wrapping factories (projection, filter, sort, limit,
+     * group-by, set operations) report their underlying scan.
+     *
+     * @return true if this factory, or any factory beneath it, reads an external data source
+     */
+    default boolean usesExternalDataSource() {
+        final RecordCursorFactory base = getBaseFactory();
+        return base != null && base.usesExternalDataSource();
     }
 
     /**

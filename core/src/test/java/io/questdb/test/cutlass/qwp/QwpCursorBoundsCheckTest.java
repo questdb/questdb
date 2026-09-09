@@ -296,6 +296,36 @@ public class QwpCursorBoundsCheckTest {
     }
 
     @Test
+    public void testMessageCursorRejectsRowCountWithSignBitSet() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] message = new byte[]{
+                    'Q', 'W', 'P', '1', 1, 0, 1, 0, 21, 0, 0, 0,
+                    5, 'c', 'r', 'a', 's', 'h',
+                    (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x88,
+                    (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x01,
+                    1, 1, 's', TYPE_VARCHAR, 0
+            };
+            Assert.assertEquals(33, message.length);
+
+            long address = Unsafe.malloc(message.length, MemoryTag.NATIVE_DEFAULT);
+            try {
+                copyToNative(message, address);
+                QwpMessageCursor cursor = new QwpMessageCursor();
+                cursor.of(address, message.length, null);
+
+                try {
+                    cursor.nextTable();
+                    Assert.fail("expected QwpParseException for unsigned rowCount exceeding max");
+                } catch (QwpParseException e) {
+                    Assert.assertEquals(QwpParseException.ErrorCode.ROW_COUNT_EXCEEDED, e.getErrorCode());
+                }
+            } finally {
+                Unsafe.free(address, message.length, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testMessageCursorRejectsPayloadLongerThanMessageLength() throws Exception {
         assertMemoryLeak(() -> {
             int messageLength = HEADER_SIZE;

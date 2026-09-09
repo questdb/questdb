@@ -83,21 +83,40 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
     @Nullable
     ObjList<PushdownFilterExtractor.PushdownFilterCondition> getPushdownFilterConditions();
 
+    /**
+     * Fail-safe determinism contract mirroring {@code RecordCursorFactory#isNonDeterministic()}:
+     * returns {@code true} unless the factory can prove that two cursor opens see the same
+     * partition frames (for example an interval factory whose interval model is stable).
+     */
+    default boolean isNonDeterministic() {
+        return true;
+    }
+
+    /**
+     * Returns {@code true} if repeated cursor opens within one query execution produce the same
+     * partition frames. Unknown implementations inherit the fail-safe determinism-derived default.
+     */
+    default boolean isStableWithinExecution() {
+        return !isNonDeterministic();
+    }
+
     TableToken getTableToken();
 
     /**
-     * Returns {@code true} if the table has any parquet-format partitions.
-     * <p>
-     * The check is table-level rather than query-level: even for
-     * {@code IntervalPartitionFrameCursorFactory} with static intervals, we do not
-     * narrow the check to only the partitions the query will touch. The table-level
-     * flag is a single cached boolean read under the metadata cache read lock (O(1),
-     * zero IO), whereas a partition-level check would require opening a
-     * {@code TxReader} at compile time.
+     * Returns {@code true} when the factory restricts the scan to a set of
+     * designated-timestamp intervals (i.e. an {@code IntervalPartitionFrameCursorFactory}).
+     * The interval predicate lives in the frame cursor and never surfaces as a residual
+     * {@code Function}, so the live view refresh path cannot see it. Live view
+     * validation relies on this to reject such factories.
      */
-    boolean hasParquetFormatPartitions(SqlExecutionContext executionContext);
+    default boolean isIntervalScan() {
+        return false;
+    }
 
-    void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions);
+    void setPushdownFilterCondition(
+            long partitionTableVersion,
+            @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions
+    );
 
     boolean supportsTableRowId(TableToken tableToken);
 

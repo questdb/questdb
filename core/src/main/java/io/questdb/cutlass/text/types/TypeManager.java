@@ -42,6 +42,7 @@ import io.questdb.std.str.DirectUtf8Sink;
 public class TypeManager implements Mutable {
     private final ObjectPool<DateUtf8Adapter> dateAdapterPool;
     private final ObjectPool<DecimalAdapter> decimalAdapterPool;
+    private final DecimalAdapter defaultDecimalAdapter;
     private final SymbolAdapter indexedSymbolAdapter;
     private final InputFormatConfiguration inputFormatConfiguration;
     private final SymbolAdapter notIndexedSymbolAdapter;
@@ -67,6 +68,7 @@ public class TypeManager implements Mutable {
         this.varcharAdapter = new VarcharAdapter(utf8Sink);
         this.indexedSymbolAdapter = new SymbolAdapter(utf16Sink, true);
         this.notIndexedSymbolAdapter = new SymbolAdapter(utf16Sink, false);
+        this.defaultDecimalAdapter = new DecimalAdapter(decimal256).of(ColumnType.DECIMAL_DEFAULT_TYPE);
         addDefaultProbes();
 
         final ObjList<DateFormat> dateFormats = inputFormatConfiguration.getDateFormats();
@@ -170,7 +172,8 @@ public class TypeManager implements Mutable {
                     return adapter;
                 }
             default:
-                if (ColumnType.isDecimal(columnType)) {
+                // the bare DECIMAL tag is a surrogate, it has no storage size
+                if (ColumnType.isDecimalType(ColumnType.tagOf(columnType))) {
                     return nextDecimalAdapter(columnType);
                 }
                 throw CairoException.nonCritical().put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
@@ -243,6 +246,7 @@ public class TypeManager implements Mutable {
         probes.add(getTypeAdapter(ColumnType.LONG256));
         probes.add(getTypeAdapter(ColumnType.UUID));
         probes.add(getTypeAdapter(ColumnType.IPv4));
-        probes.add(DecimalAdapter.DEFAULT_INSTANCE);
+        // probes double as write adapters, so this one cannot be shared between type managers
+        probes.add(defaultDecimalAdapter);
     }
 }

@@ -36,7 +36,11 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public static final int UNDEFINED = -1;
     public static final int UPDATE_REFRESH_INTERVALS = 4;
     public TableToken baseTableToken;
+    public Object fullRefreshOwner;
+    public TableToken invalidationBaseTableToken;
+    public long invalidationBaseTxn = Numbers.LONG_NULL;
     public String invalidationReason;
+    public boolean isInvalidationForced;
     public TableToken matViewToken;
     public int operation = UNDEFINED;
     public long rangeFrom = Numbers.LONG_NULL;
@@ -66,8 +70,12 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public void clear() {
         operation = UNDEFINED;
         baseTableToken = null;
-        matViewToken = null;
+        fullRefreshOwner = null;
+        invalidationBaseTableToken = null;
+        invalidationBaseTxn = Numbers.LONG_NULL;
         invalidationReason = null;
+        isInvalidationForced = false;
+        matViewToken = null;
         refreshTriggerTimestamp = Numbers.LONG_NULL;
         rangeFrom = Numbers.LONG_NULL;
         rangeTo = Numbers.LONG_NULL;
@@ -77,8 +85,12 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public void copyTo(MatViewRefreshTask anotherHolder) {
         anotherHolder.operation = operation;
         anotherHolder.baseTableToken = baseTableToken;
-        anotherHolder.matViewToken = matViewToken;
+        anotherHolder.fullRefreshOwner = fullRefreshOwner;
+        anotherHolder.invalidationBaseTableToken = invalidationBaseTableToken;
+        anotherHolder.invalidationBaseTxn = invalidationBaseTxn;
         anotherHolder.invalidationReason = invalidationReason;
+        anotherHolder.isInvalidationForced = isInvalidationForced;
+        anotherHolder.matViewToken = matViewToken;
         anotherHolder.refreshTriggerTimestamp = refreshTriggerTimestamp;
         anotherHolder.rangeFrom = rangeFrom;
         anotherHolder.rangeTo = rangeTo;

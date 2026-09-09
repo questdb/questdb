@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.window.MaxMinWindowFunctionFactoryHelper.TimestampComparator;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -62,6 +63,7 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                 supportNullsDesc(),
                 LESS_THAN,
                 NAME,
+                WindowAccumulatorDescriptor.FAMILY_LONG_MIN,
                 MaxTimestampWindowFunctionFactory.CurrentRowTimestamp::new,
                 MaxTimestampWindowFunctionFactory.PartitionTimestamp::new,
                 MaxTimestampWindowFunctionFactory.PartitionRangeTimestamp::new,

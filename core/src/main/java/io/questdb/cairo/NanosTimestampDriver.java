@@ -493,6 +493,23 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long getMaxUnitValue(char unit) {
+        return switch (unit) {
+            case 'n' -> Long.MAX_VALUE;
+            case 'u', 'U' -> Long.MAX_VALUE / Nanos.MICRO_NANOS;
+            case 'T' -> Long.MAX_VALUE / Nanos.MILLI_NANOS;
+            case 's' -> Long.MAX_VALUE / Nanos.SECOND_NANOS;
+            // from() narrows these four to int before scaling, so the narrowing caps them
+            // whenever it bites before the multiply does
+            case 'm' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Nanos.MINUTE_NANOS);
+            case 'H', 'h' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Nanos.HOUR_NANOS);
+            case 'd' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Nanos.DAY_NANOS);
+            case 'w' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Nanos.WEEK_NANOS);
+            default -> 0;
+        };
+    }
+
+    @Override
     public int getMicrosOfMilli(long timestamp) {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;

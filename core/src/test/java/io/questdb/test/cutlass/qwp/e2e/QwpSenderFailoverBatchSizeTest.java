@@ -49,7 +49,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.net.ServerSocket;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.EnumSet;
@@ -124,8 +123,8 @@ public class QwpSenderFailoverBatchSizeTest extends AbstractCairoTest {
     @Test
     public void testReconnectToTighterCapRefreshesServerMaxBatchSize() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int portA = pickFreePort();
-            int portB = pickFreePort();
+            int portA = RestartableQwpServer.pickFreePort();
+            int portB = RestartableQwpServer.pickFreePort();
 
             QwpSidecar serverA = new QwpSidecar(portA, RECV_BUFFER_LARGE_BYTES, recvChunk, sendChunk);
             QwpSidecar serverB = new QwpSidecar(portB, RECV_BUFFER_SMALL_BYTES, recvChunk, sendChunk);
@@ -230,13 +229,6 @@ public class QwpSenderFailoverBatchSizeTest extends AbstractCairoTest {
                 serverB.stop();
             }
         });
-    }
-
-    private static int pickFreePort() throws Exception {
-        try (ServerSocket s = new ServerSocket(0)) {
-            s.setReuseAddress(true);
-            return s.getLocalPort();
-        }
     }
 
     /**

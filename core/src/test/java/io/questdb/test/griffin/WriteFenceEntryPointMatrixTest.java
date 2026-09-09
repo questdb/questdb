@@ -295,6 +295,11 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         http.put("CREATE_TABLE_AS_SELECT", FENCED);
         http.put("CREATE_MAT_VIEW", FENCED);
         http.put("CREATE_VIEW", FENCED);
+        // CREATE LIVE VIEW compiles to a CreateLiveViewOperation routed to executeDdl ->
+        // executeDdlFenced, exactly like the other CREATE DDL. createLiveView registers a new table
+        // token (createTableOrViewOrMatViewUnsecure) and writes the on-disk _lv definition, so it is a
+        // replicated catalog write that must not land on a demoting node. FENCED.
+        http.put("CREATE_LIVE_VIEW", FENCED);
         // DROP (DROP TABLE / VIEW / MATERIALIZED VIEW / ALL TABLES) routes to executeDdl on the pg-wire /
         // HTTP channel, but a WAL DROP does NOT mint through OperationDispatcher: it converges on the one
         // engine entry point CairoEngine.dropTableOrViewOrMatView, whose WAL branch mints the replicated
@@ -465,6 +470,10 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         put(pg, "DROP", FENCED);
         // CREATE VIEW routes to the default arm -> executeFenced by the gate predicate. FENCED.
         put(pg, "CREATE_VIEW", FENCED);
+        // CREATE LIVE VIEW compiles to a CreateLiveViewOperation reached through executeDdlFenced and
+        // mints a replicated catalog write (registers the table token + writes the _lv definition),
+        // same class as the other CREATE DDL. FENCED.
+        put(pg, "CREATE_LIVE_VIEW", FENCED);
         // The parse-time WAL DDL types execute inside compile() at parse time (msgParse), and msgExecute
         // short-circuits at stateParseExecuted BEFORE the gate and the default-arm executeFenced route, so
         // the protocol layer cannot fence them. The mint itself is now fenced (compile() holds the

@@ -75,6 +75,19 @@ public class ObjListTest {
         Assert.assertEquals(list(), remove(list("a", "b", "c"), 4, 10));
     }
 
+    @Test
+    public void testRemoveFromToClearsRemovedBackingSlots() {
+        final ObjList<Object> list = new ObjList<>();
+        for (int i = 0; i < 32; i++) {
+            list.add(new Object());
+        }
+
+        list.remove(16, list.size() - 1);
+
+        Assert.assertEquals(16, list.size());
+        Assert.assertTrue("removed backing slots must be cleared", list.hasOnlyNullsBeyondSizeForTesting());
+    }
+
     private static <T> ObjList<T> remove(ObjList<T> o, int from, int to) {
         o.remove(from, to);
         return o;

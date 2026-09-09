@@ -24,6 +24,7 @@
 
 package io.questdb.test.log;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.log.HttpLogRecordUtf8Sink;
 import io.questdb.log.Log;
@@ -35,8 +36,11 @@ import io.questdb.log.LogRecordUtf8Sink;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -87,6 +91,42 @@ public class LogAlertSocketTest {
                     Assert.assertEquals(expectedHosts[i], socket.getAlertHosts()[i]);
                     Assert.assertEquals(expectedPorts[i], socket.getAlertPorts()[i]);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorFreesInputBufferWhenOutputAllocationFails() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int ambientBufferSize = 5 * 1024 * 1024;
+            final int inBufferSize = 1024;
+            final int outBufferSize = 512 * 1024 * 1024;
+            final long memoryBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LOGGER);
+            final long previousRssLimit = Unsafe.getRssMemLimit();
+            long ambientBufferPtr = 0;
+            try {
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 64L * 1024 * 1024);
+                // Reproduce an unrelated allocation changing the global counter after the limit snapshot.
+                ambientBufferPtr = Unsafe.malloc(ambientBufferSize, MemoryTag.NATIVE_DEFAULT);
+                try (LogAlertSocket ignored = new LogAlertSocket(
+                        NetworkFacadeImpl.INSTANCE,
+                        "",
+                        inBufferSize,
+                        outBufferSize,
+                        0,
+                        LogAlertSocket.DEFAULT_HOST,
+                        LogAlertSocket.DEFAULT_PORT,
+                        LOG
+                )) {
+                    Assert.fail("expected output buffer allocation to exceed the RSS limit");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "size=" + outBufferSize);
+                }
+                Assert.assertEquals(memoryBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LOGGER));
+            } finally {
+                Unsafe.setRssMemLimit(previousRssLimit);
+                Unsafe.free(ambientBufferPtr, ambientBufferSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -217,6 +257,57 @@ public class LogAlertSocketTest {
                 AtomicInteger reconnectCounter = new AtomicInteger();
                 Assert.assertFalse(alertSkt.send(builder.size(), reconnectCounter::incrementAndGet));
                 Assert.assertEquals(2, reconnectCounter.get());
+            }
+        });
+    }
+
+    @Test
+    public void testFailOverSingleHostRequestsReconnectDelay() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long reconnectDelayNanos = TimeUnit.MILLISECONDS.toNanos(200);
+            final AtomicInteger connectAttempts = new AtomicInteger();
+            final StringSink reconnectEvents = new StringSink();
+            final NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public int connectAddrInfo(long fd, long pAddrInfo) {
+                    connectAttempts.incrementAndGet();
+                    reconnectEvents.put("connect;");
+                    return -1;
+                }
+            };
+            try (LogAlertSocket alertSkt = new LogAlertSocket(
+                    nf,
+                    "localhost:1234",
+                    LogAlertSocket.IN_BUFFER_SIZE,
+                    LogAlertSocket.OUT_BUFFER_SIZE,
+                    reconnectDelayNanos,
+                    LogAlertSocket.DEFAULT_HOST,
+                    LogAlertSocket.DEFAULT_PORT,
+                    LOG
+            )) {
+                final LongList reconnectSleeps = new LongList();
+                alertSkt.setReconnectSleeper(millis -> {
+                    reconnectSleeps.add(millis);
+                    reconnectEvents.put("sleep;");
+                });
+                final HttpLogRecordUtf8Sink builder = new HttpLogRecordUtf8Sink(alertSkt)
+                        .putHeader("localhost")
+                        .setMark();
+                builder.rewindToMark().put("Something").put(CRLF).$();
+
+                Thread.currentThread().interrupt();
+                try {
+                    Assert.assertFalse(alertSkt.send(builder.size()));
+                    Assert.assertTrue(Thread.currentThread().isInterrupted());
+                } finally {
+                    Thread.interrupted();
+                }
+
+                Assert.assertEquals(2, reconnectSleeps.size());
+                Assert.assertEquals(2, connectAttempts.get());
+                Assert.assertEquals(200, reconnectSleeps.getQuick(0));
+                Assert.assertEquals(200, reconnectSleeps.getQuick(1));
+                TestUtils.assertEquals("sleep;connect;sleep;connect;", reconnectEvents);
             }
         });
     }
@@ -438,6 +529,44 @@ public class LogAlertSocketTest {
                 "Added default alert manager [0] 127.0.0.1:9093\r\n" +
                         "Received [0] 127.0.0.1:9093: {\"status\":\"success\"}\r\n"
         );
+    }
+
+    @Test
+    public void testReconnectDelayRoundsUpToMillis() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long[] reconnectDelayNanos = {
+                    Long.MIN_VALUE,
+                    0,
+                    1,
+                    999_999,
+                    1_000_000,
+                    1_000_001,
+                    Long.MAX_VALUE
+            };
+            final long[] expectedDelayMillis = {
+                    0,
+                    0,
+                    1,
+                    1,
+                    1,
+                    2,
+                    9_223_372_036_855L
+            };
+            for (int i = 0; i < reconnectDelayNanos.length; i++) {
+                try (LogAlertSocket socket = new LogAlertSocket(
+                        NetworkFacadeImpl.INSTANCE,
+                        "",
+                        1,
+                        1,
+                        reconnectDelayNanos[i],
+                        LogAlertSocket.DEFAULT_HOST,
+                        LogAlertSocket.DEFAULT_PORT,
+                        LOG
+                )) {
+                    Assert.assertEquals(expectedDelayMillis[i], socket.getReconnectDelayMillis());
+                }
+            }
+        });
     }
 
     private void assertLogError(String socketAddress, String expected) throws Exception {

@@ -130,8 +130,8 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         final boolean result = baseCursor.hasNext();
-        if (result && memoizerCount > 0) {
-            memoizeFunctions(recordA);
+        if (result) {
+            clearMemos();
         }
         return result;
     }
@@ -167,7 +167,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         if (supportsRandomAccess) {
             assert baseCursor != null;
             baseCursor.recordAt(((VirtualFunctionRecord) record).getBaseRecord(), atRowId);
-            memoizeFunctions((VirtualFunctionRecord) record);
+            clearMemos();
         } else {
             throw new UnsupportedOperationException();
         }
@@ -206,10 +206,9 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         GroupByUtils.toTop(functions);
     }
 
-    private void memoizeFunctions(VirtualFunctionRecord record) {
-        Record joinRecord = record.getInternalJoinRecord();
+    private void clearMemos() {
         for (int i = 0; i < memoizerCount; i++) {
-            memoizers.getQuick(i).memoize(joinRecord);
+            memoizers.getQuick(i).clearMemo();
         }
     }
 }

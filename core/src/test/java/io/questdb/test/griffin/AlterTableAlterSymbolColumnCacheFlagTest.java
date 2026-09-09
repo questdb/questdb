@@ -24,8 +24,12 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.MapWriter;
+import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -174,8 +178,28 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testAlterSymbolNocacheThenCacheOnANonWalTable() throws Exception {
+        assertNocacheThenCacheRetargetsTheLiveWriter(false);
+    }
+
+    @Test
+    public void testAlterSymbolNocacheThenCacheOnAWalTable() throws Exception {
+        assertNocacheThenCacheRetargetsTheLiveWriter(true);
+    }
+
+    @Test
     public void testBadSyntax() throws Exception {
         assertFailure("alter table x alter column c", 28, "'add index' or 'drop index' or 'type' or 'cache' or 'nocache' or 'symbol' expected");
+    }
+
+    @Test
+    public void testCacheAlterRestoresTheDroppedCacheOnANonWalTable() throws Exception {
+        assertCacheAlterRestoresTheDroppedCache(false);
+    }
+
+    @Test
+    public void testCacheAlterRestoresTheDroppedCacheOnAWalTable() throws Exception {
+        assertCacheAlterRestoresTheDroppedCache(true);
     }
 
     @Test
@@ -184,8 +208,131 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testRedundantCacheAlterKeepsTheMetadataVersionAndTheWarmCache() throws Exception {
+        // The recovery the two exhaustion tests drive must not cost the common case
+        // anything. A CACHE the column already carries has nothing to change, so it must not
+        // rewrite the table metadata - which swaps _meta through _meta.swp and bumps the
+        // metadata version every reader watches - and must not throw away the cache the
+        // writer has been filling, which updateCacheFlag() would do because it replaces
+        // unconditionally.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL CACHE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t SELECT 'warm-symbol-' || x, x::timestamp FROM long_sequence(5000)");
+
+            final long metadataVersion;
+            final long nativeBytes;
+            try (TableWriter writer = getWriter("t")) {
+                Assert.assertTrue(
+                        "the column was declared CACHE, so its writer must hold a cache",
+                        writer.getSymbolMapWriter(0).isCacheAllocated()
+                );
+                metadataVersion = writer.getMetadataVersion();
+                // The cache is the writer's only NATIVE_TABLE_WRITER allocation - the mapped
+                // symbol files are charged to MMAP_INDEX_WRITER - and five thousand distinct
+                // values have grown it well past what a replacement would start at, so a
+                // discard and rebuild shows up here as a drop.
+                nativeBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER);
+            }
+
+            execute("ALTER TABLE t ALTER COLUMN s CACHE");
+
+            try (TableWriter writer = getWriter("t")) {
+                Assert.assertEquals(
+                        "a CACHE the column already carries must not rewrite table metadata",
+                        metadataVersion,
+                        writer.getMetadataVersion()
+                );
+                Assert.assertTrue(writer.getSymbolMapWriter(0).isCacheAllocated());
+                Assert.assertEquals(
+                        "a CACHE the column already carries must not discard the warm cache",
+                        nativeBytes,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER)
+                );
+            }
+        });
+    }
+
+    @Test
     public void testWhenCacheOrNocacheAreNotInAlterStatement() throws Exception {
         assertFailure("alter table x alter column c ca", 29, "'cache' or 'nocache' expected");
+    }
+
+    /**
+     * A writer whose cache ran its key buffer out drops the cache and keeps the flag, because
+     * the drop is an internal fallback rather than a change the column asked for. That leaves
+     * ALTER TABLE ... ALTER COLUMN ... CACHE as the obvious lever to get the acceleration back,
+     * and it has to actually pull: the writer serving the column is pooled and nothing else
+     * revisits the decision before it closes.
+     * <p>
+     * The lowered key-buffer ceiling is what makes the state reachable in a test - at the
+     * production ceiling it takes eight gigabytes of distinct values in one column.
+     */
+    private void assertCacheAlterRestoresTheDroppedCache(boolean isWal) throws Exception {
+        // Sixteen chars per value, so six fit the 256-byte key buffer and the seventh
+        // trips the drop.
+        final long previousLimit = SymbolMapWriter.setCacheKeyBufferLimit(256);
+        try {
+            assertMemoryLeak(() -> {
+                execute(
+                        "CREATE TABLE t (s SYMBOL CACHE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY "
+                                + (isWal ? "WAL" : "BYPASS WAL")
+                );
+                execute("""
+                        INSERT INTO t VALUES
+                        ('cached-symbol-01', 1), ('cached-symbol-02', 2), ('cached-symbol-03', 3),
+                        ('cached-symbol-04', 4), ('cached-symbol-05', 5), ('cached-symbol-06', 6),
+                        ('cached-symbol-07', 7), ('cached-symbol-08', 8), ('cached-symbol-09', 9),
+                        ('cached-symbol-10', 10), ('cached-symbol-11', 11), ('cached-symbol-12', 12)
+                        """);
+                if (isWal) {
+                    drainWalQueue();
+                }
+
+                final TableWriter pooled;
+                try (TableWriter writer = getWriter("t")) {
+                    pooled = writer;
+                    final MapWriter symbolMapWriter = writer.getSymbolMapWriter(0);
+                    Assert.assertTrue("the column still asks for a cache", symbolMapWriter.isCached());
+                    Assert.assertFalse(
+                            "setup: the writer must have dropped its cache on key-buffer exhaustion",
+                            symbolMapWriter.isCacheAllocated()
+                    );
+                }
+
+                execute("ALTER TABLE t ALTER COLUMN s CACHE");
+                if (isWal) {
+                    drainWalQueue();
+                }
+
+                try (TableWriter writer = getWriter("t")) {
+                    Assert.assertSame("the ALTER must have landed on this very writer", pooled, writer);
+                    final MapWriter symbolMapWriter = writer.getSymbolMapWriter(0);
+                    Assert.assertTrue(
+                            "CACHE must hand the cache back to a writer that dropped it, rather than"
+                                    + " leave the column on the on-disk index for the life of the writer",
+                            symbolMapWriter.isCacheAllocated()
+                    );
+                    Assert.assertTrue(symbolMapWriter.isCached());
+                }
+
+                // The replacement cache starts empty over a non-empty column, so the values
+                // keep the keys the on-disk index already holds and a repeat of one of them
+                // is still a repeat.
+                execute("INSERT INTO t VALUES ('cached-symbol-01', 13), ('cached-symbol-13', 14)");
+                if (isWal) {
+                    drainWalQueue();
+                }
+                assertQuery("SELECT count() rows, count_distinct(s) symbols FROM t")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                rows\tsymbols
+                                14\t13
+                                """);
+            });
+        } finally {
+            SymbolMapWriter.setCacheKeyBufferLimit(previousLimit);
+        }
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {
@@ -198,6 +345,85 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
                 Assert.assertEquals(position, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), message);
             }
+        });
+    }
+
+    /**
+     * Drives both cache-flag directions through real SQL and asserts they retarget the
+     * writer that is already serving the column, rather than only the header a later
+     * writer would read. WAL and non-WAL reach the same place by different routes: a
+     * non-WAL ALTER applies to the table writer the compiler takes out of the pool, a WAL
+     * one is a non-structural change that rides the WAL and is re-executed against the
+     * table writer by the apply job. The identity check on the pooled writer is what keeps
+     * the case honest - a writer the pool had discarded and rebuilt from the header would
+     * satisfy every other assertion here without the ALTER having done anything.
+     */
+    private void assertNocacheThenCacheRetargetsTheLiveWriter(boolean isWal) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE t (s SYMBOL CACHE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY "
+                            + (isWal ? "WAL" : "BYPASS WAL")
+            );
+            execute("INSERT INTO t VALUES ('a', 0), ('b', 1), ('c', 2), ('d', 3), ('e', 4)");
+            if (isWal) {
+                drainWalQueue();
+            }
+
+            final TableWriter pooled;
+            try (TableWriter writer = getWriter("t")) {
+                pooled = writer;
+                Assert.assertTrue(
+                        "the column was declared CACHE, so its writer must hold a cache",
+                        writer.getSymbolMapWriter(0).isCacheAllocated()
+                );
+            }
+
+            execute("ALTER TABLE t ALTER COLUMN s NOCACHE");
+            if (isWal) {
+                drainWalQueue();
+            }
+
+            try (TableWriter writer = getWriter("t")) {
+                Assert.assertSame("the ALTER must have landed on this very writer", pooled, writer);
+                final MapWriter symbolMapWriter = writer.getSymbolMapWriter(0);
+                Assert.assertFalse(
+                        "NOCACHE must release the cache of the writer already serving the column",
+                        symbolMapWriter.isCacheAllocated()
+                );
+                Assert.assertFalse(symbolMapWriter.isCached());
+            }
+
+            execute("ALTER TABLE t ALTER COLUMN s CACHE");
+            if (isWal) {
+                drainWalQueue();
+            }
+
+            try (TableWriter writer = getWriter("t")) {
+                Assert.assertSame("the ALTER must have landed on this very writer", pooled, writer);
+                final MapWriter symbolMapWriter = writer.getSymbolMapWriter(0);
+                Assert.assertTrue(
+                        "CACHE must build a cache for the writer already serving the column",
+                        symbolMapWriter.isCacheAllocated()
+                );
+                Assert.assertTrue(symbolMapWriter.isCached());
+            }
+
+            // Both flips left the column's values where they were.
+            execute("INSERT INTO t VALUES ('a', 5), ('f', 6)");
+            if (isWal) {
+                drainWalQueue();
+            }
+            assertQuery("SELECT s, count() FROM t ORDER BY s")
+                    .expectSize()
+                    .returns("""
+                            s\tcount
+                            a\t2
+                            b\t1
+                            c\t1
+                            d\t1
+                            e\t1
+                            f\t1
+                            """);
         });
     }
 

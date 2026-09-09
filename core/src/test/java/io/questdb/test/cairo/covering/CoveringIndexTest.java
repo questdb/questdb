@@ -24,11 +24,13 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ReaderScanProfile;
@@ -36,6 +38,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.FSSTNative;
@@ -53,6 +56,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -60,10 +64,11 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.DirectBitSet;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
@@ -3222,6 +3227,124 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitSyncsCoveringSidecarsBeforeKeyFile() throws Exception {
+        final java.util.concurrent.ConcurrentHashMap<Long, String> fdToPath = new java.util.concurrent.ConcurrentHashMap<>();
+        final java.util.concurrent.ConcurrentHashMap<Long, Long> addrToFd = new java.util.concurrent.ConcurrentHashMap<>();
+        final ObjList<String> syncOrder = new ObjList<>();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                long addr = super.mmap(fd, len, offset, flags, memoryTag);
+                if (addr > 0) {
+                    addrToFd.put(addr, fd);
+                }
+                return addr;
+            }
+
+            @Override
+            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+                if (newAddr > 0) {
+                    addrToFd.put(newAddr, fd);
+                }
+                return newAddr;
+            }
+
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                Long fd = addrToFd.get(addr);
+                if (fd != null) {
+                    String path = fdToPath.get(fd);
+                    if (path != null) {
+                        syncOrder.add(path);
+                    }
+                }
+                super.msync(addr, len, async);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > 0 && name != null) {
+                    fdToPath.put(fd, Utf8s.stringFromUtf8Bytes(name));
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            final FilesFacade trackingFf = ff;
+            final CairoConfiguration syncConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCommitMode() {
+                    return CommitMode.SYNC;
+                }
+
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return trackingFf;
+                }
+            };
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final long doubleAddr = Unsafe.malloc(2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                final long intAddr = Unsafe.malloc(2L * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.putDouble(doubleAddr, 42.0);
+                    Unsafe.putInt(intAddr, 7);
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            syncConfiguration, path, "commit_sync_order", COLUMN_NAME_TXN_NONE
+                    )) {
+                        writer.configureCovering(
+                                new long[]{doubleAddr, intAddr},
+                                new long[]{0, 0},
+                                new int[]{3, 2},
+                                new int[]{1, 2},
+                                new int[]{ColumnType.DOUBLE, ColumnType.INT},
+                                2
+                        );
+                        writer.add(0, 0);
+                        writer.setMaxValue(0);
+                        writer.commit();
+
+                        int pvSync = -1;
+                        int pc0Sync = -1;
+                        int pc1Sync = -1;
+                        int pciSync = -1;
+                        int pkSync = -1;
+                        for (int i = 0, n = syncOrder.size(); i < n; i++) {
+                            String file = syncOrder.getQuick(i);
+                            if (file.contains(".pv")) {
+                                pvSync = i;
+                            } else if (file.contains(".pc0")) {
+                                pc0Sync = i;
+                            } else if (file.contains(".pc1")) {
+                                pc1Sync = i;
+                            } else if (file.contains(".pci")) {
+                                pciSync = i;
+                            } else if (file.contains(".pk")) {
+                                pkSync = i;
+                            }
+                        }
+                        assertTrue(".pv must be synced: " + syncOrder, pvSync >= 0);
+                        assertTrue(".pc0 must be synced: " + syncOrder, pc0Sync >= 0);
+                        assertTrue(".pc1 must be synced: " + syncOrder, pc1Sync >= 0);
+                        assertTrue(".pci must be synced: " + syncOrder, pciSync >= 0);
+                        assertTrue(".pk must be synced: " + syncOrder, pkSync >= 0);
+                        assertTrue(".pv must sync before .pc0: " + syncOrder, pvSync < pc0Sync);
+                        assertTrue(".pv must sync before .pc1: " + syncOrder, pvSync < pc1Sync);
+                        assertTrue(".pv must sync before .pci: " + syncOrder, pvSync < pciSync);
+                        assertTrue(".pc0 must sync before .pk: " + syncOrder, pc0Sync < pkSync);
+                        assertTrue(".pc1 must sync before .pk: " + syncOrder, pc1Sync < pkSync);
+                        assertTrue(".pci must sync before .pk: " + syncOrder, pciSync < pkSync);
+                    }
+                } finally {
+                    Unsafe.free(intAddr, 2L * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(doubleAddr, 2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCountPushdown() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -3889,8 +4012,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Reader: genCount=2, but per-gen sidecars exist
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0);
+                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
                         assertTrue(cursor instanceof CoveringRowCursor);
                         assertTrue(((CoveringRowCursor) cursor).isCoveredAvailable(0));
 
@@ -3900,7 +4023,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             count++;
                         }
                         assertTrue(count > 0);
-                        Misc.free(cursor);
                     }
 
                     writer2.close();
@@ -3948,8 +4070,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Verify ALL 30 covered values across both gens
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
-                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0);
+                         CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
                         assertTrue(cc.isCoveredAvailable(0));
 
                         for (int i = 0; i < 30; i++) {
@@ -3958,7 +4080,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             assertEquals("value at row " + i, 10.0 * (i + 1), cc.getCoveredDouble(0), 0.001);
                         }
                         assertFalse(cc.hasNext());
-                        Misc.free(cc);
                     }
                     w2.close();
                 } finally {
@@ -4053,37 +4174,37 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
                             coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0)) {
                         // Key 260 is in stride 1, local key 4
-                        RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0});
-                        assertTrue(cursor instanceof CoveringRowCursor);
-                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(cursor instanceof CoveringRowCursor);
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
 
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(260, cc.next());
-                        assertEquals(1260L, cc.getCoveredLong(0));
-                        assertFalse(cc.hasNext());
-                        Misc.free(cursor);
+                            assertTrue(cc.hasNext());
+                            assertEquals(260, cc.next());
+                            assertEquals(1260L, cc.getCoveredLong(0));
+                            assertFalse(cc.hasNext());
+                        }
                         // Key 299 is in stride 1, local key 43
-                        cursor = reader.getCursor(299, 0, Long.MAX_VALUE, new int[]{0});
-                        cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (RowCursor cursor = reader.getCursor(299, 0, Long.MAX_VALUE, new int[]{0})) {
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(299, cc.next());
-                        assertEquals(1299L, cc.getCoveredLong(0));
-                        assertFalse(cc.hasNext());
-                        Misc.free(cursor);
+                            assertTrue(cc.hasNext());
+                            assertEquals(299, cc.next());
+                            assertEquals(1299L, cc.getCoveredLong(0));
+                            assertFalse(cc.hasNext());
+                        }
                         // Key 0 is in stride 0 (control)
-                        cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
-                        cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(0, cc.next());
-                        assertEquals(1000L, cc.getCoveredLong(0));
-                        assertFalse(cc.hasNext());
-                        Misc.free(cursor);
+                            assertTrue(cc.hasNext());
+                            assertEquals(0, cc.next());
+                            assertEquals(1000L, cc.getCoveredLong(0));
+                            assertFalse(cc.hasNext());
+                        }
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -6216,8 +6337,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Reader sees genCount=2 with per-gen sidecar data
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0);
+                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         // Per-gen sidecars: isCoveredAvailable(0) returns true
@@ -6234,7 +6355,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             count++;
                         }
                         assertEquals(20, count);
-                        Misc.free(cursor);
                     }
 
                     writer.close(); // seal happens here
@@ -6281,34 +6401,36 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
                             coveringMetadata(new int[]{1}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         // Key 0: only gen 0 data (rows 0,2)
-                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(cc.isCoveredAvailable(0));
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(0, cc.next());
-                        assertEquals(10.0, cc.getCoveredDouble(0), 0.001);
-                        assertTrue(cc.hasNext());
-                        assertEquals(2, cc.next());
-                        assertEquals(30.0, cc.getCoveredDouble(0), 0.001);
-                        assertFalse(cc.hasNext());
+                            assertTrue(cc.hasNext());
+                            assertEquals(0, cc.next());
+                            assertEquals(10.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(2, cc.next());
+                            assertEquals(30.0, cc.getCoveredDouble(0), 0.001);
+                            assertFalse(cc.hasNext());
+                        }
 
                         // Key 1: gen 0 + gen 1 (rows 1,3,4,5)
-                        cc = (CoveringRowCursor) reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0});
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(cc.isCoveredAvailable(0));
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(1, cc.next());
-                        assertEquals(20.0, cc.getCoveredDouble(0), 0.001);
-                        assertTrue(cc.hasNext());
-                        assertEquals(3, cc.next());
-                        assertEquals(40.0, cc.getCoveredDouble(0), 0.001);
-                        assertTrue(cc.hasNext());
-                        assertEquals(4, cc.next());
-                        assertEquals(50.0, cc.getCoveredDouble(0), 0.001);
-                        assertTrue(cc.hasNext());
-                        assertEquals(5, cc.next());
-                        assertEquals(60.0, cc.getCoveredDouble(0), 0.001);
-                        assertFalse(cc.hasNext());
+                            assertTrue(cc.hasNext());
+                            assertEquals(1, cc.next());
+                            assertEquals(20.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(3, cc.next());
+                            assertEquals(40.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(4, cc.next());
+                            assertEquals(50.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(5, cc.next());
+                            assertEquals(60.0, cc.getCoveredDouble(0), 0.001);
+                            assertFalse(cc.hasNext());
+                        }
                     }
                     writer.close();
                 } finally {
@@ -6354,19 +6476,19 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
                             coveringMetadata(new int[]{1}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         // Key 1: rows 1,3,5,7,9,11,13,15,17,19
-                        RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0});
-                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0})) {
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
 
-                        int count = 0;
-                        while (cc.hasNext()) {
-                            long rowId = cc.next();
-                            assertEquals(count * 2L + 1, rowId);
-                            assertEquals(100.0 + count * 2 + 1, cc.getCoveredDouble(0), 0.001);
-                            count++;
+                            int count = 0;
+                            while (cc.hasNext()) {
+                                long rowId = cc.next();
+                                assertEquals(count * 2L + 1, rowId);
+                                assertEquals(100.0 + count * 2 + 1, cc.getCoveredDouble(0), 0.001);
+                                count++;
+                            }
+                            assertEquals(10, count);
                         }
-                        assertEquals(10, count);
-                        Misc.free(cursor);
                     }
                     writer.close();
                 } finally {
@@ -6412,8 +6534,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{1}, new int[]{ColumnType.GEOSHORT}), EMPTY_CVR, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                            coveringMetadata(new int[]{1}, new int[]{ColumnType.GEOSHORT}), EMPTY_CVR, 0);
+                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.isCoveredAvailable(0));
 
@@ -6437,7 +6559,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertEquals(101, cc.getCoveredShort(0));
 
                         assertFalse(cc.hasNext());
-                        Misc.free(cursor);
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Short.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -8990,17 +9111,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             // First covering read populates sidecarMems[0] via
                             // ensureSidecarOpen(), mmaping to the chain-published
                             // gen-0 extent.
-                            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
-                                    0, 0, Long.MAX_VALUE, new int[]{0});
-                            assertTrue(cc.isCoveredAvailable(0));
-                            for (int i = 0; i < rowsPerGen; i++) {
-                                assertTrue("gen0 row " + i, cc.hasNext());
-                                assertEquals(i, cc.next());
-                                assertEquals("gen0 covered value at row " + i,
-                                        1000L + i, cc.getCoveredLong(0));
+                            try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
+                                    0, 0, Long.MAX_VALUE, new int[]{0})) {
+                                assertTrue(cc.isCoveredAvailable(0));
+                                for (int i = 0; i < rowsPerGen; i++) {
+                                    assertTrue("gen0 row " + i, cc.hasNext());
+                                    assertEquals(i, cc.next());
+                                    assertEquals("gen0 covered value at row " + i,
+                                            1000L + i, cc.getCoveredLong(0));
+                                }
+                                assertFalse(cc.hasNext());
                             }
-                            assertFalse(cc.hasNext());
-                            Misc.free(cc);
 
                             long mmapSizeAfterGen0 = readSidecarMmapSize(reader, 0);
                             assertTrue("sanity: sidecar mmap was populated by first covering read",
@@ -9031,17 +9152,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             // return zero-padded bytes. With the fix the mapping is
                             // resized to the new published extent and every value
                             // round-trips.
-                            cc = (CoveringRowCursor) reader.getCursor(
-                                    0, 0, Long.MAX_VALUE, new int[]{0});
-                            assertTrue(cc.isCoveredAvailable(0));
-                            for (int i = 0; i < totalRows; i++) {
-                                assertTrue("post-reload row " + i, cc.hasNext());
-                                assertEquals(i, cc.next());
-                                assertEquals("post-reload covered value at row " + i,
-                                        1000L + i, cc.getCoveredLong(0));
+                            try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
+                                    0, 0, Long.MAX_VALUE, new int[]{0})) {
+                                assertTrue(cc.isCoveredAvailable(0));
+                                for (int i = 0; i < totalRows; i++) {
+                                    assertTrue("post-reload row " + i, cc.hasNext());
+                                    assertEquals(i, cc.next());
+                                    assertEquals("post-reload covered value at row " + i,
+                                            1000L + i, cc.getCoveredLong(0));
+                                }
+                                assertFalse(cc.hasNext());
                             }
-                            assertFalse(cc.hasNext());
-                            Misc.free(cc);
 
                             long mmapSizeAfterReload = readSidecarMmapSize(reader, 0);
                             assertTrue(
@@ -9121,20 +9242,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             // First read populates sidecarMems[0..2] via
                             // ensureSidecarOpen(), each mmaped to the
                             // chain-published gen-0 extent for its slot.
-                            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
-                                    0, 0, Long.MAX_VALUE, new int[]{0, 1, 2});
-                            assertTrue("slot 0 covered after gen0", cc.isCoveredAvailable(0));
-                            assertTrue("slot 1 covered after gen0", cc.isCoveredAvailable(1));
-                            assertTrue("slot 2 covered after gen0", cc.isCoveredAvailable(2));
-                            for (int i = 0; i < rowsPerGen; i++) {
-                                assertTrue("gen0 row " + i, cc.hasNext());
-                                assertEquals(i, cc.next());
-                                assertEquals("gen0 LONG @row " + i, 1000L + i, cc.getCoveredLong(0));
-                                assertEquals("gen0 INT @row " + i, 2_000_000 + i, cc.getCoveredInt(1));
-                                assertEquals("gen0 DOUBLE @row " + i, 3.5d * (i + 1), cc.getCoveredDouble(2), 1e-9);
+                            try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
+                                    0, 0, Long.MAX_VALUE, new int[]{0, 1, 2})) {
+                                assertTrue("slot 0 covered after gen0", cc.isCoveredAvailable(0));
+                                assertTrue("slot 1 covered after gen0", cc.isCoveredAvailable(1));
+                                assertTrue("slot 2 covered after gen0", cc.isCoveredAvailable(2));
+                                for (int i = 0; i < rowsPerGen; i++) {
+                                    assertTrue("gen0 row " + i, cc.hasNext());
+                                    assertEquals(i, cc.next());
+                                    assertEquals("gen0 LONG @row " + i, 1000L + i, cc.getCoveredLong(0));
+                                    assertEquals("gen0 INT @row " + i, 2_000_000 + i, cc.getCoveredInt(1));
+                                    assertEquals("gen0 DOUBLE @row " + i, 3.5d * (i + 1), cc.getCoveredDouble(2), 1e-9);
+                                }
+                                assertFalse(cc.hasNext());
                             }
-                            assertFalse(cc.hasNext());
-                            Misc.free(cc);
 
                             long[] gen0Sizes = new long[3];
                             for (int slot = 0; slot < 3; slot++) {
@@ -9163,20 +9284,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                             // Reload and read everything — every covered value
                             // for every slot must round-trip.
-                            cc = (CoveringRowCursor) reader.getCursor(
-                                    0, 0, Long.MAX_VALUE, new int[]{0, 1, 2});
-                            assertTrue(cc.isCoveredAvailable(0));
-                            assertTrue(cc.isCoveredAvailable(1));
-                            assertTrue(cc.isCoveredAvailable(2));
-                            for (int i = 0; i < totalRows; i++) {
-                                assertTrue("post-reload row " + i, cc.hasNext());
-                                assertEquals(i, cc.next());
-                                assertEquals("post-reload LONG @row " + i, 1000L + i, cc.getCoveredLong(0));
-                                assertEquals("post-reload INT @row " + i, 2_000_000 + i, cc.getCoveredInt(1));
-                                assertEquals("post-reload DOUBLE @row " + i, 3.5d * (i + 1), cc.getCoveredDouble(2), 1e-9);
+                            try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
+                                    0, 0, Long.MAX_VALUE, new int[]{0, 1, 2})) {
+                                assertTrue(cc.isCoveredAvailable(0));
+                                assertTrue(cc.isCoveredAvailable(1));
+                                assertTrue(cc.isCoveredAvailable(2));
+                                for (int i = 0; i < totalRows; i++) {
+                                    assertTrue("post-reload row " + i, cc.hasNext());
+                                    assertEquals(i, cc.next());
+                                    assertEquals("post-reload LONG @row " + i, 1000L + i, cc.getCoveredLong(0));
+                                    assertEquals("post-reload INT @row " + i, 2_000_000 + i, cc.getCoveredInt(1));
+                                    assertEquals("post-reload DOUBLE @row " + i, 3.5d * (i + 1), cc.getCoveredDouble(2), 1e-9);
+                                }
+                                assertFalse(cc.hasNext());
                             }
-                            assertFalse(cc.hasNext());
-                            Misc.free(cc);
 
                             for (int slot = 0; slot < 3; slot++) {
                                 long postReload = readSidecarMmapSize(reader, slot);
@@ -9634,8 +9755,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0);
+                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.isCoveredAvailable(0));
 
@@ -9654,7 +9775,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             assertEquals(50.0 + (i - colTop), cc.getCoveredDouble(0), 0.001);
                         }
                         assertFalse(cc.hasNext());
-                        Misc.free(cursor);
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -11401,30 +11521,25 @@ public class CoveringIndexTest extends AbstractCairoTest {
     public void testFilterOnExcludedValuesThrowingFilterDoesNotLeakIndexReader() throws Exception {
         // Regression: FilterOnExcludedValues opens per-symbol index cursors via
         // HeapRowCursor.of(), whose first hasNext() evaluates the post-filter on each
-        // sub-cursor. When that filter throws (here, a DECIMAL scale-adjustment overflow
-        // on small < big), the singleton HeapRowCursor was left un-closed because
+        // sub-cursor. When that filter throws (here, the dev-mode npe() test function), the
+        // singleton HeapRowCursor was left un-closed because
         // PageFrameRecordCursorImpl.rowCursor never got assigned. The per-symbol index
         // cursors then stayed outside the PostingIndexFwdReader.freeCursors pool and
         // their block buffers leaked. The fix closes the row cursor factory from
         // PageFrameRecordCursorImpl.close() so the singleton always cleans up.
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_excl_leak (
                         sym SYMBOL INDEX TYPE POSTING DELTA INCLUDE (v),
-                        small DECIMAL(38, 3),
-                        big DECIMAL(76, 2),
                         v DOUBLE,
                         ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY WAL
                     """);
-            // big holds the maximum value of DECIMAL(76, 2). Scaling it up by 10^1 to
-            // match small's scale overflows the 256-bit intermediate at filter time.
             execute("""
                     INSERT INTO t_excl_leak
                     SELECT
                         rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7',null),
-                        '1.000'::DECIMAL(38, 3),
-                        '99999999999999999999999999999999999999999999999999999999999999999999999999.99'::DECIMAL(76, 2),
                         rnd_double(),
                         timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1_800_000_000L)
                     FROM long_sequence(120)
@@ -11436,14 +11551,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
             Throwable caught = null;
             try (RecordCursorFactory f = select(
                     "SELECT v FROM t_excl_leak " +
-                            "WHERE NOT ((sym IN ('s7', null) OR small < big))");
+                            "WHERE NOT ((sym IN ('s7', null) OR npe()))");
                  RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
                 while (cursor.hasNext()) {
                 }
             } catch (Throwable t) {
                 caught = t;
             }
-            assertNotNull("expected DECIMAL scale-adjustment overflow", caught);
+            assertTrue("expected the injected NullPointerException, got " + caught,
+                    caught instanceof NullPointerException);
         });
     }
 
@@ -11452,30 +11568,25 @@ public class CoveringIndexTest extends AbstractCairoTest {
         // Regression: FilterOnSubQuery builds a per-symbol index cursor for every key
         // returned by the sub-query through HeapRowCursorFactory.getCursor, whose call into
         // HeapRowCursor.of evaluates the post-filter on each sub-cursor. When that filter
-        // throws (here, a DECIMAL scale-adjustment overflow on small < big), the throw fires
-        // inside getCursor before its return assigns PageFrameRecordCursorImpl.rowCursor, so
+        // throws (here, the dev-mode npe() test function), the throw fires inside getCursor
+        // before its return assigns PageFrameRecordCursorImpl.rowCursor, so
         // the singleton HeapRowCursor is left with populated per-symbol SymbolIndexFiltered
         // RowCursor sub-cursors that each hold an open index reader cursor. The fix frees
         // FilterOnSubQueryRecordCursorFactory.rowCursorFactory in _close(), which cascades
         // into HeapRowCursorFactory.close() and returns the per-symbol cursors to the pool.
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_sub_leak (
                         sym SYMBOL INDEX TYPE POSTING DELTA,
-                        small DECIMAL(38, 3),
-                        big DECIMAL(76, 2),
                         v DOUBLE,
                         ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY WAL
                     """);
-            // big holds the maximum value of DECIMAL(76, 2). Scaling it up by 10^1 to
-            // match small's scale overflows the 256-bit intermediate at filter time.
             execute("""
                     INSERT INTO t_sub_leak
                     SELECT
                         rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7',null),
-                        '1.000'::DECIMAL(38, 3),
-                        '99999999999999999999999999999999999999999999999999999999999999999999999999.99'::DECIMAL(76, 2),
                         rnd_double(),
                         timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1_800_000_000L)
                     FROM long_sequence(120)
@@ -11485,14 +11596,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
             Throwable caught = null;
             try (RecordCursorFactory f = select(
                     "SELECT v FROM t_sub_leak " +
-                            "WHERE sym IN (SELECT 's0' UNION SELECT 's1') AND small < big");
+                            "WHERE sym IN (SELECT 's0' UNION SELECT 's1') AND npe()");
                  RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
                 while (cursor.hasNext()) {
                 }
             } catch (Throwable t) {
                 caught = t;
             }
-            assertNotNull("expected DECIMAL scale-adjustment overflow", caught);
+            assertTrue("expected the injected NullPointerException, got " + caught,
+                    caught instanceof NullPointerException);
         });
     }
 
@@ -11500,31 +11612,26 @@ public class CoveringIndexTest extends AbstractCairoTest {
     public void testFilterOnValuesThrowingFilterDoesNotLeakIndexReader() throws Exception {
         // Regression: FilterOnValues opens a per-symbol index cursor for every IN-list key
         // through HeapRowCursorFactory.getCursor, whose call into HeapRowCursor.of evaluates
-        // the post-filter on each sub-cursor. When that filter throws (here, a DECIMAL
-        // scale-adjustment overflow on small < big), the throw fires inside getCursor before
-        // its return assigns PageFrameRecordCursorImpl.rowCursor, so the singleton
+        // the post-filter on each sub-cursor. When that filter throws (here, the dev-mode
+        // npe() test function), the throw fires inside getCursor before its return assigns
+        // PageFrameRecordCursorImpl.rowCursor, so the singleton
         // HeapRowCursor is left with populated per-symbol SymbolIndexFilteredRowCursor
         // sub-cursors that each hold an open index reader cursor. The fix frees
         // FilterOnValuesRecordCursorFactory.rowCursorFactory in _close(), which cascades into
         // HeapRowCursorFactory.close() and returns the per-symbol cursors to the pool.
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_val_leak (
                         sym SYMBOL INDEX TYPE POSTING DELTA,
-                        small DECIMAL(38, 3),
-                        big DECIMAL(76, 2),
                         v DOUBLE,
                         ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY WAL
                     """);
-            // big holds the maximum value of DECIMAL(76, 2). Scaling it up by 10^1 to
-            // match small's scale overflows the 256-bit intermediate at filter time.
             execute("""
                     INSERT INTO t_val_leak
                     SELECT
                         rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7',null),
-                        '1.000'::DECIMAL(38, 3),
-                        '99999999999999999999999999999999999999999999999999999999999999999999999999.99'::DECIMAL(76, 2),
                         rnd_double(),
                         timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1_800_000_000L)
                     FROM long_sequence(120)
@@ -11534,14 +11641,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
             Throwable caught = null;
             try (RecordCursorFactory f = select(
                     "SELECT v FROM t_val_leak " +
-                            "WHERE sym IN ('s0', 's1') AND small < big");
+                            "WHERE sym IN ('s0', 's1') AND npe()");
                  RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
                 while (cursor.hasNext()) {
                 }
             } catch (Throwable t) {
                 caught = t;
             }
-            assertNotNull("expected DECIMAL scale-adjustment overflow", caught);
+            assertTrue("expected the injected NullPointerException, got " + caught,
+                    caught instanceof NullPointerException);
         });
     }
 
@@ -12123,38 +12231,290 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
                             coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0)) {
                         // Key 0 is in stride 0 (clean stride) — should have correct covered value
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                        try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(cursor instanceof CoveringRowCursor);
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue("covering should be available after incremental seal", cc.isCoveredAvailable(0));
+                            assertTrue(cc.hasNext());
+                            assertEquals(0, cc.next());
+                            assertEquals(1000L, cc.getCoveredLong(0));
+                            assertFalse(cc.hasNext());
+                        }
+                        // Key 100 is in stride 0 (clean stride)
+                        try (RowCursor cursor = reader.getCursor(100, 0, Long.MAX_VALUE, new int[]{0})) {
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
+
+                            assertTrue(cc.hasNext());
+                            assertEquals(100, cc.next());
+                            assertEquals(1100L, cc.getCoveredLong(0));
+                            assertFalse(cc.hasNext());
+                        }
+
+                        // Key 260 is in stride 1 (dirty stride) — should also work
+                        try (RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0})) {
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
+
+                            assertTrue(cc.hasNext());
+                            assertEquals(260, cc.next());
+                            assertEquals(1260L, cc.getCoveredLong(0));
+                        }
+                    }
+                } finally {
+                    Unsafe.free(colAddr, (long) keyCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    // Regression for NULL covered values after a full seal poisoned the lazy
+    // covered-column read maps: writeSidecarsPerColumn (name-based covers) maps
+    // each covered column, writes its sidecar, then unmaps it -- leaving the
+    // read-map arrays allocated with every entry zeroed.
+    // ensureCoveredColumnReadMaps() early-returns on the non-null arrays, so
+    // every later covered read in the SAME writer instance -- post-seal gen
+    // flushes (writeSidecarGenData) and incremental-seal dirty strides
+    // (writeSidecarStrideData) -- resolved source addr 0 and silently wrote
+    // NULL covered values while the row-id postings stayed correct. Surfaced
+    // by PostingIndexO3ConcurrencyFuzzTest#testCoveringPostingParquetO3SpillFuzz
+    // (-Dfuzz.s0=2677701527170915 -Dfuzz.s1=1788547351855), where a tiny spill
+    // budget forces many flush/seal cycles inside one indexing run, mixing
+    // full and incremental seals.
+    @Test
+    public void testIncrementalSealAfterFullSealKeepsNameBasedCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            String name = "incr_after_full_cover";
+            int keyCount = 300; // 2 strides: 0..255 in stride 0, 256..299 in stride 1
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                int plen = path.size();
+
+                // Covered LONG column on disk: rowId r -> 1000 + r, keyCount + 1 rows.
+                FilesFacade ff = configuration.getFilesFacade();
+                try (MemoryCMARWImpl data = new MemoryCMARWImpl(
+                        ff, TableUtils.dFile(path.trimTo(plen), "covered_long", COLUMN_NAME_TXN_NONE),
+                        ff.getPageSize(), -1, MemoryTag.MMAP_DEFAULT, 0)) {
+                    for (int r = 0; r <= keyCount; r++) {
+                        data.putLong(1000L + r);
+                    }
+                }
+
+                ObjList<CharSequence> coverNames = new ObjList<>();
+                coverNames.add("covered_long");
+                LongList coverNameTxns = new LongList();
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                LongList coverTops = new LongList();
+                coverTops.add(0L);
+                IntList coverShifts = new IntList();
+                coverShifts.add(3);
+                IntList coverIndices = new IntList();
+                coverIndices.add(1);
+                IntList coverTypes = new IntList();
+                coverTypes.add(ColumnType.LONG);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.configureCovering(coverNames, coverNameTxns, coverTops, coverShifts, coverIndices, coverTypes, -1);
+                    // Phase 1: every key once, then a full seal. The full seal
+                    // writes the .pc through the per-column map/unmap loop --
+                    // the step that used to poison the lazy read-map state.
+                    for (int k = 0; k < keyCount; k++) {
+                        writer.add(k, k);
+                    }
+                    writer.setMaxValue(keyCount - 1);
+                    writer.commit();
+                    writer.seal();
+
+                    // Phase 2: one more row on key 260 (stride 1) -> sparse gen 1.
+                    // The next seal takes the incremental branch (stride 1 dirty,
+                    // stride 0 clean) and re-reads covered values for the WHOLE
+                    // dirty stride from the source column file.
+                    writer.add(260, keyCount);
+                    writer.setMaxValue(keyCount);
+                    writer.commit();
+                    writer.seal();
+                    assertTrue("second seal must take the incremental branch",
+                            writer.isLastSealIncrementalForTesting());
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                        coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0)) {
+                    // Dirty stride: key 260 holds the gen0 row and the new row.
+                    try (RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0})) {
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        assertTrue("covering should be available after incremental seal", cc.isCoveredAvailable(0));
+                        assertTrue(cc.isCoveredAvailable(0));
+                        assertTrue(cc.hasNext());
+                        assertEquals(260, cc.next());
+                        assertEquals(1260L, cc.getCoveredLong(0));
+                        assertTrue(cc.hasNext());
+                        assertEquals(keyCount, cc.next());
+                        assertEquals(1000L + keyCount, cc.getCoveredLong(0));
+                        assertFalse(cc.hasNext());
+                    }
+
+                    // Dirty stride: key 270 did not change but sits in the
+                    // re-encoded stride, so its covered value was rewritten too.
+                    try (RowCursor cursor = reader.getCursor(270, 0, Long.MAX_VALUE, new int[]{0})) {
+                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.isCoveredAvailable(0));
+                        assertTrue(cc.hasNext());
+                        assertEquals(270, cc.next());
+                        assertEquals(1270L, cc.getCoveredLong(0));
+                        assertFalse(cc.hasNext());
+                    }
+
+                    // Clean stride: copied verbatim from the full seal's sidecar.
+                    try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.isCoveredAvailable(0));
                         assertTrue(cc.hasNext());
                         assertEquals(0, cc.next());
                         assertEquals(1000L, cc.getCoveredLong(0));
                         assertFalse(cc.hasNext());
-                        Misc.free(cursor);
-                        // Key 100 is in stride 0 (clean stride)
-                        cursor = reader.getCursor(100, 0, Long.MAX_VALUE, new int[]{0});
-                        cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
-
-                        assertTrue(cc.hasNext());
-                        assertEquals(100, cc.next());
-                        assertEquals(1100L, cc.getCoveredLong(0));
-                        assertFalse(cc.hasNext());
-                        Misc.free(cursor);
-
-                        // Key 260 is in stride 1 (dirty stride) — should also work
-                        cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0});
-                        cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
-
-                        assertTrue(cc.hasNext());
-                        assertEquals(260, cc.next());
-                        assertEquals(1260L, cc.getCoveredLong(0));
-                        Misc.free(cursor);
                     }
-                } finally {
-                    Unsafe.free(colAddr, (long) keyCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    // Companion to testIncrementalSealAfterFullSealKeepsNameBasedCoveredValues
+    // pinning the SECOND consumer of the same poisoned state: a post-seal gen
+    // flush (commit -> flushAllPending -> writeSidecarGenData) with NO reseal
+    // afterwards. Readers serve covered values for unsealed generations
+    // straight from the appended gen sidecar blocks, so a NULL written there
+    // is user-visible even though no incremental seal ever ran. Guards
+    // against narrowing the fix to the incremental-seal path only.
+    @Test
+    public void testGenFlushAfterFullSealKeepsNameBasedCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            String name = "gen_after_full_cover";
+            int keyCount = 300;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                int plen = path.size();
+
+                FilesFacade ff = configuration.getFilesFacade();
+                try (MemoryCMARWImpl data = new MemoryCMARWImpl(
+                        ff, TableUtils.dFile(path.trimTo(plen), "covered_long", COLUMN_NAME_TXN_NONE),
+                        ff.getPageSize(), -1, MemoryTag.MMAP_DEFAULT, 0)) {
+                    for (int r = 0; r <= keyCount; r++) {
+                        data.putLong(1000L + r);
+                    }
+                }
+
+                ObjList<CharSequence> coverNames = new ObjList<>();
+                coverNames.add("covered_long");
+                LongList coverNameTxns = new LongList();
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                LongList coverTops = new LongList();
+                coverTops.add(0L);
+                IntList coverShifts = new IntList();
+                coverShifts.add(3);
+                IntList coverIndices = new IntList();
+                coverIndices.add(1);
+                IntList coverTypes = new IntList();
+                coverTypes.add(ColumnType.LONG);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.configureCovering(coverNames, coverNameTxns, coverTops, coverShifts, coverIndices, coverTypes, -1);
+                    for (int k = 0; k < keyCount; k++) {
+                        writer.add(k, k);
+                    }
+                    writer.setMaxValue(keyCount - 1);
+                    writer.commit();
+                    writer.seal(); // full seal: the poisoning step
+
+                    // Post-seal commit appends a sparse gen 1 whose sidecar
+                    // block is written NOW from the source column file. No
+                    // reseal follows; the reader must see this row's covered
+                    // value from the raw gen block.
+                    writer.add(260, keyCount);
+                    writer.setMaxValue(keyCount);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                        coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0);
+                     RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0})) {
+                    assertTrue(cursor instanceof CoveringRowCursor);
+                    CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                    assertTrue(cc.isCoveredAvailable(0));
+                    // Sealed gen 0 row: written by the full seal itself.
+                    assertTrue(cc.hasNext());
+                    assertEquals(260, cc.next());
+                    assertEquals(1260L, cc.getCoveredLong(0));
+                    // Unsealed gen 1 row: written by the post-seal gen flush.
+                    assertTrue(cc.hasNext());
+                    assertEquals(keyCount, cc.next());
+                    assertEquals(1000L + keyCount, cc.getCoveredLong(0));
+                    assertFalse(cc.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGenFlushAfterStreamingRollbackKeepsNameBasedCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            String name = "gen_after_streaming_rollback_cover";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+                try (MemoryCMARWImpl data = new MemoryCMARWImpl(
+                        ff, TableUtils.dFile(path.trimTo(plen), "covered_long", COLUMN_NAME_TXN_NONE),
+                        ff.getPageSize(), -1, MemoryTag.MMAP_DEFAULT, 0)) {
+                    for (int row = 0; row < 600; row++) {
+                        data.putLong(1000L + row);
+                    }
+                }
+
+                ObjList<CharSequence> coverNames = new ObjList<>();
+                coverNames.add("covered_long");
+                LongList coverNameTxns = new LongList();
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                LongList coverTops = new LongList();
+                coverTops.add(0L);
+                IntList coverShifts = new IntList();
+                coverShifts.add(3);
+                IntList coverIndices = new IntList();
+                coverIndices.add(1);
+                IntList coverTypes = new IntList();
+                coverTypes.add(ColumnType.LONG);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.configureCovering(coverNames, coverNameTxns, coverTops, coverShifts, coverIndices, coverTypes, -1);
+                    for (int row = 0; row < 600; row++) {
+                        writer.add(row % 300, row);
+                    }
+                    writer.setMaxValue(599);
+                    writer.commit();
+                    writer.rollbackValues(299);
+                    assertTrue("rollback must take the streaming branch", writer.isLastRollbackStreamingForTesting());
+
+                    // The same writer must re-map covered values after streaming rollback, without resealing or reconfiguration.
+                    writer.add(260, 300);
+                    writer.setMaxValue(300);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                        coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0);
+                     RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0})) {
+                    assertTrue(cursor instanceof CoveringRowCursor);
+                    CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                    assertTrue(cc.isCoveredAvailable(0));
+                    assertTrue(cc.hasNext());
+                    assertEquals(260, cc.next());
+                    assertEquals(1260L, cc.getCoveredLong(0));
+                    assertTrue(cc.hasNext());
+                    assertEquals(300, cc.next());
+                    assertEquals("appended covered LONG after streaming rollback", 1300L, cc.getCoveredLong(0));
+                    assertFalse(cc.hasNext());
                 }
             }
         });
@@ -13777,8 +14137,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 }
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0);
+                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
                     // Cursor should still implement CoveringRowCursor but isCoveredAvailable(0) returns false
                     assertTrue(cursor instanceof CoveringRowCursor);
                     assertFalse(((CoveringRowCursor) cursor).isCoveredAvailable(0));
@@ -13789,7 +14149,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     assertTrue(cursor.hasNext());
                     assertEquals(1, cursor.next());
                     assertFalse(cursor.hasNext());
-                    Misc.free(cursor);
                 }
             }
         });
@@ -14813,6 +15172,428 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPciFileLengthFailureDoesNotShrinkExistingFile() throws Exception {
+        final AtomicBoolean isLengthFailureArmed = new AtomicBoolean(false);
+        final AtomicInteger lengthFailureCount = new AtomicInteger();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long length(LPSZ name) {
+                if (name != null
+                        && Utf8s.endsWithAscii(name, ".pci")
+                        && isLengthFailureArmed.compareAndSet(true, false)) {
+                    lengthFailureCount.incrementAndGet();
+                    return -1;
+                }
+                return super.length(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "pci_length_failure";
+                final int plen = path.size();
+                final long colAddr = Unsafe.malloc(2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.putDouble(colAddr, 42.0);
+                    Unsafe.putDouble(colAddr + Double.BYTES, 84.0);
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{1},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        writer.add(0, 0);
+                        writer.setMaxValue(0);
+                        writer.commit();
+                    }
+
+                    LPSZ pciFile = PostingIndexUtils.coverInfoFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    );
+                    final long oversizedSize = configuration.getDataIndexValueAppendPageSize();
+                    long fd = ff.openRW(pciFile, CairoConfiguration.O_NONE);
+                    assertTrue(fd > 0);
+                    try {
+                        assertTrue(ff.truncate(fd, oversizedSize));
+                    } finally {
+                        ff.close(fd);
+                    }
+                    assertEquals(oversizedSize, ff.length(pciFile));
+
+                    isLengthFailureArmed.set(true);
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    )) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{1},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        writer.add(0, 1);
+                        writer.setMaxValue(1);
+                        writer.seal();
+                        fail("expected .pci length failure");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not read posting index cover info file length");
+                        TestUtils.assertContains(e.getFlyweightMessage(), ".pci");
+                    } finally {
+                        isLengthFailureArmed.set(false);
+                    }
+
+                    assertEquals(1, lengthFailureCount.get());
+                    assertEquals(oversizedSize, ff.length(PostingIndexUtils.coverInfoFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    )));
+                } finally {
+                    Unsafe.free(colAddr, 2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPciFileMismatchedMetadataIsRepairedOnCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "pci_commit_mismatch_repair";
+                final int plen = path.size();
+                final FilesFacade ff = configuration.getFilesFacade();
+                final long colAddr = Unsafe.malloc(4L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                final long secondColAddr = colAddr + 2L * Double.BYTES;
+                final long payloadSize = 4L * Integer.BYTES;
+                final long scratchAddr = Unsafe.malloc(payloadSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.putDouble(colAddr, 42.0);
+                    Unsafe.putDouble(colAddr + Double.BYTES, 84.0);
+                    Unsafe.putDouble(secondColAddr, 12.0);
+                    Unsafe.putDouble(secondColAddr + Double.BYTES, 24.0);
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path, name, COLUMN_NAME_TXN_NONE
+                    )) {
+                        writer.configureCovering(
+                                new long[]{colAddr, secondColAddr},
+                                new long[]{0, 0},
+                                new int[]{3, 3},
+                                new int[]{1, 2},
+                                new int[]{ColumnType.DOUBLE, ColumnType.DOUBLE},
+                                2
+                        );
+                        writer.add(0, 0);
+                        writer.setMaxValue(0);
+                        writer.commit();
+                    }
+
+                    LPSZ pciFile = PostingIndexUtils.coverInfoFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    );
+                    final long stableSize = ff.length(pciFile);
+                    assertEquals(Files.ceilPageSize(payloadSize), stableSize);
+                    final long oversizedSize = configuration.getDataIndexValueAppendPageSize();
+                    assertTrue(oversizedSize > stableSize);
+                    long fd = ff.openRW(pciFile, CairoConfiguration.O_NONE);
+                    assertTrue(fd > 0);
+                    try {
+                        assertTrue(ff.truncate(fd, oversizedSize));
+                        Unsafe.putInt(scratchAddr, -1);
+                        assertEquals(Integer.BYTES, ff.write(
+                                fd, scratchAddr, Integer.BYTES, 3L * Integer.BYTES
+                        ));
+                    } finally {
+                        ff.close(fd);
+                    }
+                    assertEquals(oversizedSize, ff.length(pciFile));
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    )) {
+                        writer.configureCovering(
+                                new long[]{colAddr, secondColAddr},
+                                new long[]{0, 0},
+                                new int[]{3, 3},
+                                new int[]{1, 2},
+                                new int[]{ColumnType.DOUBLE, ColumnType.DOUBLE},
+                                2
+                        );
+                        writer.add(0, 1);
+                        writer.setMaxValue(1);
+                        writer.commit();
+                        assertTrue(
+                                "mismatched .pci header must be rewritten when appending a generation",
+                                writer.isLastSidecarInfoHeaderWrittenForTesting()
+                        );
+                    }
+
+                    pciFile = PostingIndexUtils.coverInfoFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    );
+                    assertEquals(oversizedSize, ff.length(pciFile));
+                    fd = ff.openRO(pciFile);
+                    assertTrue(fd > 0);
+                    try {
+                        assertEquals(payloadSize, ff.read(fd, scratchAddr, payloadSize, 0));
+                    } finally {
+                        ff.close(fd);
+                    }
+                    assertEquals(PostingIndexUtils.COVER_INFO_MAGIC, Unsafe.getInt(scratchAddr));
+                    assertEquals(2, Unsafe.getInt(scratchAddr + Integer.BYTES));
+                    assertEquals(1, Unsafe.getInt(scratchAddr + 2L * Integer.BYTES));
+                    assertEquals(2, Unsafe.getInt(scratchAddr + 3L * Integer.BYTES));
+                } finally {
+                    Unsafe.free(scratchAddr, payloadSize, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(colAddr, 4L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPciFileMismatchedMetadataIsRepairedOnSeal() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final FilesFacade ff = configuration.getFilesFacade();
+                final long colAddr = Unsafe.malloc(4L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                final long secondColAddr = colAddr + 2L * Double.BYTES;
+                final long payloadSize = 4L * Integer.BYTES;
+                final long scratchAddr = Unsafe.malloc(payloadSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.putDouble(colAddr, 42.0);
+                    Unsafe.putDouble(colAddr + Double.BYTES, 84.0);
+                    Unsafe.putDouble(secondColAddr, 12.0);
+                    Unsafe.putDouble(secondColAddr + Double.BYTES, 24.0);
+
+                    final int[] corruptOffsets = {0, Integer.BYTES, 2 * Integer.BYTES, 3 * Integer.BYTES};
+                    for (int corruption = 0; corruption < corruptOffsets.length; corruption++) {
+                        final String name = "pci_mismatch_repair_" + corruption;
+                        try (PostingIndexWriter writer = new PostingIndexWriter(
+                                configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                        )) {
+                            writer.configureCovering(
+                                    new long[]{colAddr, secondColAddr},
+                                    new long[]{0, 0},
+                                    new int[]{3, 3},
+                                    new int[]{1, 2},
+                                    new int[]{ColumnType.DOUBLE, ColumnType.DOUBLE},
+                                    2
+                            );
+                            writer.add(0, 0);
+                            writer.setMaxValue(0);
+                            writer.commit();
+
+                            // Keep the append sidecars open across corruption so seal's
+                            // pending-gen flush reuses them. The subsequent seal reopen,
+                            // rather than the append reopen, must repair this header.
+                            LPSZ pciFile = PostingIndexUtils.coverInfoFileName(
+                                    path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                            );
+                            final long stableSize = ff.length(pciFile);
+                            assertEquals(Files.ceilPageSize(payloadSize), stableSize);
+                            long fd = ff.openRW(pciFile, CairoConfiguration.O_NONE);
+                            assertTrue(fd > 0);
+                            try {
+                                Unsafe.putInt(scratchAddr, -1);
+                                assertEquals(Integer.BYTES, ff.write(
+                                        fd, scratchAddr, Integer.BYTES, corruptOffsets[corruption]
+                                ));
+                            } finally {
+                                ff.close(fd);
+                            }
+                            assertEquals(stableSize, ff.length(pciFile));
+
+                            writer.add(0, 1);
+                            writer.setMaxValue(1);
+                            writer.seal();
+                            assertTrue(
+                                    "mismatched .pci header at offset " + corruptOffsets[corruption] + " must be rewritten",
+                                    writer.isLastSidecarInfoHeaderWrittenForTesting()
+                            );
+
+                            pciFile = PostingIndexUtils.coverInfoFileName(
+                                    path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                            );
+                            assertEquals(stableSize, ff.length(pciFile));
+                            fd = ff.openRO(pciFile);
+                            assertTrue(fd > 0);
+                            try {
+                                assertEquals(payloadSize, ff.read(fd, scratchAddr, payloadSize, 0));
+                            } finally {
+                                ff.close(fd);
+                            }
+                            assertEquals(PostingIndexUtils.COVER_INFO_MAGIC, Unsafe.getInt(scratchAddr));
+                            assertEquals(2, Unsafe.getInt(scratchAddr + Integer.BYTES));
+                            assertEquals(1, Unsafe.getInt(scratchAddr + 2L * Integer.BYTES));
+                            assertEquals(2, Unsafe.getInt(scratchAddr + 3L * Integer.BYTES));
+                        }
+                    }
+                } finally {
+                    Unsafe.free(scratchAddr, payloadSize, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(colAddr, 4L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPciFileShortExistingMetadataIsRepaired() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "pci_short_repair";
+                final int plen = path.size();
+                final FilesFacade ff = configuration.getFilesFacade();
+                final long colAddr = Unsafe.malloc(2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.putDouble(colAddr, 42.0);
+                    Unsafe.putDouble(colAddr + Double.BYTES, 84.0);
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{1},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        writer.add(0, 0);
+                        writer.setMaxValue(0);
+                        writer.commit();
+                    }
+
+                    LPSZ pciFile = PostingIndexUtils.coverInfoFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    );
+                    long fd = ff.openRW(pciFile, CairoConfiguration.O_NONE);
+                    assertTrue(fd > 0);
+                    try {
+                        assertTrue(ff.truncate(fd, Integer.BYTES));
+                    } finally {
+                        ff.close(fd);
+                    }
+                    assertEquals(Integer.BYTES, ff.length(pciFile));
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    )) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{1},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        writer.add(0, 1);
+                        writer.setMaxValue(1);
+                        writer.commit();
+                        assertTrue("short .pci header must be rewritten", writer.isLastSidecarInfoHeaderWrittenForTesting());
+                    }
+
+                    final long payloadSize = 3L * Integer.BYTES;
+                    pciFile = PostingIndexUtils.coverInfoFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    );
+                    assertEquals(Files.ceilPageSize(payloadSize), ff.length(pciFile));
+                    fd = ff.openRO(pciFile);
+                    assertTrue(fd > 0);
+                    try {
+                        assertEquals(payloadSize, ff.read(fd, colAddr, payloadSize, 0));
+                    } finally {
+                        ff.close(fd);
+                    }
+                    assertEquals(PostingIndexUtils.COVER_INFO_MAGIC, Unsafe.getInt(colAddr));
+                    assertEquals(1, Unsafe.getInt(colAddr + Integer.BYTES));
+                    assertEquals(1, Unsafe.getInt(colAddr + 2L * Integer.BYTES));
+                } finally {
+                    Unsafe.free(colAddr, 2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPciFileSizeStableAcrossCommitSealAndClose() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "pci_size_stability";
+                final int plen = path.size();
+                final FilesFacade ff = configuration.getFilesFacade();
+                final long colAddr = Unsafe.malloc(2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.putDouble(colAddr, 42.0);
+                    Unsafe.putDouble(colAddr + Double.BYTES, 84.0);
+                    final long stableSize;
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{1},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        writer.add(0, 0);
+                        writer.setMaxValue(0);
+                        writer.commit();
+                        assertTrue("new .pci header must be written", writer.isLastSidecarInfoHeaderWrittenForTesting());
+
+                        LPSZ pciFile = PostingIndexUtils.coverInfoFileName(
+                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                        );
+                        stableSize = ff.length(pciFile);
+                        assertEquals(Files.ceilPageSize(3L * Integer.BYTES), stableSize);
+                    }
+
+                    LPSZ pciFile = PostingIndexUtils.coverInfoFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    );
+                    assertEquals(stableSize, ff.length(pciFile));
+
+                    final long oversizedSize = configuration.getDataIndexValueAppendPageSize();
+                    assertTrue(oversizedSize > stableSize);
+                    long fd = ff.openRW(pciFile, CairoConfiguration.O_NONE);
+                    assertTrue(fd > 0);
+                    try {
+                        assertTrue(ff.truncate(fd, oversizedSize));
+                    } finally {
+                        ff.close(fd);
+                    }
+                    assertEquals(oversizedSize, ff.length(pciFile));
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    )) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{1},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        writer.add(0, 1);
+                        writer.setMaxValue(1);
+                        writer.seal();
+                        assertFalse("identical .pci header must not be rewritten", writer.isLastSidecarInfoHeaderWrittenForTesting());
+                        assertEquals(oversizedSize, ff.length(PostingIndexUtils.coverInfoFileName(
+                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                        )));
+                    }
+
+                    assertEquals(oversizedSize, ff.length(PostingIndexUtils.coverInfoFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    )));
+                } finally {
+                    Unsafe.free(colAddr, 2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPostingIndexReaderWithCovering() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -14853,43 +15634,43 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0,
                             coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
-                        assertTrue(cursor instanceof CoveringRowCursor);
-                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(cursor instanceof CoveringRowCursor);
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
 
 
-                        // key 0: rows 0, 3, 6 -> values 10.0, 40.0, 70.0
-                        assertTrue(cc.hasNext());
-                        assertEquals(0, cc.next());
-                        assertEquals(10.0, cc.getCoveredDouble(0), 0.001);
+                            // key 0: rows 0, 3, 6 -> values 10.0, 40.0, 70.0
+                            assertTrue(cc.hasNext());
+                            assertEquals(0, cc.next());
+                            assertEquals(10.0, cc.getCoveredDouble(0), 0.001);
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(3, cc.next());
-                        assertEquals(40.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(3, cc.next());
+                            assertEquals(40.0, cc.getCoveredDouble(0), 0.001);
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(6, cc.next());
-                        assertEquals(70.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(6, cc.next());
+                            assertEquals(70.0, cc.getCoveredDouble(0), 0.001);
 
-                        assertFalse(cc.hasNext());
-                        Misc.free(cursor);
+                            assertFalse(cc.hasNext());
+                        }
                         // key 1: rows 1, 4 -> values 20.0, 50.0
-                        cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0});
-                        cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0})) {
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
 
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(1, cc.next());
-                        assertEquals(20.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(1, cc.next());
+                            assertEquals(20.0, cc.getCoveredDouble(0), 0.001);
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(4, cc.next());
-                        assertEquals(50.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(4, cc.next());
+                            assertEquals(50.0, cc.getCoveredDouble(0), 0.001);
 
-                        assertFalse(cc.hasNext());
-                        Misc.free(cursor);
+                            assertFalse(cc.hasNext());
+                        }
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -16004,8 +16785,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0,
                             coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
-                        try {
+                        try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
                             assertTrue(cursor instanceof CoveringRowCursor);
                             CoveringRowCursor cc = (CoveringRowCursor) cursor;
 
@@ -16018,8 +16798,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                 count++;
                             }
                             assertEquals(rowCount, count);
-                        } finally {
-                            Misc.free(cursor);
                         }
                     }
                 } finally {
@@ -16114,15 +16892,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         int totalRows = 0;
                         for (int key = 0; key < 3; key++) {
-                            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(key, 0, Long.MAX_VALUE, new int[]{0});
-                            while (cc.hasNext()) {
-                                long rowId = cc.next();
-                                double covered = cc.getCoveredDouble(0);
-                                assertEquals("covered value must round-trip across the seal boundary",
-                                        100.0 + rowId, covered, 0.001);
-                                totalRows++;
+                            try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(key, 0, Long.MAX_VALUE, new int[]{0})) {
+                                while (cc.hasNext()) {
+                                    long rowId = cc.next();
+                                    double covered = cc.getCoveredDouble(0);
+                                    assertEquals("covered value must round-trip across the seal boundary",
+                                            100.0 + rowId, covered, 0.001);
+                                    totalRows++;
+                                }
                             }
-                            Misc.free(cc);
                         }
                         assertEquals("reader must see every committed row across both seals", 30, totalRows);
                     }
@@ -16214,8 +16992,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             coveringMetadata(new int[]{1}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         // minValue=464 drops block 0 (rows 400..463); blocks 1..3 remain.
                         final long minValue = 464;
-                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(1, minValue, Long.MAX_VALUE, new int[]{0});
-                        try {
+                        try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(1, minValue, Long.MAX_VALUE, new int[]{0})) {
                             assertTrue(cc.isCoveredAvailable(0));
                             int expectedRow = 464;
                             while (cc.hasNext()) {
@@ -16228,8 +17005,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                 expectedRow++;
                             }
                             assertEquals(600, expectedRow);
-                        } finally {
-                            Misc.free(cc);
                         }
                     }
 

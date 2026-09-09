@@ -71,6 +71,12 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
         private final GenerateSeriesTimestampRecord recordB = new GenerateSeriesTimestampRecord();
         private final TimestampDriver timestampDriver;
         private long end;
+        // Rows already handed out. The cursor walks this rather than comparing curr against
+        // end: neither end of the series is bounds-checked, so every arithmetic position -
+        // toTop()'s start - step included - can run off the end of the long range, and a
+        // comparison cannot tell a wrapped value from an in-range one.
+        private long rowIndex;
+        private long size;
         private long start;
         private long step;
 
@@ -92,12 +98,16 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
         @Override
         public boolean hasNext() {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            recordA.curr += step;
-            if (step >= 0) {
-                return recordA.curr <= end;
-            } else {
-                return recordA.curr >= end;
+            if (rowIndex >= size) {
+                return false;
             }
+            rowIndex++;
+            // start + step * (rowIndex - 1) is the row's definition, and every row of the
+            // series fits in a long even when the span between the ends does not. The
+            // multiply may wrap on the way there; two's complement carries it back, so the
+            // sum is exact for every row the count admits.
+            recordA.curr = start + step * (rowIndex - 1);
+            return true;
         }
 
         public void of(SqlExecutionContext executionContext, int stepPosition) throws SqlException {
@@ -116,6 +126,13 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
                 start = end;
                 end = temp;
             }
+            // The span between the ends can need the 64th bit, so subtract in the direction
+            // that cannot go negative and divide the result as unsigned. Math.abs(step) is
+            // likewise the step's magnitude read unsigned, which is what a step of
+            // Long.MIN_VALUE needs. Saturate on the +1 rather than wrapping: a count no long
+            // can hold must not come back as a negative row count.
+            final long steps = Long.divideUnsigned(end >= start ? end - start : start - end, Math.abs(step));
+            size = steps < 0 || steps == Long.MAX_VALUE ? Long.MAX_VALUE : steps + 1;
             toTop();
         }
 
@@ -131,21 +148,22 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
 
         @Override
         public long size() {
-            return (Math.abs(end - start) / Math.abs(step)) + 1;
+            return size;
         }
 
         @Override
         public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
-            // curr is always on-grid at start + step * (rowId - 1), so the signed offset
-            // maps the top sentinel to rowId 0 and makes skip-of-0 a positional no-op.
-            long currentRowId = (recordA.curr - start) / step + 1;
-            long rowsToSkip = Math.max(0, Math.min(rowCount.get(), size() - currentRowId));
-            recordAt(recordA, currentRowId + rowsToSkip);
+            final long rowsToSkip = Math.max(0, Math.min(rowCount.get(), size - rowIndex));
+            rowIndex += rowsToSkip;
+            // Leaves the record on the last row skipped over, or on toTop()'s sentinel when
+            // nothing was skipped, so a skip of 0 stays a positional no-op.
+            recordAt(recordA, rowIndex);
             rowCount.dec(rowsToSkip);
         }
 
         @Override
         public void toTop() {
+            rowIndex = 0;
             recordA.of(start - step);
         }
 
@@ -159,7 +177,18 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
 
             @Override
             public long getRowId() {
-                return Math.abs(start - curr) / Math.abs(step) + 1;
+                // Derived rather than read off the cursor, because recordB is positioned by
+                // recordAt() and carries no index of its own. curr is on-grid at
+                // start + step * (rowId - 1), so measuring the offset as an unsigned
+                // magnitude keeps a span that overflows a signed long dividing correctly.
+                // toTop()'s sentinel is the one position that is not a row, and it can wrap
+                // to the far side of start - so recognise it by its exact value rather than
+                // by which side of start it appears to fall on.
+                if (curr == start - step) {
+                    return 0;
+                }
+                final long offset = curr - start;
+                return Long.divideUnsigned(step > 0 ? offset : -offset, Math.abs(step)) + 1;
             }
 
             @Override

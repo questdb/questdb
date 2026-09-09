@@ -31,9 +31,10 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjectStackPool;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectStackPool;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.tasks.PostingSealPurgeTask;
 
 import java.io.Closeable;
@@ -298,6 +299,16 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     default void setCoveredColumnNameTxns(LongList txns) {
+    }
+
+    /**
+     * Overrides the directory the covering sidecar build reads the covered
+     * column files from. Must be called after {@code configureCovering}, which
+     * defaults it to the writer's own partition path. Needed when the index is
+     * written into a directory that does not hold the native column data, e.g.
+     * the destination parquet dir during a native-&gt;parquet conversion.
+     */
+    default void setCoveredPartitionPath(Utf8Sequence partitionPath) {
     }
 
     /**

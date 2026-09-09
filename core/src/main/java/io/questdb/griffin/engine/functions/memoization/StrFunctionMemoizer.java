@@ -47,6 +47,12 @@ public final class StrFunctionMemoizer extends StrFunction implements MemoizerFu
     }
 
     @Override
+    public void clearMemo() {
+        validAValue = false;
+        validBValue = false;
+    }
+
+    @Override
     public Function getArg() {
         return fn;
     }
@@ -106,12 +112,6 @@ public final class StrFunctionMemoizer extends StrFunction implements MemoizerFu
     @Override
     public boolean isThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void memoize(Record record) {
-        validAValue = false;
-        validBValue = false;
     }
 
     @Override

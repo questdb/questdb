@@ -69,7 +69,10 @@ public class NullIfLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            return longFunc1.getLong(rec) == longFunc2.getLong(rec) ? Numbers.LONG_NULL : longFunc1.getLong(rec);
+            // Read once: a second read of a non-deterministic argument is a fresh draw, and
+            // returning that draw hands back the very value the comparison just excluded.
+            final long value = longFunc1.getLong(rec);
+            return value == longFunc2.getLong(rec) ? Numbers.LONG_NULL : value;
         }
 
         @Override

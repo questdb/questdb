@@ -56,10 +56,12 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected int partitionLo;
     protected TableReader reader;
     protected long sizeSoFar = 0;
+    private long frameCountUpperBound = -1;
     private int initialIntervalsHi;
     private int initialIntervalsLo;
     private int initialPartitionHi;
     private int initialPartitionLo;
+    private boolean isFrameCountUpperBoundComputed;
 
     public AbstractIntervalPartitionFrameCursor(CairoConfiguration configuration, RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
         assert timestampIndex > -1;
@@ -75,6 +77,38 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         Misc.free(parquetDecoder);
         nativeTimestampFinder.clear();
         reader = Misc.free(reader);
+    }
+
+    /**
+     * At most one frame per (interval, partition) pair whose timestamp ranges overlap, counted
+     * over the culled bounds {@link #calculateRanges} resolved. The walk can only skip pairs (an
+     * intersection that holds no rows emits no frame), never add them, so this never
+     * under-counts. Empty partitions inside an interval over-count, which is the safe direction
+     * for eager-rejection callers. Two partition binary searches per culled interval, no I/O,
+     * computed on first call and cached until the next {@link #of}/{@link #reload}.
+     */
+    @Override
+    public long getFrameCountUpperBound() {
+        if (!isFrameCountUpperBoundComputed) {
+            frameCountUpperBound = computeFrameCountUpperBound();
+            isFrameCountUpperBoundComputed = true;
+        }
+        return frameCountUpperBound;
+    }
+
+    /**
+     * The WHOLE resolved interval list, deliberately - not the
+     * {@code [intervalsLo, intervalsHi)} sub-range this cursor actually walks.
+     * {@link #cullIntervals} narrows those bounds against the READER's timestamp range, so
+     * they describe where this table's rows can be, not what the filter admits. A caller
+     * applying the filter to rows of its own (a live view's in-memory tier holds output
+     * rows the LV table has not been flushed yet, i.e. rows ABOVE the reader's maximum)
+     * would drop every one of them by honouring the culled bounds. The cull is an
+     * optimisation over one row source; the list is the filter.
+     */
+    @Override
+    public LongList getIntervals() {
+        return intervals;
     }
 
     @Override
@@ -141,6 +175,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     private void calculateRanges(TableReader reader, LongList intervals) {
+        isFrameCountUpperBoundComputed = false;
         if (intervals.size() > 0) {
             if (PartitionBy.isPartitioned(reader.getPartitionedBy())) {
                 cullIntervals(reader, intervals);
@@ -160,6 +195,34 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
             initialPartitionHi = 0;
         }
         toTop();
+    }
+
+    private long computeFrameCountUpperBound() {
+        final TableReader reader = this.reader;
+        if (reader == null || intervals == null) {
+            return -1;
+        }
+        if (initialIntervalsLo >= initialIntervalsHi || initialPartitionLo >= initialPartitionHi) {
+            return 0;
+        }
+        final long minTimestamp = reader.getMinTimestamp();
+        final long maxTimestamp = reader.getMaxTimestamp();
+        long pairs = 0;
+        for (int i = initialIntervalsLo; i < initialIntervalsHi; i++) {
+            // Clamp to the reader's data range, mirroring cullPartitions(): an open-ended or
+            // over-reaching interval must not walk the partition search off either end.
+            final long intervalLo = Math.max(intervals.getQuick(2 * i), minTimestamp);
+            final long intervalHi = Math.min(intervals.getQuick(2 * i + 1), maxTimestamp);
+            if (intervalLo > intervalHi) {
+                continue;
+            }
+            final int partitionLo = Math.max(reader.getPartitionIndexByTimestamp(intervalLo), initialPartitionLo);
+            final int partitionHi = Math.min(reader.getPartitionIndexByTimestamp(intervalHi), initialPartitionHi - 1);
+            if (partitionLo <= partitionHi) {
+                pairs += partitionHi - partitionLo + 1;
+            }
+        }
+        return pairs;
     }
 
     private void cullIntervals(TableReader reader, LongList intervals) {

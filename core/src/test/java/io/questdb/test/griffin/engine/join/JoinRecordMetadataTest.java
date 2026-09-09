@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
@@ -92,6 +93,43 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("a.X"));
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("A.x"));
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("A.X"));
+    }
+
+    @Test
+    public void testJoinCompilesAtMinimumConfiguredPageSize() throws Exception {
+        // cairo.sql.join.metadata.page.size feeds this class's OrderedMap, whose key schema is two
+        // var-size STRING columns and whose value schema is one INT. Below four bytes the map's own
+        // assertion fired here, during SQL compilation, so a plain configuration mistake surfaced as
+        // an AssertionError out of the compiler with nothing naming the property; the startup floor
+        // rejects those values instead.
+        //
+        // Compiling a real join at exactly that floor is what keeps the floor and the schema from
+        // drifting apart: the number lives in PropServerConfiguration and the map it protects lives
+        // here, and nothing else ties the two together.
+        node1.setProperty(PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, 4);
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(4, configuration.getSqlJoinMetadataPageSize());
+            execute("CREATE TABLE bids (bid INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY NONE");
+            execute("CREATE TABLE asks (ask INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY NONE");
+            execute("""
+                    INSERT INTO bids VALUES
+                      (101, '2024-01-01T00:00:01.000000Z'),
+                      (102, '2024-01-01T00:00:03.000000Z')""");
+            execute("""
+                    INSERT INTO asks VALUES
+                      (101, '2024-01-01T00:00:01.000000Z'),
+                      (103, '2024-01-01T00:00:03.000000Z')""");
+
+            // A three-column join metadata, so the map has to grow past the 4-byte page it starts on
+            // rather than merely be constructed with it.
+            assertQuery("SELECT b.bid, b.ts, a.ask FROM bids b JOIN asks a ON b.bid = a.ask")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            bid\tts\task
+                            101\t2024-01-01T00:00:01.000000Z\t101
+                            """);
+        });
     }
 
     @Test

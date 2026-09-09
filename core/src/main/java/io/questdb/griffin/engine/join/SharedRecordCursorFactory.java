@@ -66,4 +66,19 @@ public class SharedRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.type("(Shared)");
         sink.child(primaryFactory);
     }
+
+    // Shares a single underlying factory without exposing it through getBaseFactory(), so the
+    // external-source property is propagated explicitly rather than via the fail-open default.
+    //
+    // This is a structural contract, not a load-bearing step in the mat-view rejection guard: as
+    // noted above, the primary is always also held directly by a node in the main factory tree,
+    // so that node gives the guard a second route to the same leaf and rejection does not depend
+    // on this override. It exists so the factory does not misreport itself to a future consumer
+    // that walks a sub-tree in isolation. Pinned by SharedRecordCursorFactoryExternalSourceTest,
+    // which asserts the property on the factory directly - an end-to-end mat-view probe cannot
+    // distinguish its presence from its absence.
+    @Override
+    public boolean usesExternalDataSource() {
+        return primaryFactory.usesExternalDataSource();
+    }
 }

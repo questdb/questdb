@@ -19,6 +19,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -194,6 +195,34 @@ public class SampleByFillTest extends AbstractCairoTest {
                                                 Row forward scan
                                                 Frame forward scan on: weather
                             """);
+        });
+    }
+
+    @Test
+    public void testFillConstCharValueAgainstDecimalTarget() throws Exception {
+        assertMemoryLeak(() -> {
+            // a single-digit fill literal types as CHAR and converts; a non-numeric one is
+            // reported against the literal rather than raising per filled row
+            execute("CREATE TABLE x (val DECIMAL(10, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.00::DECIMAL(10,2), '2024-01-01T00:00:00.000000Z')," +
+                    "(3.00::DECIMAL(10,2), '2024-01-01T02:00:00.000000Z')");
+
+            assertQuery("SELECT first(val), ts FROM x SAMPLE BY 1h FILL('5') ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            first\tts
+                            1.00\t2024-01-01T00:00:00.000000Z
+                            5.00\t2024-01-01T01:00:00.000000Z
+                            3.00\t2024-01-01T02:00:00.000000Z
+                            """);
+
+            String sql = "SELECT first(val), ts FROM x SAMPLE BY 1h FILL('a') ALIGN TO CALENDAR";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("'a'"), "inconvertible value: `a` [CHAR -> DECIMAL(10,2)]");
         });
     }
 
@@ -907,7 +936,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     }
                 };
 
-                final WorkerPool pool = new WorkerPool(() -> 4);
+                final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
                 TestUtils.execute(
                         pool,
                         (engine, compiler, sqlExecutionContext) -> {
@@ -1041,7 +1070,7 @@ public class SampleByFillTest extends AbstractCairoTest {
         // it catches correctness regressions in worker>1 configurations that
         // the single-worker tests cannot see.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -1114,7 +1143,7 @@ public class SampleByFillTest extends AbstractCairoTest {
         // so an outer ORDER BY ts, city pins the assertion to stable
         // semantics under sharedQueryWorkerCount > 1.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -1172,7 +1201,7 @@ public class SampleByFillTest extends AbstractCairoTest {
         // ORDER BY ts, city makes the assertion independent of intra-bucket
         // emission order.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {

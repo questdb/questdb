@@ -52,6 +52,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.ColumnarRowAppender;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
@@ -66,6 +67,7 @@ import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
@@ -80,6 +82,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectBinarySequence;
@@ -625,6 +628,51 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertNull(dataInfo.nextSymbolMapDiff());
 
                 assertFalse(eventCursor.hasNext());
+            }
+        });
+    }
+
+    @Test
+    public void testWalReaderRebindSameSegmentGrowsMapping() throws Exception {
+        // WalReader.of() reuses the column mmaps when rebinding to the SAME
+        // (table, wal, segment) with only a larger rowCount - the live view drain
+        // re-opens a segment once per base commit, so many opens share a segment.
+        // Rebind one reader instance to segment 0 at rowCount 1, 2, 3: the reuse
+        // path must remap each retained fixed- and var-size column in place at the
+        // new size, so every row - including the ones newly in range - reads back
+        // correctly, and nothing leaks (assertMemoryLeak).
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+
+            final String walName;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                walName = walWriter.getWalName();
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * 1000L);
+                    row.putByte(0, (byte) ((i + 1) * 10));
+                    row.putStr(1, "v" + i);
+                    row.append();
+                }
+                walWriter.commit(); // one segment (segment 0), three rows
+            }
+
+            try (WalReader reader = new WalReader(engine.getConfiguration())) {
+                for (int rowCount = 1; rowCount <= 3; rowCount++) {
+                    // The 2nd and 3rd of() rebind to the same segment; only rowCount grows.
+                    reader.of(tableToken, walName, 0, rowCount);
+                    assertEquals(3, reader.getColumnCount());
+                    assertEquals(rowCount, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    final Record record = cursor.getRecord();
+                    for (int i = 0; i < rowCount; i++) {
+                        assertTrue("row " + i + " missing at rowCount " + rowCount, cursor.hasNext());
+                        assertEquals((i + 1) * 10, record.getByte(0));
+                        TestUtils.assertEquals("v" + i, record.getStrA(1));
+                        assertEquals(i * 1000L, record.getTimestamp(2));
+                    }
+                    assertFalse("unexpected extra row at rowCount " + rowCount, cursor.hasNext());
+                }
             }
         });
     }
@@ -1796,7 +1844,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         while (cursor.hasNext()) {
                             assertEquals((segmentId % numOfSegments) * maxRowCount + n, record.getInt(0));
                             assertEquals(n, record.getInt(1)); // New symbol value every row
-                            assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + n), record.getSymA(1));
+                            TestUtils.assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + n), record.getSymA(1));
                             assertEquals(n, record.getRowId());
                             n++;
                         }
@@ -1860,6 +1908,47 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void testDesignatedTimestampIncludesSegmentRowNumber_OOO() throws Exception {
         testDesignatedTimestampIncludesSegmentRowNumber(new int[]{1500, 1200}, true);
+    }
+
+    @Test
+    public void testDirectUtf8UsesPointerDecoder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+            final long ptr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.putByte(ptr, (byte) 0xC3);
+                Unsafe.putByte(ptr + 1, (byte) 0xA9);
+
+                final AtomicInteger indexedReadCount = new AtomicInteger();
+                final DirectUtf8String value = new DirectUtf8String() {
+                    @Override
+                    public byte byteAt(int index) {
+                        indexedReadCount.incrementAndGet();
+                        return Unsafe.getByte(ptr() + index);
+                    }
+                };
+                value.of(ptr, ptr + 2);
+
+                try (WalWriter writer = engine.getWalWriter(tableToken)) {
+                    final TableWriter.Row row = writer.newRow(1);
+                    row.putStrUtf8(0, value);
+                    row.append();
+                    writer.commit();
+                }
+                Assert.assertEquals(0, indexedReadCount.get());
+            } finally {
+                Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT s FROM x")
+                    .expectSize()
+                    .returns("""
+                            s
+                            é
+                            """);
+        });
     }
 
     @Test
@@ -2320,6 +2409,80 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertFalse(eventCursor.hasNext());
             }
+        });
+    }
+
+    @Test
+    public void testMalformedDirectUtf8IsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+            final long ptr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.putByte(ptr, (byte) '1');
+                Unsafe.putByte(ptr + 1, (byte) 0xC3);
+
+                try (WalWriter writer = engine.getWalWriter(tableToken)) {
+                    TableWriter.Row row = writer.newRow(1);
+                    try {
+                        row.putStrUtf8(0, new DirectUtf8String().of(ptr, ptr + 2));
+                        Assert.fail("expected the malformed value to be rejected");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+                    }
+                    row.cancel();
+
+                    // the segment stays usable, and the rejected value left no trace
+                    row = writer.newRow(2);
+                    row.putStr(0, "ok");
+                    row.append();
+                    writer.commit();
+                }
+            } finally {
+                Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT s FROM x ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            ok
+                            """);
+        });
+    }
+
+    @Test
+    public void testMalformedUtf8IsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+
+            try (WalWriter writer = engine.getWalWriter(tableToken)) {
+                TableWriter.Row row = writer.newRow(1);
+                try {
+                    row.putStrUtf8(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                    Assert.fail("expected the malformed value to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+                }
+                row.cancel();
+
+                row = writer.newRow(2);
+                row.putStr(0, "ok");
+                row.append();
+                writer.commit();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT s FROM x ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            ok
+                            """);
         });
     }
 
@@ -2869,8 +3032,8 @@ public class WalWriterTest extends AbstractCairoTest {
                         TestUtils.assertEquals(String.valueOf((char) (65 + i % 26)), record.getStrA(22));
                         TestUtils.assertEquals("abcdefghijklmnopqrstuvwxyz".substring(0, i % 26 + 1), record.getStrA(23));
 
-                        assertEquals(String.valueOf(i), record.getSymA(24));
-                        assertEquals(String.valueOf((char) (65 + i % 26)), record.getSymA(25));
+                        TestUtils.assertEquals(String.valueOf(i), record.getSymA(24));
+                        TestUtils.assertEquals(String.valueOf((char) (65 + i % 26)), record.getSymA(25));
 
                         TestUtils.assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getSymA(26));
                         TestUtils.assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getStrA(27));
@@ -3383,6 +3546,107 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalReaderSymbolKeyMissUsesNotFoundSentinel() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final TableToken tableToken = createTable(
+                    new TableModel(configuration, tableName, PartitionBy.YEAR)
+                            .col("s", ColumnType.SYMBOL)
+                            .timestamp("ts")
+                            .wal()
+            );
+
+            final String walName;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                walName = walWriter.getWalName();
+
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "present");
+                row.append();
+
+                row = walWriter.newRow(1);
+                row.putSym(0, null);
+                row.append();
+                walWriter.commit();
+            }
+
+            try (WalReader reader = engine.getWalReader(
+                    sqlExecutionContext.getSecurityContext(),
+                    tableToken,
+                    walName,
+                    0,
+                    2
+            )) {
+                final int symbolCount = reader.getSymbolCount(0);
+                Assert.assertEquals(1, symbolCount);
+                Assert.assertEquals(0, reader.getSymbolKey(0, "present", symbolCount));
+                Assert.assertEquals(VALUE_NOT_FOUND, reader.getSymbolKey(0, "missing", symbolCount));
+            }
+        });
+    }
+
+    @Test
+    public void testWalReaderIncrementalSymbolMapsMatchFullRebuild() throws Exception {
+        // A same-segment rebind (the live-view drain re-opens one segment per base
+        // commit) must fold ONLY newly-appended events into the symbol maps instead of
+        // clearing and rescanning the whole event history each time. This asserts two
+        // things: (1) the incrementally-maintained maps resolve every symbol key
+        // identically to a from-scratch full rebuild (correctness), and (2) the
+        // incremental reader folds each DATA record exactly once across N rebinds while
+        // the naive per-bind full rebuild re-folds 1+2+...+N records (the quadratic the
+        // fix removes).
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final TableToken tableToken = createTable(
+                    new TableModel(configuration, tableName, PartitionBy.YEAR)
+                            .col("s1", ColumnType.SYMBOL)
+                            .col("s2", ColumnType.SYMBOL)
+                            .timestamp("ts")
+                            .wal()
+            );
+
+            final int commits = 8;
+            try (
+                    WalWriter walWriter = engine.getWalWriter(tableToken);
+                    WalReader incReader = new WalReader(engine.getConfiguration())
+            ) {
+                final String walName = walWriter.getWalName();
+                long fullFoldTotal = 0;
+                long rowCount = 0;
+                for (int c = 0; c < commits; c++) {
+                    // Each commit reuses a shared symbol, adds a fresh symbol, and leaves
+                    // s2 null until commit 3 (a first-seen-mid-segment symbol column).
+                    TableWriter.Row row = walWriter.newRow(c);
+                    row.putSym(0, "shared");
+                    row.putSym(1, c >= 3 ? "vshared" : null);
+                    row.append();
+                    row = walWriter.newRow(c);
+                    row.putSym(0, "s1_" + c);
+                    row.putSym(1, c >= 3 ? ("v" + c) : null);
+                    row.append();
+                    walWriter.commit();
+                    rowCount += 2;
+
+                    // Incremental rebind on the same reader instance (same segment 0,
+                    // growing rowCount) - after the first bind this folds only new events.
+                    incReader.of(tableToken, walName, 0, rowCount);
+                    // Full-rebuild oracle: a fresh reader always clears + full-walks.
+                    try (WalReader fullReader = new WalReader(engine.getConfiguration())) {
+                        fullReader.of(tableToken, walName, 0, rowCount);
+                        fullFoldTotal += fullReader.getSymbolMapFoldedRecords();
+                        assertSameSymbolResolution(incReader, fullReader, 0);
+                        assertSameSymbolResolution(incReader, fullReader, 1);
+                    }
+                }
+                // Incremental: each of the `commits` DATA records folded exactly once.
+                Assert.assertEquals(commits, incReader.getSymbolMapFoldedRecords());
+                // Naive per-bind full rebuild: re-folds every present record each time.
+                Assert.assertEquals((long) commits * (commits + 1) / 2, fullFoldTotal);
+            }
+        });
+    }
+
+    @Test
     public void testRemovingSymbolColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -3440,8 +3704,8 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(12, record.getInt(0));
-                assertEquals("symb", record.getSymA(1));
-                assertEquals("symc", record.getSymA(2));
+                TestUtils.assertEquals("symb", record.getSymA(1));
+                TestUtils.assertEquals("symc", record.getSymA(2));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -3496,7 +3760,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(133, record.getInt(0));
-                assertEquals("Таке-Сяке", record.getSymA(2));
+                TestUtils.assertEquals("Таке-Сяке", record.getSymA(2));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -4681,14 +4945,14 @@ public class WalWriterTest extends AbstractCairoTest {
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
                     assertEquals(i, record.getInt(1));
-                    assertEquals("sym" + i, record.getSymA(1));
+                    TestUtils.assertEquals("sym" + i, record.getSymA(1));
                     assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
                     assertEquals(i % 2, record.getInt(2));
-                    assertEquals("s" + i % 2, record.getSymA(2));
+                    TestUtils.assertEquals("s" + i % 2, record.getSymA(2));
                     assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
                     assertEquals(i % 2, record.getInt(3));
-                    assertEquals("symbol" + i % 2, record.getSymA(3));
-                    assertEquals(record.getSymB(3), record.getSymA(3));
+                    TestUtils.assertEquals("symbol" + i % 2, record.getSymA(3));
+                    TestUtils.assertEquals(record.getSymB(3), record.getSymA(3));
                     assertEquals("symbol" + i % 2, reader.getSymbolMapReader(3).valueOf(i % 2));
                     i++;
                 }
@@ -4708,12 +4972,12 @@ public class WalWriterTest extends AbstractCairoTest {
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
                     assertEquals(i, record.getInt(1));
-                    assertEquals("sym" + i, record.getSymA(1));
+                    TestUtils.assertEquals("sym" + i, record.getSymA(1));
                     assertEquals(i % 2, record.getInt(2));
-                    assertEquals("s" + i % 2, record.getSymA(2));
+                    TestUtils.assertEquals("s" + i % 2, record.getSymA(2));
                     assertEquals(i % 3, record.getInt(3));
-                    assertEquals("symbol" + i % 3, record.getSymA(3));
-                    assertEquals(record.getSymB(3), record.getSymA(3));
+                    TestUtils.assertEquals("symbol" + i % 3, record.getSymA(3));
+                    TestUtils.assertEquals(record.getSymB(3), record.getSymA(3));
                     i++;
                 }
                 assertEquals(i, reader.size());
@@ -4895,6 +5159,156 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTenantCloseRunsPoolBookkeepingWhenColumnarCancelFails() throws Exception {
+        // M2 follow-up: cleanupBeforeClose() also cancels a pending columnar
+        // write, via WalColumnarRowAppender.cancelColumnarWrite() ->
+        // WalWriter.cancelColumnarWrite(startRowId) -> setAppendPosition() --
+        // the same IO-performing rollback call as
+        // testTenantCloseRunsPoolBookkeepingWhenRollbackFails(). Before the
+        // distressed latch was added to cleanupBeforeClose(), this path had
+        // no try/catch and no distressed marking on failure, so routing
+        // close() purely on isDistressed() would have handed this half-
+        // cancelled, still-open writer back to the pool via returnToPool() --
+        // a poisoned instance handed to the next acquirer, worse than the
+        // plain stranding covered above. WalWriterTenant.close() still routes
+        // on isCleanedUp, not just isDistressed(), so this stays correct even
+        // if a future cleanup failure mode doesn't latch. This test pins both:
+        // the pool routing above, and that the latch stops the expel branch's
+        // retry from re-running the failing IO (mapFailures == 1, asserted
+        // below).
+        final long pageSize = 16_384;
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, pageSize);
+        AtomicBoolean armed = new AtomicBoolean(false);
+        AtomicInteger mapFailures = new AtomicInteger();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                // Persistent while armed, unlike a one-shot: the expel branch
+                // re-enters cleanupBeforeClose() via super.close(), and a
+                // one-shot injection would let that retry silently succeed,
+                // hiding whether close retried the failed IO at all.
+                if (armed.get()) {
+                    mapFailures.incrementAndGet();
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tenant_close_columnar (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken token = engine.verifyTableName("tenant_close_columnar");
+
+            WalWriter w = engine.getWalWriter(token);
+            ColumnarRowAppender appender = w.getColumnarRowAppender();
+            final int rowCount = rowsCrossingAppendPages(pageSize);
+            appender.beginColumnarWrite(rowCount);
+            // cancelColumnarWrite() rolls back every column's append pointer
+            // regardless of what was written, so writing only the designated-
+            // timestamp column -- and pushing it across a page boundary, same
+            // mechanism as the row-oriented test above -- is enough to force
+            // the ff.mmap() remap on cancel.
+            w.putServerAssignedTimestampColumnar(rowCount, 1_000_000L);
+
+            armed.set(true);
+            try {
+                w.close();
+                Assert.fail("close must propagate the columnar cancel failure");
+            } catch (CairoException expected) {
+            } finally {
+                armed.set(false);
+            }
+            Assert.assertEquals("cleanup must not retry the failed IO on the expel path", 1, mapFailures.get());
+
+            // In-body discriminator: on the unfixed pool the stranded busy
+            // entry kept this writer open with its fds. The fresh acquire
+            // below does NOT discriminate -- the pool simply hands out the
+            // next free slot even when an entry is stranded -- it only proves
+            // the pool still functions; assertMemoryLeak's shutdown check
+            // backstops the stranded entry itself.
+            Assert.assertFalse("expelled writer must be fully closed", w.isOpen());
+            try (WalWriter w2 = engine.getWalWriter(token)) {
+                Assert.assertNotSame(w, w2);
+                TableWriter.Row row = w2.newRow(2_000_000L);
+                row.putInt(1, 1);
+                row.append();
+                w2.commit();
+            }
+        });
+    }
+
+    @Test
+    public void testTenantCloseRunsPoolBookkeepingWhenRollbackFails() throws Exception {
+        // M2: the pooled WAL writer's close() ran cleanupBeforeClose() before any
+        // pool bookkeeping and outside any try/finally -- unlike WalWriter.close()
+        // itself, which is try { cleanupBeforeClose(); } finally { doClose(...); }.
+        // A rollback IO failure therefore propagated before returnToPool/
+        // expelFromPool ran, stranding the pool entry as busy with the writer's
+        // fds open, permanently. rollback0() marks the writer distressed before
+        // rethrowing, so with the try/finally in place the failure routes to the
+        // expel branch: full close, entry released, exception still propagates.
+        //
+        // The injection targets ff.mmap(), not ff.truncate()/ff.allocate(): a
+        // rollback to offset 0 only performs real IO when it forces MemoryPARWImpl
+        // to remap a different page (jumpTo()'s p > pageLo && p < pageHi fast path
+        // otherwise just moves the in-memory append pointer, and TableUtils
+        // .allocateDiskSpace() skips ff.allocate() whenever the file is already
+        // that long, which it is once rows have been appended). A small append
+        // page size plus enough buffered rows forces the designated-timestamp
+        // column across a page boundary, so its rollback must remap page 0 via
+        // ff.mmap() -- confirmed empirically by instrumenting every FilesFacade
+        // method the WAL writer path could plausibly touch during close().
+        final long pageSize = 16_384;
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, pageSize);
+        AtomicBoolean armed = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (armed.compareAndSet(true, false)) {
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tenant_close (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken token = engine.verifyTableName("tenant_close");
+
+            WalWriter w = engine.getWalWriter(token);
+            // Buffer enough uncommitted rows that the designated-timestamp column's
+            // append pointer crosses into a second page: rollback to row 0 then has
+            // to remap page 0, forcing a real ff.mmap() call.
+            final int rowCount = rowsCrossingAppendPages(pageSize);
+            for (int i = 0; i < rowCount; i++) {
+                TableWriter.Row row = w.newRow(1_000_000L + i);
+                row.putInt(1, i);
+                row.append();
+            }
+
+            armed.set(true);
+            try {
+                w.close();
+                Assert.fail("close must propagate the rollback failure -- the ff.mmap() injection never fired,"
+                        + " so rolling back " + rowCount + " rows never left page 0"
+                        + " of the " + Files.ceilPageSize(pageSize) + "-byte effective append page");
+            } catch (CairoException expected) {
+            } finally {
+                armed.set(false);
+            }
+
+            // In-body discriminator: on the unfixed pool the stranded busy
+            // entry kept this writer open with its fds. The fresh acquire
+            // below does NOT discriminate -- the pool simply hands out the
+            // next free slot even when an entry is stranded -- it only proves
+            // the pool still functions; assertMemoryLeak's shutdown check
+            // backstops the stranded entry itself.
+            Assert.assertFalse("expelled writer must be fully closed", w.isOpen());
+            try (WalWriter w2 = engine.getWalWriter(token)) {
+                Assert.assertNotNull(w2);
+            }
+        });
+    }
+
+    @Test
     public void testTruncateFollowedByTwoInserts() throws Exception {
         // Reproduces a block-sizing bug: after TRUNCATE, two INSERT WAL transactions
         // are visible to the applier, but the second INSERT gets LAST_ROW_COMMIT
@@ -4987,6 +5401,45 @@ public class WalWriterTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (UnsupportedOperationException ex) {
                 TestUtils.assertContains(ex.getMessage(), "cannot truncate symbol tables on WAL table");
+            }
+        });
+    }
+
+    @Test
+    public void testTxnTrackerIfExistsDoesNotCreateOrInstall() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+            // registerTable() eagerly installs a tracker; purge it to reproduce the "no tracker
+            // exists yet" case the same way a completed table drop does.
+            engine.getTableSequencerAPI().purgeTxnTracker(tableToken.getDirName());
+            Assert.assertNull(engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken));
+            // The non-creating accessor must not install one as a side effect of the miss above.
+            Assert.assertNull(engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken));
+
+            final SeqTxnTracker created = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            // Once a tracker exists, the non-creating accessor returns that same instance.
+            Assert.assertSame(created, engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken));
+
+            // No OSS caller passes a pre-resolved tracker to isWalApplySuspended(TableToken,
+            // SeqTxnTracker): the 1-arg overload (CairoEngine:2975) always resolves one before
+            // delegating here, so every OSS write path goes through that leg. The two callers
+            // that pass an already-resolved tracker directly are both ENT. Pin its distinctive
+            // legs: a null tracker (no lookup in hand yet) skips the hard-suspension check and
+            // falls through to the config list, while a resolved tracker's hard-suspended flag
+            // short-circuits ahead of the config list either way.
+            final TableToken unconfiguredToken = createTable(testName.getMethodName() + "_unconfigured");
+            final SeqTxnTracker unconfiguredTracker = engine.getTableSequencerAPI().getTxnTracker(unconfiguredToken);
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, tableToken.getDirName());
+            try {
+                // 2-arg overload, null-tracker leg: config list decides, no tracker consulted
+                Assert.assertTrue(engine.isWalApplySuspended(tableToken, null));
+                Assert.assertFalse(engine.isWalApplySuspended(unconfiguredToken, null));
+                // 2-arg overload, tracker-hit leg short-circuits ahead of the config list
+                unconfiguredTracker.setHardSuspended(true);
+                Assert.assertTrue(engine.isWalApplySuspended(unconfiguredToken, unconfiguredTracker));
+                Assert.assertFalse(engine.isWalApplySuspended(unconfiguredToken, created));
+            } finally {
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
             }
         });
     }
@@ -5999,6 +6452,22 @@ public class WalWriterTest extends AbstractCairoTest {
                 .wal();
     }
 
+    private static int rowsCrossingAppendPages(long requestedPageSize) {
+        // PropServerConfiguration wraps CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE
+        // in Files.ceilPageSize(), and Files.PAGE_SIZE is the OS allocation
+        // granularity: 4 KB on Linux x64, 16 KB on macOS arm64, but 64 KB on
+        // Windows (GetSystemInfo().dwAllocationGranularity). A hard-coded row
+        // count is therefore a silent no-op on Windows -- the append pointer
+        // never leaves page 0, rollback takes jumpTo()'s in-page fast path,
+        // and the injected ff.mmap() failure never fires. The WAL designated
+        // timestamp occupies a 128-bit (timestamp, rowId) pair per row, so
+        // size the count off the effective page size: two full pages plus a
+        // margin, which also lands the append pointer mid-page instead of
+        // exactly on a page boundary.
+        final long timestampEntryBytes = 2L * Long.BYTES;
+        return (int) ((Files.ceilPageSize(requestedPageSize) / timestampEntryBytes) * 2 + 100);
+    }
+
     private static void testReadMatViewState(int chunkSize) {
         int chunkSizeOld = node1.getConfiguration().getDefaultSeqPartTxnCount();
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSize);
@@ -6427,6 +6896,22 @@ public class WalWriterTest extends AbstractCairoTest {
                     "Binary sequences not equals at offset " + i
                             + ". Expected byte: " + expectedByte + ", actual byte: " + actualByte + ".",
                     expectedByte, actualByte
+            );
+        }
+    }
+
+    private static void assertSameSymbolResolution(WalReader a, WalReader b, int col) {
+        final int countB = b.getSymbolCount(col);
+        Assert.assertEquals("symbol count col=" + col, countB, a.getSymbolCount(col));
+        final DirectString va = new DirectString();
+        final DirectString vb = new DirectString();
+        for (int key = 0; key < countB; key++) {
+            final CharSequence sa = a.getSymbolValue(col, key, va);
+            final CharSequence sb = b.getSymbolValue(col, key, vb);
+            Assert.assertEquals(
+                    "value col=" + col + " key=" + key,
+                    sb == null ? null : Chars.toString(sb),
+                    sa == null ? null : Chars.toString(sa)
             );
         }
     }

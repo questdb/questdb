@@ -78,7 +78,7 @@ public class DirectCharSequenceIntHashMapTest {
                 // Force OOM so the rehash malloc fails.
                 Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
                 try {
-                    // 16th insert decrements free to 0 and triggers rehash.
+                    // The 16th insert triggers the pre-insert rehash.
                     map.put("key15", 15);
                     Assert.fail("Expected CairoException");
                 } catch (CairoException e) {
@@ -87,16 +87,20 @@ public class DirectCharSequenceIntHashMapTest {
                     Unsafe.setRssMemLimit(0);
                 }
 
-                // All 16 entries (including the one that triggered rehash) must be accessible.
-                Assert.assertEquals(16, map.size());
-                for (int i = 0; i < 16; i++) {
+                // The failed insert must leave the map unchanged.
+                Assert.assertEquals(15, map.size());
+                Assert.assertEquals(DirectCharSequenceIntHashMap.NO_ENTRY_VALUE, map.get("key15"));
+                for (int i = 0; i < 15; i++) {
                     Assert.assertEquals(i, map.get("key" + i));
                 }
 
                 // After lifting OOM, the next insert retries rehash successfully.
+                map.put("key15", 15);
                 map.put("key16", 16);
                 Assert.assertEquals(17, map.size());
-                Assert.assertEquals(16, map.get("key16"));
+                for (int i = 0; i < 17; i++) {
+                    Assert.assertEquals(i, map.get("key" + i));
+                }
             } finally {
                 Unsafe.setRssMemLimit(0);
             }
@@ -133,6 +137,72 @@ public class DirectCharSequenceIntHashMapTest {
             } finally {
                 Unsafe.setRssMemLimit(0);
             }
+        });
+    }
+
+    @SuppressWarnings("resource")
+    @Test
+    public void testConstructorLeaksNothingWhenOffsetBufferAllocationFails() throws Exception {
+        assertMemoryLeak(() -> {
+            final long usedBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER);
+            // No headroom at all, so the very first malloc breaches the limit and the
+            // constructor owns nothing when it unwinds.
+            Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+            try {
+                new DirectCharSequenceIntHashMap(
+                        16,
+                        0.5,
+                        DirectCharSequenceIntHashMap.NO_ENTRY_VALUE,
+                        1,
+                        MemoryTag.NATIVE_TABLE_WRITER,
+                        DirectCharSequenceIntHashMap.MAX_KEY_BUFFER_CAPACITY
+                );
+                Assert.fail("Expected CairoException");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isOutOfMemory());
+            } finally {
+                Unsafe.setRssMemLimit(0);
+            }
+
+            // The cleanup path must not free a pointer it never acquired, which would
+            // drive the tag counter negative.
+            Assert.assertEquals(usedBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER));
+        });
+    }
+
+    @SuppressWarnings("resource")
+    @Test
+    public void testConstructorReleasesOffsetBufferWhenKeyBufferAllocationFails() throws Exception {
+        assertMemoryLeak(() -> {
+            // mapCapacity = 16 (MIN_INITIAL_CAPACITY), len = ceilPow2(16 / 0.5) = 32,
+            // so the offset buffer is 32 << 3 = 256 bytes and, with avgKeySize = 1, the
+            // key-value buffer is ceilPow2(16 * ((1 << 1) + 8)) = 256 bytes too.
+            final long offsetBufferSize = 256;
+            final long usedBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER);
+            // Exactly enough headroom for the offset buffer, so the key-value buffer is the
+            // first allocation to breach the limit.
+            Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + offsetBufferSize);
+            try {
+                new DirectCharSequenceIntHashMap(
+                        16,
+                        0.5,
+                        DirectCharSequenceIntHashMap.NO_ENTRY_VALUE,
+                        1,
+                        MemoryTag.NATIVE_TABLE_WRITER,
+                        DirectCharSequenceIntHashMap.MAX_KEY_BUFFER_CAPACITY
+                );
+                Assert.fail("Expected CairoException");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isOutOfMemory());
+            } finally {
+                Unsafe.setRssMemLimit(0);
+            }
+
+            // A constructor that throws leaves no reachable instance to close(), so the
+            // offset buffer it already acquired has to be released by the constructor
+            // itself. Otherwise those 256 bytes leak for the lifetime of the process and
+            // keep counting against RSS_MEM_LIMIT.
+            Assert.assertEquals(usedBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER));
         });
     }
 
@@ -223,6 +293,44 @@ public class DirectCharSequenceIntHashMapTest {
         assertMemoryLeak(() -> {
             expectIllegalArgument(() -> new DirectCharSequenceIntHashMap(16, 0, 0));
             expectIllegalArgument(() -> new DirectCharSequenceIntHashMap(16, 1, 0));
+        });
+    }
+
+    @Test
+    public void testKeyBufferOffsetLimitDoesNotCorruptMap() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectCharSequenceIntHashMap map = new DirectCharSequenceIntHashMap(
+                    16,
+                    0.5,
+                    DirectCharSequenceIntHashMap.NO_ENTRY_VALUE,
+                    1,
+                    MemoryTag.NATIVE_DEFAULT,
+                    64
+            )) {
+                for (int i = 0; i < 5; i++) {
+                    String key = "k" + i;
+                    int hashCode = Chars.hashCode(key);
+                    int index = map.keyIndex(key, hashCode);
+                    Assert.assertTrue(map.tryPutAt(index, key, i, hashCode));
+                }
+
+                Assert.assertFalse(map.hasKeyCapacity("k5"));
+                int hashCode = Chars.hashCode("k5");
+                int index = map.keyIndex("k5", hashCode);
+                Assert.assertFalse(map.tryPutAt(index, "k5", 5, hashCode));
+                try {
+                    map.put("k5", 5);
+                    Assert.fail("Expected CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "maximum direct map key storage exceeded");
+                }
+
+                Assert.assertEquals(5, map.size());
+                Assert.assertEquals(DirectCharSequenceIntHashMap.NO_ENTRY_VALUE, map.get("k5"));
+                for (int i = 0; i < 5; i++) {
+                    Assert.assertEquals(i, map.get("k" + i));
+                }
+            }
         });
     }
 

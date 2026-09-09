@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DOUBLE_ARRAY;
 
@@ -117,6 +118,18 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
         return currentNDims;
     }
 
+    @TestOnly
+    public long getRowCacheBytes() {
+        return (long) rowOffsets.length * Long.BYTES
+                + (long) rowDims.length * Integer.BYTES
+                + (long) rowElementCounts.length * Integer.BYTES;
+    }
+
+    @TestOnly
+    public int getRowCacheCapacity() {
+        return rowOffsets.length;
+    }
+
     /**
      * Returns the total number of elements in the current row's array.
      *
@@ -172,8 +185,8 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
         this.typeCode = typeCode;
         this.isDoubleArray = (typeCode == TYPE_DOUBLE_ARRAY);
 
-        ensureRowCapacity(rowCount);
         int offset = 0;
+        boolean isRowCacheGrowthRequired = rowCount > rowOffsets.length;
 
         // Read null bitmap flag
         if (offset >= dataLength) {
@@ -182,6 +195,7 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
                     "array column data truncated: expected null bitmap flag"
             );
         }
+        int nullCount = 0;
         if (Unsafe.getByte(dataAddress + offset) != 0) {
             offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
@@ -192,10 +206,28 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
                 );
             }
             this.nullBitmapAddress = dataAddress + offset;
+            if (isRowCacheGrowthRequired) {
+                nullCount = QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
+            }
             offset += bitmapSize;
         } else {
             offset++;
             this.nullBitmapAddress = 0;
+        }
+
+        if (isRowCacheGrowthRequired) {
+            int nonNullCount = rowCount - nullCount;
+            long minimumRowDataBytes = (long) nonNullCount * 5;
+            if (dataLength - (long) offset < minimumRowDataBytes) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "array column data truncated: " + nonNullCount
+                                + " non-null rows require at least " + minimumRowDataBytes + " bytes"
+                );
+            }
+            if (nonNullCount > 0) {
+                ensureRowCapacity(rowCount);
+            }
         }
 
         this.dataAddress = dataAddress + offset;
@@ -205,9 +237,7 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
         long scanAddr = this.dataAddress;
         for (int row = 0; row < rowCount; row++) {
             if (nullBitmapAddress != 0 && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                rowOffsets[row] = -1; // Mark as null
-                rowDims[row] = 0;
-                rowElementCounts[row] = 0;
+                // Null rows do not read the row caches during iteration.
             } else {
                 rowOffsets[row] = scanAddr - this.dataAddress;
 
@@ -287,6 +317,15 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
         currentNDims = 0;
         currentElementCount = 0;
         currentValuesAddress = 0;
+    }
+
+    void releaseCachedResources() {
+        clear();
+        if (rowOffsets.length > INITIAL_ROW_CAPACITY) {
+            rowOffsets = new long[INITIAL_ROW_CAPACITY];
+            rowDims = new int[INITIAL_ROW_CAPACITY];
+            rowElementCounts = new int[INITIAL_ROW_CAPACITY];
+        }
     }
 
     private void ensureRowCapacity(int required) {

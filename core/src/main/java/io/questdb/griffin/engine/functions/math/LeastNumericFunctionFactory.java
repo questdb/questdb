@@ -353,13 +353,14 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         @Override
         public short getDecimal16(Record rec) {
             compute(rec);
-            return (short) least.getValue();
+            // narrowing the 64-bit null sentinel would yield 0
+            return least.isNull() ? Decimals.DECIMAL16_NULL : (short) least.getValue();
         }
 
         @Override
         public int getDecimal32(Record rec) {
             compute(rec);
-            return (int) least.getValue();
+            return least.isNull() ? Decimals.DECIMAL32_NULL : (int) least.getValue();
         }
 
         @Override
@@ -371,7 +372,7 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         @Override
         public byte getDecimal8(Record rec) {
             compute(rec);
-            return (byte) least.getValue();
+            return least.isNull() ? Decimals.DECIMAL8_NULL : (byte) least.getValue();
         }
 
         @Override
@@ -457,7 +458,7 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
             if (ColumnType.tagOf(type) == ColumnType.DECIMAL256) {
                 arg.getDecimal256(rec, decimal256);
                 if (decimal256.isNull()) {
-                    return Double.NEGATIVE_INFINITY;
+                    return Double.NaN;
                 }
                 sink.clear();
                 decimal256.setScale(ColumnType.getDecimalScale(type));

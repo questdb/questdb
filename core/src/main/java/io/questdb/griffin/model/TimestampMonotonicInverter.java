@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -37,7 +38,6 @@ import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 
 /**
  * Runtime helper that produces a designated-timestamp interval from a predicate
@@ -50,7 +50,6 @@ import io.questdb.std.ObjList;
  * {@link CompiledTickExpression}.
  */
 public class TimestampMonotonicInverter extends UntypedFunction {
-    private final ObjList<MonotonicTimestampFunction> chain;
     private final Function head;
     private final Function hiBound;
     private final short hiBoundAdjustment;
@@ -64,7 +63,6 @@ public class TimestampMonotonicInverter extends UntypedFunction {
 
     public TimestampMonotonicInverter(
             Function head,
-            ObjList<MonotonicTimestampFunction> chain,
             Function loBound,
             short loBoundAdjustment,
             long loConst,
@@ -75,7 +73,6 @@ public class TimestampMonotonicInverter extends UntypedFunction {
             TimestampDriver timestampDriver
     ) {
         this.head = head;
-        this.chain = chain;
         this.loBound = loBound;
         this.loBoundAdjustment = loBoundAdjustment;
         this.loConst = loConst;
@@ -88,11 +85,17 @@ public class TimestampMonotonicInverter extends UntypedFunction {
 
     @Override
     public void close() {
-        Misc.free(head);
-        Misc.free(loBound);
+        // head, loBound and hiBound are distinct owners hidden inside the inverter; the outer
+        // best-effort dynamic-range list cleanup only reaches this close(), not the functions it
+        // holds. A close() failure on an earlier owner must not abandon the later ones, so free
+        // every distinct owner best-effort (hiBound may alias loBound - free it once) and rethrow
+        // the accumulated failure, mirroring the freeBorrowedModels convention.
+        Throwable failure = Misc.freeBestEffort(null, head);
+        failure = Misc.freeBestEffort(failure, loBound);
         if (hiBound != loBound) {
-            Misc.free(hiBound);
+            failure = Misc.freeBestEffort(failure, hiBound);
         }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     /**
@@ -106,6 +109,18 @@ public class TimestampMonotonicInverter extends UntypedFunction {
         if (loBound != null) {
             lo = resolveBound(loBound);
             if (lo == Numbers.LONG_NULL) {
+                return;
+            }
+            if (loBoundAdjustment > 0 && lo == Long.MAX_VALUE) {
+                // a strict '>' bound at the output-domain ceiling matches nothing (no value exceeds
+                // Long.MAX_VALUE), so the predicate is unsatisfiable regardless of the chain. Without
+                // this guard the +1 that turns '>' into a closed '>= lo+1' wraps to Numbers.LONG_NULL
+                // (the open-lower sentinel), opening the interval to the whole storable domain and
+                // scanning every row before the residual rejects them all. Mirrors the guard in
+                // RuntimeIntervalModel. The symmetric strict '<' bound at Long.MIN_VALUE+1 is NOT
+                // guarded here: '< lo' can still be satisfied by a forward-shift that overflows the
+                // long boundary (reachable for uncapped nanos timestamps), so it must stay with the
+                // chain inversion, which declines (NONE) and leaves it to the residual filter.
                 return;
             }
             lo += loBoundAdjustment;
@@ -132,8 +147,12 @@ public class TimestampMonotonicInverter extends UntypedFunction {
         }
 
         io.of(lo, hi);
-        for (int i = 0, n = chain.size(); i < n; i++) {
-            if (chain.getQuick(i).invertTimestampInterval(io) == MonotonicTimestampFunction.NONE) {
+        // Traverse the owned head's linked monotonic chain (head -> getTimestampArg() -> ...) rather
+        // than a copied ObjList. The links hold the same functions in the same outermost-first order
+        // the compile path built, so inversion is identical, and the traversal allocates nothing.
+        Function f = head;
+        while (f instanceof MonotonicTimestampFunction m) {
+            if (m.invertTimestampInterval(io) == MonotonicTimestampFunction.NONE) {
                 // bound outside the invertible range: impose no interval, leaving it to the filter
                 out.add(Numbers.LONG_NULL, Long.MAX_VALUE);
                 return;
@@ -141,6 +160,7 @@ public class TimestampMonotonicInverter extends UntypedFunction {
             if (io.getLo() > io.getHi()) {
                 return;
             }
+            f = m.getTimestampArg();
         }
         if (io.getLo() <= io.getHi()) {
             out.add(io.getLo(), io.getHi());

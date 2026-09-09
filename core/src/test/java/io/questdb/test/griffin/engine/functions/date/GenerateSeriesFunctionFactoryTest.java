@@ -479,6 +479,37 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         """);
     }
 
+    /**
+     * The LONG series carries the same arithmetic as the TIMESTAMP one and reaches it from
+     * ordinary SQL the same way, so every shape that breaks one breaks the other.
+     */
+    @Test
+    public void testLongSeriesAtTheEdgesOfTheLongRange() throws Exception {
+        assertQuery("generate_series(9_223_372_036_854_775_805L, 9_223_372_036_854_775_801L, -3L)")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        9223372036854775805
+                        9223372036854775802
+                        """);
+
+        // Both ends inside the range and the span between them outside it, so end - start
+        // wraps. Its magnitude read signed is the wrong number rather than a negative one
+        // here - the count comes back as 1 against six rows - and only an unsigned divide
+        // recovers it.
+        assertQuery("generate_series((-9_000_000_000_000_000_000L), 8_000_000_000_000_000_000L, 3_000_000_000_000_000_000L)")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        -9000000000000000000
+                        -6000000000000000000
+                        -3000000000000000000
+                        0
+                        3000000000000000000
+                        6000000000000000000
+                        """);
+    }
+
     @Test
     public void testLongWithLimit() throws Exception {
         assertQuery("generate_series(1L, 10000000L) LIMIT 1")
@@ -588,6 +619,143 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
             assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_OTHER,
                     "generate_series('2025-01-01'::timestamp, '2025-02-01'::timestamp, :stepLong)");
         });
+    }
+
+    /**
+     * A light sort is what exercises the row-id round trip on the two factories that
+     * declare random access at plan time: it keeps each row's id and reads the value back
+     * through recordAt on recordB. The string-step factory answers that question from a
+     * cursor it has not opened yet, so it always takes the copying sort - its own round
+     * trip is covered by the LIMIT case above instead, and the arm here only holds the
+     * answer. The series is chosen so a wrong id does not happen to round-trip to the
+     * right row: reading the offset as a signed magnitude answers 2 for the last row, and
+     * start + step * 1 is a different row rather than the same one modulo 2^64.
+     */
+    @Test
+    public void testSeriesAtTheEdgesOfTheLongRangeAddressesRowsById() throws Exception {
+        assertQuery("generate_series((-9_000_000_000_000_000_000)::timestamp, 8_000_000_000_000_000_000::timestamp, 3_000_000_000_000_000_000L) ORDER BY generate_series DESC")
+                .timestampDesc("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        192102-06-07T10:40:00.000000Z
+                        97036-03-20T05:20:00.000000Z
+                        1970-01-01T00:00:00.000000Z
+                        -93097-10-14T18:40:00.000000Z
+                        -188163-07-27T13:20:00.000000Z
+                        -283229-05-10T08:00:00.000000Z
+                        """);
+
+        assertQuery("generate_series((-9_000_000_000_000_000_000L), 8_000_000_000_000_000_000L, 3_000_000_000_000_000_000L) ORDER BY generate_series DESC")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        6000000000000000000
+                        3000000000000000000
+                        0
+                        -3000000000000000000
+                        -6000000000000000000
+                        -9000000000000000000
+                        """);
+
+        assertQuery("generate_series((-9_000_000_000_000_000_000)::timestamp_ns, 8_000_000_000_000_000_000::timestamp_ns, '50_000_000m') ORDER BY generate_series DESC")
+                .timestampDesc("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        2160-02-18T10:40:00.000000000Z
+                        2065-01-24T05:20:00.000000000Z
+                        1970-01-01T00:00:00.000000000Z
+                        1874-12-07T18:40:00.000000000Z
+                        1779-11-13T13:20:00.000000000Z
+                        1684-10-19T08:00:00.000000000Z
+                        """);
+    }
+
+    /**
+     * LIMIT with an offset is what reaches skipRows, and a span that wraps is what makes
+     * the skip's own arithmetic observable: the skip is clamped against the row count, so
+     * a count read as a signed magnitude - 1 against six rows here - stops the skip short
+     * and the answer starts at the wrong row.
+     */
+    @Test
+    public void testSeriesAtTheEdgesOfTheLongRangeSkipsRows() throws Exception {
+        assertQuery("generate_series((-9_000_000_000_000_000_000)::timestamp, 8_000_000_000_000_000_000::timestamp, 3_000_000_000_000_000_000L) LIMIT 2, 4")
+                .timestamp("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        -93097-10-14T18:40:00.000000Z
+                        1970-01-01T00:00:00.000000Z
+                        """);
+
+        assertQuery("generate_series((-9_000_000_000_000_000_000L), 8_000_000_000_000_000_000L, 3_000_000_000_000_000_000L) LIMIT 2, 4")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        -3000000000000000000
+                        0
+                        """);
+
+        assertQuery("generate_series((-9_000_000_000_000_000_000)::timestamp_ns, 8_000_000_000_000_000_000::timestamp_ns, '50_000_000m') LIMIT 2, 4")
+                .timestamp("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        1874-12-07T18:40:00.000000000Z
+                        1970-01-01T00:00:00.000000000Z
+                        """);
+    }
+
+    /**
+     * A series whose last row is the top of the long range, so one more step wraps to the
+     * bottom - which is still inside the series by any comparison. A walk that advances
+     * first and asks afterwards never terminates and emits the whole negative half of the
+     * range on the way, NULL sentinel included.
+     * <p>
+     * Its own method rather than the first case of the one below, because a walk that does
+     * not terminate takes the whole class down with it and nothing after it would run.
+     */
+    @Test
+    public void testSeriesAtTheTopOfTheLongRangeTerminates() throws Exception {
+        assertQuery("generate_series(9_223_372_036_854_775_806::timestamp, 9_223_372_036_854_775_807::timestamp, 1L)")
+                .timestamp("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        294247-01-10T04:00:54.775806Z
+                        294247-01-10T04:00:54.775807Z
+                        """);
+
+        assertQuery("generate_series(9_223_372_036_854_775_806L, 9_223_372_036_854_775_807L, 1L)")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        9223372036854775806
+                        9223372036854775807
+                        """);
+
+        assertQuery("generate_series(9_223_372_036_854_775_806::timestamp, 9_223_372_036_854_775_807::timestamp, '1U')")
+                .timestamp("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        294247-01-10T04:00:54.775806Z
+                        294247-01-10T04:00:54.775807Z
+                        """);
+
+        // A calendar step cannot be counted off in advance, so this arm keeps the
+        // comparison walk - and the calendar addition wraps rather than clamping, which
+        // left the comparison carrying it through the whole far half of the range one
+        // month at a time.
+        assertQuery("generate_series(9_223_372_036_854_775_806::timestamp, 9_223_372_036_854_775_807::timestamp, '1M')")
+                .timestamp("generate_series")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        generate_series
+                        294247-01-10T04:00:54.775806Z
+                        """);
     }
 
     @Test
@@ -879,6 +1047,38 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         1969-12-31T23:59:59.999999998Z
                         1970-01-01T00:00:00.000000001Z
                         1970-01-01T00:00:00.000000004Z
+                        """);
+    }
+
+    @Test
+    public void testTimestampSeriesAtTheEdgesOfTheLongRange() throws Exception {
+        // toTop() parks the record one step before the first row, which for a descending
+        // series anchored at the top of the range is itself off the end of it. The wrap in
+        // toTop() and the wrap in the first advance cancel, so advancing first happens to
+        // land right here - but reading that sentinel as a position does not, and this is
+        // the shape that catches a walk which compares before it advances.
+        assertQuery("generate_series(9_223_372_036_854_775_805::timestamp, 9_223_372_036_854_775_801::timestamp, -3L)")
+                .timestampDesc("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        294247-01-10T04:00:54.775805Z
+                        294247-01-10T04:00:54.775802Z
+                        """);
+
+        // A span wider than a signed long can hold: the row count has to divide it as
+        // unsigned - Math.abs(end - start) is negative here - and the walk has to stop
+        // rather than wrap round and run forever.
+        assertQuery("generate_series((-4_611_686_018_427_387_904)::timestamp, 4_611_686_018_427_387_904::timestamp, 2_305_843_009_213_693_952L)")
+                .timestamp("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        -144169-06-28T09:59:32.612096Z
+                        -71100-09-29T04:59:46.306048Z
+                        1970-01-01T00:00:00.000000Z
+                        75039-04-04T19:00:13.693952Z
+                        148108-07-06T14:00:27.387904Z
                         """);
     }
 
@@ -1201,6 +1401,84 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         2025-01-21T00:00:00.000000000Z
                         2025-01-26T00:00:00.000000000Z
                         2025-01-31T00:00:00.000000000Z
+                        """);
+    }
+
+    /**
+     * The string-step series over the same shapes. Its step carries a unit rather than a
+     * tick count, so the walk it shares with the other two is the one it takes for every
+     * unit of constant width; a calendar step keeps the comparison, having no closed form
+     * to count with.
+     */
+    @Test
+    public void testTimestampStringSeriesAtTheEdgesOfTheLongRange() throws Exception {
+        assertQuery("generate_series(9_223_372_036_854_775_805::timestamp, 9_223_372_036_854_775_801::timestamp, '-3U')")
+                .timestampDesc("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        294247-01-10T04:00:54.775805Z
+                        294247-01-10T04:00:54.775802Z
+                        """);
+
+        // The calendar arm over the same too-wide span. Its count stays the estimate a
+        // calendar step allows, but reading the span as a signed magnitude made that
+        // estimate NEGATIVE - a row count no consumer can act on.
+        assertQuery("generate_series((-4_611_686_018_427_387_904)::timestamp, 4_611_686_018_427_387_904::timestamp, '1_000_000M')")
+                .timestamp("generate_series")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        generate_series
+                        -144169-06-28T09:59:32.612096Z
+                        -60836-10-28T09:59:32.612096Z
+                        22498-02-28T09:59:32.612096Z
+                        105831-06-28T09:59:32.612096Z
+                        """);
+
+        // Nanosecond ticks, so a step a signed int can name still spans more of the range
+        // than a long can hold end to end.
+        assertQuery("generate_series((-9_000_000_000_000_000_000)::timestamp_ns, 8_000_000_000_000_000_000::timestamp_ns, '50_000_000m')")
+                .timestamp("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        1684-10-19T08:00:00.000000000Z
+                        1779-11-13T13:20:00.000000000Z
+                        1874-12-07T18:40:00.000000000Z
+                        1970-01-01T00:00:00.000000000Z
+                        2065-01-24T05:20:00.000000000Z
+                        2160-02-18T10:40:00.000000000Z
+                        """);
+    }
+
+    /**
+     * SAMPLE BY spells hours with a capital, the step parser takes both spellings and so does
+     * the driver's add method - but the tick width behind them is read from a switch of its
+     * own, and that one named only the lower-case form. Every path that addresses a row
+     * rather than walking to it raised on the other.
+     */
+    @Test
+    public void testTimestampStringSeriesWithACapitalHourStepAddressesRows() throws Exception {
+        assertQuery("generate_series('2025-01-01'::timestamp, '2025-01-02'::timestamp, '6H') ORDER BY generate_series DESC")
+                .timestampDesc("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        2025-01-02T00:00:00.000000Z
+                        2025-01-01T18:00:00.000000Z
+                        2025-01-01T12:00:00.000000Z
+                        2025-01-01T06:00:00.000000Z
+                        2025-01-01T00:00:00.000000Z
+                        """);
+
+        assertQuery("generate_series('2025-01-01'::timestamp, '2025-01-02'::timestamp, '6H') LIMIT 2, 4")
+                .timestamp("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        2025-01-01T12:00:00.000000Z
+                        2025-01-01T18:00:00.000000Z
                         """);
     }
 

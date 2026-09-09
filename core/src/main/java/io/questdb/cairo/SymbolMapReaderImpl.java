@@ -68,6 +68,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private boolean nullValue;
     private int symbolCapacity;
     private int symbolCount;
+    private long symbolTableGeneration;
 
     public SymbolMapReaderImpl() {
     }
@@ -111,6 +112,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     @Override
     public int getSymbolCount() {
         return symbolCount;
+    }
+
+    @Override
+    public long getSymbolTableGeneration() {
+        return symbolTableGeneration;
     }
 
     @Override
@@ -222,10 +228,16 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // theoretically should require 2 value cells in index per hash
             // we use 4 cells to compensate for occasionally unlucky hash distribution
             this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
-            if (cached) {
-                cache.setPos(symbolCapacity);
-            }
+            // The cache grows on demand in fetchAndCache, which is why it is not
+            // pre-sized here. Pre-sizing allocated and zero-filled an Object[] of
+            // the column's DECLARED capacity on every open - 16 MB for a column
+            // declared CAPACITY 2097152, retained for the reader's life, whether or
+            // not a single value was ever resolved through it. It bought nothing
+            // even then: the clear() below immediately reset the position to zero,
+            // so only the backing array survived, and extendAndSet grows that
+            // geometrically anyway.
             cache.clear();
+            symbolTableGeneration = symbolTableGeneration == Long.MAX_VALUE ? 0 : symbolTableGeneration + 1;
             LOG.debug().$("open [columnName=").$(path.trimTo(plen).concat(columnName).$())
                     .$(", fd=").$(offsetMem.getFd())
                     .$(", capacity=").$(symbolCapacity)
@@ -253,8 +265,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             assert charSize > 0 || symbolCount == 0;
             charMem.extend(charSize);
         } else if (symbolCount < this.symbolCount) {
-            cache.remove(symbolCount + 1, this.symbolCount);
+            cache.remove(symbolCount, this.symbolCount - 1);
             this.symbolCount = symbolCount;
+            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
         }
         // Refresh contains null flag.
         this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
@@ -281,6 +294,25 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 return cachedValue(key);
             }
             return uncachedValue(key);
+        }
+        return null;
+    }
+
+    /**
+     * Binds the caller's {@code view} to the value stored for {@code key}, reading the
+     * mapped char file directly. Two differences from {@link #valueOf(int)} make this the
+     * accessor a bulk consumer wants: the caller owns the view, so two live values can be
+     * held at once without the A/B pair this class keeps for itself, and the read always
+     * goes to the mapping rather than the heap cache - a cached column would otherwise
+     * retain a {@code String} per resolved key, which is precisely the footprint a reader
+     * that resolves millions of keys must not build.
+     * <p>
+     * The view stays valid until this reader is rebound by {@link #of} or closed, or until
+     * the caller rebinds it.
+     */
+    public CharSequence valueOf(int key, DirectString view) {
+        if (key > -1 && key < symbolCount) {
+            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), view);
         }
         return null;
     }
@@ -320,6 +352,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         @Override
         public int getSymbolCount() {
             return symbolCount;
+        }
+
+        @Override
+        public long getSymbolTableGeneration() {
+            return symbolTableGeneration;
         }
 
         @Override

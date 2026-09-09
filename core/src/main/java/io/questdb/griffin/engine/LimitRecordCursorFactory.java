@@ -82,6 +82,33 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         return true;
     }
 
+    // Stable iff the limit expressions (which may be arbitrary functions) and the base are stable.
+    @Override
+    public boolean isNonDeterministic() {
+        final Function leftFunc = cursor.leftFunction;
+        if (leftFunc != null && leftFunc.isNonDeterministic()) {
+            return true;
+        }
+        final Function rightFunc = cursor.rightFunction;
+        if (rightFunc != null && rightFunc.isNonDeterministic()) {
+            return true;
+        }
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        final Function leftFunc = cursor.leftFunction;
+        if (leftFunc != null && !leftFunc.isStableWithinExecution()) {
+            return false;
+        }
+        final Function rightFunc = cursor.rightFunction;
+        if (rightFunc != null && !rightFunc.isStableWithinExecution()) {
+            return false;
+        }
+        return base.isStableWithinExecution();
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();

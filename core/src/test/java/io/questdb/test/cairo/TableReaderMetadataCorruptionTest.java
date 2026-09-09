@@ -31,6 +31,8 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -228,6 +230,66 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplacingColumnIndexBeyondColumnCount() throws Exception {
+        // this index would send the chain walk past the end of the _meta file
+        assertReplacingIndexIgnored(100_000, 2);
+    }
+
+    @Test
+    public void testReplacingColumnIndexForwardReference() throws Exception {
+        // a replacing column always comes after the column it replaces, never before
+        assertReplacingIndexIgnored(9, 2);
+    }
+
+    @Test
+    public void testReplacingColumnIndexIsClearedOnNextDdl() throws Exception {
+        // any ALTER rewrites the column block, which drops the junk
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                TableToken tableToken = createAllTableWithReplacingIndex(path, 100_000, 2);
+
+                try (TableWriter writer = TestUtils.newOffPoolWriter(configuration, tableToken, engine)) {
+                    writer.addColumn("z", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                }
+
+                Assert.assertEquals(0, readMetaInt(path, replacingIndexOffset(2)));
+            }
+        });
+    }
+
+    @Test
+    public void testReplacingColumnIndexOfDeletedColumnIsHonoured() throws Exception {
+        // what a real ALTER COLUMN TYPE leaves: "double" (3) replaces "short" (1), which is deleted
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                TableToken tableToken = createAllTableWithReplacingIndex(path, 1, 3);
+                // a deleted column has a negative type
+                pokeMetaInt(path, TableUtils.META_OFFSET_COLUMN_TYPES + TableUtils.META_COLUMN_DATA_SIZE, -ColumnType.SHORT);
+
+                try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken)) {
+                    metadata.loadMetadata();
+                    // the replacement takes over the position of the column it replaced
+                    Assert.assertEquals(-1, metadata.getColumnIndexQuiet("short"));
+                    Assert.assertEquals("double", metadata.getColumnName(1));
+                    Assert.assertEquals(3, metadata.getWriterIndex(1));
+                    Assert.assertEquals(1, metadata.getOriginalWriterIndex(1));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReplacingColumnIndexPointsAtLiveColumn() throws Exception {
+        // in range and below column 3, but column 1 is live, so it is not a replacement
+        assertReplacingIndexIgnored(1, 3);
+    }
+
+    @Test
+    public void testReplacingColumnIndexSelfReference() throws Exception {
+        assertReplacingIndexIgnored(3, 3);
+    }
+
+    @Test
     public void testTransitionIndexWhenColumnCountIsBeyondFileSize() throws Exception {
         // this test asserts that validator compares column count to file size, where
         // file is prepared to be smaller than count. On Windows this setup does not work
@@ -303,6 +365,27 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         });
     }
 
+    private void assertReplacingIndexIgnored(int replacingIndex, int columnIndex) throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                TableToken tableToken = createAllTableWithReplacingIndex(path, replacingIndex, columnIndex);
+
+                // both metadata paths read it as "no replacement" and leave the columns alone
+                try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken)) {
+                    metadata.loadMetadata();
+                    Assert.assertEquals(columnIndex, metadata.getWriterIndex(columnIndex));
+                    for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                        Assert.assertEquals(metadata.getWriterIndex(i), metadata.getOriginalWriterIndex(i));
+                    }
+                }
+
+                try (TableWriter writer = TestUtils.newOffPoolWriter(configuration, tableToken, engine)) {
+                    Assert.assertEquals(columnIndex, writer.getMetadata().getWriterIndex(columnIndex));
+                }
+            }
+        });
+    }
+
     private void assertTransitionIndexValidation(int columnCount, String contains) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
@@ -334,5 +417,32 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
             }
         });
 
+    }
+
+    private TableToken createAllTableWithReplacingIndex(Path path, int replacingIndex, int columnIndex) {
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO);
+        TableToken tableToken = engine.verifyTableName("all");
+        path.of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+        // the on-disk encoding is 1-based, with 0 meaning "no replacement"
+        pokeMetaInt(path, replacingIndexOffset(columnIndex), replacingIndex + 1);
+        return tableToken;
+    }
+
+    private void pokeMetaInt(Path path, long offset, int value) {
+        try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+            mem.smallFile(TestFilesFacadeImpl.INSTANCE, path.$(), MemoryTag.MMAP_DEFAULT);
+            mem.putInt(offset, value);
+        }
+    }
+
+    private int readMetaInt(Path path, long offset) {
+        try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+            mem.smallFile(TestFilesFacadeImpl.INSTANCE, path.$(), MemoryTag.MMAP_DEFAULT);
+            return mem.getInt(offset);
+        }
+    }
+
+    private long replacingIndexOffset(int columnIndex) {
+        return TableUtils.META_OFFSET_COLUMN_TYPES + columnIndex * TableUtils.META_COLUMN_DATA_SIZE + 24;
     }
 }

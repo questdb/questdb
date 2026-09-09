@@ -58,6 +58,7 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
@@ -65,7 +66,6 @@ import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.FlyweightMessageContainer;
@@ -75,6 +75,7 @@ import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -104,8 +105,11 @@ import java.util.function.Consumer;
 
 import static io.questdb.cutlass.pgwire.PGConnectionContext.*;
 import static io.questdb.cutlass.pgwire.PGOids.*;
+import static io.questdb.cutlass.pgwire.PGUtils.NUMERIC_NEG;
+import static io.questdb.cutlass.pgwire.PGUtils.NUMERIC_POS;
 import static io.questdb.cutlass.pgwire.PGUtils.calculateColumnBinSize;
 import static io.questdb.cutlass.pgwire.PGUtils.estimateColumnTxtSize;
+import static io.questdb.cutlass.pgwire.PGUtils.outColBinDecimal;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
@@ -115,10 +119,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public static final int SYNC_DESC_NONE = 0;
     public static final int SYNC_DESC_PARAMETER_DESCRIPTION = 2;
     public static final int SYNC_DESC_ROW_DESCRIPTION = 1;
+    // message type + message length + column count
+    private static final int DATA_ROW_HEADER_SIZE = Byte.BYTES + Integer.BYTES + Short.BYTES;
     private static final int ERROR_TAIL_MAX_SIZE = 23;
     private static final Log LOG = LogFactory.getLog(PGPipelineEntry.class);
-    private static final short NUMERIC_NEG = 0x4000;
-    private static final short NUMERIC_POS = 0x0000;
     // tableOid + column number + type + type size + type modifier + format code
     private static final int ROW_DESCRIPTION_COLUMN_RECORD_FIXED_SIZE = 3 * Short.BYTES + 3 * Integer.BYTES;
     private static final int SYNC_BIND = 1;
@@ -150,6 +154,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
     private final int maxRecompileAttempts;
+    private final PGMessageProcessingException messageProcessingException;
     private final BitSet msgBindParameterFormatCodes = new BitSet();
     // stores result format codes (0=Text,1=Binary) from the latest bind message
     // we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
@@ -172,6 +177,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final ObjList<String> pgResultSetColumnNames;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
+    private final CancellationBinding queryCancellation = new CancellationBinding();
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
     boolean isCopy;
@@ -202,6 +208,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // not to be confused with prepared statements that come on the
     // PostgresSQL wire.
     private Utf8Sequence preparedStatementNameToDeallocate;
+    private MemoryTracker queryMemoryTracker;
     private boolean selectIsCacheable = true;
     private long sqlAffectedRowCount = 0;
     // The count of rows sent that have been sent to the client per fetch. Client can either
@@ -238,6 +245,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.isCopy = false;
         this.engine = engine;
         this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
+        this.messageProcessingException = new PGMessageProcessingException(this, errorMessageSink);
         this.msgParseParameterTypeOIDs = new IntList();
         this.outParameterTypeDescriptionTypes = new LongList();
         this.pgResultSetColumnTypes = new IntList();
@@ -271,6 +279,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (tas != null) {
             // close cursor in case it is open
             cursor = Misc.free(cursor);
+            queryCancellation.clear();
+            queryMemoryTracker = null;
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
@@ -351,6 +361,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         namedPortal = null;
         namedStatement = null;
         preparedStatementNameToDeallocate = null;
+        queryCancellation.clear();
+        queryMemoryTracker = null;
         sqlAffectedRowCount = 0;
         sqlReturnRowCount = 0;
         sqlReturnRowCountLimit = 0;
@@ -377,6 +389,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void closeSuspendedCursor() {
         cursor = Misc.free(cursor);
+        queryCancellation.clear();
+        queryMemoryTracker = null;
         stateSuspended = false;
     }
 
@@ -741,6 +755,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     // fall-through
                 case CompiledQuery.CREATE_MAT_VIEW:
                     // fall-through
+                case CompiledQuery.CREATE_LIVE_VIEW:
+                    // fall-through
                 case CompiledQuery.DROP:
                     executeDdlFenced(sqlExecutionContext, tempSequence, false);
                     break;
@@ -932,6 +948,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             switch (stateSync) {
                 case SYNC_DATA_EXHAUSTED:
                     cursor = Misc.free(cursor);
+                    queryCancellation.clear();
+                    queryMemoryTracker = null;
                     stateSuspended = false;
                     outCommandComplete(utf8Sink, sqlReturnRowCount);
                     break;
@@ -969,7 +987,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.outParameterTypeDescriptionTypes.addAll(tai.getPgOutParameterTypes());
     }
 
-    public void ofCachedSelect(CharSequence utf16SqlText, TypesAndSelect tas) {
+    public void ofCachedSelect(CharSequence utf16SqlText, TypesAndSelect tas) throws PGMessageProcessingException {
+        try {
+            rejectLongArrayResults(tas.getFactory().getMetadata());
+        } catch (PGMessageProcessingException e) {
+            tas.close();
+            throw e;
+        }
         this.sqlText = utf16SqlText;
         this.factory = tas.getFactory();
         this.sqlTag = tas.getSqlTag();
@@ -985,7 +1009,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.empty = true;
     }
 
-    public void ofSimpleCachedSelect(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, TypesAndSelect tas) throws SqlException {
+    public void ofSimpleCachedSelect(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, TypesAndSelect tas)
+            throws PGMessageProcessingException, SqlException {
+        rejectLongArrayResults(tas.getFactory().getMetadata());
         setStateDesc(SYNC_DESC_ROW_DESCRIPTION); // send out the row description message
         this.empty = sqlText == null || sqlText.isEmpty();
         this.sqlText = sqlText;
@@ -1002,7 +1028,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // Calling a compiler while being called from a compiler is a bad idea.
         sqlExecutionContext.setCacheHit(cacheHit);
         sqlExecutionContext.getCircuitBreaker().resetTimer();
-        cursor = factory.getCursor(sqlExecutionContext);
+        openCursor(sqlExecutionContext);
         copyPgResultSetColumnTypesAndNames();
         setStateExec(true);
     }
@@ -1025,6 +1051,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             try {
                 setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
                 copyPgResultSetColumnTypesAndNames();
+            } catch (PGMessageProcessingException e) {
+                throw e;
             } catch (Throwable e) {
                 throw kaput().put(e);
             }
@@ -1179,6 +1207,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private long calculateRecordTailSize(
+            SqlExecutionContext sqlExecutionContext,
             Record record,
             int columnCount,
             long maxBlobSize,
@@ -1191,7 +1220,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
             // if column is not variable size and format code is text, we can't calculate size
             if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
-                return -1;
+                if (typeTag != ColumnType.ARRAY || !record.getArray(i, columnType).isNull()) {
+                    return -1;
+                }
+                // A NULL array is the one text array whose size is knowable: outColTxtArr() writes
+                // the same 4-byte NULL marker as the binary path, so the row stays resumable.
+                recordSize += Integer.BYTES;
+                continue;
             }
             // number of bits or chars for geohash
             final int geohashSize = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
@@ -1200,8 +1235,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // all other columns will be sent in full (-1 means header not sent = full size)
             final int effectiveResumeOffset = (i == outResendColumnIndex) ? outResendResumePoint : -1;
 
-            final int columnValueSize = calculateColumnBinSize(
+            final long columnValueSize = calculateColumnBinSize(
                     this,
+                    sqlExecutionContext,
                     record,
                     i,
                     columnType,
@@ -1340,8 +1376,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.INT, false), 0);
                 break;
             case X_PG_ARR_INT8:
-                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.LONG, false), 0);
-                break;
+                throw SqlException.position(0)
+                        .put("array bind variables are not supported for element type LONG");
             case X_PG_ARR_FLOAT4:
                 bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.FLOAT, false), 0);
                 break;
@@ -1399,10 +1435,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 .put(']');
     }
 
-    // Used to estimate required column size (or full record size in case of text format)
-    // to be reported to the user in the insufficient send buffer size case.
-    private long estimateRecordSize(Record record, int columnCount) throws PGMessageProcessingException {
-        long recordSize = 0;
+    // Used to estimate the size of the whole DataRow message, header included, to be reported to the
+    // user in the insufficient send buffer size case. The number must be a send buffer size the row
+    // actually fits into, so it covers the header outRecord() writes before the first column value.
+    private long estimateRecordSize(
+            SqlExecutionContext sqlExecutionContext,
+            Record record,
+            int columnCount
+    ) throws PGMessageProcessingException {
+        long recordSize = DATA_ROW_HEADER_SIZE;
         for (int i = 0; i < columnCount; i++) {
             final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
             final int typeTag = ColumnType.tagOf(columnType);
@@ -1414,9 +1455,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             final long columnValueSize;
             // if column is not variable size and format code is text, we can't calculate size
             if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
-                columnValueSize = estimateColumnTxtSize(record, i, typeTag);
+                columnValueSize = estimateColumnTxtSize(record, i, columnType);
             } else {
-                columnValueSize = calculateColumnBinSize(this, record, i, columnType, geohashSize, Long.MAX_VALUE, -1);
+                columnValueSize = calculateColumnBinSize(
+                        this,
+                        sqlExecutionContext,
+                        record,
+                        i,
+                        columnType,
+                        geohashSize,
+                        Long.MAX_VALUE,
+                        -1
+                );
             }
 
             if (columnValueSize < 0) {
@@ -1460,24 +1510,29 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
         long affectedRowCount = 0;
         engine.getMetrics().pgWireMetrics().markStart();
-        final Lock lock = engine.getRoleSwitchReadLock();
-        lock.lock();
         try {
-            // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
-            // lock around the REPLICA flag publish. The execute runs inside the read hold so the flip
-            // cannot interleave (its write acquire waits), while other commits share the read side.
-            if (engine.isReadOnlyMode()
-                    && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
-                throw CairoException.readOnlyAccess();
+            final Lock lock = engine.getRoleSwitchReadLock();
+            final OperationFuture future;
+            lock.lock();
+            try {
+                // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
+                // lock around the REPLICA flag publish. The execute runs inside the read hold so the flip
+                // cannot interleave (its write acquire waits), while other commits share the read side.
+                if (engine.isReadOnlyMode()
+                        && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
+                    throw CairoException.readOnlyAccess();
+                }
+                future = operation.execute(sqlExecutionContext, tempSequence);
+            } finally {
+                lock.unlock();
             }
-            try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
-                fut.await();
+            try (future) {
+                future.await();
                 if (reportAffectedRows) {
-                    affectedRowCount = fut.getAffectedRowsCount();
+                    affectedRowCount = future.getAffectedRowsCount();
                 }
             }
         } finally {
-            lock.unlock();
             engine.getMetrics().pgWireMetrics().markComplete();
         }
         return affectedRowCount;
@@ -1673,7 +1728,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     // The goal would be to just recompile from text.
                     if (factory != null) {
                         try {
-                            cursor = factory.getCursor(sqlExecutionContext);
+                            openCursor(sqlExecutionContext);
                             // when factory is not null, and we can obtain cursor without issues
                             // we would exit early
                             break;
@@ -1819,22 +1874,46 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColBinArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
+    // outCursor() re-installs queryCancellation and queryMemoryTracker on the context before every
+    // row batch, so every site that opens a cursor must capture them here.
+    private void openCursor(SqlExecutionContext sqlExecutionContext) throws SqlException {
+        cursor = factory.getCursor(sqlExecutionContext);
+        sqlExecutionContext.getCircuitBreaker().copyCancelledFlagTo(queryCancellation);
+        queryMemoryTracker = sqlExecutionContext.getMemoryTracker();
+    }
+
+    private void outColBinArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType)
+            throws PGMessageProcessingException {
         ArrayView array = record.getArray(columnIndex, columnType);
         if (array.getDimCount() == 0) {
             utf8Sink.setNullValue();
             return;
         }
         short elemType = array.getElemType();
+        if (elemType != ColumnType.DOUBLE) {
+            // Only DOUBLE elements have a binary encoding here, and the size arithmetic below
+            // assumes them. Reject before writing a byte: the element loop would
+            // otherwise emit nothing per element while the header declared a length for them.
+            throw kaput().put("binary result format is not supported for arrays with element type ")
+                    .put(ColumnType.nameOf(elemType))
+                    .put(", request text format instead [column=").put(columnIndex).put(']');
+        }
         if (outResendResumePoint == -1) {
             int nDims = array.getDimCount();
             int componentTypeOid = getTypeOid(elemType);
             int notNullCount = PGUtils.countNotNull(array, 0);
+            final long columnSize = PGUtils.calculateArrayColBinSizeIncludingHeader(array, notNullCount);
+            final long valueSize = columnSize - Integer.BYTES;
+            if (valueSize > Integer.MAX_VALUE) {
+                throw kaput().put("binary array exceeds PGWire size limit [size=")
+                        .put(valueSize).put(", max=").put(Integer.MAX_VALUE)
+                        .put(", column=").put(columnIndex).put(']');
+            }
 
             // The size field indicates the size of what follows, excluding its own size,
             // that's why we subtract Integer.BYTES from it. The same method is used to calculate
             // the full size of the message, and in that case this field must be included.
-            utf8Sink.putNetworkInt(PGUtils.calculateArrayColBinSizeIncludingHeader(array, notNullCount) - Integer.BYTES);
+            utf8Sink.putNetworkInt((int) valueSize);
             utf8Sink.putNetworkInt(nDims);
             utf8Sink.putIntDirect(notNullCount < array.getCardinality() ? 1 : 0); // "has nulls" flag
             utf8Sink.putNetworkInt(componentTypeOid);
@@ -1848,29 +1927,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         try {
             if (array.isVanilla()) {
                 int len = array.getFlatViewLength();
-                // Note that we rely on a HotSpot optimization: Loop-invariant code motion.
-                // It moves the switch outside the loop.
                 for (int i = outResendResumePoint; i < len; i++) {
-                    switch (elemType) {
-                        case ColumnType.LONG:
-                            utf8Sink.putNetworkInt(Long.BYTES);
-                            utf8Sink.putNetworkLong(array.getLong(i));
-                            break;
-                        case ColumnType.DOUBLE:
-                            double val = array.getDouble(i);
-                            if (Numbers.isFinite(val)) {
-                                utf8Sink.putNetworkInt(Double.BYTES);
-                                utf8Sink.putNetworkDouble(val);
-                            } else {
-                                utf8Sink.setNullValue();
-                            }
-                            break;
+                    double val = array.getDouble(i);
+                    if (Numbers.isFinite(val)) {
+                        utf8Sink.putNetworkInt(Double.BYTES);
+                        utf8Sink.putNetworkDouble(val);
+                    } else {
+                        utf8Sink.setNullValue();
                     }
                     utf8Sink.bookmark();
                     outResendResumePoint = i + 1;
                 }
             } else {
-                outColBinArrRecursive(utf8Sink, array, elemType, 0, 0, 0);
+                outColBinArrRecursive(utf8Sink, array, 0, 0, 0);
             }
             outResendResumePoint = -1;
         } catch (NoSpaceLeftInResponseBufferException e) {
@@ -1880,39 +1949,24 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private int outColBinArrRecursive(
-            PGResponseSink utf8Sink, ArrayView array, short elemType, int dim, int flatIndex, int outFlatIndex
+            PGResponseSink utf8Sink, ArrayView array, int dim, int flatIndex, int outFlatIndex
     ) {
         final int count = array.getDimLen(dim);
         final int stride = array.getStride(dim);
         if (dim < array.getDimCount() - 1) {
             for (int i = 0; i < count; i++) {
-                outFlatIndex = outColBinArrRecursive(utf8Sink, array, elemType, dim + 1, flatIndex, outFlatIndex);
+                outFlatIndex = outColBinArrRecursive(utf8Sink, array, dim + 1, flatIndex, outFlatIndex);
                 flatIndex += stride;
             }
         } else {
             for (int i = 0; i < count; i++) {
                 if (outFlatIndex == outResendResumePoint) {
-                    switch (elemType) {
-                        case ColumnType.LONG: {
-                            long val = array.getLong(flatIndex);
-                            if (val != Numbers.LONG_NULL) {
-                                utf8Sink.putNetworkInt(Double.BYTES);
-                                utf8Sink.putNetworkDouble(val);
-                            } else {
-                                utf8Sink.setNullValue();
-                            }
-                            break;
-                        }
-                        case ColumnType.DOUBLE: {
-                            double val = array.getDouble(flatIndex);
-                            if (Numbers.isFinite(val)) {
-                                utf8Sink.putNetworkInt(Double.BYTES);
-                                utf8Sink.putNetworkDouble(val);
-                            } else {
-                                utf8Sink.setNullValue();
-                            }
-                            break;
-                        }
+                    double val = array.getDouble(flatIndex);
+                    if (Numbers.isFinite(val)) {
+                        utf8Sink.putNetworkInt(Double.BYTES);
+                        utf8Sink.putNetworkDouble(val);
+                    } else {
+                        utf8Sink.setNullValue();
                     }
                     utf8Sink.bookmark();
                     outResendResumePoint++;
@@ -1944,250 +1998,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         } else {
             utf8Sink.setNullValue();
         }
-    }
-
-    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal256 decimal256, int type) {
-        if (decimal256.isNull()) {
-            utf8Sink.setNullValue();
-            return;
-        }
-
-        final int precision = ColumnType.getDecimalPrecision(type);
-        final int scale = ColumnType.getDecimalScale(type);
-
-        short sign = NUMERIC_POS;
-        if (decimal256.isNegative()) {
-            sign = NUMERIC_NEG;
-            decimal256.negate();
-        }
-
-        // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
-        // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
-        // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
-        // be encoded as an array of 2 shorts: [12, 3400].
-
-        long startAddress = utf8Sink.getSendBufferPtr();
-        utf8Sink.putNetworkInt(4 * Short.BYTES); // type size, defaults to a zero value, we will came back later to rewrite it
-
-        utf8Sink.putNetworkShort((short) 0); // ndigits, same
-        utf8Sink.putNetworkShort((short) 0); // weight, same
-        utf8Sink.putNetworkShort(sign); // sign
-        utf8Sink.putNetworkShort((short) scale); // dscale
-
-        if (decimal256.isZero()) {
-            return;
-        }
-
-        boolean writing = false;
-        int digit = 0;
-        int weight = 0;
-        int pow = precision;
-
-        // We start with the whole part of the decimal
-        final int wholePartPrecision = precision - scale;
-        for (int i = wholePartPrecision - 1; i >= 0; i--) {
-            final int mul = decimal256.getDigitAtPowerOfTen(--pow);
-            digit = digit * 10 + mul;
-            decimal256.subtractPowerOfTenMultiple(pow, mul);
-            if (i % 4 == 0 && (writing || digit != 0)) {
-                if (!writing) {
-                    writing = true;
-                    weight = (i + 3) / 4;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-                digit = 0;
-            }
-        }
-
-        // And then the decimal part
-        for (int i = 0, n = (scale + 3) / 4; i < n; i++) {
-            digit = 0;
-            for (int j = 0; j < 4; j++) {
-                final int mul = pow > 0 ? decimal256.getDigitAtPowerOfTen(--pow) : 0;
-                digit = digit * 10 + mul;
-                decimal256.subtractPowerOfTenMultiple(pow, mul);
-            }
-            if (writing || digit != 0) {
-                if (!writing) {
-                    writing = true;
-                    weight = -i - 1;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-            }
-        }
-
-        // We now need to fix previous values
-        long endAddress = utf8Sink.getSendBufferPtr();
-        final int typeLen = (int) (endAddress - startAddress - Integer.BYTES);
-        // Patching the whole type len
-        utf8Sink.putNetworkInt(startAddress, typeLen);
-        // Patching the number of digits (remove the static attributes first)
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES, (short) ((typeLen - 4 * Short.BYTES) / Short.BYTES));
-        // Patching the weight
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
-    }
-
-    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal128 decimal128, int type) {
-        if (decimal128.isNull()) {
-            utf8Sink.setNullValue();
-            return;
-        }
-
-        final int precision = ColumnType.getDecimalPrecision(type);
-        final int scale = ColumnType.getDecimalScale(type);
-
-        short sign = NUMERIC_POS;
-        if (decimal128.isNegative()) {
-            sign = NUMERIC_NEG;
-            decimal128.negate();
-        }
-
-        // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
-        // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
-        // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
-        // be encoded as an array of 2 shorts: [12, 3400].
-
-        long startAddress = utf8Sink.getSendBufferPtr();
-        utf8Sink.putNetworkInt(4 * Short.BYTES); // type size, defaults to a zero value, we will came back later to rewrite it
-
-        utf8Sink.putNetworkShort((short) 0); // ndigits, same
-        utf8Sink.putNetworkShort((short) 0); // weight, same
-        utf8Sink.putNetworkShort(sign); // sign
-        utf8Sink.putNetworkShort((short) scale); // dscale
-
-        if (decimal128.isZero()) {
-            return;
-        }
-
-        boolean writing = false;
-        int digit = 0;
-        int weight = 0;
-        int pow = precision;
-
-        // We start with the whole part of the decimal
-        final int wholePartPrecision = precision - scale;
-        for (int i = wholePartPrecision - 1; i >= 0; i--) {
-            final int mul = decimal128.getDigitAtPowerOfTen(--pow);
-            digit = digit * 10 + mul;
-            decimal128.subtractPowerOfTenMultiple(pow, mul);
-            if (i % 4 == 0 && (writing || digit != 0)) {
-                if (!writing) {
-                    writing = true;
-                    weight = (i + 3) / 4;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-                digit = 0;
-            }
-        }
-
-        // And then the decimal part
-        for (int i = 0, n = (scale + 3) / 4; i < n; i++) {
-            digit = 0;
-            for (int j = 0; j < 4; j++) {
-                final int mul = pow > 0 ? decimal128.getDigitAtPowerOfTen(--pow) : 0;
-                digit = digit * 10 + mul;
-                decimal128.subtractPowerOfTenMultiple(pow, mul);
-            }
-            if (writing || digit != 0) {
-                if (!writing) {
-                    writing = true;
-                    weight = -i - 1;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-            }
-        }
-
-        // We now need to fix previous values
-        long endAddress = utf8Sink.getSendBufferPtr();
-        final int typeLen = (int) (endAddress - startAddress - Integer.BYTES);
-        // Patching the whole type len
-        utf8Sink.putNetworkInt(startAddress, typeLen);
-        // Patching the number of digits (remove the static attributes first)
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES, (short) ((typeLen - 4 * Short.BYTES) / Short.BYTES));
-        // Patching the weight
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
-    }
-
-    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal64 decimal64, int type) {
-        if (decimal64.isNull()) {
-            utf8Sink.setNullValue();
-            return;
-        }
-
-        final int precision = ColumnType.getDecimalPrecision(type);
-        final int scale = ColumnType.getDecimalScale(type);
-
-        short sign = NUMERIC_POS;
-        if (decimal64.isNegative()) {
-            sign = NUMERIC_NEG;
-            decimal64.negate();
-        }
-
-        // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
-        // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
-        // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
-        // be encoded as an array of 2 shorts: [12, 3400].
-
-        long startAddress = utf8Sink.getSendBufferPtr();
-        utf8Sink.putNetworkInt(4 * Short.BYTES); // type size, defaults to a zero value, we will came back later to rewrite it
-
-        utf8Sink.putNetworkShort((short) 0); // ndigits, same
-        utf8Sink.putNetworkShort((short) 0); // weight, same
-        utf8Sink.putNetworkShort(sign); // sign
-        utf8Sink.putNetworkShort((short) scale); // dscale
-
-        if (decimal64.isZero()) {
-            return;
-        }
-
-        boolean writing = false;
-        int digit = 0;
-        int weight = 0;
-        int pow = precision;
-
-
-        // We start with the whole part of the decimal
-        final int wholePartPrecision = precision - scale;
-        for (int i = wholePartPrecision - 1; i >= 0; i--) {
-            final int mul = decimal64.getDigitAtPowerOfTen(--pow);
-            digit = digit * 10 + mul;
-            decimal64.subtractPowerOfTenMultiple(pow, mul);
-            if (i % 4 == 0 && (writing || digit != 0)) {
-                if (!writing) {
-                    writing = true;
-                    weight = (i + 3) / 4;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-                digit = 0;
-            }
-        }
-
-        // And then the decimal part
-        for (int i = 0, n = (scale + 3) / 4; i < n; i++) {
-            digit = 0;
-            for (int j = 0; j < 4; j++) {
-                final int mul = pow > 0 ? decimal64.getDigitAtPowerOfTen(--pow) : 0;
-                digit = digit * 10 + mul;
-                decimal64.subtractPowerOfTenMultiple(pow, mul);
-            }
-            if (writing || digit != 0) {
-                if (!writing) {
-                    writing = true;
-                    weight = -i - 1;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-            }
-        }
-
-        // We now need to fix previous values
-        long endAddress = utf8Sink.getSendBufferPtr();
-        final int typeLen = (int) (endAddress - startAddress - Integer.BYTES);
-        // Patching the whole type len
-        utf8Sink.putNetworkInt(startAddress, typeLen);
-        // Patching the number of digits (remove the static attributes first)
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES, (short) ((typeLen - 4 * Short.BYTES) / Short.BYTES));
-        // Patching the weight
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
     }
 
     private void outColBinDouble(PGResponseSink utf8Sink, Record record, int columnIndex) {
@@ -2324,7 +2134,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
+    private void outColTxtArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType)
+            throws PGMessageProcessingException {
+        rejectLongArrayResult(columnType, columnIndex);
         ArrayView arrayView = record.getArray(columnIndex, columnType);
 
         // zero dimension array indicates NULL
@@ -2617,6 +2429,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink, int columnCount) {
+        sqlExecutionContext.setCancelledFlag(queryCancellation);
+        sqlExecutionContext.setMemoryTracker(queryMemoryTracker);
         if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
         }
@@ -2649,7 +2463,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     errorMsgSink.put(errno);
                     errorMsgSink.put("] ");
                 }
-                errorMsgSink.put(((FlyweightMessageContainer) th).getFlyweightMessage());
+                final CharSequence message = ((FlyweightMessageContainer) th).getFlyweightMessage();
+                if (message != errorMsgSink) {
+                    errorMsgSink.put(message);
+                }
             } else {
                 String msg = th.getMessage();
                 if (msg != null) {
@@ -2767,6 +2584,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         outColTxtInt(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.IPv4:
+                    case BINARY_TYPE_IPv4:
+                        // pgwire advertises IPv4 as PG_VARCHAR, whose binary encoding is its text
+                        // bytes, so both format codes emit the same bytes and calculateColumnBinSize()
+                        // sizes both alike. Every format code a client can request must reach an arm
+                        // that writes the field: the DataRow header counts it either way.
                         outColTxtIPv4(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.INTERVAL:
@@ -2854,18 +2676,28 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         outColTxtLong256(utf8Sink, record, colIndex);
                         break;
                     case ColumnType.GEOBYTE:
+                    case BINARY_TYPE_GEOBYTE:
+                        // pgwire advertises every geohash width as PG_VARCHAR, as it does IPv4, so
+                        // the two format codes emit the same bytes and both labels share this arm.
                         outColTxtGeoByte(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
                         break;
                     case ColumnType.GEOSHORT:
+                    case BINARY_TYPE_GEOSHORT:
                         outColTxtGeoShort(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
                         break;
                     case ColumnType.GEOINT:
+                    case BINARY_TYPE_GEOINT:
                         outColTxtGeoInt(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
                         break;
                     case ColumnType.GEOLONG:
+                    case BINARY_TYPE_GEOLONG:
                         outColTxtGeoLong(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
                         break;
                     case ColumnType.NULL:
+                    case BINARY_TYPE_NULL:
+                        // a NULL field is a bare -1 length prefix with no payload, so both format
+                        // codes emit the same 4 bytes and share this arm. pgwire advertises the
+                        // column as PG_VARCHAR (outRowDescription() substitutes STRING for NULL).
                         utf8Sink.setNullValue();
                         break;
                     case ColumnType.UUID:
@@ -2944,8 +2776,24 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         record.getDecimal256(colIndex, decimal256);
                         outColBinDecimal(utf8Sink, decimal256, columnType);
                         break;
+                    case ColumnType.LONG128:
+                    case BINARY_TYPE_LONG128:
+                        // No egress path renders LONG128: the HTTP JSON and CSV processors reject it
+                        // too, and pgwire has no OID for it (getTypeOid() returns 0). Fail the query
+                        // rather than invent a representation here that no other protocol agrees with.
+                        throw kaput().put("unsupported column type in result set [type=LONG128, column=")
+                                .put(colIndex).put(']');
                     default:
-                        assert false;
+                        // An unlabelled (type, format code) pair would write no bytes for a field the
+                        // DataRow header has already counted, desynchronising the client until the
+                        // idle timeout. Fail loudly instead: this is the only place that can catch a
+                        // type/format combination nobody enumerated.
+                        // nameOf() answers "unknown" for an unmapped tag, so carry the number too
+                        throw kaput().put("unsupported column type in DataRow [type=")
+                                .put(ColumnType.nameOf(columnTag))
+                                .put(", tag=").put(columnTag)
+                                .put(", binaryFormat=").put(columnBinaryFlag)
+                                .put(", column=").put(colIndex).put(']');
                 }
                 outResendColumnIndex++;
                 utf8Sink.bookmark();
@@ -2957,7 +2805,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 if (utf8Sink.getWrittenBytes() == 0) {
                     // We had nothing but the record in the send buffer,
                     // so we can estimate the required size to be reported to the user.
-                    final long estimatedSize = estimateRecordSize(record, columnCount);
+                    final long estimatedSize = estimateRecordSize(sqlExecutionContext, record, columnCount);
                     e.setBytesRequired(estimatedSize);
                 }
             } else {
@@ -2967,6 +2815,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     assert sizeInBuffer > 0;
                     try {
                         final long recordTailSize = calculateRecordTailSize(
+                                sqlExecutionContext,
                                 record,
                                 columnCount,
                                 utf8Sink.getMaxBlobSize(),
@@ -2981,7 +2830,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             if (utf8Sink.getWrittenBytes() == 0) {
                                 // We had nothing but the record in the send buffer,
                                 // so we can estimate the required size to be reported to the user.
-                                e.setBytesRequired(estimateRecordSize(record, columnCount));
+                                e.setBytesRequired(estimateRecordSize(sqlExecutionContext, record, columnCount));
                             }
                         }
                     } catch (PGMessageProcessingException bpe) {
@@ -3092,6 +2941,21 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         outResendRecordHeader = true;
         // reset to the message start
         utf8Sink.resetToBookmark(messageLengthAddress - Byte.BYTES);
+    }
+
+    private void rejectLongArrayResult(int columnType, int columnIndex) throws PGMessageProcessingException {
+        if (ColumnType.isArray(columnType)
+                && ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG) {
+            throw kaput()
+                    .put("array result sets are not supported for element type LONG [column=")
+                    .put(columnIndex).put(']');
+        }
+    }
+
+    private void rejectLongArrayResults(RecordMetadata metadata) throws PGMessageProcessingException {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            rejectLongArrayResult(metadata.getColumnType(i), i);
+        }
     }
 
     private void setBindVariableAsArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, PGMessageProcessingException {
@@ -3441,7 +3305,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             SqlExecutionContext sqlExecutionContext,
             WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
             CompiledQuery cq
-    ) {
+    ) throws PGMessageProcessingException {
         sqlExecutionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
         this.sqlType = cq.getType();
         selectIsCacheable = true;
@@ -3451,6 +3315,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.DROP:
                 // fall-through
             case CompiledQuery.CREATE_MAT_VIEW:
+                // fall-through
+            case CompiledQuery.CREATE_LIVE_VIEW:
                 // fall-through
             case CompiledQuery.CREATE_TABLE:
                 operation = cq.getOperation();
@@ -3547,6 +3413,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 sqlTag = TAG_OK;
                 break;
         }
+        if (factory != null) {
+            rejectLongArrayResults(factory.getMetadata());
+        }
         sqlTextHasSecret = sqlExecutionContext.containsSecret();
         stateParseExecuted = cq.executedAtParseTime();
     }
@@ -3556,8 +3425,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     //       so we always serialize them in text format, we return false for that and true for everything else
     private boolean txtAndBinSizesCanBeDifferent(int columnType) {
         final int typeTag = ColumnType.tagOf(columnType);
+        if (typeTag == ColumnType.ARRAY) {
+            // ARRAY is var-size, but unlike the other var-size types its text encoding is not the
+            // raw bytes: outColTxtArr() writes a PostgreSQL array literal ("{1.0,2.0}") whose size
+            // bears no relation to the binary wire size calculateColumnBinSize() returns. Reporting
+            // "sizes differ" keeps calculateRecordTailSize() from patching a binary size into a
+            // DataRow header, which has to carry the exact byte count the row goes on to write.
+            return true;
+        }
         return !ColumnType.isVarSize(typeTag)
                 && !ColumnType.isGeoHash(columnType)
+                && typeTag != ColumnType.ARRAY_STRING
                 && typeTag != ColumnType.BOOLEAN
                 && typeTag != ColumnType.CHAR
                 && typeTag != ColumnType.IPv4
@@ -3747,6 +3625,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             setUuidBindVariable(i, lo, valueSize, bindVariableService);
                             break;
                         case X_PG_ARR_INT8:
+                            throw kaput().put("array bind variables are not supported for element type LONG");
                         case X_PG_ARR_FLOAT8:
                             setBindVariableAsArray(i, lo, valueSize, msgLimit, bindVariableService);
                             break;
@@ -3778,6 +3657,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateDesc = that.stateDesc;
         stateExec = that.stateExec;
         stateClosed = that.stateClosed;
+    }
+
+    PGMessageProcessingException getMessageProcessingException() {
+        getErrorMessageSink();
+        return messageProcessingException;
     }
 
     boolean isDirty() {

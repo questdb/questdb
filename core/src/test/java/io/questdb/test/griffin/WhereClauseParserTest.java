@@ -55,6 +55,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -95,6 +96,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private static TableReader unindexedReader;
     private static TableReader unindexedReaderNanos;
     private final WhereClauseParser e = new WhereClauseParser();
+    private final ObjectPool<ExpressionNode> expressionNodePool = new ObjectPool<>(ExpressionNode.FACTORY, 128);
     private final FunctionParser functionParser = new FunctionParser(
             configuration,
             engine.getFunctionFactoryCache()
@@ -3215,6 +3217,61 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotWithTokenlessSubQueryOperand() throws Exception {
+        // sub-query expression nodes carry a null token; the NOT intrinsic arm
+        // must not dereference it (used to throw NPE)
+        IntrinsicModel m = modelOf("not (select * from x)");
+        Assert.assertNotNull(m.filter);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+    }
+
+    @Test
+    public void testAndOffsetDescendsIntoTokenlessSubQueryConjunct() throws Exception {
+        // analyzeAndOffset recurses into its predicate argument, and removeAndIntrinsics dispatches
+        // on the token it finds there; a sub-query conjunct carries a null token and must not be
+        // treated as an intrinsic (used to throw NPE). The predicate references the designated
+        // timestamp, so it clears the referencesTimestamp guard and the walk actually descends -
+        // and_offset over a predicate that does NOT reference it is rejected before recursing, see
+        // testAndOffsetWithTokenlessSubQueryPredicate.
+        IntrinsicModel m = modelOf("and_offset(timestamp > '2015-02-23' and (select * from x), 'h', 1)");
+        Assert.assertNotNull(m);
+    }
+
+    @Test
+    public void testAndOffsetWithTokenlessSubQueryPredicate() throws Exception {
+        // and_offset is an internal pseudo-function with no FunctionFactory, so only SqlOptimiser
+        // may insert it - and it only ever wraps a predicate over the designated timestamp. A
+        // sub-query predicate references no timestamp, which makes this a hand-written call, and
+        // analyzeAndOffset rejects it rather than consuming the conjunct or rebuilding it as a
+        // dateadd over a sub-query.
+        try {
+            modelOf("and_offset((select * from x), 'h', 1)");
+            Assert.fail("expected SqlException");
+        } catch (SqlException e) {
+            Assert.assertEquals("[0] unknown function name: and_offset", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testBareTokenlessSubQueryPredicateKeptAsFilter() throws Exception {
+        // a sub-query used directly as a boolean predicate has a null token;
+        // it is not an intrinsic and must survive extraction as a regular filter
+        // (used to throw NPE)
+        IntrinsicModel m = modelOf("(select * from x)");
+        Assert.assertNotNull(m.filter);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+    }
+
+    @Test
+    public void testIntervalExtractedAroundTokenlessSubQueryConjunct() throws Exception {
+        // the timestamp intrinsic must still be extracted while the tokenless
+        // sub-query conjunct stays in the residual filter (used to throw NPE)
+        IntrinsicModel m = modelOf("timestamp in '2015-02-23' and (select * from x)");
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T23:59:59.999999Z}]"), intervalToString(m));
+        Assert.assertNotNull(m.filter);
+    }
+
+    @Test
     public void testNotInIntervalIntersect() throws Exception {
         IntrinsicModel m = modelOf("timestamp not between '2015-05-11T15:00:00.000Z' and '2015-05-11T20:00:00.000Z' and timestamp in '2015-05-11'");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
@@ -3727,6 +3784,20 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEqualsOrSubqueryOnLeft() throws Exception {
+        IntrinsicModel m = modelOf("(select * from x) or timestamp = '2018-01-01'");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "'2018-01-01' timestamp = (select-choose * from (x)) or");
+    }
+
+    @Test
+    public void testTimestampEqualsOrSubqueryOnRight() throws Exception {
+        IntrinsicModel m = modelOf("timestamp = '2018-01-01' or (select * from x)");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "(select-choose * from (x)) '2018-01-01' timestamp = or");
+    }
+
+    @Test
     public void testTimestampEqualsRejectedSubqueryCloseFailureClosesOnce() throws Exception {
         ThrowingCloseFunction function = new ThrowingCloseFunction(false, false, null, new RuntimeException("injected close failure"));
         try {
@@ -4167,6 +4238,44 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampOrWithNullBindVariableOnLeft() throws Exception {
+        // A NULL runtime bound is the empty-set identity under UNION: it must contribute no interval
+        // and drop only its own disjunct. Every OR disjunct - including the first - is accumulated
+        // with unionRuntimeTimestamp for exactly this reason. Anchoring the first disjunct with
+        // intersectRuntimeTimestamp instead collapses the whole disjunction to the empty set when
+        // that bound is NULL, silently returning zero rows for a predicate $2 still matches.
+        // The residual filter is removed (intrinsicValue = TRUE), so nothing downstream recovers it.
+        long day2 = 2 * 24L * 3600 * 1000 * 1000;  // 1970-01-03T00:00:00.000000Z
+        bindVariableService.clear();
+        bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
+        bindVariableService.setTimestamp(1, day2);
+        IntrinsicModel m = modelOf("timestamp in $1 or timestamp in $2");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=1970-01-03T00:00:00.000000Z, hi=1970-01-03T00:00:00.000000Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampOrWithNullBindVariableOnRight() throws Exception {
+        // Mirror of testTimestampOrWithNullBindVariableOnLeft. A non-anchor NULL disjunct always
+        // unioned correctly; pairing the two pins the symmetry so the anchor cannot regress alone.
+        long day1 = 24L * 3600 * 1000 * 1000;  // 1970-01-02T00:00:00.000000Z
+        bindVariableService.clear();
+        bindVariableService.setTimestamp(0, day1);
+        bindVariableService.setTimestamp(1, Numbers.LONG_NULL);
+        IntrinsicModel m = modelOf("timestamp in $1 or timestamp in $2");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
     public void testTimestampOrWithPeriodicIntervals() throws Exception {
         // OR with periodic intervals - each IN produces multiple interval pairs
         // '2020-01-01;1d;1M;3' = 3 monthly intervals, each spanning 1 day
@@ -4538,9 +4647,30 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntConstFunctionDateGreater() throws SqlException {
+        // An INT expression is a valid timestamp bound: the predicate reads the wrapped INT value
+        // exactly as if it had been written as an INT literal, so abs(1) prunes to the same
+        // interval as the literal 1. See griffin/CLAUDE.md on INT widening.
+        // intervalToString() hands back a shared sink that the next call clears, so materialize
+        // the literal's interval before extracting the function's one.
+        String expected = intervalToString(modelOf("timestamp > 1")).toString();
+        Assert.assertNotEquals("", expected);
+        TestUtils.assertEquals(expected, intervalToString(modelOf("timestamp > abs(1)")));
+    }
+
+    @Test
+    public void testIntConstFunctionDateLess() throws SqlException {
+        String expected = intervalToString(modelOf("timestamp <= 1")).toString();
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=, hi=1970-01-01T00:00:00.000001Z}]"), expected);
+        TestUtils.assertEquals(expected, intervalToString(modelOf("timestamp <= abs(1)")));
+    }
+
+    @Test
     public void testWrongTypeConstFunctionDateGreater() {
+        // DOUBLE has no timestamp reading, so it is still rejected at the position of the
+        // offending function. INT is not - see testIntConstFunctionDateGreater.
         try {
-            modelOf("timestamp > abs(1)");
+            modelOf("timestamp > abs(1.5)");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(12, e.getPosition());
@@ -4550,7 +4680,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testWrongTypeConstFunctionDateLess() {
         try {
-            modelOf("timestamp <= abs(1)");
+            modelOf("timestamp <= abs(1.5)");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(13, e.getPosition());
@@ -4640,7 +4770,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? reader : readerNanos,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4660,7 +4791,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? reader : readerNanos,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4680,7 +4812,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? noDesignatedTimestampNorIdxReader : noDesignatedTimestampNorIdxReaderNanos,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4699,7 +4832,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     noTimestampReader,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4719,7 +4853,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? nonEmptyReader : nonEmptyReaderNanos,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4847,7 +4982,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     unindexedReader,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }

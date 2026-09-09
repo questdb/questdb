@@ -114,6 +114,16 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         sink.child(partitionFrameCursorFactory);
     }
 
+    // Holds the LATEST BY key sub-query in a private field and does not expose it through
+    // getBaseFactory() - the base is the partition frame scan, not the sub-query - so the
+    // external-source property is propagated explicitly. Without this, a mat-view predicate
+    // sub-query of the shape "WHERE key IN (SELECT ... FROM read_parquet(...)) LATEST ON ..."
+    // is accepted and the view then refreshes against an untracked external file.
+    @Override
+    public boolean usesExternalDataSource() {
+        return recordCursorFactory != null && recordCursorFactory.usesExternalDataSource();
+    }
+
     @Override
     public boolean usesIndex() {
         return indexed;

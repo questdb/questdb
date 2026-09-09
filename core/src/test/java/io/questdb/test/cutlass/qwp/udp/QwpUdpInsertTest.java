@@ -1377,6 +1377,528 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUdpAlterColumnTypeRefreshesCachedTableUpdateDetails() throws Exception {
+        // ALTER COLUMN ... TYPE keeps the table's TableToken and only bumps its
+        // metadata version. Staleness was judged by token identity alone, which
+        // catches a DROP but never an ALTER -- so the cached details, and the
+        // writer they hold, kept the old column type. On UDP that is unbounded:
+        // the receiver has ONE cache for every sender and no reconnect to heal
+        // it, so a single ALTER silently corrupts or refuses that column's rows
+        // from then on.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                execute("CREATE TABLE alter_type (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("alter_type").longColumn("v", 1).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                execute("ALTER TABLE alter_type ALTER COLUMN v TYPE DOUBLE");
+                drainWalQueue();
+
+                // A fresh sender, so the CLIENT's per-buffer type binding is new
+                // and the only stale view left is the receiver's cached one.
+                // The 2.5 value MUST stay non-integral: a stale LONG writer
+                // refuses a precision-losing double, so the datagram drops and
+                // unfixed code goes red. The integral 3.0 covers the other
+                // failure half -- unfixed code silently coerces it to LONG 3.
+                // Both rows travel in one datagram to avoid a receive race.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("alter_type").doubleColumn("v", 2.5).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.table("alter_type").doubleColumn("v", 3.0).at(3_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                assertQuery("SELECT v FROM alter_type ORDER BY timestamp")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("v\n1.0\n2.5\n3.0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUdpDropEvictsOnlyDroppedTableCoCachedTableSurvives() throws Exception {
+        // A dropped table must be evicted without disturbing other tables cached
+        // in the same receiver: the survivor keeps its data and remains writable.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("surv_keep").symbol("host", "k0").doubleColumn("v", 1.0).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                    sender.table("surv_drop").symbol("host", "d0").doubleColumn("v", 2.0).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver, 2);
+                drainWalQueue();
+                Assert.assertEquals("both tables cached", 2, receiver.getCachedTableCount());
+
+                execute("DROP TABLE surv_drop");
+                drainWalQueue();
+
+                // Write the survivor again -> drives a commit cycle that must evict
+                // the dropped table only.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("surv_keep").symbol("host", "k1").doubleColumn("v", 3.0).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                Assert.assertEquals("only the survivor remains cached", 1, receiver.getCachedTableCount());
+                assertQuery("SELECT count() FROM surv_keep")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUdpDroppedTableEvictedByIntervalCommitPath() throws Exception {
+        // The datagram-triggered commit path (commitAllBestEffort) is covered by
+        // the tests above; this covers the sibling interval path (commitWalTables)
+        // in the storm condition it actually guards against: a FULLY COMMITTED then
+        // dropped table (zero uncommitted rows). In that case commit() short-circuits
+        // without a CommitFailedException.isTableDropped(), so the pre-existing
+        // eviction never fires - only the new token-staleness guard evicts it. We
+        // co-cache an active table so the interval timer keeps calling
+        // commitWalTables, which must then evict the dropped table.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(TIMER_COMMIT_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("timer_active").symbol("host", "a0").doubleColumn("v", 1.0).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                    sender.table("timer_drop").symbol("host", "d0").doubleColumn("v", 2.0).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                // Receive both datagrams first so both tables are autocreated;
+                // otherwise assertQuery below could hit a not-yet-created table
+                // and throw a CairoException that assertEventually does not catch.
+                drainReceiver(receiver, 2);
+                // Let the interval timer commit both tables (both now zero-uncommitted).
+                TestUtils.assertEventually(() -> {
+                    receiver.runSerially();
+                    drainWalQueue();
+                    assertQuery("SELECT count() FROM timer_drop").noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess().returns("count\n1\n");
+                    assertQuery("SELECT count() FROM timer_active").noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess().returns("count\n1\n");
+                }, 10);
+                Assert.assertEquals("both tables cached", 2, receiver.getCachedTableCount());
+
+                execute("DROP TABLE timer_drop");
+                drainWalQueue();
+
+                // Keep the active table producing so the interval timer keeps firing
+                // commitWalTables; that cycle must evict the dropped (zero-row) table.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("timer_active").symbol("host", "a1").doubleColumn("v", 3.0).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                // Eviction of the dropped table and the survivor's interval
+                // commit happen on independent schedules: the staleness check
+                // fires on every pass, the commit only when the 50 ms interval
+                // elapses. Assert both inside one eventually-loop so the test
+                // does not exit between the two.
+                TestUtils.assertEventually(() -> {
+                    receiver.runSerially();
+                    Assert.assertEquals("interval commit path should evict the dropped table", 1, receiver.getCachedTableCount());
+                    drainWalQueue();
+                    assertQuery("SELECT count() FROM timer_active")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n2\n");
+                }, 10);
+            }
+        });
+    }
+
+    @Test
+    public void testUdpDroppedTableIsEvictedFromCacheNotRetriedForever() throws Exception {
+        // A fully committed TUD has zero pending rows, so commit() returns without
+        // surfacing CommitFailedException.isTableDropped(). The token check must
+        // still evict the dropped table on the next commit cycle.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("storm_dropped")
+                            .symbol("host", "h0")
+                            .doubleColumn("v", 1.0)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertQuery("SELECT count() FROM storm_dropped")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+                Assert.assertEquals("dropped table should be cached before the drop", 1, receiver.getCachedTableCount());
+
+                // Drop the table but do NOT write it again. The stale TUD lingers
+                // in the cache until a commit cycle evicts it.
+                execute("DROP TABLE storm_dropped");
+                drainWalQueue();
+
+                // Drive a commit cycle by writing an unrelated table. With
+                // maxUncommittedDatagrams=1 this datagram forces commitAllBestEffort,
+                // which iterates the stale storm_dropped TUD and must evict it.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("storm_other")
+                            .symbol("host", "h1")
+                            .doubleColumn("v", 2.0)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                // Only storm_other remains; storm_dropped was evicted (not retained
+                // and retried forever).
+                Assert.assertEquals("dropped table's stale TUD should be evicted", 1, receiver.getCachedTableCount());
+                assertQuery("SELECT count() FROM storm_other")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUdpExternallyRecreatedTableReplacesStaleCachedWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("recreate_external")
+                            .longColumn("v", 1L)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                execute("DROP TABLE recreate_external");
+                execute("CREATE TABLE recreate_external (v LONG, timestamp TIMESTAMP) " +
+                        "TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("recreate_external")
+                            .longColumn("v", 2L)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT v FROM recreate_external")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n2\n");
+        });
+    }
+
+    @Test
+    public void testUdpMultipleDroppedTablesEvictedInSingleCommitCycle() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    for (int i = 0; i < 3; i++) {
+                        sender.table("multi_drop_" + i)
+                                .longColumn("v", i)
+                                .at(1_000_000L + i, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                }
+                drainReceiver(receiver, 3);
+                Assert.assertEquals(3, receiver.getCachedTableCount());
+
+                for (int i = 0; i < 3; i++) {
+                    execute("DROP TABLE multi_drop_" + i);
+                }
+                drainWalQueue();
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("multi_drop_survivor")
+                            .longColumn("v", 1L)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                Assert.assertEquals(1, receiver.getCachedTableCount());
+            }
+        });
+    }
+
+    @Test
+    public void testUdpReinsertAfterDropDoesNotDistressStaleCachedWriter() throws Exception {
+        // After DROP, the name-keyed cache can retain a TUD bound to the old WAL
+        // writer. The next datagram must evict that TUD and create a fresh writer.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("reinsert_after_drop")
+                            .symbol("host", "h0")
+                            .doubleColumn("v", 1.0)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertQuery("SELECT count() FROM reinsert_after_drop")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+
+                // Drop the table out from under the receiver's cached TUD.
+                execute("DROP TABLE reinsert_after_drop");
+                drainWalQueue();
+
+                // Write again through the same receiver. This datagram recreates
+                // the table after the cache evicts the stale TUD.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("reinsert_after_drop")
+                            .symbol("host", "h1")
+                            .doubleColumn("v", 2.0)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                assertQuery("SELECT count() FROM reinsert_after_drop")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUdpRenameAndRecreateRoutesRowsToNewTable() throws Exception {
+        // C1 regression: after RENAME TABLE t TO t2 + CREATE TABLE t, the cached
+        // entry for "t" is still bound to what is now t2's writer. The staleness
+        // gate alone reports "not stale" (the dir still resolves), and goActive()
+        // would replay the rename into the writer, defeating the sequencer's
+        // token check -- rows sent for "t" would land in t2. The cache must
+        // instead evict the entry and rebuild it against the new "t".
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                execute("CREATE TABLE ren (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("ren").longColumn("v", 1).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                execute("RENAME TABLE ren TO ren_old");
+                execute("CREATE TABLE ren (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+                drainWalQueue();
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("ren").longColumn("v", 2).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                assertQuery("SELECT v FROM ren")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("v\n2\n");
+                assertQuery("SELECT v FROM ren_old")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("v\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUdpRenameAndRecreateSalvagesBufferedRows() throws Exception {
+        // Companion to testUdpRenameAndRecreateRoutesRowsToNewTable that PINS
+        // the salvage premise: v=1 is still buffered (uncommitted) when the
+        // rename+recreate lands, so the eviction on the next lookup must
+        // salvage it into the renamed table rather than discard it.
+        //
+        // LOW_COMMIT_RATE_CONF does not work here: its getMaxUncommittedDatagrams()
+        // = 1 force-commits after every datagram that leaves rows buffered, so
+        // v=1 is already committed and WAL-applied before the rename and the
+        // premise assertion below fails with count=1 (confirmed experimentally).
+        // This local config disables both commit triggers -- a nearly-infinite
+        // commit interval and an effectively unbounded uncommitted-datagram
+        // count -- so v=1 provably stays buffered until the receiver closes.
+        QwpUdpReceiverConfiguration bufferedConf = new DefaultQwpUdpReceiverConfiguration() {
+            @Override
+            public long getCommitInterval() {
+                return Long.MAX_VALUE / 4;
+            }
+
+            @Override
+            public int getMaxUncommittedDatagrams() {
+                return Integer.MAX_VALUE;
+            }
+
+            @Override
+            public int getPort() {
+                return PORT;
+            }
+
+            @Override
+            public boolean isOwnThread() {
+                return false;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(bufferedConf, engine)) {
+                execute("CREATE TABLE sal_udp (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("sal_udp").longColumn("v", 1).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                // Pin the premise: nothing is committed yet -- v=1 is buffered in
+                // the cached writer. If this fails, the receiver config commits
+                // too eagerly and the salvage path is not being exercised.
+                assertQuery("SELECT count() FROM sal_udp")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n0\n");
+
+                execute("RENAME TABLE sal_udp TO sal_udp_old");
+                execute("CREATE TABLE sal_udp (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+                drainWalQueue();
+
+                // The next datagram's lookup finds the entry stale (old name
+                // re-used), salvages v=1 into sal_udp_old and rebuilds against
+                // the new sal_udp.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("sal_udp").longColumn("v", 2).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+            // Receiver close commits v=2 best-effort; drain and assert the split.
+            drainWalQueue();
+            assertQuery("SELECT v FROM sal_udp_old")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n1\n");
+            assertQuery("SELECT v FROM sal_udp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n2\n");
+        });
+    }
+
+    @Test
+    public void testUdpStaleTableWithBufferedRowsDropsDatagramAndHeals() throws Exception {
+        // M4: end-to-end through processDatagram. A datagram buffers rows for a
+        // table that is then DROPped WITHOUT a commit, so the cached TUD still
+        // holds uncommitted rows. The next datagram for that name hits the
+        // stale-TUD eviction throw; processDatagram drops the whole datagram
+        // (no ack on UDP) and counts it as a stale-table drop (M6). A later
+        // datagram recreates the table and its row lands (drop-and-heal).
+        assertMemoryLeak(() -> {
+            // RCVR_CONF keeps up to 10 datagrams uncommitted, so a single
+            // datagram leaves its rows buffered (LOW_COMMIT_RATE_CONF would
+            // force-commit after every datagram).
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("udp_heal").symbol("host", "h0").doubleColumn("v", 1.0).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver, 1);
+                Assert.assertEquals(1, receiver.getCachedTableCount());
+
+                // Drop the table while its buffered row is still uncommitted.
+                execute("DROP TABLE udp_heal");
+                drainWalQueue();
+
+                // Next datagram for the same name: the stale TUD still holds the
+                // buffered row, so getTableUpdateDetails throws, the datagram is
+                // dropped, and the stale TUD is evicted.
+                long staleBefore = receiver.getDroppedStaleTableCount();
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("udp_heal").symbol("host", "h1").doubleColumn("v", 2.0).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                Assert.assertEquals("stale-table drop must be counted separately",
+                        staleBefore + 1, receiver.getDroppedStaleTableCount());
+                Assert.assertEquals("stale TUD must be evicted", 0, receiver.getCachedTableCount());
+
+                // Heal: a later datagram recreates the table and buffers its row.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("udp_heal").symbol("host", "h2").doubleColumn("v", 3.0).at(3_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver, 1);
+                Assert.assertEquals(1, receiver.getCachedTableCount());
+            }
+            // close() commits buffered rows best-effort, so the healed row lands
+            // while the rolled-back (v=1) and dropped-datagram (v=2) rows do not.
+            drainWalQueue();
+            assertQuery("SELECT v FROM udp_heal")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n3.0\n");
+        });
+    }
+
+    @Test
+    public void testUdpRepeatedDropRecreateChurnAlwaysLands() throws Exception {
+        // The original footgun: a table repeatedly autocreated via UDP and
+        // dropped under the SAME name through one long-lived receiver. Before the
+        // fix, the first drop poisoned the name's cache entry permanently and
+        // every later write was silently lost. Expected: every churn iteration
+        // lands its row into a fresh table.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                for (int iter = 0; iter < 3; iter++) {
+                    try (QwpUdpSender sender = newSender()) {
+                        sender.table("churn_repeat")
+                                .symbol("host", "h" + iter)
+                                .doubleColumn("v", iter)
+                                .at(1_000_000L + iter, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                    drainReceiver(receiver);
+                    drainWalQueue();
+                    assertQuery("SELECT count() FROM churn_repeat")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n1\n");
+
+                    execute("DROP TABLE churn_repeat");
+                    drainWalQueue();
+                }
+            }
+        });
+    }
+
     private static double[][][] cube() {
         return new double[][][]{
                 {
@@ -1390,19 +1912,47 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         };
     }
 
+    // Keyed on the receiver's datagram counters, not runSerially()'s return:
+    // the interval-commit branch also returns true, so with interleaved DDL
+    // the boolean could report "received" before any datagram was handled.
+    // processedCount + totalDroppedCount increases exactly once per handled
+    // datagram, making progress unambiguous.
     private static void drainReceiver(QwpUdpReceiver receiver) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-        boolean everReceived = false;
+        long handledBefore = receiver.getProcessedCount() + receiver.getTotalDroppedCount();
+        boolean hasEverProgressed = false;
         while (System.nanoTime() < deadline) {
-            boolean received = receiver.runSerially();
-            if (received) {
-                everReceived = true;
-            } else if (everReceived) {
+            receiver.runSerially();
+            long handledNow = receiver.getProcessedCount() + receiver.getTotalDroppedCount();
+            if (handledNow > handledBefore) {
+                handledBefore = handledNow;
+                hasEverProgressed = true;
+            } else if (hasEverProgressed) {
                 break;
             }
             Os.pause();
         }
-        Assert.assertTrue("timeout: receiver did not process any datagrams", everReceived);
+        Assert.assertTrue("timeout: receiver did not process any datagrams", hasEverProgressed);
+    }
+
+    // Deterministic drain for multi-datagram tests: the single-gap drainReceiver
+    // above can break after only the first of several back-to-back datagrams is
+    // processed (the second lands after the first empty poll). When a test knows
+    // how many tables it expects cached, drain until that count is reached
+    // instead of guessing at inter-datagram timing.
+    private static void drainReceiver(QwpUdpReceiver receiver, int minCachedTables) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        while (System.nanoTime() < deadline) {
+            receiver.runSerially();
+            if (receiver.getCachedTableCount() >= minCachedTables) {
+                return;
+            }
+            Os.pause();
+        }
+        Assert.assertTrue(
+                "timeout: receiver cached " + receiver.getCachedTableCount() + " tables, expected " + minCachedTables,
+                receiver.getCachedTableCount() >= minCachedTables
+        );
     }
 
     private static QwpUdpSender newSender(int maxDatagramSize) {
