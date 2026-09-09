@@ -967,6 +967,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.partition.compaction.decline.backoff.max\tQDB_CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MAX\t3600000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.compaction.idle.timeout\tQDB_CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT\t3600000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.compaction.hot.commits\tQDB_CAIRO_PARTITION_COMPACTION_HOT_COMMITS\t10\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.hot.time\tQDB_CAIRO_PARTITION_COMPACTION_HOT_TIME\t10000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.move.tail.min.gain\tQDB_CAIRO_PARTITION_COMPACTION_MOVE_TAIL_MIN_GAIN\t2\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.compaction.piece.threshold\tQDB_CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD\t20\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.compaction.prefix.min.percent\tQDB_CAIRO_PARTITION_COMPACTION_PREFIX_MIN_PERCENT\t50\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.compaction.table.dead.stop.percent\tQDB_CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_PERCENT\t10\tdefault\tfalse\tfalse\n" +

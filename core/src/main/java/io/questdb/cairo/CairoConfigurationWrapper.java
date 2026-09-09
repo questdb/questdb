@@ -885,6 +885,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionCompactionHotTime() {
+        return getDelegate().getPartitionCompactionHotTime();
+    }
+
+    @Override
+    public int getPartitionCompactionMoveTailMinGain() {
+        return getDelegate().getPartitionCompactionMoveTailMinGain();
+    }
+
+    @Override
     public int getPartitionCompactionPieceThreshold() {
         return getDelegate().getPartitionCompactionPieceThreshold();
     }

@@ -452,6 +452,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long partitionCompactionDeclineBackoffMax;
     private final long partitionCompactionIdleTimeout;
     private final int partitionCompactionHotCommits;
+    private final long partitionCompactionHotTime;
+    private final int partitionCompactionMoveTailMinGain;
     private final int partitionCompactionPieceThreshold;
     private final int partitionCompactionPrefixMinPercent;
     private final int partitionCompactionTableDeadStopPercent;
@@ -1921,6 +1923,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.partitionCompactionPieceThreshold = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 20));
             // 0 turns the hot-partition exclusion off entirely, restoring the pre-existing behaviour.
             this.partitionCompactionHotCommits = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 10));
+            this.partitionCompactionHotTime = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_TIME, 10 * Micros.SECOND_MICROS);
+            // MOVE-TAIL reclaims the partition's dead rows and pays a copy of its tail, so this is the
+            // dead rows it must win per row copied. 1 breaks even on bytes moved.
+            this.partitionCompactionMoveTailMinGain = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_MIN_GAIN, 2));
             this.partitionCompactionAvgRowsPieceLim = Math.max(1, getLong(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 4096));
             this.partitionCompactionTimeBudgetMs = getMillis(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TIME_BUDGET, 1000);
             this.partitionCompactionDeclineBackoffMax = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MAX, 60 * Micros.MINUTE_MICROS);
@@ -4912,6 +4918,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPartitionCompactionHotCommits() {
             return partitionCompactionHotCommits;
+        }
+
+        @Override
+        public long getPartitionCompactionHotTime() {
+            return partitionCompactionHotTime;
+        }
+
+        @Override
+        public int getPartitionCompactionMoveTailMinGain() {
+            return partitionCompactionMoveTailMinGain;
         }
 
         @Override
