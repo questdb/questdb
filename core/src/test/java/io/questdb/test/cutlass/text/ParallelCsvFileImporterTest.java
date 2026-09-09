@@ -2081,9 +2081,9 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         // The abort twin of testImportWithSkipRowAtomicitySkipsOutOfBoundsNanosTimestamp: under
         // SKIP_ALL the out-of-range row fails the import the way an unparsable timestamp does,
         // and nothing lands in the table.
+        final String fileName = writeNanosBoundsCsv();
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             execute(compiler, "CREATE TABLE tab (id INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
-            final String fileName = writeNanosBoundsCsv();
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                 importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ALL);
                 importer.process(AllowAllSecurityContext.INSTANCE);
@@ -3023,9 +3023,9 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     private void assertSkipsOutOfBoundsNanosTimestampRow(int atomicity) throws Exception {
+        final String fileName = writeNanosBoundsCsv();
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             execute(compiler, "CREATE TABLE tab (id INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
-            final String fileName = writeNanosBoundsCsv();
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                 importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, atomicity);
                 importer.process(AllowAllSecurityContext.INSTANCE);
@@ -3047,6 +3047,15 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
      * Writes a three-row CSV whose numeric nanosecond timestamps sit one below the nanos ceiling,
      * one above it, and exactly on it, into a fresh folder, and points {@link #inputRoot} at that
      * folder. {@link #setUp()} restores the shared CSV root before the next test.
+     * <p>
+     * Callers must invoke this <em>before</em> {@code executeWithPool()}, never inside its
+     * runnable. {@code execute()} hands the pool to {@link CopyImportJob#assignToPool} first, and
+     * {@link io.questdb.mp.WorkerPool#assign} clones the job once per worker right there, each
+     * clone building a {@link io.questdb.cutlass.text.CsvFileIndexer} whose constructor copies
+     * {@code getSqlCopyInputRoot()} into a final field. A root set later reaches only the
+     * importer's own {@code localImportJob}, so the indexing chunk resolves against the shared CSV
+     * root or the fresh folder depending on whether a pool worker or the work-stealing caller
+     * picks it up.
      */
     private String writeNanosBoundsCsv() throws Exception {
         final File dir = temp.newFolder("nanos-bounds" + System.nanoTime());
