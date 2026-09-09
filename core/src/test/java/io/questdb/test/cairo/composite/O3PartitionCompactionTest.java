@@ -88,27 +88,18 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     private static int passDay;
 
     /**
-     * A running CHECKPOINT must not let TRIM-FILES shorten a live partition's column files. Backup sizes those
-     * files by the physical row extent {@code E} its manifest copied out of the checkpoint, and it reads them
-     * from the LIVE db root, not from the checkpoint copy - see {@code TableWriter#processPartitionRemoveCandidates0},
-     * which defers partition removal for the same reason. TRIM-FILES shortens those live files in place, so a trim
-     * under a checkpoint would leave the upload asking for more rows than the file holds. It is the shortening this
-     * test observes, not the writer's only one -- {@code TableWriter#truncateColumns} shortens live column files
-     * too, on the TRUNCATE and cancelRow paths.
+     * A running CHECKPOINT must not let TRIM-FILES shorten a live partition's column files: backup sizes those
+     * files by the physical row extent its manifest copied out of the checkpoint but reads them from the LIVE db
+     * root, so a trim under a checkpoint leaves the upload asking for more rows than the file holds.
      * <p>
-     * Nothing names the checkpoint here: {@link io.questdb.cairo.DatabaseCheckpointAgent} pins the transaction it
-     * captured on the {@link io.questdb.cairo.TxnScoreboard} for the whole checkpoint, and MAKE-PLAIN's SECOND
-     * scoreboard check - the one over {@code [partitionNameTxn, txWriter.getTxn())}, taken after its own commit -
-     * sees that pin like any other reader's and defers. Its FIRST check does not: the checkpoint captured the
-     * geometry record MAKE-PLAIN is retiring, so its pin sits at or above that record's writer txn, outside the
-     * range that check asks about. The bookkeeping half of MAKE-PLAIN therefore still commits here, and only the
-     * file shortening waits - which is exactly what backup needs, and why this asserts the disk size rather than
-     * the composite flag alone.
+     * Nothing names the checkpoint here. {@link io.questdb.cairo.DatabaseCheckpointAgent} pins its transaction on
+     * the {@link io.questdb.cairo.TxnScoreboard}; MAKE-PLAIN's SECOND scoreboard check - over
+     * {@code [partitionNameTxn, txWriter.getTxn())}, taken after its own commit - sees that pin and defers, while
+     * its FIRST does not, that pin sitting at or above the geometry record MAKE-PLAIN retires. So the bookkeeping
+     * half still commits and only the shortening waits, which is why this asserts disk size, not the flag.
      * <p>
-     * Same fixture as {@link #testMakePlainWaitsForAPinnedReaderThenReclaimsOnceItGoes}, run past the point where
-     * the reader goes away; without the checkpoint it trims (see
-     * {@link #testMakePlainReclaimsAMoveTailedFrontsDeadSpace}), so the unchanged disk size below is the
-     * checkpoint's doing and not a fixture that never reached TRIM-FILES.
+     * Fixture of {@link #testMakePlainWaitsForAPinnedReaderThenReclaimsOnceItGoes} run past the reader's exit;
+     * without the checkpoint it trims ({@link #testMakePlainReclaimsAMoveTailedFrontsDeadSpace}).
      */
     @Test
     public void testACheckpointDefersTrimFiles() throws Exception {
@@ -130,8 +121,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             backdate("x", "2024-01-01T05:00:00", 200);
             pinPieceCap(2);
 
-            // A pinned reader gets the day to MAKE-PLAIN's eligible shape - MOVE-TAIL runs, MAKE-PLAIN declines -
-            // and then goes, so the checkpoint below is the only thing left holding anything.
+            // The pinned reader gets the day to MAKE-PLAIN's eligible shape, then goes: MOVE-TAIL has run,
+            // MAKE-PLAIN has declined, and the checkpoint below is the only thing left holding anything.
             try (TableReader pinned = engine.getReader(engine.verifyTableName("x"))) {
                 Assert.assertNotNull(pinned);
                 runCompactionPasses("x");
@@ -146,7 +137,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
             execute("checkpoint create");
             try {
-                // Clear the backoff the decline above started, so what happens next is the checkpoint's doing.
+                // Clear the decline's backoff, so what happens next is the checkpoint's doing.
                 setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
                 runCompactionPasses("x");
 

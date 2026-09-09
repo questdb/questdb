@@ -836,11 +836,9 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
-     * A partition frozen read-only - by {@code ATTACH PARTITION ... READ ONLY}, or by the Enterprise
-     * storage policy ahead of a cold switch - must survive the sweep untouched, however idle and however
-     * full of dead row groups it is. {@link TableWriter}'s own {@code compactPhysicalPartition} already
-     * declines a read-only partition; the swap must not reach the same partition through the other door
-     * and rewrite frozen bytes into a directory carrying a fresh nameTxn.
+     * A frozen partition must survive the sweep untouched, however idle and however full of dead row groups.
+     * {@link TableWriter}'s own {@code compactPhysicalPartition} already declines a read-only partition; the
+     * swap must not reach the same partition through the other door.
      */
     @Test
     public void testScanLeavesAReadOnlyParquetPartitionAlone() throws Exception {
@@ -863,9 +861,9 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
-     * The composite twin of {@link #testScanLeavesAReadOnlyParquetPartitionAlone}: the REWRITE branch
-     * lands through {@link TableWriter#swapCompactedCompositePartition}, which bypasses {@code
-     * compactPhysicalPartition}'s read-only guard entirely, so it needs its own gate.
+     * Composite twin of {@link #testScanLeavesAReadOnlyParquetPartitionAlone}: the REWRITE branch lands through
+     * {@link TableWriter#swapCompactedCompositePartition}, which bypasses {@code compactPhysicalPartition}'s
+     * read-only guard entirely, so it needs its own gate.
      */
     @Test
     public void testScanLeavesAReadOnlyCompositePartitionAlone() throws Exception {
@@ -919,10 +917,8 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
-     * A partition whose bytes already live in a remote object store. The swap assigns a new nameTxn and a
-     * new parquet file size, and that pair IS the identity the remote copy is tracked by, so a rewrite
-     * strands the manifest row against content it no longer describes and costs a full re-upload. The
-     * partition keeps reading UPLOADED either way, so nothing downstream repairs the divergence.
+     * A partition whose bytes already live in a remote object store. It keeps reading UPLOADED after a rewrite,
+     * so nothing downstream notices the manifest row now describes content that moved.
      */
     @Test
     public void testScanLeavesAnUploadedParquetPartitionAlone() throws Exception {
@@ -954,8 +950,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                     nameTxnBefore, reader.getTxFile().getPartitionNameTxn(0)
             );
         }
-        // The dead row groups are still there: the sweep declined to reclaim them, rather than reclaiming
-        // them and leaving the nameTxn alone by some other route.
+        // Still there: the sweep declined, rather than reclaiming them by some other route.
         assertUnusedBytes(tableToken, 0, true);
     }
 
@@ -972,11 +967,10 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
-     * Builds {@code tableName} with an idle Parquet partition at 2020-01-01 holding dead row-group bytes,
-     * behind a later plain partition so the Parquet one is never the active one. This is the same shape
-     * {@link #testScanCompactsIdleDirtyParquetPartitionButLeavesCleanOneAlone} proves a sweep DOES
-     * compact, so it is the control for the gate tests: they differ from it only in the one partition
-     * flag they set before sweeping.
+     * Builds {@code tableName} with an idle Parquet partition at 2020-01-01 holding dead row-group bytes, behind
+     * a later plain partition so it is never the active one. Control fixture for the gate tests, which differ
+     * from it only in the one partition flag they set;
+     * {@link #testScanCompactsIdleDirtyParquetPartitionButLeavesCleanOneAlone} proves a sweep DOES compact it.
      */
     private TableToken createIdleDirtyParquetTable(String tableName) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
@@ -1025,11 +1019,10 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
-     * Re-tightens the dead-space thresholds the sweep reads - deliberately disabled while the dead bytes
-     * were built up - and runs one sweep on a clock sitting past the idle timeout. The parquet branch's
-     * idle gate reads the {@code .parquet} file's modification time, which is real wall-clock time
-     * whatever the simulated clock says, so the job's own clock has to be shifted rather than the
-     * simulated one.
+     * Re-tightens the dead-space thresholds - deliberately disabled while the dead bytes were built up - and
+     * runs one sweep on a clock past the idle timeout. The parquet branch's idle gate reads the
+     * {@code .parquet} file's modification time, which is real wall-clock time whatever the simulated clock
+     * says, so the job's own clock has to be shifted rather than the simulated one.
      */
     private void sweepPastTheIdleTimeout() {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "0.01");
