@@ -904,6 +904,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionCompactionHotTime() {
+        return 10 * Micros.SECOND_MICROS;
+    }
+
+    @Override
+    public int getPartitionCompactionMoveTailMinGain() {
+        return 2;
+    }
+
+    @Override
     public int getPartitionCompactionPieceThreshold() {
         return 20;
     }

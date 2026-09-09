@@ -934,6 +934,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             backdate("x", "2024-01-02T00:30:00", 400);
 
             enableCompaction();
+            // ...but this test is about the hot window itself, so it keeps the shipped one.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 10);
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, "20");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD, "1");
@@ -1199,6 +1201,13 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     private static void enableCompaction() {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
+        // These fixtures are a handful of commits over a mock clock that barely advances, and they hold
+        // dead space measured in tens of thousands of rows. The shipped settled-piece window and MOVE-TAIL
+        // gain floor would decline every one of them, so the tests that want MOVE-TAIL turn them off and
+        // the tests that want to observe them set them themselves.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_TIME, 0);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_MIN_GAIN, 1);
     }
 
     /**

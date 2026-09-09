@@ -670,6 +670,10 @@ public interface CairoConfiguration {
 
     int getPartitionCompactionHotCommits();
 
+    long getPartitionCompactionHotTime();
+
+    int getPartitionCompactionMoveTailMinGain();
+
     long getPartitionCompactionIdleTimeout();
 
     int getPartitionCompactionPieceThreshold();
