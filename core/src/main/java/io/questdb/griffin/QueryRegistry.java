@@ -958,6 +958,13 @@ public class QueryRegistry {
             return registeredAtNs;
         }
 
+        public @Nullable CharSequence getResourceGroupName() {
+            final QuietCloseable lease = executionLease;
+            return lease instanceof SqlExecutionLease sqlExecutionLease
+                    ? sqlExecutionLease.getResourceGroupName()
+                    : null;
+        }
+
         public byte getState() {
             return state;
         }

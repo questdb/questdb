@@ -29,9 +29,12 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cutlass.pgwire.PGPipelineEntry;
+import io.questdb.cutlass.pgwire.PGResponseSink;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.std.ObjObjHashMap;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
@@ -41,10 +44,71 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class PGPipelineEntryResourceLifecycleTest extends AbstractTest {
+
+    @Test
+    public void testErrorSyncClosesSuspendedCursorBeforeRetryingResponse() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final DefaultTestCairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            try (
+                    TrackingCairoEngine engine = new TrackingCairoEngine(configuration);
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)
+                            .with(AllowAllSecurityContext.INSTANCE);
+                    PGPipelineEntry entry = new PGPipelineEntry(engine)
+            ) {
+                setCursor(entry, new TrackingRecordCursor(engine.events));
+                invoke(
+                        entry,
+                        "beginSqlExecutionOwner",
+                        new Class<?>[]{CharSequence.class, SqlExecutionContext.class, short.class},
+                        "SELECT 1",
+                        executionContext,
+                        CompiledQuery.SELECT
+                );
+                invoke(entry, "unmountSqlExecutionOwnerAfterExecute", new Class<?>[0]);
+                final Field stateSuspended = PGPipelineEntry.class.getDeclaredField("stateSuspended");
+                stateSuspended.setAccessible(true);
+                stateSuspended.setBoolean(entry, true);
+                entry.getErrorMessageSink().put("admission refused");
+                final AtomicBoolean isFirstWrite = new AtomicBoolean(true);
+                // This sink injects buffer exhaustion only; lifecycle assertions do not
+                // depend on any simulated client response or message bytes.
+                final PGResponseSink sink = (PGResponseSink) Proxy.newProxyInstance(
+                        PGResponseSink.class.getClassLoader(),
+                        new Class<?>[]{PGResponseSink.class},
+                        (proxy, method, args) -> {
+                            if (method.getName().equals("put") && isFirstWrite.compareAndSet(true, false)) {
+                                throw NoSpaceLeftInResponseBufferException.instance(1, 0, 4096);
+                            }
+                            if (method.getReturnType() == long.class) {
+                                return method.getName().equals("getSendBufferSize") ? 4096L : 0L;
+                            }
+                            if (method.getReturnType() == boolean.class) {
+                                return true;
+                            }
+                            return method.getReturnType().isInstance(proxy) ? proxy : null;
+                        }
+                );
+                Assert.assertThrows(
+                        NoSpaceLeftInResponseBufferException.class,
+                        () -> entry.msgSync(executionContext, new ObjObjHashMap<>(), sink)
+                );
+                final List<String> retiredEvents = List.of(
+                        "owner.begin", "cursor.suspend", "owner.unmount", "cursor.close", "owner.end"
+                );
+                Assert.assertEquals(retiredEvents, engine.events);
+                Assert.assertFalse(entry.isSuspended());
+                entry.msgSync(executionContext, new ObjObjHashMap<>(), sink);
+                Assert.assertEquals(retiredEvents, engine.events);
+                Assert.assertFalse(entry.isError());
+            }
+        });
+    }
 
     @Test
     public void testExecuteToSyncGapCountsAsClientWait() throws Exception {

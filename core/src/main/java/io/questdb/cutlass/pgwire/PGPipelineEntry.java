@@ -60,6 +60,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.network.PeerDisconnectedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
@@ -397,6 +398,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void closeSuspendedCursor() {
         cursor = Misc.free(cursor);
+        outResendColumnIndex = 0;
+        outResendCursorRecord = false;
+        outResendRecordHeader = true;
+        outResendResumePoint = -1;
         queryCancellation.clear();
         queryMemoryTracker = null;
         stateSuspended = false;
@@ -869,8 +874,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             SqlExecutionContext sqlExecutionContext,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             PGResponseSink utf8Sink
-    ) throws NoSpaceLeftInResponseBufferException {
+    ) throws NoSpaceLeftInResponseBufferException, PeerDisconnectedException {
         if (isError()) {
+            completePendingMessageOnError(sqlExecutionContext, utf8Sink);
+            closeSuspendedCursor();
             outError(utf8Sink, pendingWriters);
         } else {
             switch (stateSync) {
@@ -1276,6 +1283,35 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             recordSize += columnValueSize;
         }
         return recordSize;
+    }
+
+    private void completePendingMessageOnError(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink)
+            throws PeerDisconnectedException {
+        if (!outResendRecordHeader) {
+            // The peer already received this message's header. Finish its remaining fields
+            // before writing ErrorResponse, even if reacquiring query admission failed.
+            // No cursor advance or new result row is allowed during this completion.
+            if (stateSync == SYNC_DESCRIBE) {
+                outRowDescription(utf8Sink);
+            } else {
+                assert stateSync == SYNC_DATA;
+                assert outResendCursorRecord;
+                sqlExecutionContext.setCancelledFlag(queryCancellation);
+                sqlExecutionContext.setMemoryTracker(queryMemoryTracker);
+                try {
+                    outRecord(sqlExecutionContext, utf8Sink, cursor.getRecord(), factory.getMetadata().getColumnCount());
+                } catch (PGMessageProcessingException e) {
+                    // A second failure while finishing the message leaves no valid position
+                    // for an ErrorResponse. Disconnect instead of corrupting the frame.
+                    LOG.error().$("could not complete pgwire message [error=").$(e.getFlyweightMessage()).I$();
+                    throw PeerDisconnectedException.INSTANCE;
+                } finally {
+                    // Admission was not reacquired, so owner unmount cannot detach allocations
+                    // made by retained projections. This also runs before another partial send.
+                    MemoryTracker.detachResourceMemoryCurrentThread();
+                }
+            }
+        }
     }
 
     private void copyOf(PGPipelineEntry blueprint) {

@@ -1460,8 +1460,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             boolean isExec = pipelineCurrentEntry.isStateExec();
             boolean isError = pipelineCurrentEntry.isError();
             boolean isClosed = pipelineCurrentEntry.isStateClosed();
-            pipelineCurrentEntry.mountSqlExecutionOwnerForSync();
             try {
+                try {
+                    pipelineCurrentEntry.mountSqlExecutionOwnerForSync();
+                } catch (CairoException e) {
+                    if (e.isCritical()) {
+                        throw e;
+                    }
+                    pipelineCurrentEntry.setErrorMessagePosition(e.getPosition());
+                    pipelineCurrentEntry.getErrorMessageSink().put(e.getFlyweightMessage());
+                    isError = true;
+                    if (transactionState == IN_TRANSACTION) {
+                        transactionState = ERROR_TRANSACTION;
+                    }
+                }
                 syncPipelineEntry();
             } finally {
                 // A retained cursor means either portal suspension or a socket send that parked
