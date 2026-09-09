@@ -185,6 +185,7 @@ public final class WhereClauseParser implements Mutable {
     private int scalarBoundDepth;
     private boolean scalarBoundSpeculated;
     private CharSequence timestamp;
+    private int timestampColumnType;
     private boolean useIndexedSymbolFilters = true;
 
     @Override
@@ -245,6 +246,7 @@ public final class WhereClauseParser implements Mutable {
         clearKeys();
         clearExcludedKeys();
         timestamp = null;
+        timestampColumnType = 0;
         preferredKeyColumn = null;
         expressionNodePool = null;
         isInsideAndOffset = false;
@@ -855,7 +857,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata metadata,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        ExpressionNode col = node.args.getLast();
+        ExpressionNode col = unwrapNoOpTimestampCast(node.args.getLast());
         if (col.type != ExpressionNode.LITERAL) {
             if (referencesTimestamp(col)) {
                 return analyzeMonotonicTimestamp(timestampDriver, model, node, col, node.args.getQuick(1), node.args.getQuick(0), true, true, functionParser, metadata, executionContext);
@@ -966,6 +968,7 @@ public final class WhereClauseParser implements Mutable {
             boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
+        a = unwrapNoOpTimestampCast(a);
         if (nodesEqual(a, b)) {
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
@@ -1147,9 +1150,11 @@ public final class WhereClauseParser implements Mutable {
             return false;
         }
 
-        if (node.lhs.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(node.lhs.token, timestamp)) {
+        ExpressionNode lhs = unwrapNoOpTimestampCast(node.lhs);
+        ExpressionNode rhs = unwrapNoOpTimestampCast(node.rhs);
+        if (lhs.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(lhs.token, timestamp)) {
             return analyzeTimestampGreater(timestampDriver, model, node, equalsTo, functionParser, metadata, executionContext, node.rhs);
-        } else if (node.rhs.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(node.rhs.token, timestamp)) {
+        } else if (rhs.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(rhs.token, timestamp)) {
             return analyzeTimestampLess(timestampDriver, model, node, equalsTo, functionParser, metadata, executionContext, node.lhs);
         }
 
@@ -1172,7 +1177,7 @@ public final class WhereClauseParser implements Mutable {
             throw SqlException.$(node.position, "Too few arguments for 'in'");
         }
 
-        final ExpressionNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
+        final ExpressionNode col = unwrapNoOpTimestampCast(node.paramCount < 3 ? node.lhs : node.args.getLast());
         if (col.type != ExpressionNode.LITERAL) {
             if (referencesTimestamp(col)) {
                 if (node.paramCount == 2 && node.rhs.type == ExpressionNode.CONSTANT) {
@@ -1436,9 +1441,11 @@ public final class WhereClauseParser implements Mutable {
             return false;
         }
 
-        if (node.lhs.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(node.lhs.token, timestamp)) {
+        ExpressionNode lhs = unwrapNoOpTimestampCast(node.lhs);
+        ExpressionNode rhs = unwrapNoOpTimestampCast(node.rhs);
+        if (lhs.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(lhs.token, timestamp)) {
             return analyzeTimestampLess(timestampDriver, model, node, equalsTo, functionParser, metadata, executionContext, node.rhs);
-        } else if (node.rhs.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(node.rhs.token, timestamp)) {
+        } else if (rhs.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(rhs.token, timestamp)) {
             return analyzeTimestampGreater(timestampDriver, model, node, equalsTo, functionParser, metadata, executionContext, node.lhs);
         }
 
@@ -1857,7 +1864,7 @@ public final class WhereClauseParser implements Mutable {
     ) throws SqlException {
 
         ExpressionNode node = notNode.rhs;
-        ExpressionNode col = node.args.getLast();
+        ExpressionNode col = unwrapNoOpTimestampCast(node.args.getLast());
         if (col.type != ExpressionNode.LITERAL) {
             return false;
         }
@@ -1905,6 +1912,7 @@ public final class WhereClauseParser implements Mutable {
             boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
+        a = unwrapNoOpTimestampCast(a);
         if (nodesEqual(a, b) && a.noLeafs() && b.noLeafs()) {
             model.intrinsicValue = IntrinsicModel.FALSE;
             return true;
@@ -2050,7 +2058,7 @@ public final class WhereClauseParser implements Mutable {
             throw SqlException.$(node.position, "Too few arguments for 'in'");
         }
 
-        ExpressionNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
+        ExpressionNode col = unwrapNoOpTimestampCast(node.paramCount < 3 ? node.lhs : node.args.getLast());
 
         if (col.type != ExpressionNode.LITERAL) {
             return false;
@@ -3029,7 +3037,8 @@ public final class WhereClauseParser implements Mutable {
         // Handle timestamp = 'value' or timestamp = now() - parse as point interval [ts, ts]
         if (Chars.equals(node.token, '=')) {
             ExpressionNode valueNode;
-            if (node.lhs.type == ExpressionNode.LITERAL && isTimestamp(node.lhs)) {
+            ExpressionNode lhs = unwrapNoOpTimestampCast(node.lhs);
+            if (lhs.type == ExpressionNode.LITERAL && isTimestamp(lhs)) {
                 valueNode = node.rhs;
             } else {
                 valueNode = node.lhs;
@@ -3151,6 +3160,37 @@ public final class WhereClauseParser implements Mutable {
         return type != ExpressionNode.OPERATION;
     }
 
+    /**
+     * Checks if node is dateadd(const_period, const_stride, designated_timestamp).
+     *
+     * @param node the expression node to check
+     * @return true the dateadd node if it matches the pattern, false otherwise
+     */
+    private boolean isDateaddOnTimestamp(ExpressionNode node) {
+        if (node == null || timestamp == null) {
+            return false;
+        }
+        if (node.type != ExpressionNode.FUNCTION
+                || !Chars.equalsLowerCaseAscii(node.token, "dateadd")
+                || node.args.size() != 3) {
+            return false;
+        }
+        // Args are in reverse order: args[0]=timestamp, args[1]=stride, args[2]=period
+        final ExpressionNode timestampArg = unwrapNoOpTimestampCast(node.args.getQuick(0));
+        final ExpressionNode strideArg = node.args.getQuick(1);
+        final ExpressionNode periodArg = node.args.getQuick(2);
+        // Check timestamp arg is the designated timestamp column
+        if (timestampArg.type != ExpressionNode.LITERAL || !isTimestamp(timestampArg)) {
+            return false;
+        }
+        // Check period is a constant char (e.g., 'm', 'd', 'h')
+        if (periodArg.type != ExpressionNode.CONSTANT) {
+            return false;
+        }
+        // Check stride is a constant integer (either a direct constant or unary minus of constant)
+        return isConstantInt(strideArg);
+    }
+
     private boolean isGeoHashConstFunction(Function fn) {
         return (fn instanceof AbstractGeoHashFunction) && fn.isConstant();
     }
@@ -3199,7 +3239,7 @@ public final class WhereClauseParser implements Mutable {
             if (node.paramCount < 2) {
                 return false;
             }
-            ExpressionNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
+            ExpressionNode col = unwrapNoOpTimestampCast(node.paramCount < 3 ? node.lhs : node.args.getLast());
             if (col.type != ExpressionNode.LITERAL || !isTimestamp(col)) {
                 return false;
             }
@@ -3240,6 +3280,26 @@ public final class WhereClauseParser implements Mutable {
 
     private boolean isTimestamp(ExpressionNode n) {
         return Chars.equalsIgnoreCaseNc(n.token, timestamp);
+    }
+
+    // Returns n.lhs when n is CAST(<designated_timestamp> AS <same_type>), otherwise n.
+    // A cross-precision cast (e.g. timestamp::timestamp_ns) is not a no-op and is left alone.
+    private ExpressionNode unwrapNoOpTimestampCast(ExpressionNode n) {
+        if (timestamp != null
+                && n.type == ExpressionNode.FUNCTION
+                && SqlKeywords.isCastKeyword(n.token)
+                && n.paramCount == 2
+                && n.lhs != null
+                && n.rhs != null
+                && n.lhs.type == ExpressionNode.LITERAL
+                // The type argument is ExpressionNode.CONSTANT (set by ExpressionParser when
+                // closing a CAST scope) for CAST(x AS type), or ExpressionNode.LITERAL for x::type.
+                && (n.rhs.type == ExpressionNode.CONSTANT || n.rhs.type == ExpressionNode.LITERAL)
+                && isTimestamp(n.lhs)
+                && ColumnType.typeOf(n.rhs.token) == timestampColumnType) {
+            return n.lhs;
+        }
+        return n;
     }
 
     private void markOrIntrinsic(ExpressionNode node) {
