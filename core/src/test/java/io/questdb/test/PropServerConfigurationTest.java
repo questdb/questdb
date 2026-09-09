@@ -3460,47 +3460,6 @@ public class PropServerConfigurationTest {
         return new PropServerConfiguration(root, properties, env, PropServerConfigurationTest.LOG, buildInformation);
     }
 
-    @Test
-    public void testPartitionChecksumProperties() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty("cairo.partition.checksum.enabled", "false");
-        properties.setProperty("cairo.partition.checksum.block.size", "262144");
-        properties.setProperty("cairo.partition.checksum.strict", "true");
-        properties.setProperty("cairo.partition.checksum.scrub.bytes.per.second", "1048576");
-        PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        CairoConfiguration cairo = configuration.getCairoConfiguration();
-        Assert.assertFalse(cairo.isPartitionChecksumEnabled());
-        Assert.assertEquals(262144, cairo.getPartitionChecksumBlockSize());
-        Assert.assertTrue(cairo.isPartitionChecksumStrict());
-        Assert.assertEquals(1048576L, cairo.getPartitionChecksumScrubBytesPerSecond());
-    }
-
-    @Test
-    public void testPartitionChecksumPropertyDefaults() throws Exception {
-        PropServerConfiguration configuration = newPropServerConfiguration(new Properties());
-        CairoConfiguration cairo = configuration.getCairoConfiguration();
-        Assert.assertTrue(cairo.isPartitionChecksumEnabled());
-        Assert.assertEquals(1024 * 1024, cairo.getPartitionChecksumBlockSize());
-        // Degrade-by-default is a deliberate exemption from fail-stop, not an oversight.
-        Assert.assertFalse(cairo.isPartitionChecksumStrict());
-        // 0: the scrub is opt-in until it is serialised against the writer -- see the accessor javadoc.
-        Assert.assertEquals("the scrub is opt-in: see the accessor javadoc for the two measured failures", 0L, cairo.getPartitionChecksumScrubBytesPerSecond());
-    }
-
-    @Test
-    public void testPartitionChecksumBlockSizeMustBeAPowerOfTwo() throws Exception {
-        // The block index is derived by division; a non-power-of-two silently changes which bytes a
-        // block covers between two binaries reading the same vector.
-        Properties properties = new Properties();
-        properties.setProperty("cairo.partition.checksum.block.size", "1000");
-        try {
-            newPropServerConfiguration(properties);
-            Assert.fail("expected rejection");
-        } catch (ServerConfigurationException e) {
-            TestUtils.assertContains(e.getMessage(), "cairo.partition.checksum.block.size");
-        }
-    }
-
     protected PropServerConfiguration newPropServerConfiguration(Properties properties) throws Exception {
         return new PropServerConfiguration(root, properties, null, PropServerConfigurationTest.LOG, new BuildInformationHolder());
     }

@@ -672,53 +672,6 @@ public interface CairoConfiguration {
 
     int getO3ColumnMemorySize();
 
-    /**
-     * Block size, in bytes, of the per-partition checksum vector. Power of two. A sidecar that
-     * already exists is always read with ITS recorded block size, never reinterpreted at this one.
-     */
-    default int getPartitionChecksumBlockSize() {
-        return 1024 * 1024;
-    }
-
-    /**
-     * Bytes per second the background checksum scrub may hash. 0 disables the scrub, and 0 is the
-     * DEFAULT.
-     * <p>
-     * THREE attempts at making it default-on each fixed the previous symptom and exposed another:
-     * <ol>
-     *   <li>walking the filesystem: 46 false "partition failed checksum verification" errors, because
-     *       O3 rewrites some partitions inside their existing directory;</li>
-     *   <li>enumerating through a pooled {@link TableReader}, plus invalidate-before-mutate on the O3
-     *       path: the false verdicts went away, but the reader is still checked out mid-scrub and
-     *       shutdown reports "table is left behind on pool shutdown";</li>
-     *   <li>an off-pool reader: fd accounting then fails instead.</li>
-     * </ol>
-     * None of the last two are about checksum correctness -- they are a background job perturbing the
-     * engine's resource accounting. That is a real cost to weigh, not a bug to squash, so the default
-     * stays 0: a diagnostic whose failure mode is taking healthy data offline has to earn being on.
-     * Enable it against tables that are not being actively written, where all three problems vanish.
-     */
-    default long getPartitionChecksumScrubBytesPerSecond() {
-        return 0;
-    }
-
-    /**
-     * When true, per-partition data checksums are maintained on the write path and verified
-     * structurally when a partition opens.
-     */
-    default boolean isPartitionChecksumEnabled() {
-        return true;
-    }
-
-    /**
-     * When true, a failure to write or sync a checksum sidecar is fatal, restoring budget-3
-     * fail-stop. The default is false: the sidecar carries no durability claim and is fully
-     * re-derivable, so losing it must cost DETECTION, not ingestion.
-     */
-    default boolean isPartitionChecksumStrict() {
-        return false;
-    }
-
     int getO3CopyQueueCapacity();
 
     int getO3LagCalculationWindowsSize();

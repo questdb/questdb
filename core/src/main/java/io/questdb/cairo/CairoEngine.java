@@ -246,7 +246,6 @@ public class CairoEngine implements Closeable, WriterSource {
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final BackupSeqPartLock backupSeqPartLock = new BackupSeqPartLock();
-    private final CorruptPartitionRegistry corruptPartitionRegistry = new CorruptPartitionRegistry();
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyExportContext copyExportContext;
     private final CopyImportContext copyImportContext;
@@ -441,7 +440,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.recentWriteTracker = new RecentWriteTracker(configuration.getRecentWriteTrackerCapacity());
             this.writerPool = new WriterPool(configuration, this, recentWriteTracker);
             this.scoreboardPool = new TxnScoreboardPoolV2(configuration);
-            this.readerPool = new ReaderPool(configuration, scoreboardPool, messageBus, partitionOverwriteControl, corruptPartitionRegistry);
+            this.readerPool = new ReaderPool(configuration, scoreboardPool, messageBus, partitionOverwriteControl);
             this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
             this.tableMetadataPool = new TableMetadataPool(configuration);
             this.walWriterPool = new WalWriterPool(configuration, this);
@@ -2366,14 +2365,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public MessageBus getMessageBus() {
         return messageBus;
-    }
-
-    /**
-     * Partitions the checksum scrub has condemned. Consulted when a partition opens, so a query
-     * touching a corrupt partition fails rather than returning wrong rows.
-     */
-    public CorruptPartitionRegistry getCorruptPartitionRegistry() {
-        return corruptPartitionRegistry;
     }
 
     public MetadataCache getMetadataCache() {

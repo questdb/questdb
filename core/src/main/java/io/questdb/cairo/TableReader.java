@@ -81,8 +81,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
     private final CairoConfiguration configuration;
-    private final PartitionChecksumSidecar checksumSidecar = new PartitionChecksumSidecar();
-    private CorruptPartitionRegistry corruptPartitionRegistry;
     private final int dbRootSize;
     private final FilesFacade ff;
     private final int id;
@@ -129,7 +127,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             CairoConfiguration configuration,
             @NotNull TableToken tableToken,
             TxnScoreboardPool scoreboardFactory) {
-        this(id, configuration, tableToken, scoreboardFactory, null, null, null);
+        this(id, configuration, tableToken, scoreboardFactory, null, null);
     }
 
     // Don't forget to change TableReader srcReader overload when changing this constructor.
@@ -139,11 +137,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             @NotNull TableToken tableToken,
             TxnScoreboardPool scoreboardPool,
             @Nullable MessageBus messageBus,
-            @Nullable PartitionOverwriteControl partitionOverwriteControl,
-            @Nullable CorruptPartitionRegistry corruptPartitionRegistry
+            @Nullable PartitionOverwriteControl partitionOverwriteControl
     ) {
         this.id = id;
-        this.corruptPartitionRegistry = corruptPartitionRegistry;
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
         this.maxOpenPartitions = configuration.getInactiveReaderMaxOpenPartitions();
@@ -192,12 +188,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             TableReader srcReader,
             TxnScoreboardPool scoreboardPool,
             @Nullable MessageBus messageBus,
-            @Nullable PartitionOverwriteControl partitionOverwriteControl,
-            @Nullable CorruptPartitionRegistry corruptPartitionRegistry
+            @Nullable PartitionOverwriteControl partitionOverwriteControl
     ) {
         assert srcReader.isOpen() && srcReader.isActive();
         this.id = id;
-        this.corruptPartitionRegistry = corruptPartitionRegistry;
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
         this.maxOpenPartitions = configuration.getInactiveReaderMaxOpenPartitions();
@@ -275,7 +269,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(txnScoreboard);
             Misc.free(path);
             Misc.free(columnVersionReader);
-            Misc.free(checksumSidecar);
             LOG.debug().$("closed [table=").$(tableToken).I$();
         }
     }
@@ -1449,124 +1442,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    /**
-     * Structural verification when a native partition opens: the sidecar's own trailer, then each
-     * covered file's actual length against the recorded one.
-     * <p>
-     * Deliberately does NOT hash blocks. Column files are mmap'd, so there is no read hook to piggyback
-     * on, and hashing here would make partition open cost O(bytes) on the query path. This is
-     * O(#files) -- a length call each plus one small mapping -- and still catches truncation, which is
-     * the shape a torn write at the tail of a file takes. Block hashes are the scrub's job.
-     * <p>
-     * A file LONGER than recorded is normal: the partition has been appended to since the last
-     * generation, and those blocks are simply uncovered. A file that is ABSENT is also normal -- a
-     * dropped or purged column -- and must not fail the read.
-     */
-    /**
-     * Last path segment: the partition directory name, which is how verdicts are keyed.
-     */
-    private static CharSequence partitionDirNameOf(Path partitionPath) {
-        final String full = partitionPath.toString();
-        final int slash = full.lastIndexOf(io.questdb.std.Files.SEPARATOR);
-        return slash < 0 ? full : full.substring(slash + 1);
-    }
-
-    /**
-     * Whether a covered file being SHORTER than its recorded length is trustworthy evidence of
-     * corruption rather than of coverage that simply ran ahead of the data.
-     * <p>
-     * It is trustworthy in exactly two cases:
-     * <ul>
-     *   <li>{@code SYNC}/{@code ASYNC} — the sidecar is flushed under the same
-     *       {@link CommitMode#appliesColumnSync} predicate as the columns it covers, so their relative
-     *       order survives a crash;</li>
-     *   <li>{@code ADAPTIVE} on a WAL table — the sidecar is not flushed per commit, but the columns
-     *       are not either, and recovery rolls back to a validated epoch and re-derives coverage.</li>
-     * </ul>
-     * Everything else leaves the sidecar unordered against its data with nothing to re-derive it, so a
-     * shortfall is indistinguishable from the tail simply never having landed. That covers plain
-     * {@code NOSYNC}, and it covers <b>{@code ADAPTIVE} on a non-WAL table</b>, which
-     * {@link CommitMode#appliesColumnSync} documents as degrading to nosync-grade apply durability --
-     * there is no durable WAL to replay and no epoch, so the configured token says ADAPTIVE while the
-     * actual guarantee is nosync's. Keying this off the configured token alone condemned a healthy
-     * {@code BYPASS WAL} partition in {@code FrameAppendFuzzTest#testSimple}
-     * ({@code new_col_4.d.31, recorded=44112, actual=8192}).
-     */
-    private boolean coverageIsOrdered() {
-        final int resolved = CommitMode.effectiveCommitMode(
-                metadata.getCommitMode(), configuration.getCommitMode());
-        return CommitMode.appliesColumnSync(resolved)
-                || (resolved == CommitMode.ADAPTIVE && metadata.isWalEnabled());
-    }
-
-    private void verifyPartitionStructure(Path partitionPath) {
-        if (!configuration.isPartitionChecksumEnabled()) {
-            return;
-        }
-        final int plen = partitionPath.size();
-        // A partition the scrub condemned must fail the queries that TOUCH it, and only those -- the
-        // rest of the table stays readable. Checked before the structural work: there is nothing to
-        // learn from a partition already known bad.
-        if (corruptPartitionRegistry != null && !corruptPartitionRegistry.isEmpty()) {
-            final CharSequence dirName = partitionDirNameOf(partitionPath);
-            final String reason = corruptPartitionRegistry.reasonFor(tableToken, dirName);
-            if (reason != null) {
-                throw CairoException.critical(0)
-                        .put("partition failed checksum verification [table=").put(tableToken.getTableName())
-                        .put(", partition=").put(dirName)
-                        .put(", detail=").put(reason)
-                        .put(']');
-            }
-        }
-        try {
-            partitionPath.concat(PartitionChecksumSidecar.FILE_NAME);
-            checksumSidecar.of(ff, partitionPath, configuration.getPartitionChecksumBlockSize());
-            partitionPath.trimTo(plen);
-            if (checksumSidecar.coverage() != ChecksumTrailer.PRESENT_OK) {
-                return; // uncovered: upgrade-on-write, read it unverified
-            }
-            for (int i = 0, n = checksumSidecar.fileCount(); i < n; i++) {
-                partitionPath.trimTo(plen).concat(checksumSidecar.fileName(i));
-                final long actual = ff.length(partitionPath.$());
-                if (actual < 0) {
-                    continue; // gone: dropped or purged column, not a fault
-                }
-                final long recorded = checksumSidecar.fileLength(i);
-                if (actual < recorded) {
-                    // A short covered file is normally a torn write at the tail -- the one corruption
-                    // this structural check catches for free (PartitionChecksumReadPathTest
-                    // #testTruncatedColumnFileIsDetectedOnOpen), so it stays fatal in every mode that
-                    // orders the sidecar against the columns it covers. SYNC/ASYNC flush both under
-                    // the same appliesColumnSync predicate; ADAPTIVE flushes neither per commit but
-                    // recovery rolls back to a validated epoch and re-derives coverage, so a shortfall
-                    // that survives into a reader is genuine there too.
-                    //
-                    // NOSYNC is the exception, and the only one: it orders nothing and re-derives
-                    // nothing, so writeback can land the sidecar's recorded length while the column's
-                    // last pages never reach the platter. There the shortfall is indistinguishable
-                    // from the data loss nosync explicitly permits, and condemning it takes a table
-                    // offline for behaving as documented -- a one-byte-short ts.d made a whole
-                    // partition unqueryable (PartitionChecksumCrashTest
-                    // #testNosyncCrashIsNotReportedAsCorruption). Degrade to uncovered instead: the
-                    // partition reads unverified and the next seal re-covers it against real contents.
-                    if (!coverageIsOrdered()) {
-                        LOG.info().$("partition checksum coverage is behind its data and nothing orders or"
-                                        + " re-derives it, reading unverified [path=")
-                                .$(partitionPath).$(", recorded=").$(recorded).$(", actual=").$(actual).I$();
-                        return;
-                    }
-                    throw CairoException.critical(0)
-                            .put("covered file is shorter than recorded [path=").put(partitionPath)
-                            .put(", recorded=").put(recorded)
-                            .put(", actual=").put(actual)
-                            .put(']');
-                }
-            }
-        } finally {
-            partitionPath.trimTo(plen);
-            checksumSidecar.close();
-        }
-    }
 
     private long openPartition0(int partitionIndex) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
@@ -1678,7 +1553,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
-                        verifyPartitionStructure(path);
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);

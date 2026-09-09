@@ -297,19 +297,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
     private final LongList partitionRemoveCandidates = new LongList();
-    private final PartitionChecksumSidecar partitionChecksumSidecar = new PartitionChecksumSidecar();
-    private final ObjList<String> partitionChecksumNames = new ObjList<>();
-    private final LongList partitionChecksumLengths = new LongList();
-    private final StringSink partitionChecksumNameSink = new StringSink();
-    private final LongList pendingChecksumSeals = new LongList();
-    /**
-     * Partitions whose checksum sidecar was written since the last durable epoch. A seal changes no
-     * row data, so neither {@code txWriter} nor {@code columnVersionWriter} marks the partition dirty
-     * -- yet the epoch's non-syncfs sweep is bounded by those two dirty sets. This is the third
-     * member of that write set, so a just-sealed {@code _chk} is fsynced by the epoch that follows
-     * it. Cleared with the other two when an epoch publishes.
-     */
-    private final LongHashSet checksumEpochWriteSet = new LongHashSet();
     private final Path path;
     // Adaptive durable-epoch marker + its scratch path, lazily created on the first
     // advanceDurableEpoch() call (only adaptive WAL tables ever advance an epoch).
@@ -1171,13 +1158,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         return AttachDetachStatus.ATTACH_ERR_RENAME;
                     }
                 }
-
-                // An attached partition arrives from another table, or another era of this one, so any
-                // checksum sidecar it carries describes the SOURCE's files rather than the destination's
-                // -- a column deleted on one side alone makes it wrong, and it then reports corruption on
-                // a healthy partition. Drop it here: absent coverage, never wrong coverage. The next seal
-                // re-covers the partition against its real contents.
-                dropPartitionChecksums(path);
 
                 // pin column versions
                 // the dir traversal will attempt to populate the column versions, we need to maintain the timestamp
@@ -6078,19 +6058,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void commit00() {
         updateIndexes();
-        for (int i = 0, n = pendingChecksumSeals.size(); i < n; i++) {
-            sealPartitionChecksums(pendingChecksumSeals.getQuick(i));
-        }
-        pendingChecksumSeals.clear();
         syncColumns();
-        // No per-commit sidecar flush. _chk is maintained only under ADAPTIVE
-        // (maintainsPartitionChecksums), and ADAPTIVE never satisfies appliesColumnSync, so the
-        // former syncPartitionChecksums() call could not execute: a reachability probe over the
-        // crash package and every PartitionChecksum* suite (138 classes, 1743 tests) hit it zero
-        // times. Its durability comes from the durable epoch, which flushes the sidecar together
-        // with the columns it covers and only then publishes the epoch anchor -- so the
-        // "checksum trails data" ordering this call used to provide is now a property of the
-        // epoch's publish step, not of the commit path.
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriterAndPublishPendingPostingSealPurges();
@@ -7610,7 +7578,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(txWriter);
         Misc.free(ddlMem);
         Misc.free(other);
-        Misc.free(partitionChecksumSidecar);
         durableEpochMarker = Misc.free(durableEpochMarker);
         Misc.free(durableEpochSnapshotPath);
         Misc.free(todoMem);
@@ -9572,15 +9539,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                // The O3 path -- not openPartition -- is how a WAL apply materialises partitions, so
-                // this is where a partition stops being written. Only non-last partitions are sealed:
-                // the last one is still the active append target, and its files are pre-extended, so a
-                // length recorded now would be contradicted by the truncate at close and the reader
-                // would call an intact file truncated.
-                if (partitionTimestamp != lastPartitionTimestamp && !isParquet) {
-                    armChecksumSeal(partitionTimestamp);
-                }
-
                 LOG.info().$("o3 partition update [timestampMin=").$ts(timestampDriver, timestampMin)
                         .$(", last=").$(partitionTimestamp == lastPartitionTimestamp)
                         .$(", partitionTimestamp=").$ts(timestampDriver, partitionTimestamp)
@@ -10327,14 +10285,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void openPartition(long timestamp, long rowCount) {
         try {
             timestamp = txWriter.getPartitionTimestampByTimestamp(timestamp);
-            // Opening a different partition finishes the previous one: its append memories are about
-            // to be re-pointed, so from here its files are closed and at their final on-disk length.
-            // Arm the seal rather than doing it here -- commit00() performs it, so the hashes are
-            // written before syncColumns() and the sidecar is synced after, preserving
-            // "checksum trails data".
-            if (lastOpenPartitionTs != Long.MIN_VALUE && lastOpenPartitionTs != timestamp) {
-                armChecksumSeal(lastOpenPartitionTs);
-            }
             lastOpenPartitionTxnName = setStateForTimestamp(path, timestamp);
             partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(timestamp);
             int plen = path.size();
@@ -10898,35 +10848,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long newPartitionSize = srcDataMax + srcOooBatchRowSize;
 
                     pCount++;
-
-                    // Drop coverage BEFORE O3 touches a sealed partition, not after.
-                    //
-                    // O3 does not always write into a new directory version: with partitionMutates
-                    // false it rewrites files inside the EXISTING one. While that is in flight the
-                    // partition's sidecar still describes the previous bytes, and anything reading
-                    // concurrently -- the scrub, a reader's structural check -- sees valid-looking
-                    // coverage over data being rewritten underneath it. That is what produced 46 false
-                    // "partition failed checksum verification" errors across O3Test.
-                    //
-                    // Invalidating first turns that window from WRONG coverage into ABSENT coverage,
-                    // which every consumer already treats as "unverified". The seal armed below
-                    // re-covers the partition once the write is done.
-                    // Gated on the config flag ALONE, not on maintainsPartitionChecksums(): a
-                    // partition carrying coverage written while the table was adaptive must still be
-                    // invalidated when it is rewritten under another mode. Mode-gating the cleanup
-                    // as well would let stale-but-present coverage outlive the data it describes,
-                    // which is precisely the wrong-coverage state this block exists to prevent.
-                    if (!last && configuration.isPartitionChecksumEnabled()) {
-                        final Path chkPath = Path.getThreadLocal(configuration.getDbRoot()).concat(tableToken);
-                        TableUtils.setPathForNativePartition(
-                                chkPath,
-                                timestampDriver.getTimestampType(),
-                                partitionBy,
-                                partitionTimestamp,
-                                srcNameTxn
-                        );
-                        dropPartitionChecksums(chkPath);
-                    }
 
                     LOG.info().$("o3 partition task [table=").$(tableToken)
                             .$(", partitionTs=").$ts(timestampDriver, partitionTimestamp)
@@ -15748,247 +15669,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return appliesColumnSync(commitMode) ? commitMode : CommitMode.NOSYNC;
     }
 
-    /**
-     * Hashes the last partition's covered files into a new sidecar generation.
-     * <p>
-     * Mutation paths are handled by the partition directory being VERSIONED: O3, dedup and the
-     * parquet conversions write into a new directory version, which starts with no sidecar and is
-     * therefore uncovered for free. Only genuinely in-place rewrites need an explicit
-     * {@link PartitionChecksumSidecar#invalidate()}; those are wired separately.
-     * <p>
-     * Failure policy: this is a deliberate exemption from budget-3 fail-stop. The sidecar carries no
-     * durability claim and is fully re-derivable from the data it describes, so a failure must cost
-     * DETECTION, never ingestion -- unless strict mode says otherwise.
-     */
-    /**
-     * Removes a partition's checksum sidecar, leaving it uncovered until the next seal.
-     */
-    private void dropPartitionChecksums(Path partitionPath) {
-        final int plen = partitionPath.size();
-        try {
-            partitionPath.concat(PartitionChecksumSidecar.FILE_NAME);
-            if (ff.exists(partitionPath.$()) && !ff.removeQuiet(partitionPath.$())) {
-                LOG.error().$("could not remove stale partition checksum sidecar [path=").$(partitionPath)
-                        .$(", errno=").$(ff.errno()).I$();
-            }
-        } finally {
-            partitionPath.trimTo(plen);
-        }
-    }
-
-    /**
-     * Whether this writer should CREATE and maintain partition checksum coverage. The sidecar is an
-     * adaptive-mode artifact, so gating it on the effective mode keeps the legacy modes free of work
-     * they never asked for: under nosync/sync/async, block hashing plus an extra file per partition
-     * buys detection their durability contract does not rest on, and nosync additionally cannot
-     * order the sidecar against the columns it covers (see
-     * {@code TableReader.verifyPartitionStructure}).
-     * <p>
-     * Deliberately NOT used for the drop/invalidate paths, which stay gated on the config flag
-     * alone: coverage written while a table was adaptive must still be cleaned up when that table is
-     * later rewritten under another mode, or stale-but-present coverage outlives the data it
-     * describes. Reads are ungated for the same reason -- an existing sidecar is still verified.
-     */
-    private boolean maintainsPartitionChecksums() {
-        if (!configuration.isPartitionChecksumEnabled()) {
-            return false;
-        }
-        // Resolve the CONFIGURED mode rather than reading effectiveCommitMode. That field is
-        // deliberately SYNC while adaptiveEnrollmentPending -- a not-yet-enrolled table runs eager
-        // until its durable baseline is published -- so keying off it silently drops coverage for
-        // every newly enrolled adaptive table. A first attempt did exactly that and took out all of
-        // PartitionChecksumInvalidationTest. Resolving fresh also picks up ALTER SET PARAM.
-        return CommitMode.effectiveCommitMode(metadata.getCommitMode(), configuration.getCommitMode())
-                == CommitMode.ADAPTIVE;
-    }
-
-    private void armChecksumSeal(long partitionTimestamp) {
-        if (maintainsPartitionChecksums() && pendingChecksumSeals.indexOf(partitionTimestamp) < 0) {
-            pendingChecksumSeals.add(partitionTimestamp);
-        }
-    }
-
-    private void sealPartitionChecksums(long partitionTimestamp) {
-        if (!maintainsPartitionChecksums() || !PartitionBy.isPartitioned(partitionBy)) {
-            return;
-        }
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (partitionIndex < 0 || txWriter.isPartitionParquet(partitionIndex)) {
-            // Parquet partitions are excluded by design: verify their own page CRCs instead.
-            return;
-        }
-        // AUTHORITATIVE last-partition guard, and it must live here rather than at the arming sites.
-        // The O3 site tests against the `lastPartitionTimestamp` FIELD, which is captured before the
-        // commit -- so the insert that creates a new final partition sees the field still naming the
-        // previous one and arms the brand-new ACTIVE partition. Sealing that one records a
-        // pre-extension length which the truncate at close then contradicts, and the reader calls an
-        // intact file truncated. txWriter reflects the post-commit state by the time this runs.
-        if (partitionTimestamp == txWriter.getLastPartitionTimestamp()) {
-            return;
-        }
-        try {
-            sealPartitionChecksums0(partitionTimestamp);
-            // Sealing writes _chk into a partition that the txn/cv dirty sets do NOT name -- a seal
-            // changes no row data, so neither writer marks it. The non-syncfs epoch sweep
-            // (fsyncAttachedPartitionFiles) is bounded by exactly those two sets, so without this the
-            // epoch immediately after a seal skips the partition and the sidecar it just wrote is
-            // never fsynced. Verified before the fix: the barrier list for that epoch contained no
-            // file from the sealed partition at all. Harmless in itself (torn or missing coverage
-            // reads as ABSENT, i.e. unverified, never as corruption) but it silently costs the
-            // detection the sidecar exists to provide, on every platform that lacks a
-            // filesystem-wide syncfs.
-            checksumEpochWriteSet.add(partitionTimestamp);
-        } catch (Throwable th) {
-            if (configuration.isPartitionChecksumStrict()) {
-                throw CairoException.critical(0).put("partition checksum seal failed [table=")
-                        .put(tableToken.getTableName()).put("]: ").put(th.getMessage());
-            }
-            LOG.error().$("partition checksum seal failed, coverage dropped [table=").$(tableToken)
-                    .$(", error=").$(th.getMessage()).I$();
-            if (partitionChecksumSidecar.isOpen()) {
-                // Absent coverage, never stale coverage.
-                partitionChecksumSidecar.invalidate();
-            }
-        }
-    }
-
-    private void sealPartitionChecksums0(long partitionTimestamp) {
-        final int pathSize = path.size();
-        try {
-            setStateForTimestamp(path, partitionTimestamp);
-            final int plen = path.size();
-
-            // Pass 1: what is covered, and how long is each file. The slot capacity depends on the
-            // total block count, and the sidecar header is write-once, so it must be known up front.
-            partitionChecksumNames.clear();
-            partitionChecksumLengths.clear();
-            collectCoveredFiles(partitionTimestamp, plen);
-            if (partitionChecksumNames.size() == 0) {
-                return;
-            }
-
-            final int blockSizeHint = configuration.getPartitionChecksumBlockSize();
-            long needed = PartitionChecksumSidecar.SLOT_HEADER_SIZE + ChecksumTrailer.TRAILER_SIZE;
-            for (int i = 0, n = partitionChecksumNames.size(); i < n; i++) {
-                final int nameLen = partitionChecksumNames.getQuick(i).length();
-                needed += 16 + ((nameLen + 7) & ~7)
-                        + 8L * PartitionChecksumSidecar.blockCountFor(partitionChecksumLengths.getQuick(i), blockSizeHint);
-            }
-            final int capacity = PartitionChecksumSidecar.slotCapacityFor(needed);
-
-            path.trimTo(plen).concat(PartitionChecksumSidecar.FILE_NAME);
-            partitionChecksumSidecar.of(ff, path, blockSizeHint, capacity);
-            path.trimTo(plen);
-            if (!partitionChecksumSidecar.isOpen()) {
-                // of() deliberately swallows the open error so an unopenable sidecar can never take a
-                // writer down by itself. Raise it here instead, so the FAILURE POLICY is decided in one
-                // place: strict mode propagates, the default logs and drops coverage.
-                throw CairoException.critical(ff.errno())
-                        .put("could not open partition checksum sidecar [path=").put(path).put(']');
-            }
-
-            // Pass 2: hash. The file's RECORDED block size governs -- reinterpreting an existing
-            // vector at a different size compares every block against the wrong expected hash.
-            final int blockSize = partitionChecksumSidecar.blockSize();
-            partitionChecksumSidecar.beginGeneration();
-            for (int i = 0, n = partitionChecksumNames.size(); i < n; i++) {
-                hashOneCoveredFile(plen, partitionChecksumNames.getQuick(i), partitionChecksumLengths.getQuick(i), blockSize);
-            }
-            if (!partitionChecksumSidecar.commitGeneration()) {
-                partitionChecksumSidecar.invalidate();
-            }
-        } finally {
-            path.trimTo(pathSize);
-        }
-    }
-
-    private void collectCoveredFiles(long partitionTimestamp, int plen) {
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            final int columnType = metadata.getColumnType(i);
-            if (columnType < 0) {
-                continue; // dropped column
-            }
-            final CharSequence columnName = metadata.getColumnName(i);
-            final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, i);
-            addCoveredFile(columnName, TableUtils.FILE_SUFFIX_D, columnNameTxn, plen);
-            if (ColumnType.isVarSize(columnType)) {
-                addCoveredFile(columnName, TableUtils.FILE_SUFFIX_I, columnNameTxn, plen);
-            }
-            if (metadata.isIndexed(i)) {
-                addCoveredFile(columnName, ".k", columnNameTxn, plen);
-                addCoveredFile(columnName, ".v", columnNameTxn, plen);
-            }
-        }
-        path.trimTo(plen);
-    }
-
-    /**
-     * Builds the file name exactly as {@link TableUtils#dFile} and
-     * {@link BitmapIndexUtils#keyFileName} do -- {@code <column><suffix>} plus {@code .<txn>} when
-     * the column carries a name txn -- and records it when the file exists and is non-empty.
-     */
-    private void addCoveredFile(CharSequence columnName, CharSequence suffix, long columnNameTxn, int plen) {
-        partitionChecksumNameSink.clear();
-        partitionChecksumNameSink.put(columnName).put(suffix);
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            partitionChecksumNameSink.put('.').put(columnNameTxn);
-        }
-        final String fileName = partitionChecksumNameSink.toString();
-        path.trimTo(plen).concat(fileName);
-        final long len = ff.length(path.$());
-        path.trimTo(plen);
-        if (len <= 0) {
-            return; // absent or empty: nothing to cover, and an entry would only be noise
-        }
-        partitionChecksumNames.add(fileName);
-        partitionChecksumLengths.add(len);
-    }
-
-    private void hashOneCoveredFile(int plen, String fileName, long length, int blockSize) {
-        final int blocks = PartitionChecksumSidecar.blockCountFor(length, blockSize);
-        partitionChecksumSidecar.putFile(fileName, length, blocks);
-        if (blocks == 0) {
-            return;
-        }
-        final int prevIdx = partitionChecksumSidecar.indexOf(fileName);
-        final long prevLength = prevIdx >= 0 ? partitionChecksumSidecar.fileLength(prevIdx) : 0;
-        // Only an append can reuse hashes. A file that SHRANK was rewritten, so every block is suspect.
-        final int firstDirty = prevLength > 0 && prevLength <= length
-                ? PartitionChecksumSidecar.firstDirtyBlock(prevLength, blockSize)
-                : 0;
-
-        path.trimTo(plen).concat(fileName);
-        final long fd = ff.openRO(path.$());
-        path.trimTo(plen);
-        if (fd < 0) {
-            // No verdict rather than a wrong one: emit zero hashes for a file we cannot read would
-            // be stale coverage, so instead let commitGeneration proceed with what we have and rely
-            // on the length check. Simplest correct behaviour is to drop the whole generation.
-            throw CairoException.critical(ff.errno()).put("could not open covered file for hashing");
-        }
-        long addr = 0;
-        try {
-            addr = ff.mmap(fd, length, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-            if (addr == FilesFacade.MAP_FAILED) {
-                addr = 0;
-                throw CairoException.critical(ff.errno()).put("could not map covered file for hashing");
-            }
-            for (int b = 0; b < blocks; b++) {
-                if (b < firstDirty) {
-                    partitionChecksumSidecar.putBlockHash(partitionChecksumSidecar.blockHash(prevIdx, b));
-                } else {
-                    partitionChecksumSidecar.putBlockHash(PartitionChecksumSidecar.hashBlock(addr, length, b, blockSize));
-                }
-            }
-        } finally {
-            if (addr != 0) {
-                ff.munmap(addr, length, MemoryTag.MMAP_DEFAULT);
-            }
-            ff.close(fd);
-        }
-    }
-
-
     private void syncColumns() {
         final int commitMode = effectiveCommitMode;
         // Always commit indexers: PostingIndexWriter buffers add() calls in native
@@ -16354,14 +16034,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         tracker.setLastEpochTs(nowMs);
         // Restart the backlog count now the epoch is published (success path only).
         tracker.resetRowsSinceEpoch();
-        // Same success-path-only rule for the epoch write set: everything it named is now durable, so the
-        // next epoch owes only what is written from here on. Clearing earlier would drop partitions a FAILED
-        // epoch never flushed, and nothing would revisit them. Clearing the incomplete flag here is what
-        // narrows every subsequent epoch of this writer's life to the write set.
+        // Success-path-only: everything the write set named is now durable, so the next epoch owes only
+        // what is written from here on. Clearing earlier would drop partitions a FAILED epoch never
+        // flushed, and nothing would revisit them. Clearing the incomplete flag here is what narrows every
+        // subsequent epoch of this writer's life to the write set.
         txWriter.clearDirtyPartitions();
-        // Cleared HERE, with the other two, and for the same reason: a FAILED epoch must leave the
-        // sealed partitions in the write set so the next one revisits them.
-        checksumEpochWriteSet.clear();
         columnVersionWriter.clearDirtyPartitions();
         epochWriteSetIncomplete = false;
 
@@ -16568,7 +16245,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             if (!scanAll) {
                 final long ts = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                if (txnDirty.excludes(ts) && cvDirty.excludes(ts) && checksumEpochWriteSet.excludes(ts)) {
+                if (txnDirty.excludes(ts) && cvDirty.excludes(ts)) {
                     continue;
                 }
             }

@@ -744,25 +744,9 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
         return getDelegate().getO3ColumnMemorySize();
     }
 
-    @Override
-    public int getPartitionChecksumBlockSize() {
-        return getDelegate().getPartitionChecksumBlockSize();
-    }
 
-    @Override
-    public long getPartitionChecksumScrubBytesPerSecond() {
-        return getDelegate().getPartitionChecksumScrubBytesPerSecond();
-    }
 
-    @Override
-    public boolean isPartitionChecksumEnabled() {
-        return getDelegate().isPartitionChecksumEnabled();
-    }
 
-    @Override
-    public boolean isPartitionChecksumStrict() {
-        return getDelegate().isPartitionChecksumStrict();
-    }
 
     @Override
     public int getO3CopyQueueCapacity() {
