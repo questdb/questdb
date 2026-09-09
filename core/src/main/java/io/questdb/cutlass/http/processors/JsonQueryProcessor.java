@@ -363,8 +363,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             } else {
                 state.setPausedQuery(false);
             }
-            state.resumeSqlExecutionOwner();
             try {
+                state.resumeSqlExecutionOwner();
                 doResumeSend(state, context);
             } catch (CairoError e) {
                 internalError(
