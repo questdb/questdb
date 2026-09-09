@@ -111,6 +111,30 @@ final class ConcurrentQueueSegment<T> {
     }
 
     /**
+     * Reports whether the segment held no dequeueable item at the moment of the check. Mirrors the
+     * empty branch of {@link #tryDequeue}, minus the reservation: it reads the head slot's sequence
+     * number and, when that slot holds nothing, compares the head and tail positions the same way.
+     * The answer is moment-in-time. A concurrent enqueue that has reserved a slot but not yet
+     * published it counts as an item, and a head read that a concurrent dequeue has already advanced
+     * past also reads as non-empty; both errors are on the safe side for a caller deciding whether
+     * to come back for more.
+     *
+     * @return true if the segment held nothing to dequeue at the moment of the check
+     */
+    public boolean isEmpty() {
+        final long currentHead = headAndTail.head;
+        final int slotsIndex = (int) (currentHead & slotsMask);
+        final long sequenceNumber = slots[slotsIndex].sequenceNumber;
+        if (sequenceNumber - (currentHead + 1) >= 0) {
+            // The head slot holds an item, or a dequeuer already moved the head past it.
+            return false;
+        }
+        final boolean frozen = frozenForEnqueues;
+        final long currentTail = headAndTail.tail;
+        return currentTail - currentHead <= 0 || (frozen && (currentTail - freezeOffset - currentHead <= 0));
+    }
+
+    /**
      * Attempts to dequeue an element from the queue.
      *
      * @param target the item holder to dequeue into

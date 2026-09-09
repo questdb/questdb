@@ -139,6 +139,28 @@ public class ConcurrentQueue<T> implements Queue<T> {
     }
 
     /**
+     * Reports whether the queue held no item at the moment of the check, without dequeueing
+     * anything. The check walks the segment chain from the head and stops at the first segment
+     * that holds an item, so a chain whose head segment is drained but whose tail segment is not
+     * reads as non-empty.
+     * <p>
+     * The answer is moment-in-time, exactly like a {@link #tryDequeue} that returns false: an item
+     * may arrive right after a true, and an in-flight enqueue that has reserved a slot but not yet
+     * published it already reads as an item. Callers use it to decide whether to come back for
+     * more, not as a guarantee that a following dequeue succeeds or fails.
+     *
+     * @return true if the queue held nothing at the moment of the check
+     */
+    public boolean isEmpty() {
+        for (ConcurrentQueueSegment<T> segment = head; segment != null; segment = segment.nextSegment) {
+            if (!segment.isEmpty()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Attempts to remove the item at the head of this queue and copy it into the supplied
      * target holder.
      * <p>

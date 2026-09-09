@@ -281,8 +281,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test seam: runs once for each task a pass takes on, before the task executes. A task the batch
-     * bound hands back to the queue does not fire it; the pass that executes the task does.
+     * Test seam: runs once for each task a pass takes on, before the task executes. A yield dequeues
+     * nothing and so does not fire it; the pass that dequeues and executes the task does.
      * Tests use it to put a deterministic upper bound on self-republishing contender paths.
      * Persistent: fires on every pass until reset.
      */
@@ -2014,32 +2014,39 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long deadlineNanos = System.nanoTime() + maxRunDurationNanos;
         int startedTasks = 0;
         boolean hasYielded = false;
-        while (stateStore.tryDequeueRefreshTask(refreshTask)) {
+        while (true) {
             // Test the bounds before a task starts rather than after it finishes. A bound that tripped
             // on the queue's last task would report leftover work that does not exist, and run()'s
             // return value would then depend on how long the final refresh happened to take -- a
-            // cancelled refresh that ran past the budget would claim the pass did work. The dequeue
-            // above already proved the queue non-empty, so hand the task back and say so. Always start
-            // one task per pass: a budget already spent on entry must not turn a pass into a
-            // dequeue-and-reenqueue that makes no progress.
+            // cancelled refresh that ran past the budget would claim the pass did work. Always start
+            // one task per pass: a budget already spent on entry must not turn a pass into one that
+            // makes no progress.
             //
-            // Handing the task back appends it to the queue tail. The queue already tolerates that --
-            // the suspend gate below, every tryLock-failure re-enqueue, and reenqueueFailedPendingTasks
-            // all append -- and a bounded batch still drains it, since each pass takes tasks from the
-            // head and defers at most one.
+            // Test the bounds before the dequeue, too, and yield without touching the queue. A yield
+            // that dequeued the next task and appended it back to the tail would have to grow the
+            // queue whenever the tail segment is full -- the batch's dequeues free slots in the head
+            // segment, not in the frozen tail -- and a failed growth allocation would lose the task.
+            // For a base table notification that loss is permanent: its positive deduplication
+            // marker stays set, so later commits enqueue nothing, no pending-task recovery covers a
+            // base-scoped task, and no timer schedules an immediate, non-period view. The peek
+            // allocates nothing, and the queue keeps the task. Its answer is moment-in-time, like a
+            // failed dequeue: a task that arrives right after an empty reading waits for the next
+            // pass, exactly as it would have after a failed dequeue.
             if (startedTasks > 0 && (startedTasks == MAX_TASKS_PER_RUN || System.nanoTime() - deadlineNanos >= 0)) {
-                stateStore.reenqueueRefreshTask(refreshTask);
-                hasYielded = true;
+                hasYielded = !stateStore.isRefreshQueueEmpty();
+                break;
+            }
+            if (!stateStore.tryDequeueRefreshTask(refreshTask)) {
                 break;
             }
             runRefreshTaskDequeuedSeamForTesting();
             // Re-read the suspend gate AFTER the dequeue. A promote can set the gate, swap in the real
             // store, and enqueue the hydrate kickstart between this pass's top-of-method gate read and
             // this dequeue. The dequeue synchronizes-with that enqueue, which the promoter ordered
-            // after the gate-set, so this read is guaranteed to observe the set gate -- a re-check in
-            // the while condition would NOT (it is ordered before the dequeue). Put the task back and
-            // stop: executing it now would refuse the view WalWriter on the still-read-only engine and
-            // drop it. It runs after the gate clears (writes open).
+            // after the gate-set, so this read is guaranteed to observe the set gate -- a re-check
+            // before the dequeue would NOT. Put the task back and stop: executing it now would refuse
+            // the view WalWriter on the still-read-only engine and drop it. It runs after the gate
+            // clears (writes open).
             if (engine.isMatViewRefreshSuspended()) {
                 stateStore.reenqueueRefreshTask(refreshTask);
                 break;
@@ -2073,7 +2080,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     throw new RuntimeException("unexpected operation: " + operation);
             }
         }
-        // A yield hands a task back to the queue, so report that this pass has work left even when the
+        // A yield leaves the queue non-empty, so report that this pass has work left even when the
         // batch refreshed nothing: the return value is what stops the worker napping, and what
         // drainMatViewQueue() loops on.
         return refreshed || hasYielded;

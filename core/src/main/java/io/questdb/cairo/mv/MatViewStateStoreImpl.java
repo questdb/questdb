@@ -61,7 +61,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<MatViewState> stateByTableDirName = new ConcurrentHashMap<>();
     private final CarrierLocal<MatViewRefreshTask> taskHolder = new CarrierLocal<>(MatViewRefreshTask::new);
-    private final Queue<MatViewRefreshTask> taskQueue = ConcurrentQueue.createConcurrentQueue(MatViewRefreshTask::new);
+    private final ConcurrentQueue<MatViewRefreshTask> taskQueue = ConcurrentQueue.createConcurrentQueue(MatViewRefreshTask::new);
     private final Telemetry<TelemetryMatViewTask> telemetry;
     private final MatViewTelemetryFacade telemetryFacade;
     private final Queue<MatViewTimerTask> timerTaskQueue;
@@ -290,6 +290,11 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
             return state;
         }
         return null;
+    }
+
+    @Override
+    public boolean isRefreshQueueEmpty() {
+        return taskQueue.isEmpty();
     }
 
     @Override

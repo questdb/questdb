@@ -7741,15 +7741,14 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRefreshJobYieldHandbackFailureDoesNotLoseBaseNotification() throws Exception {
-        // The batch bound dequeues the task it stops at and appends it back to the queue tail. That
-        // append allocates whenever the tail segment is full: the batch's dequeues free slots in the
-        // head segment, not in the frozen tail, so a queue that grew past one segment grows again on
-        // the handback. When the allocation fails on a base table notification, the notification is
-        // gone while its positive deduplication marker stays set, so every later base commit enqueues
-        // nothing. No pending-task recovery covers a base-scoped task, and no timer schedules an
-        // immediate, non-period view, so the view stops refreshing for good while
-        // materialized_views() keeps reporting it valid.
+    public void testRefreshJobYieldDoesNotTouchQueue() throws Exception {
+        // The batch bound must yield without dequeueing the next task and appending it back to the
+        // queue tail. That append allocates whenever the tail segment is full -- the batch's dequeues
+        // free slots in the head segment, not in the frozen tail -- and a failed allocation loses the
+        // task. For a base table notification the loss is permanent: its positive deduplication
+        // marker stays set, so every later base commit enqueues nothing, no pending-task recovery
+        // covers a base-scoped task, and no timer schedules an immediate, non-period view. The view
+        // stops refreshing for good while materialized_views() keeps reporting it valid.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -7775,7 +7774,7 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertNotNull(fillerToken);
 
             // A full batch of view-scoped no-op tasks ahead of the base notification, so the
-            // notification is the task the bound dequeues and hands back.
+            // notification is the task the bound stops at.
             final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
             for (int i = 0; i < 32; i++) {
                 store.enqueueIncrementalRefresh(fillerToken);
@@ -7784,27 +7783,33 @@ public class MatViewTest extends AbstractCairoTest {
             drainWalQueue();
 
             final AtomicInteger dequeued = new AtomicInteger();
+            final AtomicBoolean hasAppended = new AtomicBoolean();
             try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 1)) {
                 // Keep the time budget out of it so only the task count bound can end this pass.
                 refreshJob.setMaxRunDurationForTesting(TimeUnit.DAYS.toNanos(1));
                 refreshJob.setOnRefreshTaskDequeuedForTesting(() -> {
-                    // Arm on the batch's last task: the next queue append is the handback.
+                    // Arm on the batch's last task: any append the yield makes is the next one, and
+                    // it fails the way a queue growth allocation does.
                     if (dequeued.incrementAndGet() == 32) {
-                        store.setOnTaskQueueAppendForTesting(oneShotOom("test handback append failure"));
+                        store.setOnTaskQueueAppendForTesting(() -> {
+                            hasAppended.set(true);
+                            throw new OutOfMemoryError("test yield append failure");
+                        });
                     }
                 });
                 try {
-                    refreshJob.run();
-                    Assert.fail("the handback append failure must escape run()");
-                } catch (OutOfMemoryError expected) {
-                    assertContains(expected.getMessage(), "test handback append failure");
+                    Assert.assertTrue(
+                            "the yield must report work left: the base notification is still queued",
+                            refreshJob.run()
+                    );
                 } finally {
                     store.setOnTaskQueueAppendForTesting(null);
                 }
                 Assert.assertEquals(32, dequeued.get());
+                Assert.assertFalse("the yield must not append to the queue", hasAppended.get());
 
-                // The commit whose notification failed the handback, and every commit after it, must
-                // still reach the view once the job runs again.
+                // The commit queued behind the batch, and every commit after it, must reach the view
+                // once the job runs again.
                 drainWalAndMatViewQueues(refreshJob, engine);
                 execute("insert into base_price values('gbpusd', 1.325, '2024-09-10T14:01')");
                 drainWalAndMatViewQueues(refreshJob, engine);
