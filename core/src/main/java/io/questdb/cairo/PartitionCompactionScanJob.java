@@ -306,6 +306,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     symbolTableProvider,
                     path,
                     other,
+                    // Fallback only: the rebuilt _pm keeps the source footer's own seqTxn.
                     reader.getSeqTxn(),
                     command
             );
@@ -586,6 +587,13 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             String tableRoot = null;
             final int partitionCount = txReader.getPartitionCount();
             for (int partitionIndex = 0; partitionIndex < partitionCount && dispatchBudget > 0; partitionIndex++) {
+                if (txReader.isPartitionReadOnly(partitionIndex) || txReader.isPartitionRemote(partitionIndex)) {
+                    // Not this job's partition to rewrite. READ ONLY is an operator ATTACH or an
+                    // Enterprise freeze ahead of the cold switch. REMOTE means a durable copy exists
+                    // outside this instance, tracked by the very nameTxn and parquet file size the swap
+                    // reassigns; a remotely served partition has no local data.parquet left to map at all.
+                    continue;
+                }
                 final boolean isComposite = txReader.isPartitionComposite(partitionIndex);
                 // The offset-3 word is a parquet file size only for a parquet partition; on a native one
                 // it is a seqTxn stamp or a geometry pointer, and reading it as a size asserts. Ask the

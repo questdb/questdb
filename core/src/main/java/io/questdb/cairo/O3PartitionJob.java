@@ -2047,7 +2047,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      *
      * @param srcPartitionDir the live partition directory, {@code <partition>.<nameTxn>}; trimmed back on return
      * @param dstPartitionDir the staging directory to build into, created here; trimmed back on return
-     * @param seqTxn          stamped into the new {@code _pm}: the reader snapshot's own
+     * @param fallbackSeqTxn  stamped into the new {@code _pm} only when the source footer carries no
+     *                        seqTxn of its own (a pre-upgrade file); pass the reader snapshot's table seqTxn
      * @param command         carries the source generation in ({@link ParquetPartitionSwapCommand#getExpectedParquetFileSize})
      *                        and the build's result out ({@link ParquetPartitionSwapCommand#setResult})
      */
@@ -2059,7 +2060,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableUtils.SymbolTableProvider symbolTableProvider,
             Path srcPartitionDir,
             Path dstPartitionDir,
-            long seqTxn,
+            long fallbackSeqTxn,
             ParquetPartitionSwapCommand command
     ) {
         final long parquetFileSize = command.getExpectedParquetFileSize();
@@ -2083,6 +2084,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .put(", parquetFileSize=").put(parquetFileSize).put(']');
             }
             parquetSize = parquetMetaReader.getParquetFileSize();
+            // Compaction rewrites the bytes without changing a row, so the rebuilt footer carries the
+            // source footer's own seqTxn: the cold-storage upload dedup compares that against the durable
+            // manifest, and the caller's table seqTxn would lift the local version above the durable copy's.
+            // A pre-upgrade footer carries no seqTxn (-1); fall back to the table seqTxn there, the same
+            // way StoragePolicyJob heals a legacy partition.
+            final long srcSeqTxn = parquetMetaReader.getResolvedSeqTxn();
+            final long seqTxn = srcSeqTxn > 0 ? srcSeqTxn : fallbackSeqTxn;
             srcPartitionDir.trimTo(srcDirLen).concat(PARQUET_PARTITION_NAME).$();
             parquetAddr = TableUtils.mapRO(ff, srcPartitionDir.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             partitionDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);

@@ -1782,7 +1782,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean isParquet = partitionIndex > -1 && txWriter.isPartitionParquet(partitionIndex);
         final long liveParquetFileSize = isParquet ? txWriter.getPartitionParquetFileSize(partitionIndex) : -1L;
         final long liveMetadataVersion = getMetadataVersion();
+        // Neither a freeze nor an upload moves the nameTxn, the file size or the metadata version, so
+        // the triple below cannot see one that landed while the build ran; test the two bits directly.
+        final boolean isReadOnly = isParquet && txWriter.isPartitionReadOnly(partitionIndex);
+        final boolean isRemote = isParquet && txWriter.isPartitionRemote(partitionIndex);
         final boolean stale = !isParquet
+                || isReadOnly
+                || isRemote
                 || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
                 || liveParquetFileSize != expectedParquetFileSize
                 || liveMetadataVersion != expectedMetadataVersion;
@@ -1798,6 +1804,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", liveParquetFileSize=").$(liveParquetFileSize)
                     .$(", expectedMetadataVersion=").$(expectedMetadataVersion)
                     .$(", liveMetadataVersion=").$(liveMetadataVersion)
+                    .$(", readOnly=").$(isReadOnly)
+                    .$(", remote=").$(isRemote)
                     .I$();
             if (ff.exists(other.$())) {
                 ff.rmdir(other, false);
@@ -3943,7 +3951,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp);
         final long liveWriterTxn = partitionIndex < 0 ? -1L : getGeometry().getWriterTxn(partitionIndex);
         final long liveMetadataVersion = getMetadataVersion();
+        // See swapCompactedParquetPartition: a freeze or an upload moves none of the fields below.
+        final boolean isReadOnly = partitionIndex > -1 && txWriter.isPartitionReadOnly(partitionIndex);
+        final boolean isRemote = partitionIndex > -1 && txWriter.isPartitionRemote(partitionIndex);
         final boolean stale = partitionIndex < 0
+                || isReadOnly
+                || isRemote
                 || !txWriter.isPartitionComposite(partitionIndex)
                 || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
                 || liveWriterTxn != expectedWriterTxn
@@ -3960,6 +3973,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", liveWriterTxn=").$(liveWriterTxn)
                     .$(", expectedMetadataVersion=").$(expectedMetadataVersion)
                     .$(", liveMetadataVersion=").$(liveMetadataVersion)
+                    .$(", readOnly=").$(isReadOnly)
+                    .$(", remote=").$(isRemote)
                     .I$();
             if (ff.exists(other.$())) {
                 ff.rmdir(other, false);
