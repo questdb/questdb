@@ -835,6 +835,130 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A partition frozen read-only - by {@code ATTACH PARTITION ... READ ONLY}, or by the Enterprise
+     * storage policy ahead of a cold switch - must survive the sweep untouched, however idle and however
+     * full of dead row groups it is. {@link TableWriter}'s own {@code compactPhysicalPartition} already
+     * declines a read-only partition; the swap must not reach the same partition through the other door
+     * and rewrite frozen bytes into a directory carrying a fresh nameTxn.
+     */
+    @Test
+    public void testScanLeavesAReadOnlyParquetPartitionAlone() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createIdleDirtyParquetTable("ro_px");
+            final long nameTxnBefore;
+            try (TableWriter writer = engine.getWriter(token, "test-freeze")) {
+                writer.getTxWriter().setPartitionReadOnly(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+                nameTxnBefore = writer.getTxWriter().getPartitionNameTxn(0);
+            }
+            assertUnusedBytes(token, 0, true);
+
+            sweepPastTheIdleTimeout();
+
+            assertPartitionUntouched(token, nameTxnBefore, "a read-only");
+            assertQuery("SELECT count() c FROM ro_px").noRandomAccess().expectSize().returns("c\n16\n");
+        });
+    }
+
+    /**
+     * The composite twin of {@link #testScanLeavesAReadOnlyParquetPartitionAlone}: the REWRITE branch
+     * lands through {@link TableWriter#swapCompactedCompositePartition}, which bypasses {@code
+     * compactPhysicalPartition}'s read-only guard entirely, so it needs its own gate.
+     */
+    @Test
+    public void testScanLeavesAReadOnlyCompositePartitionAlone() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+
+            final String dayBase = "SELECT x::INT i, timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760)";
+            final String dayPlain = "SELECT x::INT + 90000 i, timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)";
+            final String dayBackfill = "SELECT x::INT + 70000 i, timestamp_sequence('2020-01-01T04:00:07', 5*1000000L) ts FROM long_sequence(200)";
+
+            execute("CREATE TABLE ro_cx AS (" + dayBase + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO ro_cx " + dayPlain);
+            drainWalQueue();
+            execute("INSERT INTO ro_cx " + dayBackfill);
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("ro_cx");
+            final long liveRowsBefore;
+            final long nameTxnBefore;
+            try (TableWriter writer = engine.getWriter(token, "test-freeze")) {
+                Assert.assertTrue("2020-01-01 should be composite", writer.getTxWriter().isPartitionComposite(0));
+                writer.getTxWriter().setPartitionReadOnly(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+                liveRowsBefore = writer.getTxWriter().getPartitionSize(0);
+                nameTxnBefore = writer.getTxWriter().getPartitionNameTxn(0);
+            }
+            Assert.assertEquals(5960, liveRowsBefore);
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                job.run();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertTrue("a read-only partition must stay composite", tx.isPartitionComposite(0));
+                Assert.assertTrue(reader.getGeometry().getPieceCount(0) > 1);
+                Assert.assertEquals("a read-only partition must keep its directory", nameTxnBefore, tx.getPartitionNameTxn(0));
+                Assert.assertEquals(liveRowsBefore, tx.getPartitionSize(0));
+            }
+            assertQuery("SELECT count() c FROM ro_cx").noRandomAccess().expectSize().returns("c\n6010\n");
+        });
+    }
+
+    /**
+     * A partition whose bytes already live in a remote object store. The swap assigns a new nameTxn and a
+     * new parquet file size, and that pair IS the identity the remote copy is tracked by, so a rewrite
+     * strands the manifest row against content it no longer describes and costs a full re-upload. The
+     * partition keeps reading UPLOADED either way, so nothing downstream repairs the divergence.
+     */
+    @Test
+    public void testScanLeavesAnUploadedParquetPartitionAlone() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createIdleDirtyParquetTable("up_px");
+            final long nameTxnBefore;
+            try (TableWriter writer = engine.getWriter(token, "test-upload")) {
+                writer.getTxWriter().setPartitionRemote(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+                nameTxnBefore = writer.getTxWriter().getPartitionNameTxn(0);
+            }
+            assertUnusedBytes(token, 0, true);
+
+            sweepPastTheIdleTimeout();
+
+            assertPartitionUntouched(token, nameTxnBefore, "an uploaded");
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertTrue("the UPLOADED bit must survive the sweep", reader.getTxFile().isPartitionRemote(0));
+            }
+            assertQuery("SELECT count() c FROM up_px").noRandomAccess().expectSize().returns("c\n16\n");
+        });
+    }
+
+    private void assertPartitionUntouched(TableToken tableToken, long nameTxnBefore, String why) throws Exception {
+        try (TableReader reader = engine.getReader(tableToken)) {
+            Assert.assertEquals(
+                    why + " partition must keep its directory",
+                    nameTxnBefore, reader.getTxFile().getPartitionNameTxn(0)
+            );
+        }
+        // The dead row groups are still there: the sweep declined to reclaim them, rather than reclaiming
+        // them and leaving the nameTxn alone by some other route.
+        assertUnusedBytes(tableToken, 0, true);
+    }
+
     private void assertUnusedBytes(TableToken tableToken, int partitionIndex, boolean expectPositive) throws Exception {
         try (TableReader reader = engine.getReader(tableToken)) {
             reader.openPartition(partitionIndex);
@@ -845,6 +969,80 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                 Assert.assertEquals("expected no dead row-group bytes", 0, unusedBytes);
             }
         }
+    }
+
+    /**
+     * Builds {@code tableName} with an idle Parquet partition at 2020-01-01 holding dead row-group bytes,
+     * behind a later plain partition so the Parquet one is never the active one. This is the same shape
+     * {@link #testScanCompactsIdleDirtyParquetPartitionButLeavesCleanOneAlone} proves a sweep DOES
+     * compact, so it is the control for the gate tests: they differ from it only in the one partition
+     * flag they set before sweeping.
+     */
+    private TableToken createIdleDirtyParquetTable(String tableName) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+
+        execute("CREATE TABLE " + tableName + " (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute(
+                "INSERT INTO " + tableName + "(a, ts) VALUES" +
+                        "(1,  '2020-01-01T00:00:00.000Z')," +
+                        "(2,  '2020-01-01T01:00:00.000Z')," +
+                        "(3,  '2020-01-01T02:00:00.000Z')," +
+                        "(4,  '2020-01-01T03:00:00.000Z')," +
+                        "(5,  '2020-01-01T04:00:00.000Z')," +
+                        "(6,  '2020-01-01T05:00:00.000Z')," +
+                        "(7,  '2020-01-01T06:00:00.000Z')," +
+                        "(8,  '2020-01-01T07:00:00.000Z')," +
+                        "(9,  '2020-01-01T08:00:00.000Z')," +
+                        "(10, '2020-01-01T09:00:00.000Z')," +
+                        "(11, '2020-01-01T10:00:00.000Z')," +
+                        "(12, '2020-01-01T11:00:00.000Z')"
+        );
+        // Pusher day, so 2020-01-01 is inactive by the time it is converted below.
+        execute("INSERT INTO " + tableName + "(a, ts) VALUES (90, '2020-01-02T00:00:00.000Z')");
+        drainWalQueue();
+
+        execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+        drainWalQueue();
+
+        // Three in-place O3 updates: each appends a merged row group and leaves the one it replaced as
+        // dead bytes. The ratio/max-bytes thresholds above are disabled, so none auto-rewrites.
+        execute("INSERT INTO " + tableName + "(a, ts) VALUES (101, '2020-01-01T01:30:00.000Z')");
+        drainWalQueue();
+        execute("INSERT INTO " + tableName + "(a, ts) VALUES (102, '2020-01-01T02:30:00.000Z')");
+        drainWalQueue();
+        execute("INSERT INTO " + tableName + "(a, ts) VALUES (103, '2020-01-01T03:30:00.000Z')");
+        drainWalQueue();
+
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        try (TableReader reader = engine.getReader(tableToken)) {
+            Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+        }
+        assertUnusedBytes(tableToken, 0, true);
+        return tableToken;
+    }
+
+    /**
+     * Re-tightens the dead-space thresholds the sweep reads - deliberately disabled while the dead bytes
+     * were built up - and runs one sweep on a clock sitting past the idle timeout. The parquet branch's
+     * idle gate reads the {@code .parquet} file's modification time, which is real wall-clock time
+     * whatever the simulated clock says, so the job's own clock has to be shifted rather than the
+     * simulated one.
+     */
+    private void sweepPastTheIdleTimeout() {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "0.01");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, "1");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:00:00.000000Z"));
+
+        final Clock pastTheIdleTimeout = () -> MicrosecondClockImpl.INSTANCE.getTicks() + 2 * Micros.HOUR_MICROS;
+        try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), pastTheIdleTimeout)) {
+            job.run();
+        }
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
     }
 
     /**

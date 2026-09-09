@@ -32,10 +32,12 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -84,6 +86,92 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      * Days the housekeeping commits consume, never reused within a test.
      */
     private static int passDay;
+
+    /**
+     * A running CHECKPOINT must not let TRIM-FILES shorten a live partition's column files. Backup sizes those
+     * files by the physical row extent {@code E} its manifest copied out of the checkpoint, and it reads them
+     * from the LIVE db root, not from the checkpoint copy - see {@code TableWriter#processPartitionRemoveCandidates0},
+     * which defers partition removal for the same reason. TRIM-FILES shortens those live files in place, so a trim
+     * under a checkpoint would leave the upload asking for more rows than the file holds. It is the shortening this
+     * test observes, not the writer's only one -- {@code TableWriter#truncateColumns} shortens live column files
+     * too, on the TRUNCATE and cancelRow paths.
+     * <p>
+     * Nothing names the checkpoint here: {@link io.questdb.cairo.DatabaseCheckpointAgent} pins the transaction it
+     * captured on the {@link io.questdb.cairo.TxnScoreboard} for the whole checkpoint, and MAKE-PLAIN's SECOND
+     * scoreboard check - the one over {@code [partitionNameTxn, txWriter.getTxn())}, taken after its own commit -
+     * sees that pin like any other reader's and defers. Its FIRST check does not: the checkpoint captured the
+     * geometry record MAKE-PLAIN is retiring, so its pin sits at or above that record's writer txn, outside the
+     * range that check asks about. The bookkeeping half of MAKE-PLAIN therefore still commits here, and only the
+     * file shortening waits - which is exactly what backup needs, and why this asserts the disk size rather than
+     * the composite flag alone.
+     * <p>
+     * Same fixture as {@link #testMakePlainWaitsForAPinnedReaderThenReclaimsOnceItGoes}, run past the point where
+     * the reader goes away; without the checkpoint it trims (see
+     * {@link #testMakePlainReclaimsAMoveTailedFrontsDeadSpace}), so the unchanged disk size below is the
+     * checkpoint's doing and not a fixture that never reached TRIM-FILES.
+     */
+    @Test
+    public void testACheckpointDefersTrimFiles() throws Exception {
+        // CHECKPOINT CREATE calls sync(), which Windows does not have.
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            letPreSplitCut();
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+            createDayTable("x", "2024-01-01", 20_000);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            pinPieceCap(2);
+
+            // A pinned reader gets the day to MAKE-PLAIN's eligible shape - MOVE-TAIL runs, MAKE-PLAIN declines -
+            // and then goes, so the checkpoint below is the only thing left holding anything.
+            try (TableReader pinned = engine.getReader(engine.verifyTableName("x"))) {
+                Assert.assertNotNull(pinned);
+                runCompactionPasses("x");
+                Assert.assertTrue("fixture did not reach MOVE-TAIL", isComposite("x", "2024-01-01"));
+                Assert.assertEquals(1, pieceCountOfDay("x", "2024-01-01"));
+                Assert.assertTrue("MOVE-TAIL left no dead space to protect", deadRowsOfDay("x", "2024-01-01") > 0);
+            }
+            engine.releaseInactive();
+
+            final String before = fingerprintOfDay("x", "2024-01-01");
+            final long diskBefore = diskSizeOfDay("x", "2024-01-01");
+
+            execute("checkpoint create");
+            try {
+                // Clear the backoff the decline above started, so what happens next is the checkpoint's doing.
+                setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+                runCompactionPasses("x");
+
+                Assert.assertFalse(
+                        "MAKE-PLAIN's bookkeeping half must still commit under a checkpoint - only TRIM-FILES waits",
+                        isComposite("x", "2024-01-01")
+                );
+                Assert.assertEquals(
+                        "MAKE-PLAIN did not reclaim the dead space, so the unchanged disk size below proves nothing",
+                        0,
+                        deadRowsOfDay("x", "2024-01-01")
+                );
+                Assert.assertEquals(
+                        "TRIM-FILES shortened a live column file while a checkpoint was running - a backup sizing" +
+                                " that file by the manifest's physical row extent would fail its upload",
+                        diskBefore,
+                        diskSizeOfDay("x", "2024-01-01")
+                );
+            } finally {
+                execute("checkpoint release");
+            }
+
+            Assert.assertEquals("the deferred trim changed the data", before, fingerprintOfDay("x", "2024-01-01"));
+        });
+    }
 
     @Test
     public void testAgeTriggerCompactsAPartitionNothingHasWrittenTo() throws Exception {
