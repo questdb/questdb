@@ -203,7 +203,7 @@ public class QueryRegistry {
      */
     public long getResourceGroupCpuWaitNanos(long queryId) {
         final Entry entry = registry.get(queryId);
-        if (entry == null || !Entry.isActiveLifecycle(queryId, entry.lifecycle)) {
+        if (entry == null || !Entry.isLiveLifecycle(queryId, entry.lifecycle)) {
             return Numbers.LONG_NULL;
         }
         final QuietCloseable lease = entry.executionLease;
@@ -211,7 +211,7 @@ public class QueryRegistry {
                 ? sqlExecutionLease.getResourceGroupCpuWaitNanos()
                 : Numbers.LONG_NULL;
         Unsafe.loadFence();
-        return Entry.isActiveLifecycle(queryId, entry.lifecycle) ? cpuWaitNanos : Numbers.LONG_NULL;
+        return Entry.isLiveLifecycle(queryId, entry.lifecycle) ? cpuWaitNanos : Numbers.LONG_NULL;
     }
 
     /**
@@ -222,7 +222,7 @@ public class QueryRegistry {
      */
     public long getResourceGroupId(long queryId) {
         final Entry entry = registry.get(queryId);
-        if (entry == null || !Entry.isActiveLifecycle(queryId, entry.lifecycle)) {
+        if (entry == null || !Entry.isLiveLifecycle(queryId, entry.lifecycle)) {
             return Numbers.LONG_NULL;
         }
         final QuietCloseable lease = entry.executionLease;
@@ -230,7 +230,7 @@ public class QueryRegistry {
                 ? sqlExecutionLease.getResourceGroupId()
                 : Numbers.LONG_NULL;
         Unsafe.loadFence();
-        return Entry.isActiveLifecycle(queryId, entry.lifecycle) ? groupId : Numbers.LONG_NULL;
+        return Entry.isLiveLifecycle(queryId, entry.lifecycle) ? groupId : Numbers.LONG_NULL;
     }
 
     /**
@@ -239,7 +239,7 @@ public class QueryRegistry {
      */
     public @Nullable CharSequence getResourceGroupName(long queryId) {
         final Entry entry = registry.get(queryId);
-        if (entry == null || !Entry.isActiveLifecycle(queryId, entry.lifecycle)) {
+        if (entry == null || !Entry.isLiveLifecycle(queryId, entry.lifecycle)) {
             return null;
         }
         final QuietCloseable lease = entry.executionLease;
@@ -247,7 +247,7 @@ public class QueryRegistry {
                 ? sqlExecutionLease.getResourceGroupName()
                 : null;
         Unsafe.loadFence();
-        return Entry.isActiveLifecycle(queryId, entry.lifecycle) ? groupName : null;
+        return Entry.isLiveLifecycle(queryId, entry.lifecycle) ? groupName : null;
     }
 
     /**
@@ -975,6 +975,13 @@ public class QueryRegistry {
 
         public boolean isWAL() {
             return isWAL;
+        }
+
+        private static boolean isLiveLifecycle(long queryId, long lifecycle) {
+            // Cancellation guards mutable entry fields without detaching the execution lease.
+            // Lease metadata remains readable until retirement, with the query id still checked.
+            return lifecycle == lifecycle(queryId, LIFECYCLE_STATE_ACTIVE)
+                    || lifecycle == lifecycle(queryId, LIFECYCLE_STATE_CANCELLING);
         }
 
         private static long lifecycle(long queryId, long state) {

@@ -50,6 +50,7 @@ import io.questdb.mp.continuation.FiberWakeSink;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
@@ -1106,6 +1107,55 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResourceGroupMetadataSurvivesCancellationGuard() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    LeaseCairoEngine ownerEngine = new LeaseCairoEngine(new DefaultTestCairoConfiguration(
+                            temp.newFolder("cancelled-owner-metadata").getAbsolutePath()
+                    ));
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(ownerEngine, 1).with(AllowAllSecurityContext.INSTANCE);
+                    SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(ownerEngine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final QueryRegistry registry = ownerEngine.getQueryRegistry();
+                final long ownerId = registry.registerOwner("SELECT owner", ownerContext);
+                final QueryRegistry.Entry entry = registry.getEntry(ownerId);
+                final AtomicReference<Throwable> failure = new AtomicReference<>();
+                final Thread canceller = new Thread(() -> {
+                    try {
+                        Assert.assertTrue(registry.cancel(ownerId, cancelContext));
+                    } catch (Throwable th) {
+                        failure.set(th);
+                    }
+                }, "query_registry_metadata_canceller");
+                try {
+                    // Hold the cancellation signal monitor so cancel() pauses inside its
+                    // lifecycle guard, while the query still owns its execution lease.
+                    synchronized (entry.getCancelled()) {
+                        canceller.start();
+                        TestUtils.assertEventually(() -> {
+                            Assert.assertEquals(Thread.State.BLOCKED, canceller.getState());
+                            Assert.assertFalse(QueryRegistry.Entry.isActiveLifecycle(ownerId, entry.getLifecycle()));
+                        });
+                        TestUtils.assertEquals("test_group", registry.getResourceGroupName(ownerId));
+                        Assert.assertEquals(7, registry.getResourceGroupId(ownerId));
+                        Assert.assertEquals(42, registry.getResourceGroupCpuWaitNanos(ownerId));
+                    }
+                } finally {
+                    canceller.join(5_000);
+                    Assert.assertFalse("canceller did not finish", canceller.isAlive());
+                    registry.unregister(ownerId, ownerContext);
+                }
+                if (failure.get() != null) {
+                    throw new AssertionError("canceller failed", failure.get());
+                }
+                Assert.assertNull(registry.getResourceGroupName(ownerId));
+                Assert.assertEquals(Numbers.LONG_NULL, registry.getResourceGroupId(ownerId));
+                Assert.assertEquals(Numbers.LONG_NULL, registry.getResourceGroupCpuWaitNanos(ownerId));
+            }
+        });
+    }
+
+    @Test
     public void testSlowCancellerPrincipalDoesNotBlockUnregister() throws Exception {
         assertMemoryLeak(() -> {
             final QueryRegistry registry = engine.getQueryRegistry();
@@ -1781,6 +1831,21 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
         @Override
         public MemoryTracker getMemoryTracker() {
             return memoryTracker;
+        }
+
+        @Override
+        public long getResourceGroupCpuWaitNanos() {
+            return 42;
+        }
+
+        @Override
+        public long getResourceGroupId() {
+            return 7;
+        }
+
+        @Override
+        public CharSequence getResourceGroupName() {
+            return "test_group";
         }
 
         @Override
