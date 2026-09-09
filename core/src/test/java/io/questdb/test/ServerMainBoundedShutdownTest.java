@@ -271,6 +271,62 @@ public class ServerMainBoundedShutdownTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testBoundedCloseCancelsBlockedStart() throws Exception {
+        assertMemoryLeak(() -> {
+            final CountDownLatch startEntered = new CountDownLatch(1);
+            final AtomicInteger cancelRequests = new AtomicInteger();
+            final Component component = new TestComponent("component") {
+                private volatile boolean isStopRequested;
+
+                @Override
+                public void requestStop() {
+                    isStopRequested = true;
+                    cancelRequests.incrementAndGet();
+                }
+
+                @Override
+                public void start(LifecycleContext ctx) {
+                    startEntered.countDown();
+                    while (!isStopRequested) {
+                        Os.pause();
+                    }
+                    ctx.publish(State.READY);
+                }
+            };
+            final ServerMain server = new ServerMain(getServerMainArgs()) {
+                @Override
+                protected void registerComponents(LifecycleOrchestrator orchestrator) {
+                    orchestrator.register(component);
+                }
+            };
+            final Thread starter = new Thread(() -> {
+                try {
+                    server.start();
+                } catch (Throwable ignore) {
+                    // a cancelled boot may unwind exceptionally; closeBy completing is the contract
+                }
+            }, "blocked-starter");
+            starter.setDaemon(true);
+            try {
+                starter.start();
+                Assert.assertTrue("component start never entered", startEntered.await(10, TimeUnit.SECONDS));
+                // start() boots under closeLock, so closeBy must signal cancellation before
+                // waiting on the lock or the blocked start can never unwind to release it
+                Assert.assertTrue(
+                        "bounded close did not finish after cancelling the blocked start",
+                        server.closeBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(10))
+                );
+                starter.join(TimeUnit.SECONDS.toMillis(10));
+                Assert.assertFalse("starter thread did not unwind", starter.isAlive());
+                Assert.assertTrue("component never observed the stop request", cancelRequests.get() > 0);
+                Assert.assertTrue(server.isCloseComplete());
+            } finally {
+                server.close();
+            }
+        });
+    }
+
+    @Test
     public void testLifecycleUnexpectedBoundedStopFailurePropagates() {
         final AtomicInteger terminalStopCalls = new AtomicInteger();
         final LifecycleOrchestrator orchestrator = new LifecycleOrchestrator(null, null, null);
