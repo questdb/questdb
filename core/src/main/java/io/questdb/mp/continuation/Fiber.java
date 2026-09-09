@@ -138,18 +138,16 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         final int previousYieldReason = fiber.yieldReason;
         fiber.yieldReason = YIELD_COOPERATIVE;
         boolean isSuspended = false;
-        boolean isRolledBack = false;
         try {
             isSuspended = suspend();
             if (!isSuspended) {
                 fiber.rollbackCooperativeYield();
-                isRolledBack = true;
             } else if (fiber.executionState != packExecutionState(0, EXECUTION_MOUNTED)) {
                 throw new IllegalStateException("cooperative yield resumed without a mount");
             }
             return isSuspended;
         } catch (Throwable th) {
-            if (!isSuspended && !isRolledBack) {
+            if (!isSuspended) {
                 fiber.rollbackCooperativeYield();
             }
             throw th;
