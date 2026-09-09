@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.ParquetRestoreMarker;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -38,14 +39,22 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT;
 import static io.questdb.PropertyKey.CAIRO_WAL_MAX_LAG_SIZE;
@@ -362,6 +371,154 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInterruptedParquetRestoreIsFinishedOnTheNextWriterOpen() throws Exception {
+        // The crash window the marker exists for. The decode commits its own _txn before the
+        // replacement runs, so a process that dies between the two commits leaves the covered
+        // partitions native: the WAL replays the replacement, but the replay finds nothing left
+        // to decode and so records no re-encode. Here the replacement's partition directory
+        // fails to appear, which is the first thing it does after the decode has committed. The
+        // marker survives that, and the writer the RESUME opens re-encodes off it.
+        final AtomicBoolean faultEnabled = new AtomicBoolean(true);
+        final AtomicBoolean decodeCommitted = new AtomicBoolean();
+        final AtomicInteger partitionDirs = new AtomicInteger();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                // After the marker is published the first directory for the covered partition is
+                // the decode's, and the second is the replacement's.
+                if (faultEnabled.get()
+                        && decodeCommitted.get()
+                        && Utf8s.containsAscii(path, "2026-01-02")
+                        && partitionDirs.incrementAndGet() == 2) {
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                final int result = super.rename(from, to);
+                if (Utf8s.endsWithAscii(to, ParquetRestoreMarker.MARKER_FILE_NAME)) {
+                    decodeCommitted.set(true);
+                }
+                return result;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE rg (id long, ts timestamp, v long) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE expected (id long, ts timestamp, v long) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO rg VALUES
+                    (1, '2026-01-02T01:00:00.000000Z', 10),
+                    (2, '2026-01-02T02:00:00.000000Z', 20),
+                    (3, '2026-01-03T01:00:00.000000Z', 30)""");
+            drainWalQueue();
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2026-01-02'");
+            drainWalQueue();
+            assertParquetPartitions("rg", "2026-01-02");
+
+            final TableToken rg = engine.verifyTableName("rg");
+            try (WalWriter ww = engine.getWalWriter(rg)) {
+                appendRow(ww, MicrosTimestampDriver.floor("2026-01-02T02:30:00.000000Z"), 4, 40);
+                ww.commitWithParams(
+                        MicrosTimestampDriver.floor("2026-01-02T02:00:00.000000Z"),
+                        MicrosTimestampDriver.floor("2026-01-03T00:00:00.000000Z"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            drainWalQueue();
+
+            // The apply died after the decode's commit: the partition is native, the replacement
+            // never landed, and the marker is the only thing that says a re-encode is owed.
+            Assert.assertTrue("table must be suspended", engine.getTableSequencerAPI().isSuspended(rg));
+            assertParquetPartitions("rg");
+            Assert.assertTrue("the pending restore marker must be on disk", hasParquetRestoreMarker("rg"));
+
+            faultEnabled.set(false);
+            execute("ALTER TABLE rg RESUME WAL");
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(rg));
+            execute("""
+                    INSERT INTO expected VALUES
+                    (1, '2026-01-02T01:00:00.000000Z', 10),
+                    (4, '2026-01-02T02:30:00.000000Z', 40),
+                    (3, '2026-01-03T01:00:00.000000Z', 30)""");
+            drainWalQueue();
+            assertSqlCursors("SELECT id, ts, v FROM expected", "SELECT id, ts, v FROM rg");
+            // Without the marker the replay leaves the partition native, because it decodes
+            // nothing and so records nothing to encode.
+            assertParquetPartitions("rg", "2026-01-02");
+            Assert.assertFalse("the marker must be cleared once the re-encode ran", hasParquetRestoreMarker("rg"));
+        });
+    }
+
+    @Test
+    public void testParquetRestoreMarkerOfAnotherTableIsDiscarded() throws Exception {
+        // The marker binds itself to the table id, so a copy that travelled with a table
+        // directory names partitions of a table this one knows nothing about. It is dropped
+        // rather than acted on, and dropped for good: leaving it would have every writer open
+        // read it again.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rg (id long, ts timestamp, v long) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO rg VALUES
+                    (1, '2026-01-01T01:00:00.000000Z', 10),
+                    (2, '2026-01-02T01:00:00.000000Z', 20)""");
+            drainWalQueue();
+
+            final TableToken rg = engine.verifyTableName("rg");
+            writeParquetRestoreMarker(rg, rg.getTableId() + 1, "2026-01-01T00:00:00.000000Z");
+            engine.releaseInactive();
+
+            try (TableWriter ignore = engine.getWriter(rg, "test")) {
+                // opening the writer is what runs the recovery
+            }
+            assertParquetPartitions("rg");
+            Assert.assertFalse("a foreign marker must not survive the open that read it", hasParquetRestoreMarker("rg"));
+        });
+    }
+
+    @Test
+    public void testPendingParquetRestoreMarkerReEncodesOnWriterOpen() throws Exception {
+        // The second crash window: the replacement committed but the re-encode did not run, and
+        // the table may never take another commit. The marker is read when the writer opens, so
+        // an idle table gets its compaction back all the same.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rg (id long, ts timestamp, v long) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO rg VALUES
+                    (1, '2026-01-01T01:00:00.000000Z', 10),
+                    (2, '2026-01-02T01:00:00.000000Z', 20),
+                    (3, '2026-01-03T01:00:00.000000Z', 30)""");
+            drainWalQueue();
+            assertParquetPartitions("rg");
+
+            final TableToken rg = engine.verifyTableName("rg");
+            // A partition that is gone by the time the writer opens is skipped, and must not
+            // stop the surviving one from being re-encoded.
+            writeParquetRestoreMarker(rg, rg.getTableId(), "2026-01-02T00:00:00.000000Z", "2025-12-31T00:00:00.000000Z");
+            engine.releaseInactive();
+
+            try (TableWriter ignore = engine.getWriter(rg, "test")) {
+                // opening the writer is what runs the recovery
+            }
+            assertParquetPartitions("rg", "2026-01-02");
+            Assert.assertFalse("the marker must be cleared once the re-encode ran", hasParquetRestoreMarker("rg"));
+            assertQuery("SELECT id, ts, v FROM rg")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            id\tts\tv
+                            1\t2026-01-01T01:00:00.000000Z\t10
+                            2\t2026-01-02T01:00:00.000000Z\t20
+                            3\t2026-01-03T01:00:00.000000Z\t30
+                            """);
+        });
+    }
+
+    @Test
     public void testReplaceRangeEmptyingParquetPartitionDropsIt() throws Exception {
         // The replacement covers 2026-01-01 whole and writes nothing back into it, so the
         // partition is gone by the time the re-encode runs and has to be skipped. The second
@@ -620,6 +777,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
             // Both covered partitions are parquet again, and hold what the replacement left.
             assertParquetPartitions("rg", "2026-01-01", "2026-01-02");
+            Assert.assertFalse("the re-encode must clear its marker", hasParquetRestoreMarker("rg"));
             assertQuery("SELECT name, numRows, isParquet FROM table_partitions('rg')")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -2399,6 +2557,34 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns(expected.toString());
+    }
+
+    /**
+     * True when the table directory still carries the pending parquet re-encode marker.
+     */
+    private static boolean hasParquetRestoreMarker(String tableName) {
+        final TableToken token = engine.verifyTableName(tableName);
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot())
+                    .concat(token.getDirName())
+                    .concat(ParquetRestoreMarker.MARKER_FILE_NAME);
+            return engine.getConfiguration().getFilesFacade().exists(path.$());
+        }
+    }
+
+    /**
+     * Plants a pending-restore marker by hand, the way a crash between the decode's commit and
+     * the replacement's would have left one.
+     */
+    private static void writeParquetRestoreMarker(TableToken token, int tableId, String... partitionTimestamps) throws NumericException {
+        final LongList partitions = new LongList();
+        for (int i = 0; i < partitionTimestamps.length; i++) {
+            partitions.add(MicrosTimestampDriver.floor(partitionTimestamps[i]));
+        }
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName());
+            ParquetRestoreMarker.write(engine.getConfiguration(), path, tableId, 1, partitions);
+        }
     }
 
     private static long readPartitionNameTxn(String tableName, String partitionTimestamp) throws NumericException {

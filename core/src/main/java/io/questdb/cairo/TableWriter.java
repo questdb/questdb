@@ -642,6 +642,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // table-local file because it could not reach the purge queue or the
             // shared purge-log writer. This is best-effort and never fails open.
             recoverSpilledPostingSealPurges();
+
+            // Finish a parquet re-encode a crash interrupted between the decode's commit and
+            // the commit that made the replacement durable.
+            recoverPendingParquetRestore();
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -5492,6 +5496,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         activeNullSetters = nullSetters;
     }
 
+    private void clearParquetRestoreMarker() {
+        try {
+            path.trimTo(pathSize);
+            ParquetRestoreMarker.clear(ff, path);
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
     private void clearTodoAndCommitMeta() {
         try {
             bumpMetadataVersion();
@@ -7262,12 +7275,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * {@link #restoreParquetFormatAfterReplaceRange()} re-encodes them once the replacement is
      * durable.
      * <p>
-     * A crash between the two commits leaves the partitions native: the WAL re-applies the
-     * replacement, but this method has nothing left to record, because the partitions it would have
-     * recorded are already native. The data is correct and the view is complete; only the user's
-     * compaction is gone, and {@code ALTER TABLE ... CONVERT PARTITION TO PARQUET} puts it back.
+     * A crash between the two commits leaves the partitions native, and this method has nothing
+     * left to record on the replay, because the partitions it would have recorded are already
+     * native. {@link ParquetRestoreMarker} is what survives that window: it goes to disk before
+     * the decode commits and {@link #recoverPendingParquetRestore()} finishes the re-encode when
+     * the table is opened again.
      */
-    private void dropParquetFormatForReplaceRange(long replaceRangeTsLo, long replaceRangeTsHiExcl) {
+    private void dropParquetFormatForReplaceRange(long replaceRangeTsLo, long replaceRangeTsHiExcl, long seqTxn) {
         if (replaceRangeTsHiExcl <= replaceRangeTsLo || !txWriter.hasParquetPartitions()) {
             return;
         }
@@ -7292,6 +7306,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (replaceRangeParquetPartitions.size() == pending) {
             return;
         }
+        writeParquetRestoreMarker(seqTxn);
         for (int i = pending, n = replaceRangeParquetPartitions.size(); i < n; i++) {
             final long partitionTimestamp = replaceRangeParquetPartitions.getQuick(i);
             LOG.info().$("decoding parquet partition for replace range commit [table=").$(tableToken)
@@ -10977,7 +10992,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // after this transaction commits. A replace-range transaction always applies alone
             // (WalTxnDetails.calculateInsertTransactionBlock breaks the block on one), so this is
             // the only place a replace commit can be intercepted.
-            dropParquetFormatForReplaceRange(replaceRangeTsLo, replaceRangeTsHi);
+            dropParquetFormatForReplaceRange(replaceRangeTsLo, replaceRangeTsHi, seqTxn);
             processWalCommitDedupReplace(
                     walPath,
                     inOrder,
@@ -13021,6 +13036,61 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Finishes a parquet re-encode that a crash interrupted, using the
+     * {@link ParquetRestoreMarker} the decode left in the table directory. The decode and the
+     * replacement it serves are two commits (see
+     * {@link #dropParquetFormatForReplaceRange(long, long, long)}), and a crash between them
+     * leaves the partitions native with nothing in the WAL replay left to say a re-encode was
+     * owed; a crash after the replacement committed but before the encode ran leaves the same
+     * debt on a table that may never take another commit. Both windows end here, at the next
+     * writer open.
+     * <p>
+     * The marker's partitions are re-encoded as they stand now: encoding is idempotent - a
+     * partition the replay is about to decode again simply pays for one more round trip - and a
+     * partition the replacement emptied or TTL evicted is gone and skipped. Best effort: losing
+     * the user's compaction is not a reason to fail a writer open, so only a distressed writer
+     * propagates.
+     */
+    private void recoverPendingParquetRestore() {
+        if (!PartitionBy.isPartitioned(partitionBy) || metadata.getTimestampIndex() < 0) {
+            return;
+        }
+        try {
+            path.trimTo(pathSize);
+            final long seqTxn = ParquetRestoreMarker.read(configuration, path, tableToken.getTableId(), replaceRangeParquetPartitions);
+            path.trimTo(pathSize);
+            if (seqTxn == Numbers.LONG_NULL) {
+                // Absent, unreadable, or another table's copy: there is no partition list to act
+                // on, so drop whatever is there rather than reading it again on every open.
+                ParquetRestoreMarker.clear(ff, path);
+                replaceRangeParquetPartitions.clear();
+                return;
+            }
+            if (replaceRangeParquetPartitions.size() == 0) {
+                // Nothing to re-encode: restoreParquetFormatAfterReplaceRange() would leave the
+                // marker in place, and the next open would read it again.
+                ParquetRestoreMarker.clear(ff, path);
+                return;
+            }
+            LOG.info().$("finishing an interrupted parquet re-encode on writer open [table=").$(tableToken)
+                    .$(", partitions=").$(replaceRangeParquetPartitions.size())
+                    .$(", seqTxn=").$(seqTxn)
+                    .I$();
+            restoreParquetFormatAfterReplaceRange();
+        } catch (Throwable th) {
+            LOG.critical().$("could not finish an interrupted parquet re-encode, partitions stay native [table=").$(tableToken)
+                    .$(", error=").$(th)
+                    .I$();
+            if (distressed) {
+                throw th;
+            }
+        } finally {
+            path.trimTo(pathSize);
+            replaceRangeParquetPartitions.clear();
+        }
+    }
+
+    /**
      * Replays posting seal-purge intents that a prior {@link #closeDeferredPostingSealPurges()}
      * spilled to {@link #POSTING_SEAL_PURGE_PENDING_FILE_NAME} because the ring
      * queue was full and the shared purge-log writer was held. Reads are bounded
@@ -13801,9 +13871,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Re-encodes the partitions {@link #dropParquetFormatForReplaceRange(long, long)} decoded, so a
-     * replace-range commit leaves the user's compaction where it found it. Runs after the commit is
-     * durable, because the partition's final row set is what has to be encoded.
+     * Re-encodes the partitions {@link #dropParquetFormatForReplaceRange(long, long, long)}
+     * decoded, so a replace-range commit leaves the user's compaction where it found it. Runs
+     * after the commit is durable, because the partition's final row set is what has to be
+     * encoded, and again from {@link #recoverPendingParquetRestore()} when a crash got in
+     * between.
      * <p>
      * The bloom filters come from the per-column parquet encoding config, which is what
      * {@code CONVERT PARTITION TO PARQUET} uses when its statement carries no {@code WITH} clause.
@@ -13813,7 +13885,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * A partition the replacement emptied or that TTL evicted is gone by now, and is skipped. A
      * failed re-encode leaves that partition native and does not fail the apply: the replacement
      * data is already durable, and losing compaction is not worth suspending the table over. The
-     * writer going distressed is the exception - nothing further can run on it.
+     * writer going distressed is the exception - nothing further can run on it, so the
+     * {@link ParquetRestoreMarker} stays behind for the next writer to pick the remaining
+     * partitions up.
      */
     private void restoreParquetFormatAfterReplaceRange() {
         if (replaceRangeParquetPartitions.size() == 0) {
@@ -13848,6 +13922,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             }
+            // Every partition has had its turn, so the durable evidence has done its job. A
+            // partition that failed above is not retried: it would fail again on every commit.
+            clearParquetRestoreMarker();
         } finally {
             replaceRangeParquetPartitions.clear();
         }
@@ -15548,6 +15625,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         clearTodoAndCommitMeta();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
+        }
+    }
+
+    /**
+     * Records the re-encode {@link #restoreParquetFormatAfterReplaceRange()} owes, before the
+     * decode's commit makes the partitions native. Best effort: the marker guards the user's
+     * compaction, not the data, so a table that cannot write it degrades to the old behaviour -
+     * a crash before the re-encode leaves the partitions native - rather than failing the apply
+     * and suspending the table.
+     */
+    private void writeParquetRestoreMarker(long seqTxn) {
+        try {
+            path.trimTo(pathSize);
+            ParquetRestoreMarker.write(configuration, path, tableToken.getTableId(), seqTxn, replaceRangeParquetPartitions);
+        } catch (Throwable th) {
+            LOG.critical().$("could not record the parquet partitions a replace range commit decoded, " +
+                            "a crash before the re-encode would leave them native [table=").$(tableToken)
+                    .$(", seqTxn=").$(seqTxn)
+                    .$(", error=").$(th)
+                    .I$();
+        } finally {
+            path.trimTo(pathSize);
         }
     }
 
