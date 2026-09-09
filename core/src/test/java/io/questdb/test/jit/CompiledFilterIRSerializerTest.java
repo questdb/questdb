@@ -2303,6 +2303,109 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testCharArithmeticDeclinesJit() throws Exception {
+        // CHAR arithmetic is not i16 arithmetic: `achar - achar` answers a signed INT in the Java
+        // filter (SubIntFunction over CharFunction#getInt, which reads a digit CHAR as its numeric
+        // value and throws ImplicitCastException for any other CHAR, NULL included). The
+        // serializer has no result type to give the arithmetic node - every constant and
+        // comparison in a CHAR predicate takes the column's own I2 typing and the unsigned CHAR
+        // order, which reads a zero difference as CHAR NULL and a negative one as a code point
+        // above every positive one - so it declines the predicate and the Java filter answers.
+        // Pinned by CompiledFilterRegressionTest#testCharArithmeticDeclinesCompiledFilter.
+        bindVariableService.setChar("achar", 'a');
+        final String[] filters = {
+                // The general CHAR ordering expansion, both operands arithmetic.
+                "(achar - achar) < (achar - achar)",
+                "(achar - achar) <= (achar - achar)",
+                "(achar - achar) > (achar - achar)",
+                "(achar - achar) >= (achar - achar)",
+                // The literal-specialised forms, on either side.
+                "achar - achar < 'a'",
+                "achar - achar <= 'a'",
+                "'a' > achar - achar",
+                "'a' >= achar - achar",
+                // A bind variable takes the general expansion.
+                "achar - achar < :achar",
+                // Equality against a column, a NULL and a numeric constant.
+                "achar - achar = achar",
+                "achar - achar <> achar",
+                "(achar - achar) = (achar - achar)",
+                "achar - achar = null",
+                "achar - achar = 0",
+                "achar - achar < 0",
+                // Every arithmetic operator, and a constant on the left.
+                "achar + 1 = 'b'",
+                "'b' - achar = 'a'",
+                "achar * 2 = 'b'",
+                "achar / 2 = 'b'",
+                // Behind an AND, and nested under a comparison that compiles on its own.
+                "anint = 1 and achar - achar = 'a'",
+                "(achar < achar) = (achar - achar < 'a')",
+                // A pure-constant subtree descend() folds sets hasArithmeticOperations without an
+                // arithmeticNode; the decline names the predicate instead of the operator.
+                "achar < 3_000_000_000 - 1",
+                // Unary minus. isArithmeticOperation() skips it (paramCount < 2), so the predicate
+                // tracks it on its own: `-achar` is NegShortFunction over CharFunction#getShort in
+                // the Java filter, where the serializer emitted NEG on the raw i16 code point and
+                // then applied the unsigned CHAR ordering to the negated value.
+                "-achar > achar",
+                "-achar >= 'a'",
+                "'a' < -achar",
+                "-achar < achar",
+                "-achar = achar",
+                "-achar = -achar",
+                "-achar <> -achar",
+                "-achar > :achar",
+                "(-achar > achar) = (achar < achar)",
+                "anint = 1 and -achar > achar",
+                "-achar in ('a')",
+                "-(achar - achar) > achar",
+                // A negated CHAR literal never reaches visit(): descend() stubs `-<constant>` for
+                // the backfill, which emitted the code point with the sign dropped, so `-'a'`
+                // compiled as 'a'. The stub marks the operator on the way.
+                "achar < -'a'",
+                "achar = -'a'",
+                "-achar < -'a'",
+                "achar in (-'a')",
+        };
+        for (String filter : filters) {
+            try {
+                serialize(filter);
+                Assert.fail("expected JIT compilation to be declined for: " + filter);
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "is not supported for CHAR type");
+            }
+        }
+        // The decline names the operator: the visited unary minus, or the stubbed one.
+        try {
+            serialize("-achar > achar");
+            Assert.fail("expected JIT compilation to be declined for: -achar > achar");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "operator: - is not supported for CHAR type");
+        }
+        try {
+            serialize("achar < -'a'");
+            Assert.fail("expected JIT compilation to be declined for: achar < -'a'");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "operator: - is not supported for CHAR type");
+        }
+        // A CHAR ordering with no arithmetic keeps compiling.
+        serialize("achar < 'a'");
+        assertIR("(i16 0L)(i16 achar)(>)(i16 97L)(i16 achar)(<)(&&)(ret)");
+        serialize("achar < achar");
+        // The unary-minus mark is consulted for CHAR and IPv4 only. A numeric unary minus keeps its
+        // IR and its vectorised execution hint, and a negative numeric literal stays a single
+        // immediate: descend() folds it before visit() runs. -abyte > afloat and -anint > afloat
+        // are pinned by testNarrowIntArithCmpFloatColumnWidensSubtreeResult.
+        int options = serialize("-anint > anint", false, false, true);
+        assertIR("-anint > anint", "(i32 anint)(i32 anint)(neg)(>)(ret)");
+        assertOptionsHint("-anint > anint", options, OptionsHint.SINGLE_SIZE);
+        options = serialize("anint > -1", false, false, true);
+        assertIR("anint > -1", "(i32 -1L)(i32 anint)(>)(ret)");
+        assertOptionsHint("anint > -1", options, OptionsHint.SINGLE_SIZE);
+    }
+
+    @Test
     public void testCharOrdering() throws Exception {
         // https://github.com/questdb/questdb/issues/7549
         // Against a literal the serializer knows the literal's sign at compile time, so the

@@ -487,7 +487,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, "-")) {
             ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;
             if (nextNode != null && nextNode.paramCount == 0 && nextNode.type == ExpressionNode.CONSTANT) {
-                // Store negation node for later backfilling
+                // Store negation node for later backfilling. The stub skips visit(), so the
+                // predicate records the operator here: a CHAR or IPv4 predicate declines it at
+                // exit, ahead of the backfill (see visit()).
+                predicateContext.markUnaryMinus(node);
                 serializeConstantStub(node);
                 return false;
             }
@@ -1038,7 +1041,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (predicateLeft) {
             // We're out of a predicate
 
-            // Arithmetic in an IPv4 predicate. The Java filter answers `ip - ip2` and
+            // Arithmetic in an IPv4 or CHAR predicate. The Java filter answers `ip - ip2` and
             // `ip - '1.1.1.1'` with a signed LONG (IPv4MinusIPv4FunctionFactory), LONG_NULL for a
             // NULL operand, and `ip + 1` / `ip - 1` with an IPv4 that is NULL for a NULL operand or
             // for a carry out of 32 bits. The backends run i32 arithmetic on the raw lane instead:
@@ -1048,20 +1051,48 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // negative difference as a huge address. `(ip - ip2) < (ip2 - ip)` answered NO rows
             // over a table where every row has ip = 1.1.1.1 and ip2 = 1.1.1.2, and
             // `(ip - '1.1.1.1') = NULL` selected the row whose difference is ZERO instead of the
-            // row whose ip is NULL. Until the serializer types an arithmetic node by its own
-            // result, decline the predicate; the Java filter is always correct. This runs ahead
-            // of the constant backfill so that the decline names the operator rather than a
-            // constant the backfill would have refused for its own reasons.
-            if (predicateContext.hasArithmeticOperations
-                    && ColumnType.tagOf(predicateContext.columnType) == ColumnType.IPv4) {
-                final ExpressionNode arithmeticNode = predicateContext.arithmeticNode;
-                if (arithmeticNode != null) {
-                    throw SqlException.position(arithmeticNode.position)
-                            .put("operator: ").put(arithmeticNode.token)
-                            .put(" is not supported for IPv4 type");
+            // row whose ip is NULL.
+            //
+            // CHAR takes the same route one lane narrower. The Java filter answers `c - d` with a
+            // signed INT: SubIntFunction reads each operand through CharFunction#getInt, which
+            // maps a digit CHAR to its numeric value and throws ImplicitCastException for any other
+            // CHAR, NULL included. The backends subtract the raw i16 lanes, read a NULL lane as
+            // zero rather than failing, and the ordering operators take the unsigned CHAR
+            // expansion, which reads a zero difference as CHAR NULL and a negative one as a code
+            // point above every positive one. `(c - d) < (d - c)` answered NO rows over a table
+            // where every row has c = '1' and d = '2', and so did `(c - c) <= (d - d)`.
+            //
+            // A unary minus takes the same route. isArithmeticOperation() does not report it
+            // (paramCount < 2), so the predicate tracks it apart from hasArithmeticOperations,
+            // which forceScalarMode below derives from: a numeric `-abyte > afloat` keeps its
+            // vectorised path. The Java filter answers `-c` with a SHORT (NegShortFunction over
+            // CharFunction#getShort: the digit value negated, ImplicitCastException for any other
+            // CHAR) and reads that SHORT as a CHAR again at the comparison, so -'0' is CHAR NULL;
+            // the backends negated the raw i16 code point, and `-c > d` answered EVERY row over a
+            // table where c = '0'. A negated CHAR literal never reaches visit() at all: descend()
+            // stubs `-<constant>` for the backfill, and serializeConstant() emitted the code point
+            // with the sign dropped, so `c < -'5'` compiled as `c < '5'`.
+            //
+            // Until the serializer types an arithmetic node by its own result, decline the
+            // predicate; the Java filter is always correct. This runs ahead of the constant
+            // backfill so that the decline names the operator rather than a constant the backfill
+            // would have refused for its own reasons.
+            final int predicateColumnTypeTag = ColumnType.tagOf(predicateContext.columnType);
+            final boolean hasUnaryMinus = predicateContext.unaryMinusNode != null;
+            if ((predicateContext.hasArithmeticOperations || hasUnaryMinus)
+                    && (predicateColumnTypeTag == ColumnType.IPv4 || predicateColumnTypeTag == ColumnType.CHAR)) {
+                final ExpressionNode operatorNode = predicateContext.arithmeticNode != null
+                        ? predicateContext.arithmeticNode
+                        : predicateContext.unaryMinusNode;
+                if (operatorNode != null) {
+                    throw SqlException.position(operatorNode.position)
+                            .put("operator: ").put(operatorNode.token)
+                            .put(" is not supported for ").put(ColumnType.nameOf(predicateColumnTypeTag))
+                            .put(" type");
                 }
                 throw SqlException.position(node.position)
-                        .put("arithmetic is not supported for IPv4 type");
+                        .put("arithmetic is not supported for ").put(ColumnType.nameOf(predicateColumnTypeTag))
+                        .put(" type");
             }
 
             // A comparison - or an IN pairing - inside this predicate that reads NO column, under a
@@ -6072,10 +6103,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final TypesObserver localTypesObserver = new TypesObserver();
         private final LongList inIntervals = new LongList();
         int columnType;
-        // The first arithmetic operation the predicate holds, for the IPv4 decline's message.
-        // Null when the predicate has none, or only a pure-constant subtree descend() folded.
+        // The first arithmetic operation the predicate holds, for the IPv4 / CHAR decline's
+        // message. Null when the predicate has none, or only a pure-constant subtree descend()
+        // folded.
         ExpressionNode arithmeticNode;
         boolean hasArithmeticOperations;
+        // The first unary minus the predicate holds, whether visited or stubbed by descend() over
+        // a constant. Consulted by the IPv4 / CHAR decline only: isArithmeticOperation() skips a
+        // unary minus, and hasArithmeticOperations must stay false for it so that a numeric
+        // `-abyte > afloat` keeps the vectorised backend (see forceScalarMode in visit()).
+        ExpressionNode unaryMinusNode;
         // True when the predicate has at least one FLOAT / DOUBLE column,
         // bind variable, or numeric constant. Captured up front by
         // NarrowI64WidenDetector so other code paths (e.g. constant
@@ -6257,6 +6294,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 if (arithmeticNode == null) {
                     arithmeticNode = node;
                 }
+            } else if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
+                markUnaryMinus(node);
+            }
+        }
+
+        private void markUnaryMinus(ExpressionNode node) {
+            if (unaryMinusNode == null) {
+                unaryMinusNode = node;
             }
         }
 
@@ -6268,6 +6313,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             singleBooleanColumn = false;
             arithmeticNode = null;
             hasArithmeticOperations = false;
+            unaryMinusNode = null;
             hasFloatInPredicate = false;
             localTypesObserver.clear();
             currentInSerialization = false;

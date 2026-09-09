@@ -378,6 +378,211 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCharArithmeticDeclinesCompiledFilter() throws Exception {
+        // CHAR arithmetic is not the i16 arithmetic the backends run. The Java filter resolves
+        // `c - d` to SubIntFunction over CharFunction#getInt, which reads a digit CHAR as its
+        // numeric value and throws ImplicitCastException for any other CHAR, NULL included, so the
+        // difference is a signed INT and every comparison against it is an INT comparison. The
+        // serializer keeps the COLUMN's typing for the whole predicate instead: the lanes subtract
+        // as i16, the ordering operators take the unsigned CHAR expansion - which reads a zero
+        // difference as CHAR NULL and a negative one as a code point above every positive one -
+        // and a NULL operand is a zero lane rather than an error. `(c - d) < (d - c)` answered NO
+        // rows over a fixture where every row has c = '1' and d = '2', and so did
+        // `(c - c) <= (d - d)`. The serializer declines arithmetic in a CHAR predicate and the
+        // Java filter answers.
+        assertMemoryLeak(() -> {
+            // Five value classes, seven rows each, so that the SIMD body and its scalar tail both
+            // see every class: a difference of -1, 1, 0, 9 and -9.
+            execute("CREATE TABLE x (c CHAR, d CHAR, id LONG, k TIMESTAMP) TIMESTAMP(k)");
+            execute(
+                    """
+                            INSERT INTO x
+                            SELECT
+                                (CASE x % 5
+                                    WHEN 0 THEN '1'
+                                    WHEN 1 THEN '2'
+                                    WHEN 2 THEN '5'
+                                    WHEN 3 THEN '9'
+                                    ELSE '0'
+                                END)::CHAR,
+                                (CASE x % 5
+                                    WHEN 0 THEN '2'
+                                    WHEN 1 THEN '1'
+                                    WHEN 2 THEN '5'
+                                    WHEN 3 THEN '0'
+                                    ELSE '9'
+                                END)::CHAR,
+                                x,
+                                timestamp_sequence(0, 1)
+                            FROM long_sequence(35)
+                            """
+            );
+
+            // The two shapes the review reported: a negative difference against a positive one,
+            // and a zero difference against a zero difference.
+            assertPredicateDeclines("(c - d) < (d - c)", 14);
+            assertPredicateDeclines("(c - c) <= (d - d)", 35);
+            // Every ordering operator against a numeric literal. serializeConstant() already
+            // declined these shapes before the arithmetic rule existed ("numeric constant in
+            // non-numeric expression": the predicate's column is CHAR and the literal is numeric).
+            // They stay here as guards: the arithmetic decline runs ahead of the constant backfill,
+            // so the shape keeps the Java filter even if a future change teaches the serializer
+            // numeric constants against CHAR. The Java result is an INT, so the expected counts
+            // are digit-value arithmetic. The same guard covers the equality rows and the
+            // `c + 1 = 2` / `c * 2 = 10` / `c / 2 = 4` rows below.
+            assertPredicateDeclines("c - d < 0", 14);
+            assertPredicateDeclines("c - d <= 0", 21);
+            assertPredicateDeclines("c - d > 0", 14);
+            assertPredicateDeclines("c - d >= 0", 21);
+            assertPredicateDeclines("(c - d) > (d - c)", 14);
+            assertPredicateDeclines("(c - d) >= (d - c)", 21);
+            // Equality: the Java filter compares a signed INT difference, so a zero difference
+            // is a genuine INT zero, not CHAR NULL, and two digits never differ by INT_NULL.
+            assertPredicateDeclines("c - d = 0", 7);
+            assertPredicateDeclines("c - d <> 0", 28);
+            assertPredicateDeclines("c - d = -1", 7);
+            assertPredicateDeclines("c - d = 9", 7);
+            assertPredicateDeclines("(c - d) = (d - c)", 7);
+            assertPredicateDeclines("(c - d) <> (d - c)", 28);
+            assertPredicateDeclines("(c - d) <> NULL", 35);
+            // A CHAR literal beside the arithmetic is a digit the Java filter reads as its value;
+            // the literal-specialised CHAR ordering forms read it as a code point instead.
+            assertPredicateDeclines("(c - d) < '5'", 28);
+            assertPredicateDeclines("('5' - c) = 4", 7);
+            // CHAR +, *, / against an INT constant answer an INT; guarded for the same reason.
+            assertPredicateDeclines("c + 1 = 2", 7);
+            assertPredicateDeclines("c * 2 = 10", 7);
+            assertPredicateDeclines("c / 2 = 4", 7);
+            // Nested under a comparison that does compile on its own - every class agrees on the
+            // two sides - and behind an AND.
+            assertPredicateDeclines("(c < d) = (c - d < 0)", 35);
+            assertPredicateDeclines("id > 5 AND c - d < 0", 12);
+
+            // Unary minus. The Java filter resolves `-c` to NegShortFunction over
+            // CharFunction#getShort - the digit value negated, an ImplicitCastException for any
+            // other CHAR - and the comparison against a CHAR then reads that SHORT as a CHAR again:
+            // -'0' is CHAR NULL, which orders against nothing, and -'1'..-'9' are code points
+            // above every digit. The compiled filter negated the raw i16 code point instead, so
+            // -'0' was the live code point -48 and every row compared. isArithmeticOperation()
+            // does not see a unary minus (paramCount < 2), so this needs its own mark.
+            assertPredicateDeclines("-c > d", 28);
+            assertPredicateDeclines("-c >= d", 28);
+            assertPredicateDeclines("d < -c", 28);
+            assertPredicateDeclinesOnEmptyResult("-c < d");
+            assertPredicateDeclinesOnEmptyResult("-c <= d");
+            // Equality between two negated SHORTs is a SHORT comparison in the Java filter; the
+            // compiled i16 NEG agrees over digit rows and disagrees over the NULL and letter rows
+            // fixture z pins below, so the decline holds here too.
+            assertPredicateDeclines("-c = -d", 7);
+            assertPredicateDeclines("-c <> -d", 28);
+            assertPredicateDeclinesOnEmptyResult("-c = d");
+            // Against a CHAR literal, on either side.
+            assertPredicateDeclines("-c > '5'", 28);
+            assertPredicateDeclines("'5' < -c", 28);
+            assertPredicateDeclinesOnEmptyResult("-c < '5'");
+            // A negated CHAR literal never reaches visit(): descend() stubs `-<constant>` for the
+            // backfill, and serializeConstant() emitted the literal's code point with the sign
+            // dropped, so `c < -'5'` compiled as `c < '5'`. The Java filter reads -'5' as the
+            // SHORT -5, which every CHAR sorts below.
+            assertPredicateDeclines("c < -'5'", 35);
+            assertPredicateDeclinesOnEmptyResult("c > -'5'");
+            assertPredicateDeclinesOnEmptyResult("c = -'5'");
+            assertPredicateDeclines("-c = -'5'", 7);
+            // Nested under a comparison that compiles on its own, behind an AND, and over a
+            // binary arithmetic subtree the round-1 rule already declines.
+            assertPredicateDeclines("(-c > d) = (c < d)", 7);
+            assertPredicateDeclines("-c > d AND id > 5", 24);
+            assertPredicateDeclinesOnEmptyResult("-(c - d) > d");
+
+            // A CHAR ordering with no arithmetic keeps compiling.
+            assertJitMatchesJavaInAllModes("x WHERE c < d");
+            assertJitMatchesJavaInAllModes("x WHERE c >= d");
+
+            // Projected rows over a mixed fixture, with the absolute result pinned.
+            execute("CREATE TABLE y (c CHAR, d CHAR, id INT, k TIMESTAMP) TIMESTAMP(k)");
+            execute(
+                    """
+                            INSERT INTO y VALUES
+                            ('1', '2', 0, 0),
+                            ('2', '1', 1, 1),
+                            ('5', '5', 2, 2),
+                            ('9', '0', 3, 3),
+                            ('0', '9', 4, 4),
+                            ('3', '3', 5, 5)
+                            """
+            );
+            assertJitMatchesJava("SELECT id FROM y WHERE c - d < 0", false, "id\n0\n4\n");
+            assertJitMatchesJava("SELECT id FROM y WHERE c - d <= 0", false, "id\n0\n2\n4\n5\n");
+            assertJitMatchesJava("SELECT id FROM y WHERE c - d > 0", false, "id\n1\n3\n");
+            assertJitMatchesJava("SELECT id FROM y WHERE c - d >= 0", false, "id\n1\n2\n3\n5\n");
+            assertJitMatchesJava("SELECT id FROM y WHERE c - d = 0", false, "id\n2\n5\n");
+            assertJitMatchesJava("SELECT id FROM y WHERE c - d <> 0", false, "id\n0\n1\n3\n4\n");
+            assertJitMatchesJava("SELECT id FROM y WHERE (c - d) < (d - c)", false, "id\n0\n4\n");
+            assertJitMatchesJava("SELECT id FROM y WHERE (c - c) <= (d - d)", false, "id\n0\n1\n2\n3\n4\n5\n");
+            assertJitMatchesJava("SELECT id FROM y WHERE (c - d) < '5'", false, "id\n0\n1\n2\n4\n5\n");
+            // Unary minus: row 4 has c = '0', whose negation is CHAR NULL in the Java filter and
+            // the live code point -48 in the compiled one, which selected it.
+            assertJitMatchesJava("SELECT id FROM y WHERE -c > d", false, "id\n0\n1\n2\n3\n5\n");
+            assertJitMatchesJava("SELECT id FROM y WHERE -c >= d", false, "id\n0\n1\n2\n3\n5\n");
+            assertJitMatchesJava("SELECT id FROM y WHERE -c = -d", false, "id\n2\n5\n");
+            assertJitMatchesJava("SELECT id FROM y WHERE (-c > d) = (c < d)", false, "id\n0\n");
+            assertJitMatchesJava("SELECT id FROM y WHERE -c > d AND id > 1", false, "id\n2\n3\n5\n");
+            // The same rows through the fluent battery, with the JIT enabled.
+            assertQuery("SELECT id FROM y WHERE c - d < 0")
+                    .noLeakCheck()
+                    .returns("id\n0\n4\n");
+            assertQuery("SELECT id FROM y WHERE (c - c) <= (d - d)")
+                    .noLeakCheck()
+                    .returns("id\n0\n1\n2\n3\n4\n5\n");
+            assertQuery("SELECT id FROM y WHERE -c > d")
+                    .noLeakCheck()
+                    .returns("id\n0\n1\n2\n3\n5\n");
+
+            // A NULL or letter operand. CharFunction#getInt / getShort throw ImplicitCastException
+            // for any CHAR that is not a digit, NULL included, so the Java filter fails the query;
+            // the compiled filter read the NULL lane as zero and the letters as code points and
+            // answered rows instead. The serializer now declines the predicate, so the Java filter
+            // answers in every JIT mode and throws the same ImplicitCastException.
+            execute("CREATE TABLE z (c CHAR, d CHAR, id INT, k TIMESTAMP) TIMESTAMP(k)");
+            execute(
+                    """
+                            INSERT INTO z VALUES
+                            ('1', NULL, 0, 0),
+                            (NULL, '2', 1, 1),
+                            (NULL, NULL, 2, 2),
+                            ('1', '2', 3, 3),
+                            ('a', 'b', 4, 4),
+                            ('b', 'a', 5, 5)
+                            """
+            );
+            final int[] jitModes = {SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED};
+            for (int jitMode : jitModes) {
+                sqlExecutionContext.setJitMode(jitMode);
+                assertQuery("SELECT id FROM z WHERE c - d < 0")
+                        .noLeakCheck()
+                        .failsWith("[CHAR -> INT]");
+                assertQuery("SELECT id FROM z WHERE (c - d) = (d - c)")
+                        .noLeakCheck()
+                        .failsWith("[CHAR -> INT]");
+                // Unary minus reads its operand through getShort.
+                assertQuery("SELECT id FROM z WHERE -c > d")
+                        .noLeakCheck()
+                        .failsWith("[CHAR -> SHORT]");
+                assertQuery("SELECT id FROM z WHERE -c >= d")
+                        .noLeakCheck()
+                        .failsWith("[CHAR -> SHORT]");
+                assertQuery("SELECT id FROM z WHERE -c = -d")
+                        .noLeakCheck()
+                        .failsWith("[CHAR -> SHORT]");
+                assertQuery("SELECT id FROM z WHERE -c < 'a'")
+                        .noLeakCheck()
+                        .failsWith("[CHAR -> SHORT]");
+            }
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        });
+    }
+
+    @Test
     public void testCharOrderingNestedInPredicateUsesCompiledFilter() throws Exception {
         // https://github.com/questdb/questdb/issues/7549
         // A CHAR ordering comparison anywhere but at the predicate ROOT rewound the IR stream over
@@ -9072,9 +9277,28 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // count() builds a different factory, so the decline has to hold there too - and this is
         // where the absolute row count gets pinned.
         assertJitMatchesJava(countQuery, false, "count\n" + expectedRows + "\n");
-        // JIT_MODE_FORCE_SCALAR is the third execution mode. Both backends must decline, not only
-        // the vectorized one: they were wrong in the same direction, which is why parity between
-        // them never flagged the shape.
+        assertPredicateDeclinesInScalarMode(rowQuery, countQuery, expectedRows);
+    }
+
+    /**
+     * Companion to {@link #assertPredicateDeclines(String, long)} for the shapes whose CORRECT
+     * answer is no rows - a negated digit that no CHAR sorts above, or a negated CHAR that no
+     * digit equals. Parity alone cannot vouch for those, so this PINS the empty result in every
+     * mode rather than merely tolerating it, and still demands the decline: a defect that starts
+     * adding rows, or a fixture that silently starts matching, has to redden a test somewhere.
+     */
+    private void assertPredicateDeclinesOnEmptyResult(String predicate) throws SqlException {
+        final String rowQuery = "x WHERE " + predicate;
+        final String countQuery = "SELECT count() FROM x WHERE " + predicate;
+        assertJitMatchesJavaOnEmptyResult(rowQuery, false);
+        assertJitMatchesJava(countQuery, false, "count\n0\n");
+        assertPredicateDeclinesInScalarMode(rowQuery, countQuery, 0);
+    }
+
+    // JIT_MODE_FORCE_SCALAR is the third execution mode. Both backends must decline, not only
+    // the vectorized one: they were wrong in the same direction, which is why parity between
+    // them never flagged the shape.
+    private void assertPredicateDeclinesInScalarMode(String rowQuery, String countQuery, long expectedRows) throws SqlException {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
         try (RecordCursorFactory factory = select(rowQuery)) {
             Assert.assertFalse("compiled filter is expected to decline for: " + rowQuery, factory.usesCompiledFilter());
