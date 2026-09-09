@@ -32,6 +32,7 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
@@ -356,6 +357,327 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             assertSqlCursors(
                     "select count(*), min(ts), max(ts) from expected",
                     "select count(*), min(ts), max(ts) from rg"
+            );
+        });
+    }
+
+    @Test
+    public void testReplaceRangeEmptyingParquetPartitionDropsIt() throws Exception {
+        // The replacement covers 2026-01-01 whole and writes nothing back into it, so the
+        // partition is gone by the time the re-encode runs and has to be skipped. The second
+        // parquet partition keeps rows and comes back parquet.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rg (id long, ts timestamp, v long) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO rg VALUES
+                    (1, '2026-01-01T01:00:00.000000Z', 10),
+                    (2, '2026-01-01T02:00:00.000000Z', 20),
+                    (3, '2026-01-02T01:00:00.000000Z', 30),
+                    (4, '2026-01-02T02:00:00.000000Z', 40)""");
+            drainWalQueue();
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2026-01-01', '2026-01-02'");
+            drainWalQueue();
+            assertParquetPartitions("rg", "2026-01-01", "2026-01-02");
+
+            final TableToken rg = engine.verifyTableName("rg");
+            try (WalWriter ww = engine.getWalWriter(rg)) {
+                appendRow(ww, MicrosTimestampDriver.floor("2026-01-02T03:00:00.000000Z"), 5, 50);
+                ww.commitWithParams(
+                        MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"),
+                        MicrosTimestampDriver.floor("2026-01-03T00:00:00.000000Z"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(rg));
+            assertQuery("SELECT id, ts, v FROM rg")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            id\tts\tv
+                            5\t2026-01-02T03:00:00.000000Z\t50
+                            """);
+            // 2026-01-01 was emptied and dropped; 2026-01-02 survived and is parquet again.
+            assertParquetPartitions("rg", "2026-01-02");
+        });
+    }
+
+    @Test
+    public void testReplaceRangeOverIndexedParquetPartitionKeepsItParquet() throws Exception {
+        // An indexed SYMBOL is where the re-encode does the most work: converting a native
+        // partition to parquet rebuilds the partition's index files and zeroes the column tops the
+        // rewrite invalidates. The replacement also changes the symbol distribution, so the
+        // rebuilt index has to describe the post-replacement rows, not the ones the decode found.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rg (id long, ts timestamp, m symbol index, v long) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO rg VALUES
+                    (1, '2026-01-01T01:00:00.000000Z', 'a', 10),
+                    (2, '2026-01-01T02:00:00.000000Z', 'b', 20),
+                    (3, '2026-01-01T03:00:00.000000Z', 'a', 30),
+                    (4, '2026-01-02T01:00:00.000000Z', 'b', 40)""");
+            drainWalQueue();
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2026-01-01'");
+            drainWalQueue();
+            assertParquetPartitions("rg", "2026-01-01");
+
+            final TableToken rg = engine.verifyTableName("rg");
+            try (WalWriter ww = engine.getWalWriter(rg)) {
+                TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2026-01-01T02:30:00.000000Z"));
+                row.putLong(0, 5);
+                row.putSym(2, "c");
+                row.putLong(3, 50);
+                row.append();
+                ww.commitWithParams(
+                        MicrosTimestampDriver.floor("2026-01-01T02:00:00.000000Z"),
+                        MicrosTimestampDriver.floor("2026-01-02T00:00:00.000000Z"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(rg));
+            assertParquetPartitions("rg", "2026-01-01");
+            // Index reads: 'b' and 'a' lost their 2026-01-01 rows to the replacement, 'c' is new.
+            assertQuery("SELECT m, count() FROM rg WHERE ts < '2026-01-02' ORDER BY m")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            m\tcount
+                            a\t1
+                            c\t1
+                            """);
+            assertQuery("SELECT id, ts, m, v FROM rg WHERE m = 'b'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts\tm\tv
+                            4\t2026-01-02T01:00:00.000000Z\tb\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeOverLastParquetPartitionKeepsItParquet() throws Exception {
+        // The covered partition is the table's last one, so the decode has to reopen it as the
+        // active partition before the replacement appends to it, and the re-encode closes it
+        // again. A WAL table is allowed to hold its last partition in parquet format.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rg (id long, ts timestamp, v long) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO rg VALUES
+                    (1, '2026-01-01T01:00:00.000000Z', 10),
+                    (2, '2026-01-02T01:00:00.000000Z', 20),
+                    (3, '2026-01-02T02:00:00.000000Z', 30)""");
+            drainWalQueue();
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2026-01-02'");
+            drainWalQueue();
+            assertParquetPartitions("rg", "2026-01-02");
+
+            final TableToken rg = engine.verifyTableName("rg");
+            try (WalWriter ww = engine.getWalWriter(rg)) {
+                appendRow(ww, MicrosTimestampDriver.floor("2026-01-02T03:00:00.000000Z"), 4, 40);
+                ww.commitWithParams(
+                        MicrosTimestampDriver.floor("2026-01-02T02:00:00.000000Z"),
+                        Long.MAX_VALUE,
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(rg));
+            assertQuery("SELECT id, ts, v FROM rg")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            id\tts\tv
+                            1\t2026-01-01T01:00:00.000000Z\t10
+                            2\t2026-01-02T01:00:00.000000Z\t20
+                            4\t2026-01-02T03:00:00.000000Z\t40
+                            """);
+            assertParquetPartitions("rg", "2026-01-02");
+
+            // The table keeps taking ordinary appends after the parquet last partition came back.
+            execute("INSERT INTO rg VALUES (5, '2026-01-03T01:00:00.000000Z', 50)");
+            drainWalQueue();
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(rg));
+            assertQuery("SELECT count() FROM rg")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n4\n");
+        });
+    }
+
+    @Test
+    public void testReplaceRangeOverParquetPartitionTtlEvictsSkipsReEncode() throws Exception {
+        // The re-encode runs after housekeep(), so TTL gets to evict first: the decoded parquet
+        // partition is gone by then and must be skipped rather than encoded on its way out. The
+        // replacement's new row raises the table's max timestamp past the TTL window, which is
+        // what makes the eviction land in the same commit as the replacement that decoded the
+        // partition.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rg (id long, ts timestamp, v long) TIMESTAMP(ts) PARTITION BY DAY TTL 2 DAYS WAL");
+            execute("""
+                    INSERT INTO rg VALUES
+                    (1, '2026-01-01T01:00:00.000000Z', 10),
+                    (2, '2026-01-01T02:00:00.000000Z', 20),
+                    (3, '2026-01-02T01:00:00.000000Z', 30),
+                    (4, '2026-01-03T01:00:00.000000Z', 40)""");
+            drainWalQueue();
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2026-01-01'");
+            drainWalQueue();
+            assertParquetPartitions("rg", "2026-01-01");
+
+            final TableToken rg = engine.verifyTableName("rg");
+            try (WalWriter ww = engine.getWalWriter(rg)) {
+                appendRow(ww, MicrosTimestampDriver.floor("2026-01-04T01:00:00.000000Z"), 5, 50);
+                ww.commitWithParams(
+                        MicrosTimestampDriver.floor("2026-01-01T02:00:00.000000Z"),
+                        Long.MAX_VALUE,
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(rg));
+            // Row 1 sits below the range, so the replacement kept it and left 2026-01-01 with one
+            // row for the re-encode to pick up. TTL evicted the partition first - which is what
+            // row 1's absence here says - so the re-encode found it gone and skipped it. Nothing
+            // is left in parquet format.
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2026-01-04\t1\tfalse
+                            """);
+            assertQuery("SELECT id, ts, v FROM rg")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            id\tts\tv
+                            5\t2026-01-04T01:00:00.000000Z\t50
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeOverParquetPartitionsKeepsThemParquet() throws Exception {
+        // A replace-mode commit cannot rewrite a parquet partition: the O3 merge path has no way
+        // to remove rows from a parquet file, and TableWriter used to refuse the commit outright,
+        // which suspended the table. The writer now decodes the partitions the range covers,
+        // applies the replacement over native storage, and re-encodes them afterwards, so the
+        // caller sees the replacement land and the user's compaction survive it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rg (id long, ts timestamp, v long) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE expected (id long, ts timestamp, v long) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String rows = """
+                    (1, '2026-01-01T01:00:00.000000Z', 10),
+                    (2, '2026-01-01T02:00:00.000000Z', 20),
+                    (3, '2026-01-02T01:00:00.000000Z', 30),
+                    (4, '2026-01-02T02:00:00.000000Z', 40),
+                    (5, '2026-01-03T01:00:00.000000Z', 50),
+                    (6, '2026-01-03T02:00:00.000000Z', 60)""";
+            execute("INSERT INTO rg VALUES " + rows);
+            drainWalQueue();
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2026-01-01', '2026-01-02'");
+            drainWalQueue();
+            assertParquetPartitions("rg", "2026-01-01", "2026-01-02");
+
+            // Replace [2026-01-01T02, 2026-01-03T00): drops one row of the first parquet
+            // partition and both rows of the second, and writes one row into each. The third
+            // partition is native and lies above the range, so it must not move.
+            final TableToken rg = engine.verifyTableName("rg");
+            try (WalWriter ww = engine.getWalWriter(rg)) {
+                appendRow(ww, MicrosTimestampDriver.floor("2026-01-01T02:30:00.000000Z"), 7, 70);
+                appendRow(ww, MicrosTimestampDriver.floor("2026-01-02T02:30:00.000000Z"), 8, 80);
+                ww.commitWithParams(
+                        MicrosTimestampDriver.floor("2026-01-01T02:00:00.000000Z"),
+                        MicrosTimestampDriver.floor("2026-01-03T00:00:00.000000Z"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(rg));
+
+            // Oracle: the same rows written with plain commits, no replace mode and no parquet.
+            execute("""
+                    INSERT INTO expected VALUES
+                    (1, '2026-01-01T01:00:00.000000Z', 10),
+                    (7, '2026-01-01T02:30:00.000000Z', 70),
+                    (8, '2026-01-02T02:30:00.000000Z', 80),
+                    (5, '2026-01-03T01:00:00.000000Z', 50),
+                    (6, '2026-01-03T02:00:00.000000Z', 60)""");
+            drainWalQueue();
+            assertSqlCursors("SELECT id, ts, v FROM expected", "SELECT id, ts, v FROM rg");
+
+            // Both covered partitions are parquet again, and hold what the replacement left.
+            assertParquetPartitions("rg", "2026-01-01", "2026-01-02");
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2026-01-01\t2\ttrue
+                            2026-01-02\t1\ttrue
+                            2026-01-03\t2\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeUnderParquetPartitionLeavesItAlone() throws Exception {
+        // The range stops below the parquet partition, so nothing is decoded and the partition
+        // keeps the parquet file it had - the decode must not reach past the range it is given.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rg (id long, ts timestamp, v long) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO rg VALUES
+                    (1, '2026-01-01T01:00:00.000000Z', 10),
+                    (2, '2026-01-02T01:00:00.000000Z', 20),
+                    (3, '2026-01-03T01:00:00.000000Z', 30)""");
+            drainWalQueue();
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2026-01-02'");
+            drainWalQueue();
+            final long partitionNameTxn = readPartitionNameTxn("rg", "2026-01-02T00:00:00.000000Z");
+
+            final TableToken rg = engine.verifyTableName("rg");
+            try (WalWriter ww = engine.getWalWriter(rg)) {
+                appendRow(ww, MicrosTimestampDriver.floor("2026-01-01T03:00:00.000000Z"), 4, 40);
+                ww.commitWithParams(
+                        MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"),
+                        MicrosTimestampDriver.floor("2026-01-02T00:00:00.000000Z"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(rg));
+            assertQuery("SELECT id, ts, v FROM rg")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            id\tts\tv
+                            4\t2026-01-01T03:00:00.000000Z\t40
+                            2\t2026-01-02T01:00:00.000000Z\t20
+                            3\t2026-01-03T01:00:00.000000Z\t30
+                            """);
+            assertParquetPartitions("rg", "2026-01-02");
+            // A decode and re-encode would have moved the partition into a new directory, so an
+            // unchanged name txn is what says neither ran.
+            Assert.assertEquals(
+                    "an untouched parquet partition must keep its directory",
+                    partitionNameTxn,
+                    readPartitionNameTxn("rg", "2026-01-02T00:00:00.000000Z")
             );
         });
     }
@@ -975,7 +1297,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReplaceRangeNotSupportedParquetPartition() throws Exception {
+    public void testReplaceRangeOverWholeParquetPartitionKeepsItParquet() throws Exception {
+        // The range starts below the first partition and covers the parquet one whole, leaving it
+        // with just the row the commit carries. The writer used to refuse a replace commit against
+        // a parquet partition and suspend the table; it now decodes 2022-02-24, applies the
+        // replacement over native storage and re-encodes the partition.
         assertMemoryLeak(() -> {
             execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
@@ -988,7 +1314,20 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             insertRowsWithRangeReplace(tableToken, new Utf8StringSink(), "2022-02-24T17", "2022-02-14T17", "2022-02-25T18", true);
             drainWalQueue();
 
-            Assert.assertTrue("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("select min(ts), max(ts), count(*) from rg")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            min	max	count
+                            2022-02-24T17:00:00.000000Z	2022-02-28T16:15:00.000000Z	282
+                            """);
+            assertParquetPartitions("rg", "2022-02-24");
+            assertQuery("select numRows from table_partitions('rg') where isParquet")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("numRows\n1\n");
         });
     }
 
@@ -2044,6 +2383,32 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         row.putLong(0, id);
         row.putLong(2, v);
         row.append();
+    }
+
+    /**
+     * Asserts the table's parquet-format partitions are exactly the named ones, in ascending
+     * partition order.
+     */
+    private void assertParquetPartitions(String tableName, String... partitionNames) throws Exception {
+        StringSink expected = new StringSink();
+        expected.put("name\n");
+        for (int i = 0; i < partitionNames.length; i++) {
+            expected.put(partitionNames[i]).put('\n');
+        }
+        assertQuery("SELECT name FROM table_partitions('" + tableName + "') WHERE isParquet")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns(expected.toString());
+    }
+
+    private static long readPartitionNameTxn(String tableName, String partitionTimestamp) throws NumericException {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+            final TxReader txReader = reader.getTxFile();
+            final long ts = MicrosTimestampDriver.floor(partitionTimestamp);
+            final int partitionIndex = txReader.getPartitionIndex(ts);
+            Assert.assertTrue("partition " + partitionTimestamp + " is not attached", partitionIndex > -1);
+            return txReader.getPartitionNameTxn(partitionIndex);
+        }
     }
 
     private static void assertAlterIsStructural(String alterSql, boolean expectedStructural) throws SqlException {

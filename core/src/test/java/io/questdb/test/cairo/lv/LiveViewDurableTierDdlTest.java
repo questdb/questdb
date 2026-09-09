@@ -1233,23 +1233,19 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testOutOfOrderRepairOverParquetPartitionSuspendsTheView() throws Exception {
-        // KNOWN GAP, not a desired behaviour. This test pins it so that the day the writer
-        // grows replace-mode support for Parquet the test fails and whoever did that work
-        // replaces these assertions with the real expectation: the repair completes and the
-        // view's rows match a recompute.
+    public void testOutOfOrderRepairOverParquetPartitionCompletes() throws Exception {
+        // A live view repairs an out-of-order base commit by publishing a REPLACE_RANGE over its
+        // own table, and the range the head-miss replay publishes runs from the view's lower
+        // bound, so the out-of-order row does not have to land inside a Parquet partition for the
+        // replacement to cover it: the row this test inserts sits an hour ABOVE the Parquet
+        // partition and the replacement reaches it anyway. Any out-of-order base commit under a
+        // view holding any Parquet partition takes this path.
         //
-        // A live view repairs an out-of-order base commit by publishing a REPLACE_RANGE over
-        // its own table, and TableWriter.processO3Block refuses replace mode against a
-        // Parquet partition outright ("commit replace mode is not supported for Parquet
-        // partitions"). The refusal is a critical error, so the apply suspends the view.
-        //
-        // The range the head-miss replay publishes runs from the view's lower bound, so the
-        // out-of-order row does not have to land inside the Parquet partition for the
-        // replacement to cover it: the row this test inserts sits an hour ABOVE that
-        // partition and the replacement reaches it anyway. Any out-of-order base commit
-        // under a view holding any Parquet partition takes this path, which is why CONVERT
-        // PARTITION TO PARQUET cannot be exposed on live views until it is fixed.
+        // TableWriter.processO3Block used to refuse replace mode against a Parquet partition
+        // outright ("commit replace mode is not supported for Parquet partitions"), a critical
+        // error that suspended the view. The writer now decodes the Parquet partitions the range
+        // covers, applies the replacement over native storage and re-encodes them afterwards, so
+        // the repair lands and the partition the user compacted is Parquet again.
         assertMemoryLeak(() -> {
             createParquetBaseAndView("60m", "PARTITION BY HOUR");
             execute("INSERT INTO base VALUES " +
@@ -1268,21 +1264,45 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
                 // Out of order, and an hour ABOVE the Parquet partition.
                 execute("INSERT INTO base VALUES ('1970-01-01T02:30:00.000000Z', 2, 'a', 'beta')");
-                driveUntil(
-                        job,
-                        () -> engine.getTableSequencerAPI().isSuspended(lvToken),
-                        "the repair's REPLACE_RANGE never reached the Parquet partition"
-                );
-                Assert.assertTrue(
-                        "the refused replacement must suspend the view's own table",
+                driveUntilDurableRowCount(job, 4);
+                driveRefreshToQuiescence(job);
+
+                Assert.assertFalse(
+                        "the replacement must not suspend the view's own table",
                         engine.getTableSequencerAPI().isSuspended(lvToken)
                 );
-                // The repair never landed, so the out-of-order row is absent from the view
-                // and the three rows the flush wrote are all it holds. Note that
-                // live_views() still reports the view 'active' here: view_status does not
-                // follow the durable tier's suspension.
-                assertQuery("SELECT count() FROM lv")
-                        .noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+                assertNoRefreshFaults("lv");
+                // The repaired view holds the out-of-order row in ts order, with the window
+                // function recomputed over it: 'a' now counts three rows, not two.
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\tsym\tv\trn
+                                1970-01-01T01:00:00.000000Z\t1\ta\talpha\t1
+                                1970-01-01T02:00:00.000000Z\t3\ta\tgamma\t2
+                                1970-01-01T02:30:00.000000Z\t2\ta\tbeta\t3
+                                1970-01-01T03:00:00.000000Z\t4\tb\tdelta\t1
+                                """);
+                // The view matches a recompute of its own SELECT from the base table.
+                assertSqlCursors(
+                        "SELECT ts, x, sym, v, count(*) OVER (PARTITION BY sym ORDER BY ts " +
+                                "ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS rn FROM base",
+                        "SELECT ts, x, sym, v, rn FROM lv"
+                );
+                // The compacted partition survived the repair as Parquet.
+                assertParquetPartitionCount(1);
+                assertQuery("SELECT name, numRows, isParquet FROM table_partitions('lv')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                name\tnumRows\tisParquet
+                                1970-01-01T01\t1\ttrue
+                                1970-01-01T02\t2\tfalse
+                                1970-01-01T03\t1\tfalse
+                                """);
             }
         });
     }

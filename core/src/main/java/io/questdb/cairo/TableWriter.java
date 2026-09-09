@@ -313,6 +313,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Three longs per entry: [partitionTimestamp, oldPartitionNameTxn, lastPartitionConvertedFlag].
     private final LongList pendingParquetToNativeConversions = new LongList();
     private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
+    // Logical timestamps of the partitions dropParquetFormatForReplaceRange() decoded from parquet
+    // to native so a replace-range commit could rewrite them. restoreParquetFormatAfterReplaceRange()
+    // re-encodes them once the commit is durable. Kept across a failed apply so the retry that
+    // finds them already native still restores them.
+    private final LongList replaceRangeParquetPartitions = new LongList();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
@@ -1704,6 +1709,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             commit00();
             lastWalCommitTimestampMicros = wallClockMicros;
             housekeep(wallClockMicros);
+            // After housekeep(), so a partition TTL has just evicted is not encoded on its way out.
+            restoreParquetFormatAfterReplaceRange();
             shrinkO3Mem();
 
             assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
@@ -7243,6 +7250,58 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Decodes every parquet partition the replace range covers back to native, so the replace-mode
+     * O3 path has native partitions to rewrite: {@link #processO3Block} cannot express a row removal
+     * against a parquet file, and refuses such a commit outright.
+     * <p>
+     * The conversions commit their own {@code _txn} before the replacement runs. They have to: both
+     * the decode and the O3 replacement name their output directory after the current txn, so
+     * sharing one txn would have the replacement write into the directory the decode just produced.
+     * The partitions this method touches go on {@link #replaceRangeParquetPartitions}, and
+     * {@link #restoreParquetFormatAfterReplaceRange()} re-encodes them once the replacement is
+     * durable.
+     * <p>
+     * A crash between the two commits leaves the partitions native: the WAL re-applies the
+     * replacement, but this method has nothing left to record, because the partitions it would have
+     * recorded are already native. The data is correct and the view is complete; only the user's
+     * compaction is gone, and {@code ALTER TABLE ... CONVERT PARTITION TO PARQUET} puts it back.
+     */
+    private void dropParquetFormatForReplaceRange(long replaceRangeTsLo, long replaceRangeTsHiExcl) {
+        if (replaceRangeTsHiExcl <= replaceRangeTsLo || !txWriter.hasParquetPartitions()) {
+            return;
+        }
+        final int pending = replaceRangeParquetPartitions.size();
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            // A read-only partition is left alone, the same way processO3Block skips writing to
+            // one: converting it would fail the apply over a partition the replacement is not
+            // going to touch anyway.
+            if (!txWriter.isPartitionParquet(i) || txWriter.isPartitionReadOnly(i)) {
+                continue;
+            }
+            // A parquet partition is never a split: convertPartitionNativeToParquet squashes the
+            // logical partition before it encodes, so the attached timestamp is the logical floor
+            // and the logical ceiling is the partition's exclusive upper bound.
+            final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+            final long partitionCeiling = txWriter.getNextLogicalPartitionTimestamp(partitionTimestamp);
+            if (partitionCeiling <= replaceRangeTsLo || partitionTimestamp >= replaceRangeTsHiExcl) {
+                continue;
+            }
+            replaceRangeParquetPartitions.add(partitionTimestamp);
+        }
+        if (replaceRangeParquetPartitions.size() == pending) {
+            return;
+        }
+        for (int i = pending, n = replaceRangeParquetPartitions.size(); i < n; i++) {
+            final long partitionTimestamp = replaceRangeParquetPartitions.getQuick(i);
+            LOG.info().$("decoding parquet partition for replace range commit [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
+            convertPartitionParquetToNative(partitionTimestamp, false);
+        }
+        commitPendingParquetToNativeConversions();
+    }
+
     private boolean dropPartitionByExactTimestamp(long timestamp, byte removalSource) {
         final long minTimestamp = txWriter.getMinTimestamp(); // table min timestamp
         final long maxTimestamp = txWriter.getMaxTimestamp(); // table max timestamp
@@ -10445,7 +10504,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long o3TimestampLo, o3TimestampHi;
                         if (isCommitReplaceMode()) {
                             if (isParquet) {
-                                // Parquet partitions do not support replace commits feature yet
+                                // Unreachable for a WAL replace commit: dropParquetFormatForReplaceRange()
+                                // decodes every parquet partition the range covers before the
+                                // replacement runs, and restoreParquetFormatAfterReplaceRange()
+                                // re-encodes them after it commits. Kept as a backstop, because the
+                                // merge path still has no way to remove rows from a parquet file.
                                 o3PartitionUpdRemaining.decrementAndGet();
                                 latchCount--;
                                 pressureControl.updateInflightPartitions(--inflightPartitions);
@@ -10909,6 +10972,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         walRowsProcessed = rowHi - rowLo;
 
         if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            // The replacement cannot rewrite a parquet partition, so the partitions it covers go
+            // back to native first and are re-encoded by restoreParquetFormatAfterReplaceRange()
+            // after this transaction commits. A replace-range transaction always applies alone
+            // (WalTxnDetails.calculateInsertTransactionBlock breaks the block on one), so this is
+            // the only place a replace commit can be intercepted.
+            dropParquetFormatForReplaceRange(replaceRangeTsLo, replaceRangeTsHi);
             processWalCommitDedupReplace(
                     walPath,
                     inOrder,
@@ -13728,6 +13797,59 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
+        }
+    }
+
+    /**
+     * Re-encodes the partitions {@link #dropParquetFormatForReplaceRange(long, long)} decoded, so a
+     * replace-range commit leaves the user's compaction where it found it. Runs after the commit is
+     * durable, because the partition's final row set is what has to be encoded.
+     * <p>
+     * The bloom filters come from the per-column parquet encoding config, which is what
+     * {@code CONVERT PARTITION TO PARQUET} uses when its statement carries no {@code WITH} clause.
+     * A {@code WITH (bloom_filter_columns=..., fpp=...)} override is scoped to the statement that
+     * carried it and is stored nowhere, so a partition converted under one loses it here.
+     * <p>
+     * A partition the replacement emptied or that TTL evicted is gone by now, and is skipped. A
+     * failed re-encode leaves that partition native and does not fail the apply: the replacement
+     * data is already durable, and losing compaction is not worth suspending the table over. The
+     * writer going distressed is the exception - nothing further can run on it.
+     */
+    private void restoreParquetFormatAfterReplaceRange() {
+        if (replaceRangeParquetPartitions.size() == 0) {
+            return;
+        }
+        // The replacement and everything housekeep() did are committed by now, so the encode reads
+        // a settled partition and convertPartitionNativeToParquet does not take its commit-first
+        // branch, which asserts a non-WAL table.
+        assert !inTransaction();
+        try {
+            for (int i = 0, n = replaceRangeParquetPartitions.size(); i < n; i++) {
+                final long partitionTimestamp = replaceRangeParquetPartitions.getQuick(i);
+                if (txWriter.getPartitionIndex(partitionTimestamp) < 0) {
+                    LOG.info().$("replaced parquet partition is gone, nothing to re-encode [table=").$(tableToken)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                            .I$();
+                    continue;
+                }
+                LOG.info().$("re-encoding parquet partition after replace range commit [table=").$(tableToken)
+                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                        .I$();
+                try {
+                    convertPartitionNativeToParquet(partitionTimestamp, null, Double.NaN);
+                } catch (Throwable th) {
+                    LOG.critical().$("could not re-encode parquet partition after replace range commit, " +
+                                    "partition stays native [table=").$(tableToken)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                            .$(", error=").$(th)
+                            .I$();
+                    if (distressed) {
+                        throw th;
+                    }
+                }
+            }
+        } finally {
+            replaceRangeParquetPartitions.clear();
         }
     }
 

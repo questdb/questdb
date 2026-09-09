@@ -134,16 +134,13 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.0,
                 0.8,
-                0.0,   // replaceProb -- DISABLED: replace-range commits are a mat-view-only
-                //   operation in production (WalWriter.commitMatView via
-                //   MatViewRefreshJob); they are never issued against a regular WAL
-                //   table. With partitionToParquetProb>0 above, enabling replace here
-                //   makes the fuzz apply a replace commit onto a Parquet partition --
-                //   an unsupported, production-unreachable state that suspends the
-                //   table ("commit replace mode is not supported for Parquet
-                //   partitions"). Replace and Parquet must stay mutually exclusive;
-                //   native-partition replace coverage lives in
-                //   testCoveringPostingO3NativeSpillFuzz and testCoveringPostingSquashSpillFuzz.
+                0.1,   // replaceProb -- REPLACE RANGE over parquet partitions. A replace commit
+                //   used to be refused against a parquet partition ("commit replace mode is not
+                //   supported for Parquet partitions"), which suspended the table, so this knob
+                //   had to stay at 0 while partitionToParquetProb is 0.5. TableWriter now decodes
+                //   the partitions the range covers, applies the replacement over native storage
+                //   and re-encodes them, and this is the only fuzz that crosses replace with
+                //   parquet, covering posting indexes and partition splits at the same time.
                 0.0,
                 0.01,
                 0.1,   // setParquetEncodingProb
