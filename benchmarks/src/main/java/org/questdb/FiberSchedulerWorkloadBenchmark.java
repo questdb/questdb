@@ -124,6 +124,7 @@ public class FiberSchedulerWorkloadBenchmark {
     @OperationsPerInvocation(SAME_RUNTIME_OPERATIONS)
     @Threads(1)
     public long sameRuntimePublishAndComplete(SameRuntimeState state, PublishCounters counters) {
+        state.prepareBatch();
         state.awaitBatch();
         final long sameMounterCount = state.sum(state.sameMounterCount) - state.sameMounterBaseline;
         counters.mounts += SAME_RUNTIME_OPERATIONS;
@@ -451,7 +452,6 @@ public class FiberSchedulerWorkloadBenchmark {
             }
         }
 
-        @Setup(Level.Invocation)
         public void prepareBatch() {
             awaitTasksTerminal();
             final Throwable error = failure.get();
