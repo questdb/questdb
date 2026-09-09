@@ -145,6 +145,28 @@ public class QwpBrowserNegotiationWireTest extends AbstractQwpBootstrapTest {
         });
     }
 
+    /**
+     * Both carriers present at once, naming zstd at different levels. The
+     * trailer's level says which one {@code onHeadersReady} applied, so this
+     * pins the precedence at the CALL SITE. The unit test around
+     * {@code negotiateAcceptEncoding} pins the function; its two arguments have
+     * the same type, so swapping them at the call site compiles silently and
+     * lets a reverse proxy override the codec the browser asked for -- the
+     * threat the production javadoc names.
+     * <p>
+     * Both directions are asserted so that "the URL wins" cannot be confused
+     * with "the higher level wins" or "the lower level wins".
+     */
+    @Test
+    public void testBrowserUrlAcceptEncodingWinsOverProxyInjectedHeader() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain ignored = startFragmented()) {
+                assertNegotiatedZstdLevel(5, "?qwp_accept_encoding=zstd%3Blevel%3D5", "zstd;level=1");
+                assertNegotiatedZstdLevel(1, "?qwp_accept_encoding=zstd%3Blevel%3D1", "zstd;level=5");
+            }
+        });
+    }
+
     @Test
     public void testBrowserUrlHandshakePushesIngressServerInfo() throws Exception {
         // The ingress counterpart of the two egress carriers below. The unit
@@ -247,17 +269,35 @@ public class QwpBrowserNegotiationWireTest extends AbstractQwpBootstrapTest {
                 | (serverInfo[SERVER_INFO_CAPABILITIES_OFFSET + 3] & 0xFF) << 24;
     }
 
+    private static void assertNegotiatedZstdLevel(int expectedLevel, String query, String headerValue) throws Exception {
+        byte[] info = readServerInfo(query, "X-QWP-Accept-Encoding: " + headerValue + "\r\n");
+        Assert.assertNotEquals(
+                "a URL-carrier request must advertise CAP_COMPRESSION whichever carrier won",
+                0,
+                readCapabilities(info) & QwpEgressMsgKind.CAP_COMPRESSION
+        );
+        Assert.assertEquals(
+                "the trailer must name the negotiated codec",
+                QwpConstants.COMPRESSION_ZSTD,
+                info[info.length - 2]
+        );
+        Assert.assertEquals(
+                "the browser's URL carrier must win over the header a proxy could inject",
+                expectedLevel,
+                info[info.length - 1]
+        );
+    }
+
     private static byte[] readServerInfo(String query) throws Exception {
+        return readServerInfo(query, "");
+    }
+
+    private static byte[] readServerInfo(String query, String extraHeaders) throws Exception {
         try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
             socket.setSoTimeout(60_000);
-            QwpWireTestFixtures.performReadHandshake(socket, query);
+            QwpWireTestFixtures.performReadHandshake(socket, query, extraHeaders);
             byte[] frame = QwpWireTestFixtures.readServerFrame(socket.getInputStream());
-            Assert.assertTrue("truncated SERVER_INFO", frame.length > QwpConstants.HEADER_SIZE);
-            Assert.assertEquals(
-                    "SERVER_INFO must be the first frame after the upgrade",
-                    QwpEgressMsgKind.SERVER_INFO,
-                    frame[QwpConstants.HEADER_SIZE]
-            );
+            QwpWireTestFixtures.assertQwpMessageKind(frame, QwpEgressMsgKind.SERVER_INFO);
             return frame;
         }
     }

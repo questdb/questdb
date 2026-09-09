@@ -47,6 +47,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -413,7 +414,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
 
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
             byte[] first = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
-            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, durableAckPollMessage());
+            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage());
             byte[] second = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L));
             byte[] wire = concat(first, poll, second);
 
@@ -492,7 +493,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                 QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(durableEngine, httpConfig);
 
                 byte[] data = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
-                byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, durableAckPollMessage());
+                byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage());
                 byte[] wire = concat(data, poll);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
@@ -551,7 +552,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                     WebSocketOpcode.BINARY,
                     deferred(oneRowMessage(100L, 1_000_000L))
             );
-            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, durableAckPollMessage());
+            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage());
             byte[] commit = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L));
             byte[] wire = concat(deferred, poll, commit);
 
@@ -625,12 +626,12 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             ObjList<byte[]> sent = ingestOnFreshConnection(
                     processor,
                     httpConfig,
-                    createMaskedFrame(WebSocketOpcode.BINARY, durableAckPollMessage())
+                    createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage())
             );
 
             Assert.assertTrue(
                     "an unnegotiated durable ACK poll must receive STATUS_PARSE_ERROR",
-                    hasResponseForSeqAndStatus(sent, 0, QwpConstants.STATUS_PARSE_ERROR)
+                    indexOfBinaryFrame(sent, QwpConstants.STATUS_PARSE_ERROR, 0) >= 0
             );
         });
     }
@@ -652,7 +653,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
 
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
             byte[] data = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
-            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, durableAckPollMessage());
+            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage());
             byte[] tail = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L));
             byte[] wire = concat(data, poll, tail);
 
@@ -677,7 +678,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
 
                 Assert.assertTrue(
                         "the refused poll must receive STATUS_PARSE_ERROR",
-                        hasResponseForSeqAndStatus(rawSocket.sentFrames, 1, QwpConstants.STATUS_PARSE_ERROR)
+                        indexOfBinaryFrame(rawSocket.sentFrames, QwpConstants.STATUS_PARSE_ERROR, 1) >= 0
                 );
                 Assert.assertEquals(
                         "the cumulative ack must stop at the frame before the refused poll",
@@ -716,7 +717,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
 
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
             byte[] data = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
-            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, durableAckPollMessage());
+            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage());
             byte[] wire = concat(data, poll);
 
             PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
@@ -813,16 +814,6 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         return false;
     }
 
-    private static boolean hasResponseForSeqAndStatus(ObjList<byte[]> frames, long seq, byte status) {
-        for (int i = 0, n = frames.size(); i < n; i++) {
-            byte[] f = frames.getQuick(i);
-            if (isBinaryFrame(f) && f[2] == status && readLeLong(f, 3) == seq) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /**
      * Position of the first server-to-client BINARY frame carrying the given
      * status and sequence, or -1 when none was sent. Order matters where an ack
@@ -896,17 +887,6 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         byte[] copy = message.clone();
         copy[5] |= QwpConstants.FLAG_DEFER_COMMIT;
         return copy;
-    }
-
-    private static byte[] durableAckPollMessage() {
-        byte[] message = new byte[QwpConstants.HEADER_SIZE];
-        message[0] = 'Q';
-        message[1] = 'W';
-        message[2] = 'P';
-        message[3] = '1';
-        message[4] = QwpConstants.VERSION;
-        message[5] = QwpConstants.FLAG_DURABLE_ACK_POLL;
-        return message;
     }
 
     private static byte[] oneRowMessage(long value, long tsMicros) {

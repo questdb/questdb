@@ -319,12 +319,12 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
 
     @Test
     public void testOnHeadersReadyDoesNotEnableDurableAckWhenHeaderAbsent() throws Exception {
-        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, new FakeEnabledDurableAckRegistry(), false));
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, null, new FakeEnabledDurableAckRegistry(), false, false));
     }
 
     @Test
     public void testOnHeadersReadyEnablesDurableAckWhenHeaderTrueAndRegistryEnabled() throws Exception {
-        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake("true", new FakeEnabledDurableAckRegistry(), true));
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, "true", new FakeEnabledDurableAckRegistry(), true, false));
     }
 
     @Test
@@ -333,7 +333,7 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         // no subprotocol. RFC 6455 s4.1 makes a client fail the connection when
         // the server names a subprotocol the client did not offer, so the
         // confirmation must stay off even though durable ack is on.
-        assertMemoryLeak(() -> assertDurableAckSubprotocolAfterHandshake(
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(
                 null,
                 "true",
                 new FakeEnabledDurableAckRegistry(),
@@ -348,7 +348,7 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         // subprotocol and the 101 names none, so withholding the echo here
         // would hand the client an opaque handshake failure instead of a
         // connection that can carry the SERVER_INFO verdict.
-        assertMemoryLeak(() -> assertDurableAckSubprotocolAfterHandshake(
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(
                 "questdb.qwp.durable-ack.v1",
                 null,
                 DefaultDurableAckRegistry.INSTANCE,
@@ -358,7 +358,7 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
 
     @Test
     public void testOnHeadersReadyEnablesDurableAckThroughBrowserSubprotocol() throws Exception {
-        assertMemoryLeak(() -> assertDurableAckSubprotocolAfterHandshake(
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(
                 "application.v1, questdb.qwp.durable-ack.v1",
                 null,
                 new FakeEnabledDurableAckRegistry(),
@@ -481,8 +481,8 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     @Test
     public void testOnHeadersReadyHeaderValueIsCaseInsensitive() throws Exception {
         assertMemoryLeak(() -> {
-            assertDurableAckStateAfterHandshake("TRUE", new FakeEnabledDurableAckRegistry(), true);
-            assertDurableAckStateAfterHandshake("TrUe", new FakeEnabledDurableAckRegistry(), true);
+            assertDurableAckStateAfterHandshake(null, "TRUE", new FakeEnabledDurableAckRegistry(), true, false);
+            assertDurableAckStateAfterHandshake(null, "TrUe", new FakeEnabledDurableAckRegistry(), true, false);
         });
     }
 
@@ -490,15 +490,15 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     public void testOnHeadersReadyIgnoresDurableAckWhenRegistryDisabled() throws Exception {
         // Default OSS behavior: DefaultDurableAckRegistry.isEnabled() returns false,
         // so even when the client requests durable ack, the state stays disabled.
-        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake("true", DefaultDurableAckRegistry.INSTANCE, false));
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, "true", DefaultDurableAckRegistry.INSTANCE, false, false));
     }
 
     @Test
     public void testOnHeadersReadyIgnoresNonTrueHeaderValue() throws Exception {
         assertMemoryLeak(() -> {
-            assertDurableAckStateAfterHandshake("false", new FakeEnabledDurableAckRegistry(), false);
-            assertDurableAckStateAfterHandshake("", new FakeEnabledDurableAckRegistry(), false);
-            assertDurableAckStateAfterHandshake("yes", new FakeEnabledDurableAckRegistry(), false);
+            assertDurableAckStateAfterHandshake(null, "false", new FakeEnabledDurableAckRegistry(), false, false);
+            assertDurableAckStateAfterHandshake(null, "", new FakeEnabledDurableAckRegistry(), false, false);
+            assertDurableAckStateAfterHandshake(null, "yes", new FakeEnabledDurableAckRegistry(), false, false);
         });
     }
 
@@ -673,45 +673,6 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         }
     }
 
-    private static void assertDurableAckStateAfterHandshake(
-            String headerValue,
-            DurableAckRegistry registry,
-            boolean expectedEnabled
-    ) throws Exception {
-        DurableAckRegistry previous = engine.getDurableAckRegistry();
-        engine.setDurableAckRegistry(registry);
-        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
-        LocalValue<QwpIngressProcessorState> lv = getLV();
-
-        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-        try (
-                MockHttpRequestHeader header = new MockHttpRequestHeader();
-                TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
-        ) {
-            header.setHeader("Upgrade", "websocket");
-            header.setHeader("Connection", "Upgrade");
-            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
-            header.setHeader("Sec-WebSocket-Version", "13");
-            if (headerValue != null) {
-                header.setHeader("X-QWP-Request-Durable-Ack", headerValue);
-            }
-
-            processor.onHeadersReady(context);
-            // onHeadersReady stages the 101 bytes; onRequestComplete performs
-            // the rawSocket.send and finalises the protocol switch.
-            processor.onRequestComplete(context);
-
-            Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
-            QwpIngressProcessorState state = lv.get(context);
-            Assert.assertNotNull("state must be populated after successful handshake", state);
-            Assert.assertEquals(expectedEnabled, state.isDurableAckEnabled());
-        } finally {
-            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            engine.setDurableAckRegistry(previous);
-        }
-    }
-
     /**
      * Drives a handshake through either durable-ack carrier and pins both the
      * negotiated state and whether the 101 confirms the browser subprotocol.
@@ -719,7 +680,7 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
      * other: the confirmation follows the client's offer alone, while
      * enablement follows the registry. Every caller states both.
      */
-    private static void assertDurableAckSubprotocolAfterHandshake(
+    private static void assertDurableAckStateAfterHandshake(
             String protocols,
             String durableAckHeaderValue,
             DurableAckRegistry registry,

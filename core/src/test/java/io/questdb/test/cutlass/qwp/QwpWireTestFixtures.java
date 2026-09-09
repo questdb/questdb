@@ -38,7 +38,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
-import java.util.Base64;
 
 /**
  * Raw-wire building blocks for QWP tests that must drive the WebSocket byte
@@ -145,6 +144,24 @@ public final class QwpWireTestFixtures {
     }
 
     /**
+     * Builds the exact v1 durable-ack poll control frame: a bare header with
+     * {@link QwpConstants#FLAG_DURABLE_ACK_POLL} set, no tables and no
+     * payload. {@code QwpMessageHeader.isDurableAckPoll} recognises this shape
+     * and nothing else, so a test that hand-rolls a near-miss silently stops
+     * exercising the poll path.
+     */
+    public static byte[] durableAckPollMessage() {
+        byte[] message = new byte[QwpConstants.HEADER_SIZE];
+        message[0] = 'Q';
+        message[1] = 'W';
+        message[2] = 'P';
+        message[3] = '1';
+        message[QwpConstants.HEADER_OFFSET_VERSION] = QwpConstants.VERSION;
+        message[QwpConstants.HEADER_OFFSET_FLAGS] = QwpConstants.FLAG_DURABLE_ACK_POLL;
+        return message;
+    }
+
+    /**
      * Builds a complete single-row QWP ingress message for a table shaped
      * {@code (value long, ts timestamp) timestamp(ts)}: header + one table
      * block carrying one {@code value} column and the designated timestamp,
@@ -234,7 +251,21 @@ public final class QwpWireTestFixtures {
      * @param query leading {@code ?} included, or empty for none
      */
     public static void performReadHandshake(Socket socket, String query) throws Exception {
-        performHandshake(socket, "/read/v1", query);
+        performReadHandshake(socket, query, "");
+    }
+
+    /**
+     * Upgrades the read endpoint with an optional query string and optional
+     * extra request headers, so a test can drive both carriers of one
+     * capability at once: the URL parameter a browser must use, and the
+     * {@code X-QWP-*} header a reverse proxy in front of it could inject.
+     *
+     * @param query        leading {@code ?} included, or empty for none
+     * @param extraHeaders already-formatted {@code Name: value\r\n} lines, or
+     *                     empty for none
+     */
+    public static void performReadHandshake(Socket socket, String query, String extraHeaders) throws Exception {
+        performHandshake(socket, "/read/v1", query, extraHeaders);
     }
 
     /**
@@ -246,7 +277,7 @@ public final class QwpWireTestFixtures {
      * @param query leading {@code ?} included, or empty for none
      */
     public static void performWriteHandshake(Socket socket, String query) throws Exception {
-        performHandshake(socket, "/write/v4", query);
+        performHandshake(socket, "/write/v4", query, "");
     }
 
     /**
@@ -310,22 +341,17 @@ public final class QwpWireTestFixtures {
         return payload;
     }
 
-    private static void performHandshake(Socket socket, String path, String query) throws Exception {
+    private static void performHandshake(Socket socket, String path, String query, String extraHeaders) throws Exception {
         OutputStream out = socket.getOutputStream();
         InputStream in = socket.getInputStream();
-
-        byte[] keyBytes = new byte[16];
-        for (int i = 0; i < 16; i++) {
-            keyBytes[i] = (byte) (i + 1);
-        }
-        String wsKey = Base64.getEncoder().encodeToString(keyBytes);
 
         String request = "GET " + path + query + " HTTP/1.1\r\n" +
                 "Host: localhost\r\n" +
                 "Upgrade: websocket\r\n" +
                 "Connection: Upgrade\r\n" +
-                "Sec-WebSocket-Key: " + wsKey + "\r\n" +
+                "Sec-WebSocket-Key: " + WEBSOCKET_KEY + "\r\n" +
                 "Sec-WebSocket-Version: 13\r\n" +
+                extraHeaders +
                 "\r\n";
         out.write(request.getBytes(StandardCharsets.UTF_8));
         out.flush();
