@@ -889,6 +889,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testWalTxnAutoRepublishing() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_WAL_SEQUENCER_CHECK_INTERVAL, 1);
+        // The floor between full rescans is about how often the job may walk every table off disk, which
+        // is not what this test measures - it drives runSerially() by hand against a clock it advances
+        // 200ms at a time, and the shipped 500ms floor would swallow two calls in three.
+        node1.setProperty(PropertyKey.CAIRO_WAL_SEQUENCER_CHECK_MIN_INTERVAL, 0);
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             final String tableCopyName = tableName + "_copy";

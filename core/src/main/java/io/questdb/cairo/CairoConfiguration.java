@@ -866,6 +866,8 @@ public interface CairoConfiguration {
 
     long getSequencerCheckInterval();
 
+    long getSequencerCheckMinInterval();
+
     /**
      * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
      * on database start the id is compared with the ID stored in the checkpoint, if any. If the ids

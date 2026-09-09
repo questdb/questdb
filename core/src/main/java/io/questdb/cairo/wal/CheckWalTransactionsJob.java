@@ -47,6 +47,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob implements QuietClo
     private final long checkInterval;
     private final TableSequencerAPI.TableSequencerCallback checkNotifyOutstandingTxnInWalRef;
     private final CharSequence dbRoot;
+    private final long minScanInterval;
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final MillisecondClock millisecondClock;
@@ -56,6 +57,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob implements QuietClo
     private final TxReader txReader;
     private long lastProcessedCount = 0;
     private long lastRunMs;
+    private long lastScanMs;
     private boolean notificationQueueIsFull = false;
     private Path threadLocalPath;
 
@@ -68,7 +70,9 @@ public class CheckWalTransactionsJob extends SynchronizedJob implements QuietClo
         spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
         checkNotifyOutstandingTxnInWalRef = (tableId, token, txn) -> checkNotifyOutstandingTxnInWal(token, txn);
         checkInterval = engine.getConfiguration().getSequencerCheckInterval();
+        minScanInterval = engine.getConfiguration().getSequencerCheckMinInterval();
         lastRunMs = millisecondClock.getTicks();
+        lastScanMs = lastRunMs - minScanInterval;
     }
 
     @Override
@@ -138,6 +142,14 @@ public class CheckWalTransactionsJob extends SynchronizedJob implements QuietClo
             }
             return false;
         }
+        // The scan below reads every table off disk, and a moved counter alone used to start one on the
+        // very next poll. Under load the counter moves constantly, so it ran back to back. A skipped scan
+        // leaves lastProcessedCount where it is, so this defers the work rather than dropping it.
+        final long now = millisecondClock.getTicks();
+        if (now - lastScanMs < minScanInterval) {
+            return false;
+        }
+        lastScanMs = now;
         checkMissingWalTransactions();
         lastProcessedCount = unpublishedWalTxnCount;
         return !notificationQueueIsFull;
