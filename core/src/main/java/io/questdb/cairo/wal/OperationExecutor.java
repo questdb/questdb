@@ -127,6 +127,9 @@ class OperationExecutor implements Closeable {
             try (AlterOperation alterOp = compiledQuery.getAlterOperation()) {
                 alterOp.withContext(executionContext);
                 assert !alterOp.isStructural() : "alter operation must not be structural when applied as SQL";
+                if (tableWriter.getTableToken().isLiveView()) {
+                    engine.notifyLiveViewAlterApplying(tableWriter, seqTxn, alterOp);
+                }
                 tableWriter.apply(alterOp, seqTxn);
                 return alterOp.matViewInvalidationReason();
             }

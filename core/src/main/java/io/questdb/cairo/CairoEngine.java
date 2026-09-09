@@ -134,6 +134,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
@@ -3314,6 +3315,20 @@ public class CairoEngine implements Closeable, WriterSource {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Fires when the WAL apply is about to run a non-structural {@code ALTER LIVE VIEW} that was
+     * sequenced into a live view's own WAL: {@code SET TTL}, {@code DROP PARTITION} and
+     * {@code CONVERT PARTITION}. The operation is compiled under the WAL application context, so
+     * its partition selector, {@code LIST} or {@code WHERE}, is already resolved against this
+     * node's own reader. Runs on the apply thread before {@code TableWriter.apply}, and again if
+     * that apply is retried, so an implementation must key on {@code seqTxn}.
+     * <p>
+     * A no-op here. Enterprise overrides it to relay the command to replicas, which compute their
+     * live views locally and never receive this WAL.
+     */
+    public void notifyLiveViewAlterApplying(TableWriter writer, long seqTxn, AlterOperation alterOp) {
     }
 
     public void notifyLiveViewBaseTableCommit(TableToken baseTableToken, long seqTxn) {

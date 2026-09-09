@@ -310,6 +310,23 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return command;
     }
 
+    /**
+     * The command's positional payload, laid out per command: {@code (timestamp, position)} pairs
+     * for the partition commands, with the Parquet {@code fpp} bits appended when a conversion
+     * carried a {@code WITH} clause; the encoded TTL for {@code SET_TTL}. Read-only.
+     */
+    public LongList getExtraInfo() {
+        return extraInfo;
+    }
+
+    public CharSequence getExtraStrInfo(int index) {
+        return activeExtraStrInfo.getStrA(index);
+    }
+
+    public int getExtraStrInfoSize() {
+        return activeExtraStrInfo.size();
+    }
+
     @Override
     public boolean isForceWalBypass() {
         return command == FORCE_DROP_PARTITION;
