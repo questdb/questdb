@@ -85,4 +85,66 @@ public class SortTsAscJoinReproTest extends AbstractCairoTest {
             assertSqlCursors(trusted, suspect);
         });
     }
+
+    /**
+     * The same dishonest signal also defeated an ordering check that already existed.
+     * <p>
+     * A time-series join walks its right-hand operand as a monotonically ascending
+     * designated-timestamp stream, and {@code generateSelect} already rejects an operand whose
+     * {@code getScanDirection()} is not {@code SCAN_DIRECTION_FORWARD}. That check passed
+     * vacuously for every reordering factory, because {@code RecordCursorFactory.getScanDirection()}
+     * defaults to {@code SCAN_DIRECTION_FORWARD} and none of them overrode it. The join then
+     * searched a non-monotonic cursor and silently returned no match for keys outside the leading
+     * run - a wrong answer rather than an error.
+     * <p>
+     * Reported from the field as missing price coverage: a {@code UNION ALL} of two price sources,
+     * re-designated with {@code timestamp(ts)} and joined with {@code LT JOIN}, resolved only the
+     * tokens carried by the first branch. Reproduced below with disjoint keys per branch.
+     */
+    @Test
+    public void testUnorderedTimeSeriesJoinOperandIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE px_bridge (ts TIMESTAMP, token SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE px_tail (ts TIMESTAMP, token SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (ts TIMESTAMP, token SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO px_bridge SELECT timestamp_sequence(0, 1000000), 'BRIDGE', 600.0 FROM long_sequence(10)");
+            execute("INSERT INTO px_tail SELECT timestamp_sequence(0, 1000000), 'TAIL', 1.5 FROM long_sequence(10)");
+            execute("INSERT INTO trades SELECT timestamp_sequence(5000000, 1000000), " +
+                    "CASE WHEN x % 2 = 0 THEN 'BRIDGE' ELSE 'TAIL' END FROM long_sequence(4)");
+
+            final String prefix = "SELECT sum(CASE WHEN p.price IS NOT NULL THEN 1 ELSE 0 END) r FROM trades t LT JOIN ";
+            final String suffix = " p ON (t.token = p.token)";
+            final String msg = "ASC order over TIMESTAMP column is required but not provided";
+
+            // Control: a genuinely ascending operand still joins. px_bridge prices only BRIDGE,
+            // which is 2 of the 4 trades.
+            assertQuery(prefix + "px_bridge" + suffix)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            r
+                            2
+                            """);
+
+            // Concatenating UNION ALL - the reported shape. Rejected with and without an explicit
+            // ORDER BY, since the sort is not what makes the concatenation ordered.
+            assertException(prefix + "(SELECT * FROM (SELECT ts, token, price FROM px_bridge " +
+                    "UNION ALL SELECT ts, token, price FROM px_tail) TIMESTAMP(ts))" + suffix, 85, msg);
+            assertException(prefix + "(SELECT * FROM (SELECT ts, token, price FROM px_bridge " +
+                    "UNION ALL SELECT ts, token, price FROM px_tail ORDER BY ts) TIMESTAMP(ts))" + suffix, 85, msg);
+
+            // Hash-deduplicating UNION.
+            assertException(prefix + "(SELECT * FROM (SELECT ts, token, price FROM px_bridge " +
+                    "UNION SELECT ts, token, price FROM px_tail) TIMESTAMP(ts))" + suffix, 85, msg);
+
+            // Sort whose leading key is not the designated timestamp.
+            assertException(prefix + "(SELECT * FROM (SELECT ts, token, price FROM px_bridge " +
+                    "ORDER BY price, ts) TIMESTAMP(ts))" + suffix, 85, msg);
+
+            // Keyed GROUP BY - rows come back in hash order.
+            assertException("SELECT sum(CASE WHEN p.px IS NOT NULL THEN 1 ELSE 0 END) r FROM trades t LT JOIN " +
+                    "(SELECT * FROM (SELECT ts, token, max(price) px FROM px_bridge GROUP BY ts, token) TIMESTAMP(ts))" +
+                    " p ON (t.token = p.token)", 82, msg);
+        });
+    }
 }
