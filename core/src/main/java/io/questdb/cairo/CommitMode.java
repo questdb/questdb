@@ -47,6 +47,19 @@ public final class CommitMode {
     public static final int ADAPTIVE = 3;
 
     /**
+     * The commit mode that applies when nothing is configured, for both the server and the embedded API.
+     * <p>
+     * NOSYNC until an ingest benchmark justifies moving it: adaptive buys local durability at a throughput
+     * cost, and that trade has to be measured rather than assumed. Flipping this constant is the whole
+     * change -- {@code PropServerConfiguration} and {@code DefaultCairoConfiguration} both defer to it, so
+     * they cannot drift apart and hand a server and an embedded process different durability.
+     * <p>
+     * The test suite runs ADAPTIVE regardless, via {@code questdb.test.commit.mode}; see
+     * {@code Overrides}. Changing this constant does not change what the suite exercises.
+     */
+    public static final int DEFAULT = NOSYNC;
+
+    /**
      * Returns {@code true} iff this commit mode requires a per-commit msync/fdatasync flush of the
      * TABLE PARTITION COLUMN FILES on the apply path (the materialization of a WAL/O3 commit into
      * the table's partition column files: {@code TableWriter.syncColumns()},

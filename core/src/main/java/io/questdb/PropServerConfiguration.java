@@ -1680,7 +1680,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             // has no more redundancy than an OSS one and keeps this default.
             //
             // An explicit cairo.commit.mode always wins over both.
-            this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE, CommitMode.toString(CommitMode.DEFAULT));
             this.adaptiveEpochIntervalMs = getMillis(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 60000);
             this.adaptiveEpochMaxRows = getLong(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 5_000_000);
             // Default 50_000 (50ms) batches the device flush within a small window (RPO <= 50ms) under

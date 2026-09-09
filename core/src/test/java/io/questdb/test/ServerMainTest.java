@@ -898,7 +898,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.column.indexer.queue.capacity\tQDB_CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.column.pool.capacity\tQDB_CAIRO_COLUMN_POOL_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +
                                     "cairo.commit.lag\tQDB_CAIRO_COMMIT_LAG\t600000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.commit.mode\tQDB_CAIRO_COMMIT_MODE\tadaptive\tdefault\tfalse\tfalse\n" +
+                                    // AbstractBootstrapTest writes the suite commit mode into server.conf, so the source is the
+                                    // conf file rather than the built-in default. The value is the suite's, not the shipped one.
+                                    "cairo.commit.mode\tQDB_CAIRO_COMMIT_MODE\tadaptive\tconf\tfalse\tfalse\n" +
                                     "cairo.create.as.select.retry.count\tQDB_CAIRO_CREATE_AS_SELECT_RETRY_COUNT\t5\tdefault\tfalse\tfalse\n" +
                                     "cairo.date.locale\tQDB_CAIRO_DATE_LOCALE\ten\tdefault\tfalse\tfalse\n" +
                                     "cairo.default.sequencer.part.txn.count\tQDB_CAIRO_DEFAULT_SEQUENCER_PART_TXN_COUNT\t0\tdefault\tfalse\tfalse\n" +

@@ -230,7 +230,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getCommitMode() {
-        return CommitMode.ADAPTIVE;
+        return CommitMode.DEFAULT;
     }
 
     @Override
