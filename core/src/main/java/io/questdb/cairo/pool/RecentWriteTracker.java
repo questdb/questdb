@@ -72,6 +72,9 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class RecentWriteTracker {
     private static final Log LOG = LogFactory.getLog(RecentWriteTracker.class);
+    // Sentinel for "the pending-row floor has not been seeded yet". Cannot be 0: 0 is a
+    // legitimate floor (a table whose WAL is empty when this process first sees it).
+    private static final long UNSET_FLOOR = Long.MIN_VALUE;
 
     private final AtomicBoolean evictionInProgress = new AtomicBoolean(false);
     private final int maxCapacity;
@@ -287,19 +290,23 @@ public class RecentWriteTracker {
     /**
      * Records that WAL rows have been processed (applied to the table).
      * <p>
-     * This decrements the pending WAL row count (if seqTxn > floor) and accumulates dedup row count.
+     * This decrements the pending WAL row count and accumulates dedup row count.
      * Called after successful WAL transaction application.
+     * <p>
+     * <b>walRowCount must already exclude transactions at or below the table's pending-row
+     * floor</b> - see {@link #seedAndGetWalPendingFloor(TableToken, long)}. The floor cannot be
+     * applied here: an apply batch spans a range of seqTxns and only the caller knows how the
+     * rows are distributed across them, so an all-or-nothing test on the batch's last seqTxn
+     * would subtract pre-floor rows that were never added and drive the count negative.
      *
      * @param tableToken       the table whose WAL was processed
-     * @param seqTxn           the sequencer transaction number being processed
-     * @param walRowCount      the number of WAL rows that were processed (before dedup)
+     * @param walRowCount      the number of above-floor WAL rows processed (before dedup)
      * @param dedupRowsRemoved the number of duplicate rows removed during dedup
      */
-    public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long dedupRowsRemoved) {
+    public void recordWalProcessed(@NotNull TableToken tableToken, long walRowCount, long dedupRowsRemoved) {
         try {
             WriteStats stats = getOrCreateStats(tableToken);
-            // Only subtract if seqTxn is above the floor (rows added after tracking started)
-            if (seqTxn > stats.getFloorSeqTxn()) {
+            if (walRowCount > 0) {
                 stats.walRowCount.add(-walRowCount);
             }
             if (dedupRowsRemoved > 0) {
@@ -307,6 +314,41 @@ public class RecentWriteTracker {
             }
         } catch (Throwable th) {
             LOG.error().$("could not record WAL processed [table=").$(tableToken).$(", error=").$(th).I$();
+        }
+    }
+
+    /**
+     * Returns the pending-row floor for a table, seeding it on first sight.
+     * <p>
+     * WAL transactions at or below the floor were committed before this process began counting
+     * rows for the table, so their rows are absent from the pending count and must not be
+     * subtracted when they are applied.
+     * <p>
+     * The floor is seeded by whichever component sees the table first and is never moved
+     * afterwards. A WAL commit seeds it to {@code seqTxn - 1} (everything older predates this
+     * process); a WAL apply seeds it to the last seqTxn of the batch it is about to apply
+     * (nothing in that batch was counted, or a commit would have seeded the floor first).
+     * Seeding from both paths is what makes the floor independent of the startup race between
+     * ingestion and the apply job - relying on a single seeder leaves a table unprotected
+     * whenever the other one gets there first.
+     * <p>
+     * A commit publishes its seqTxn to the sequencer before it records the write here, so an
+     * apply of that same txn can seed the floor first and leave the commit's rows counted but
+     * never subtracted. That biases the pending count high, never low, and only for txns
+     * in flight at the instant a table is first seen. Erring high is deliberate: an
+     * over-reported backlog is a cosmetic stat, an under-reported one goes negative.
+     *
+     * @param tableToken the table to look up
+     * @param seedFloor  the floor to install if the table has not been seen before
+     * @return the effective floor; WAL rows with seqTxn &lt;= this value must not be subtracted
+     */
+    public long seedAndGetWalPendingFloor(@NotNull TableToken tableToken, long seedFloor) {
+        try {
+            return getOrCreateStats(tableToken).seedAndGetFloorSeqTxn(seedFloor);
+        } catch (Throwable th) {
+            LOG.error().$("could not read WAL pending floor [table=").$(tableToken).$(", error=").$(th).I$();
+            // Subtract nothing rather than risk a negative pending count.
+            return Long.MAX_VALUE;
         }
     }
 
@@ -588,8 +630,12 @@ public class RecentWriteTracker {
         private final SimpleReadWriteLock batchSizeHistogramLock = new SimpleReadWriteLock();
         // Dedup row count - accumulated count of rows removed by deduplication
         private final LongAdder dedupRowCount = new LongAdder();
-        // Floor seqTxn - set on startup, WAL rows with seqTxn <= floor are not subtracted
-        private final AtomicLong floorSeqTxn = new AtomicLong(0);
+        // Floor seqTxn - WAL rows with seqTxn <= floor were committed before this process
+        // started tracking the table, so they were never added to walRowCount and must not be
+        // subtracted from it. UNSET_FLOOR until the first component to see the table seeds it;
+        // seeded once and never moved after that (lowering it would expose uncounted rows to
+        // subtraction and drive the pending count negative).
+        private final AtomicLong floorSeqTxn = new AtomicLong(UNSET_FLOOR);
         // Lock for merge stats (write amplification and merge throughput) access
         private final SimpleReadWriteLock mergeStatsLock = new SimpleReadWriteLock();
         // Merge throughput histogram - tracks rows/second during WAL apply
@@ -718,7 +764,7 @@ public class RecentWriteTracker {
          * Returns the floor seqTxn. WAL rows with seqTxn &lt;= floor are not subtracted
          * from pending count (they were never added because they existed before tracking started).
          *
-         * @return floor seqTxn, or 0 if not set
+         * @return floor seqTxn, or {@link Long#MIN_VALUE} if it has not been seeded yet
          */
         public long getFloorSeqTxn() {
             return floorSeqTxn.get();
@@ -1126,6 +1172,10 @@ public class RecentWriteTracker {
          * @param txnRowCount     the number of rows in this WAL transaction
          */
         private void updateWal(long newTxn, long newWalTimestamp, long txnRowCount) {
+            // First commit this process has seen for the table: everything strictly older was
+            // committed before we started counting, so its rows must never be subtracted.
+            seedAndGetFloorSeqTxn(newTxn - 1);
+
             // Always increment WAL row count - contention-free via LongAdder
             walRowCount.add(txnRowCount);
 
@@ -1192,13 +1242,27 @@ public class RecentWriteTracker {
         }
 
         /**
-         * Sets the floor seqTxn. Only succeeds if not already set (floor is 0).
+         * Seeds the floor seqTxn if it has not been seeded yet, and returns the effective floor.
+         * The first seed wins; later calls only read.
+         *
+         * @param floor the floor seqTxn to install if unseeded
+         * @return the effective floor seqTxn
+         */
+        long seedAndGetFloorSeqTxn(long floor) {
+            if (floorSeqTxn.compareAndSet(UNSET_FLOOR, floor)) {
+                return floor;
+            }
+            return floorSeqTxn.get();
+        }
+
+        /**
+         * Sets the floor seqTxn. Only succeeds if not already seeded.
          * Called on startup to mark WAL transactions that existed before tracking started.
          *
          * @param floor the floor seqTxn to set
          */
         void setFloorSeqTxn(long floor) {
-            floorSeqTxn.compareAndSet(0, floor);
+            floorSeqTxn.compareAndSet(UNSET_FLOOR, floor);
         }
     }
 }
