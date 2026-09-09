@@ -710,9 +710,10 @@ public class WorkerPool implements Closeable {
                     if (isStrict) {
                         runtimeHaltFailure = fiberRuntimeHaltTimeout(timeoutNanos, runtime);
                     } else {
+                        final String runtimeDescription = describeRuntime(runtime);
                         LOG.error().$("timed out waiting for fiber runtime to drain; retaining live pool resources [pool=").$(poolName)
                                 .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms")
-                                .$(", ").$(describeRuntime(runtime)).I$();
+                                .$(", ").$(runtimeDescription).I$();
                     }
                 }
             }
