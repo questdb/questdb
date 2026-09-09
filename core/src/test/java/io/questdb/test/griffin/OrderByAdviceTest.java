@@ -32,6 +32,28 @@ import org.junit.Test;
 public class OrderByAdviceTest extends AbstractCairoTest {
 
     @Test
+    public void testArrayAggPreservesOrderByAdvice() throws Exception {
+        execute("create table nums (val double, seq int)");
+        execute("""
+                insert into nums values
+                (1.0, 1),
+                (4.0, 4),
+                (2.0, 2),
+                (3.0, 3)
+                """);
+
+        assertQuery("select array_agg(val) arr from (select * from nums order by seq)")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("GroupBy", "keys: [seq]")
+                .returns("""
+                        arr
+                        [1.0,2.0,3.0,4.0]
+                        """);
+    }
+
+    @Test
     public void testCreateDesignatedTimestampFromMultipleOrderBy() throws Exception {
         assertQuery("select * from x order by t, a")
                 .ddl("create table x as (" +
@@ -180,6 +202,28 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                             from long_sequence(1000)) timestamp (ts)""")
                 .expectSize()
                 .returns("sym\tmaxp\n", expected);
+    }
+
+    @Test
+    public void testHaversineDistDegPreservesOrderByAdvice() throws Exception {
+        execute("create table geo (lat double, lon double, seq int, ts timestamp)");
+        execute("""
+                insert into geo values
+                (0, 0,  1, '2020-01-01T00:00:00.000000Z'),
+                (0, 30, 4, '2020-01-01T00:00:03.000000Z'),
+                (0, 10, 2, '2020-01-01T00:00:01.000000Z'),
+                (0, 20, 3, '2020-01-01T00:00:02.000000Z')
+                """);
+
+        assertQuery("select haversine_dist_deg(lat, lon, ts) d from (select * from geo order by seq)")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("GroupBy", "keys: [seq]")
+                .returns("""
+                        d
+                        3335.893876029014
+                        """);
     }
 
     @Test
@@ -791,6 +835,96 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         1326447242\t1970-01-01T00:00:00.006000Z
                         1548800833\t1970-01-01T00:00:00.002000Z
                         1868723706\t1970-01-01T00:00:00.008000Z
+                        """);
+    }
+
+    @Test
+    public void testSparklinePreservesOrderByAdvice() throws Exception {
+        execute("create table series (val double, seq int)");
+        execute("""
+                insert into series values
+                (0.0, 1),
+                (3.0, 4),
+                (1.0, 2),
+                (2.0, 3)
+                """);
+
+        assertQuery("select sparkline(val) spark from (select * from series order by seq)")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("GroupBy", "keys: [seq]")
+                .returns("""
+                        spark
+                        ▁▃▅█
+                        """);
+    }
+
+    @Test
+    public void testStringAggPreservesOrderByAdvice() throws Exception {
+        execute("create table words (val string, seq int)");
+        execute("""
+                insert into words values
+                ('A', 1),
+                ('D', 4),
+                ('B', 2),
+                ('C', 3)
+                """);
+
+        assertQuery("select string_agg(val, ',') s from (select * from words order by seq)")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("GroupBy", "keys: [seq]")
+                .returns("""
+                        s
+                        A,B,C,D
+                        """);
+    }
+
+    @Test
+    public void testStringDistinctAggPreservesOrderByAdvice() throws Exception {
+        execute("create table words (val string, seq int)");
+        execute("""
+                insert into words values
+                ('A', 1),
+                ('D', 4),
+                ('B', 2),
+                ('C', 3),
+                ('B', 5)
+                """);
+
+        assertQuery("select string_distinct_agg(val, ',') s from (select * from words order by seq)")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("GroupBy", "keys: [seq]")
+                .returns("""
+                        s
+                        A,B,C,D
+                        """);
+    }
+
+    @Test
+    public void testStringDistinctAggPreservesOrderByAdviceDesc() throws Exception {
+        execute("create table words (val string, seq int)");
+        execute("""
+                insert into words values
+                ('A', 1),
+                ('D', 4),
+                ('B', 2),
+                ('C', 3),
+                ('B', 5)
+                """);
+
+        assertQuery("select string_distinct_agg(val, ',') s from (select * from words order by seq desc)")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("GroupBy", "keys: [seq desc]")
+                .returns("""
+                        s
+                        B,D,C,A
                         """);
     }
 
