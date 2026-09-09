@@ -449,7 +449,7 @@ public final class FiberRuntime {
             tryClose();
             return false;
         }
-        processSelected(fiber, ownerContext, false);
+        processSelected(fiber, ownerContext);
         tryClose();
         return true;
     }
@@ -472,7 +472,7 @@ public final class FiberRuntime {
                 drainStartNanos = System.nanoTime();
             }
             attempts++;
-            processSelected(fiber, ownerContext, false);
+            processSelected(fiber, ownerContext);
             if (System.nanoTime() - drainStartNanos >= OWNED_DRAIN_TIME_BUDGET_NANOS) {
                 break;
             }
@@ -1483,10 +1483,9 @@ public final class FiberRuntime {
 
     private void processSelected(
             Fiber fiber,
-            @Nullable OwnerContext ownerContext,
-            boolean isDirectMount
+            @Nullable OwnerContext ownerContext
     ) {
-        final int processResult = process(fiber, isDirectMount, ownerContext);
+        final int processResult = process(fiber, false, ownerContext);
         if (processResult != PROCESS_TERMINATED) {
             finishProcessingAfterUnmount(fiber, processResult == PROCESS_OWNED, ownerContext);
         }
