@@ -33,6 +33,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzTransaction;
+import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -214,6 +215,77 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         );
         Assert.assertEquals("reader", reader);
         Assert.assertEquals(3, attempts.get());
+    }
+
+    @Test
+    public void testTableRenameCrossAliasedParallelApply() throws Exception {
+        // Regression test for the shared harness handling of table renames: two tables
+        // are renamed concurrently and the rename targets collide with the original
+        // names, i.e. tbl_0 -> tbl_1 while tbl_1 -> tbl_2. Writers hold stale tokens
+        // after a rename; without the reopenTable refresh the product-side stale-token
+        // recovery fast-forwards writer metadata past the harness version ladder and
+        // the run fails with "cannot update wal writer to correct structure version".
+        assertMemoryLeak(() -> {
+            Rnd rnd = fuzzer.generateRandom(LOG);
+            fuzzer.withDb(engine, sqlExecutionContext);
+            fuzzer.setFuzzProbabilities(
+                    0.05, // cancelRowsProb
+                    0.1,  // notSetProb
+                    0.1,  // nullSetProb
+                    0.01, // rollbackProb
+                    0.3,  // colAddProb
+                    0.3,  // colRemoveProb
+                    0.3,  // colRenameProb
+                    0.2,  // colTypeChangeProb
+                    0.8,  // dataAddProb
+                    0.1,  // equalTsRowsProb
+                    0.0,  // partitionDropProb
+                    0.05, // truncateProb
+                    0.0,  // tableDropProb, keep 0 to isolate the rename identity change
+                    0.0,  // setTtlProb
+                    0.0,  // replaceInsertProb
+                    0.0   // symbolAccessValidationProb
+            );
+            fuzzer.setFuzzCounts(
+                    rnd.nextBoolean(), // isO3
+                    1000,              // fuzzRowCount
+                    30,                // transactionCount
+                    10,                // strLen
+                    10,                // symbolStrLenMax
+                    10,                // symbolCountMax
+                    5000,              // initialRowCount
+                    3                  // partitionCount
+            );
+
+            String tableNameBase = testName.getMethodName();
+            int tableCount = 2;
+            ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
+            try {
+                for (int i = 0; i < tableCount; i++) {
+                    String tableName = FuzzRunner.getWalParallelApplyTableName(tableNameBase, i);
+                    fuzzer.createInitialTableWal(tableName);
+                    ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
+                    // rename each table to the next (+1) table name: the target of table N
+                    // is the original name of table N+1, exercising colliding renames and
+                    // the writer reopen path
+                    String newTableName = FuzzRunner.getWalParallelApplyTableName(tableNameBase, i + 1);
+                    int renameIndex = 1 + rnd.nextInt(transactions.size() - 1);
+                    FuzzTransactionGenerator.insertTableRename(transactions, renameIndex, newTableName);
+                    fuzzTransactions.add(transactions);
+                }
+
+                fuzzer.applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true, true);
+                fuzzer.checkNoSuspendedTables();
+
+                for (int i = 0; i < tableCount; i++) {
+                    engine.verifyTableName(FuzzRunner.getWalParallelApplyTableName(tableNameBase, i + 1));
+                }
+            } finally {
+                for (int i = 0, n = fuzzTransactions.size(); i < n; i++) {
+                    Misc.freeObjListAndClear(fuzzTransactions.getQuick(i));
+                }
+            }
+        });
     }
 
     @Test

@@ -610,6 +610,38 @@ public class FuzzTransactionGenerator {
         transactionList.add(transaction);
     }
 
+    /**
+     * Inserts a table rename transaction into an already generated transaction list.
+     * The rename is serialized against all in-flight transactions of the table
+     * (waitAllDone) and the WAL writers are reopened afterwards (reopenTable), since
+     * writer table tokens go stale when the table name changes. Structure and barrier
+     * versions of all subsequent transactions are shifted by one to account for the
+     * rename being an extra structural change.
+     *
+     * @param transactionList generated transactions of a single table
+     * @param insertIndex     index to insert the rename at, [0, transactionList.size())
+     * @param newTableName    new table name; if the name belongs to another table that
+     *                        is renamed concurrently, the rename operation waits for the
+     *                        colliding rename to free the name
+     */
+    public static void insertTableRename(ObjList<FuzzTransaction> transactionList, int insertIndex, String newTableName) {
+        assert insertIndex >= 0 && insertIndex < transactionList.size();
+        FuzzTransaction displaced = transactionList.getQuick(insertIndex);
+        FuzzTransaction renameTransaction = new FuzzTransaction();
+        // the rename applies at the structure version the displaced transaction expected
+        renameTransaction.structureVersion = displaced.structureVersion;
+        renameTransaction.waitBarrierVersion = displaced.waitBarrierVersion;
+        renameTransaction.waitAllDone = true;
+        renameTransaction.reopenTable = true;
+        renameTransaction.operationList.add(new FuzzTableRenameOperation(newTableName));
+        transactionList.insert(insertIndex, 1, renameTransaction);
+        for (int i = insertIndex + 1, n = transactionList.size(); i < n; i++) {
+            FuzzTransaction transaction = transactionList.getQuick(i);
+            transaction.structureVersion++;
+            transaction.waitBarrierVersion++;
+        }
+    }
+
     private static void generateTableDropCreate(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion) {
         FuzzTransaction transaction = new FuzzTransaction();
         transaction.waitBarrierVersion = waitBarrierVersion;
