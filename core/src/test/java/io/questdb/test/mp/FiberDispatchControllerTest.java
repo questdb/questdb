@@ -587,6 +587,53 @@ public class FiberDispatchControllerTest {
     }
 
     @Test
+    public void testOwnedDrainTimeBudgetPreservesDispatchTickets() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestController controller = new TestController();
+            final FiberRuntime runtime = new FiberRuntime(2, 2, 64, 1, controller, FiberWakeSink.NO_OP);
+            final FiberRuntime.OwnerContext owner = runtime.getOwnerContext(0);
+            final CountingTask first = new CountingTask();
+            final CountingTask second = new CountingTask();
+            try {
+                runtime.activateOwner(owner);
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(first));
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(second));
+                controller.session.grantAll();
+                runtime.setAfterProcessForTesting(() -> {
+                    runtime.setAfterProcessForTesting(null);
+                    final long startNanos = System.nanoTime();
+                    while (System.nanoTime() - startNanos < TimeUnit.MILLISECONDS.toNanos(20)) {
+                        Thread.onSpinWait();
+                    }
+                });
+
+                Assert.assertEquals(1, runtime.drainOwned(owner, 64));
+                Assert.assertEquals(1, first.runCount);
+                Assert.assertTrue(first.isDone());
+                Assert.assertEquals(0, second.runCount);
+                Assert.assertFalse(second.isDone());
+                Assert.assertEquals(1, controller.ticket.mountCount);
+                Assert.assertEquals(1, controller.ticket.unmountCount);
+                Assert.assertEquals(1, runtime.getQueuedCount());
+                Assert.assertEquals(1, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(1, runtime.getOwnedDrainTimeoutCount());
+                Assert.assertEquals(0, runtime.getBudgetExhaustionCount());
+
+                Assert.assertEquals(1, runtime.drainOwned(owner, 64));
+                Assert.assertEquals(1, second.runCount);
+                Assert.assertTrue(second.isDone());
+                Assert.assertEquals(2, controller.ticket.mountCount);
+                Assert.assertEquals(2, controller.ticket.unmountCount);
+                Assert.assertEquals(0, runtime.getQueuedCount());
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+            } finally {
+                runtime.setAfterProcessForTesting(null);
+                close(runtime);
+            }
+        });
+    }
+
+    @Test
     public void testPinnedCooperativeYieldRestoresMountedStateAndContext() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final TestController controller = new TestController();

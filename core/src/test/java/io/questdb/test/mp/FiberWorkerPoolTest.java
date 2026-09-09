@@ -795,13 +795,27 @@ public class FiberWorkerPoolTest {
                 release[0].countDown();
                 Assert.assertTrue(entered[1].await(10, TimeUnit.SECONDS));
                 Assert.assertEquals(1, completed.get());
+                Assert.assertEquals(1, runtime.getBudgetExhaustionCount());
 
                 configuration.setDelegate(fiberHostConfiguration("fiber-mount-budget-test", 1, false, 4, 3));
                 Assert.assertEquals(3, runtime.getMountBudget());
+                // Force the elapsed limit so the completion count cannot depend on worker timing.
+                runtime.setAfterProcessForTesting(() -> {
+                    runtime.setAfterProcessForTesting(null);
+                    final long startNanos = System.nanoTime();
+                    while (System.nanoTime() - startNanos < TimeUnit.MILLISECONDS.toNanos(20)) {
+                        Thread.onSpinWait();
+                    }
+                });
                 release[1].countDown();
                 Assert.assertTrue(entered[2].await(10, TimeUnit.SECONDS));
-                Assert.assertEquals(4, completed.get());
+                Assert.assertEquals(2, completed.get());
+                // A stale mount budget of 1 would exhaust the count limit with two tasks still queued.
+                Assert.assertEquals("worker must observe the updated mount budget", 1, runtime.getBudgetExhaustionCount());
+                release[2].countDown();
+                TestUtils.assertEventually(() -> Assert.assertEquals(4, completed.get()));
             } finally {
+                runtime.setAfterProcessForTesting(null);
                 for (int i = 0; i < release.length; i++) {
                     release[i].countDown();
                 }

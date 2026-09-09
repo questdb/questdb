@@ -561,12 +561,15 @@ public final class FiberRuntime {
             return 0;
         }
         int attempts = 0;
-        final long drainStartNanos = System.nanoTime();
+        long drainStartNanos = 0;
         if (dispatchSession == null) {
             while (attempts < attemptBudget) {
                 final Fiber fiber = selectOwned(shard);
                 if (fiber == null) {
                     break;
+                }
+                if (attempts == 0) {
+                    drainStartNanos = System.nanoTime();
                 }
                 attempts++;
                 processSelected(fiber, ownerContext);
@@ -593,6 +596,9 @@ public final class FiberRuntime {
                 final Fiber fiber = selectOwned(shard);
                 if (fiber == null) {
                     break;
+                }
+                if (attempts == 0) {
+                    drainStartNanos = System.nanoTime();
                 }
                 attempts++;
                 scope.fiberDrainMountCount++;
