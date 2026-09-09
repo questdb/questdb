@@ -262,6 +262,16 @@ public final class FiberRuntime {
         }
     }
 
+    @TestOnly
+    public static int calculateLocalQueueCapacityForTesting(int initialMaxLiveCount, int workerCount) {
+        return FiberLocalRunQueue.calculateCapacity(initialMaxLiveCount, workerCount);
+    }
+
+    @TestOnly
+    public static int getGlobalProbeIntervalForTesting() {
+        return GLOBAL_PROBE_INTERVAL;
+    }
+
     public void activateOwner(OwnerContext ownerContext) {
         final Shard shard = validateOwner(ownerContext);
         if (!shard.ownerState.compareAndSet(Shard.UNSTARTED, Shard.ACTIVE)) {
@@ -599,16 +609,6 @@ public final class FiberRuntime {
     @TestOnly
     public synchronized int getQuiesceListenerCountForTesting() {
         return quiesceListeners.size();
-    }
-
-    @TestOnly
-    public static int calculateLocalQueueCapacityForTesting(int initialMaxLiveCount, int workerCount) {
-        return FiberLocalRunQueue.calculateCapacity(initialMaxLiveCount, workerCount);
-    }
-
-    @TestOnly
-    public static int getGlobalProbeIntervalForTesting() {
-        return GLOBAL_PROBE_INTERVAL;
     }
 
     @TestOnly

@@ -38,6 +38,7 @@ import io.questdb.mp.continuation.FiberWalWaitQueue;
 import io.questdb.mp.continuation.FiberWalWaitRegistration;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SourceRegistrationResult;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 import org.openjdk.jmh.annotations.AuxCounters;
@@ -213,19 +214,6 @@ public class FiberSchedulerWorkloadBenchmark {
 
     @AuxCounters(AuxCounters.Type.EVENTS)
     @State(Scope.Thread)
-    public static class PublishCounters {
-        public long mounts;
-        public long sameMounter;
-
-        @Setup(Level.Iteration)
-        public void reset() {
-            mounts = 0;
-            sameMounter = 0;
-        }
-    }
-
-    @AuxCounters(AuxCounters.Type.EVENTS)
-    @State(Scope.Thread)
     public static class BurstCounters {
         public long bursts;
         public long tasks;
@@ -239,43 +227,13 @@ public class FiberSchedulerWorkloadBenchmark {
         }
     }
 
-    @AuxCounters(AuxCounters.Type.EVENTS)
-    @State(Scope.Thread)
-    public static class ResumeCounters {
-        public long mounts;
-        public long sameMounter;
-
-        @Setup(Level.Iteration)
-        public void reset() {
-            mounts = 0;
-            sameMounter = 0;
-        }
-    }
-
     @State(Scope.Benchmark)
     public static class ExternalResumeState {
+        @Param({"1", "2", "8"})
+        public int workerCount;
         private WorkerPool pool;
         private ExternalResumeTask task;
         private final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
-        @Param({"1", "2", "8"})
-        public int workerCount;
-
-        @Setup(Level.Trial)
-        public void setup() {
-            pool = new WorkerPool(configuration("fiber-external-workload", workerCount, 10));
-            task = new ExternalResumeTask(waitQueue);
-            pool.start();
-            if (pool.getFiberRuntime().launch(task) != LaunchResult.LAUNCHED) {
-                throw new IllegalStateException("could not launch external-resume workload Fiber");
-            }
-            final long deadline = System.nanoTime() + AWAIT_TIMEOUT_NANOS;
-            while (waitQueue.size() != 1) {
-                if (System.nanoTime() - deadline >= 0) {
-                    throw new IllegalStateException("external-resume workload Fiber did not park");
-                }
-                Os.pause();
-            }
-        }
 
         @Setup(Level.Invocation)
         public void awaitIdlePool() {
@@ -294,46 +252,75 @@ public class FiberSchedulerWorkloadBenchmark {
                 pool.halt();
             }
         }
-    }
-
-    @State(Scope.Benchmark)
-    public static class SameRuntimeState {
-        private AtomicLongArray checksums;
-        private AtomicLongArray completedCount;
-        private long completedCountBaseline;
-        private AtomicReference<Throwable> failure;
-        private AtomicIntegerArray inFlight;
-        private WorkerPool pool;
-        private AtomicIntegerArray remaining;
-        private long sameMounterBaseline;
-        private AtomicLongArray sameMounterCount;
-        private PublishTask[] tasks;
-        @Param({"1", "2", "8", "32"})
-        public int workerCount;
-        @Param({"0", "64", "512"})
-        public int workTokens;
 
         @Setup(Level.Trial)
         public void setup() {
-            checksums = new AtomicLongArray(workerCount);
-            completedCount = new AtomicLongArray(workerCount);
-            failure = new AtomicReference<>();
-            inFlight = new AtomicIntegerArray(workerCount);
-            remaining = new AtomicIntegerArray(workerCount);
-            sameMounterCount = new AtomicLongArray(workerCount);
-            tasks = new PublishTask[workerCount];
-            final WorkerPoolConfiguration configuration = configuration(
-                    "fiber-same-runtime-workload",
-                    workerCount,
-                    10
-            );
-            pool = new WorkerPool(configuration);
-            final FiberRuntime runtime = pool.getFiberRuntime();
-            for (int i = 0; i < workerCount; i++) {
-                tasks[i] = new PublishTask(this, i);
-            }
-            pool.assign(new PublishJob(this, runtime));
+            pool = new WorkerPool(configuration("fiber-external-workload", workerCount, 10));
+            task = new ExternalResumeTask(waitQueue);
             pool.start();
+            if (pool.getFiberRuntime().launch(task) != LaunchResult.LAUNCHED) {
+                throw new IllegalStateException("could not launch external-resume workload Fiber");
+            }
+            final long deadline = System.nanoTime() + AWAIT_TIMEOUT_NANOS;
+            while (waitQueue.size() != 1) {
+                if (System.nanoTime() - deadline >= 0) {
+                    throw new IllegalStateException("external-resume workload Fiber did not park");
+                }
+                Os.pause();
+            }
+        }
+    }
+
+    @AuxCounters(AuxCounters.Type.EVENTS)
+    @State(Scope.Thread)
+    public static class PublishCounters {
+        public long mounts;
+        public long sameMounter;
+
+        @Setup(Level.Iteration)
+        public void reset() {
+            mounts = 0;
+            sameMounter = 0;
+        }
+    }
+
+    @AuxCounters(AuxCounters.Type.EVENTS)
+    @State(Scope.Thread)
+    public static class ResumeCounters {
+        public long mounts;
+        public long sameMounter;
+
+        @Setup(Level.Iteration)
+        public void reset() {
+            mounts = 0;
+            sameMounter = 0;
+        }
+    }
+
+    @State(Scope.Benchmark)
+    public static class SameRuntimeBurstState {
+        @Param({"2", "8", "64"})
+        public int burstSize;
+        @Param({"8"})
+        public int workerCount;
+        @Param({"512", "8192"})
+        public int workTokens;
+        private long[] checksums;
+        private final AtomicInteger completedCount = new AtomicInteger();
+        private final AtomicReference<Throwable> failure = new AtomicReference<>();
+        private volatile int generation;
+        private volatile boolean isPublisherStarted;
+        private WorkerPool pool;
+        private ObjList<BurstTask> tasks;
+        private int[] workerIds;
+
+        @TearDown(Level.Trial)
+        public void close() {
+            try {
+                awaitTasksTerminal();
+            } finally {
+                pool.halt();
+            }
         }
 
         @Setup(Level.Invocation)
@@ -341,90 +328,21 @@ public class FiberSchedulerWorkloadBenchmark {
             awaitTasksTerminal();
             final Throwable error = failure.get();
             if (error != null) {
-                throw new IllegalStateException("same-runtime workload failed", error);
+                throw new IllegalStateException("single-publisher burst failed", error);
             }
-            sameMounterBaseline = sum(sameMounterCount);
-            completedCountBaseline = sum(completedCount);
-            final int operationsPerWorker = SAME_RUNTIME_OPERATIONS / workerCount;
-            for (int i = 0; i < workerCount; i++) {
-                if (remaining.get(i) != 0 || inFlight.get(i) != 0) {
-                    throw new IllegalStateException("same-runtime workload batch overlapped");
+            completedCount.set(0);
+            for (int i = 0; i < burstSize; i++) {
+                final BurstTask task = tasks.getQuick(i);
+                if (task.isDone()) {
+                    task.reopen();
                 }
-                remaining.set(i, operationsPerWorker);
+                checksums[i] = 0;
+                workerIds[i] = -1;
             }
+            // Worker 0 remains active in its Job. Two complete idle timeouts make the other
+            // Workers overwhelmingly likely to be registered sleepers before publication.
+            Os.sleep(20);
         }
-
-        @TearDown(Level.Trial)
-        public void close() {
-            try {
-                for (int i = 0; i < workerCount; i++) {
-                    remaining.set(i, 0);
-                }
-                awaitTasksTerminal();
-            } finally {
-                pool.halt();
-            }
-        }
-
-        private void awaitBatch() {
-            final long expected = completedCountBaseline + SAME_RUNTIME_OPERATIONS;
-            final long deadline = System.nanoTime() + AWAIT_TIMEOUT_NANOS;
-            while (sum(completedCount) != expected || !areTasksTerminal()) {
-                final Throwable error = failure.get();
-                if (error != null) {
-                    throw new IllegalStateException("same-runtime workload failed", error);
-                }
-                if (System.nanoTime() - deadline >= 0) {
-                    throw new IllegalStateException("timed out waiting for same-runtime Fiber batch");
-                }
-                Os.pause();
-            }
-        }
-
-        private void awaitTasksTerminal() {
-            final long deadline = System.nanoTime() + AWAIT_TIMEOUT_NANOS;
-            while (!areTasksTerminal()) {
-                if (System.nanoTime() - deadline >= 0) {
-                    throw new IllegalStateException("timed out waiting for same-runtime tasks to finish");
-                }
-                Os.pause();
-            }
-        }
-
-        private boolean areTasksTerminal() {
-            for (int i = 0; i < workerCount; i++) {
-                if (inFlight.get(i) != 0 || (!tasks[i].isDone() && completedCount.get(i) != 0)) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        private long sum(AtomicLongArray values) {
-            long sum = 0;
-            for (int i = 0; i < workerCount; i++) {
-                sum += values.get(i);
-            }
-            return sum;
-        }
-    }
-
-    @State(Scope.Benchmark)
-    public static class SameRuntimeBurstState {
-        private final AtomicInteger completedCount = new AtomicInteger();
-        private final AtomicReference<Throwable> failure = new AtomicReference<>();
-        private long[] checksums;
-        private volatile int generation;
-        private volatile boolean isPublisherStarted;
-        private WorkerPool pool;
-        private BurstTask[] tasks;
-        private int[] workerIds;
-        @Param({"2", "8", "64"})
-        public int burstSize;
-        @Param({"8"})
-        public int workerCount;
-        @Param({"512", "8192"})
-        public int workTokens;
 
         @Setup(Level.Trial)
         public void setup() {
@@ -432,10 +350,10 @@ public class FiberSchedulerWorkloadBenchmark {
                 throw new IllegalArgumentException("burst exceeds the Fiber admission limit");
             }
             checksums = new long[burstSize];
-            tasks = new BurstTask[burstSize];
+            tasks = new ObjList<>(burstSize);
             workerIds = new int[burstSize];
             for (int i = 0; i < burstSize; i++) {
-                tasks[i] = new BurstTask(this, i);
+                tasks.add(new BurstTask(this, i));
                 workerIds[i] = -1;
             }
             pool = new WorkerPool(configuration("fiber-single-publisher-burst", workerCount, 10));
@@ -450,42 +368,12 @@ public class FiberSchedulerWorkloadBenchmark {
             }
         }
 
-        @Setup(Level.Invocation)
-        public void prepareBatch() {
-            awaitTasksTerminal();
-            final Throwable error = failure.get();
-            if (error != null) {
-                throw new IllegalStateException("single-publisher burst failed", error);
-            }
-            completedCount.set(0);
-            for (int i = 0; i < burstSize; i++) {
-                final BurstTask task = tasks[i];
-                if (task.isDone()) {
-                    task.reopen();
-                }
-                checksums[i] = 0;
-                workerIds[i] = -1;
-            }
-            // Worker 0 remains active in its Job. Two complete idle timeouts make the other
-            // Workers overwhelmingly likely to be registered sleepers before publication.
-            Os.sleep(20);
-        }
-
-        @TearDown(Level.Trial)
-        public void close() {
-            try {
-                awaitTasksTerminal();
-            } finally {
-                pool.halt();
-            }
-        }
-
         private void awaitTasksTerminal() {
             final long deadline = System.nanoTime() + AWAIT_TIMEOUT_NANOS;
             while (true) {
                 boolean isTerminal = true;
                 for (int i = 0; i < burstSize; i++) {
-                    final BurstTask task = tasks[i];
+                    final BurstTask task = tasks.getQuick(i);
                     if (generation != 0 && !task.isDone()) {
                         isTerminal = false;
                         break;
@@ -534,6 +422,188 @@ public class FiberSchedulerWorkloadBenchmark {
         }
     }
 
+    @State(Scope.Benchmark)
+    public static class SameRuntimeState {
+        @Param({"1", "2", "8", "32"})
+        public int workerCount;
+        @Param({"0", "64", "512"})
+        public int workTokens;
+        private AtomicLongArray checksums;
+        private AtomicLongArray completedCount;
+        private long completedCountBaseline;
+        private AtomicReference<Throwable> failure;
+        private AtomicIntegerArray inFlight;
+        private WorkerPool pool;
+        private AtomicIntegerArray remaining;
+        private long sameMounterBaseline;
+        private AtomicLongArray sameMounterCount;
+        private ObjList<PublishTask> tasks;
+
+        @TearDown(Level.Trial)
+        public void close() {
+            try {
+                for (int i = 0; i < workerCount; i++) {
+                    remaining.set(i, 0);
+                }
+                awaitTasksTerminal();
+            } finally {
+                pool.halt();
+            }
+        }
+
+        @Setup(Level.Invocation)
+        public void prepareBatch() {
+            awaitTasksTerminal();
+            final Throwable error = failure.get();
+            if (error != null) {
+                throw new IllegalStateException("same-runtime workload failed", error);
+            }
+            sameMounterBaseline = sum(sameMounterCount);
+            completedCountBaseline = sum(completedCount);
+            final int operationsPerWorker = SAME_RUNTIME_OPERATIONS / workerCount;
+            for (int i = 0; i < workerCount; i++) {
+                if (remaining.get(i) != 0 || inFlight.get(i) != 0) {
+                    throw new IllegalStateException("same-runtime workload batch overlapped");
+                }
+                remaining.set(i, operationsPerWorker);
+            }
+        }
+
+        @Setup(Level.Trial)
+        public void setup() {
+            checksums = new AtomicLongArray(workerCount);
+            completedCount = new AtomicLongArray(workerCount);
+            failure = new AtomicReference<>();
+            inFlight = new AtomicIntegerArray(workerCount);
+            remaining = new AtomicIntegerArray(workerCount);
+            sameMounterCount = new AtomicLongArray(workerCount);
+            tasks = new ObjList<>(workerCount);
+            final WorkerPoolConfiguration configuration = configuration(
+                    "fiber-same-runtime-workload",
+                    workerCount,
+                    10
+            );
+            pool = new WorkerPool(configuration);
+            final FiberRuntime runtime = pool.getFiberRuntime();
+            for (int i = 0; i < workerCount; i++) {
+                tasks.add(new PublishTask(this, i));
+            }
+            pool.assign(new PublishJob(this, runtime));
+            pool.start();
+        }
+
+        private boolean areTasksTerminal() {
+            for (int i = 0; i < workerCount; i++) {
+                if (inFlight.get(i) != 0 || (!tasks.getQuick(i).isDone() && completedCount.get(i) != 0)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private void awaitBatch() {
+            final long expected = completedCountBaseline + SAME_RUNTIME_OPERATIONS;
+            final long deadline = System.nanoTime() + AWAIT_TIMEOUT_NANOS;
+            while (sum(completedCount) != expected || !areTasksTerminal()) {
+                final Throwable error = failure.get();
+                if (error != null) {
+                    throw new IllegalStateException("same-runtime workload failed", error);
+                }
+                if (System.nanoTime() - deadline >= 0) {
+                    throw new IllegalStateException("timed out waiting for same-runtime Fiber batch");
+                }
+                Os.pause();
+            }
+        }
+
+        private void awaitTasksTerminal() {
+            final long deadline = System.nanoTime() + AWAIT_TIMEOUT_NANOS;
+            while (!areTasksTerminal()) {
+                if (System.nanoTime() - deadline >= 0) {
+                    throw new IllegalStateException("timed out waiting for same-runtime tasks to finish");
+                }
+                Os.pause();
+            }
+        }
+
+        private long sum(AtomicLongArray values) {
+            long sum = 0;
+            for (int i = 0; i < workerCount; i++) {
+                sum += values.get(i);
+            }
+            return sum;
+        }
+    }
+
+    private static final class BurstPublishJob implements Job {
+        private int observedGeneration;
+        private final FiberRuntime runtime;
+        private final SameRuntimeBurstState state;
+
+        private BurstPublishJob(SameRuntimeBurstState state, FiberRuntime runtime) {
+            this.state = state;
+            this.runtime = runtime;
+        }
+
+        @Override
+        public boolean run(@NotNull WorkerContext workerContext) {
+            state.isPublisherStarted = true;
+            final int requestedGeneration = state.generation;
+            if (requestedGeneration == observedGeneration) {
+                // Keep only this publisher active while every peer follows the normal idle path.
+                return true;
+            }
+            if (requestedGeneration != observedGeneration + 1) {
+                state.failure.compareAndSet(null, new IllegalStateException(
+                        "single-publisher generation skipped [expected=" + (observedGeneration + 1)
+                                + ", actual=" + requestedGeneration + ']'
+                ));
+                observedGeneration = requestedGeneration;
+                return true;
+            }
+            observedGeneration = requestedGeneration;
+            for (int i = 0; i < state.burstSize; i++) {
+                final LaunchResult result = runtime.launch(state.tasks.getQuick(i));
+                if (result != LaunchResult.LAUNCHED) {
+                    state.failure.compareAndSet(null, new IllegalStateException(
+                            "single-publisher Fiber launch failed [index=" + i + ", result=" + result + ']'
+                    ));
+                    return true;
+                }
+            }
+            return true;
+        }
+    }
+
+    private static final class BurstTask extends FiberTask {
+        private final int index;
+        private final SameRuntimeBurstState state;
+
+        private BurstTask(SameRuntimeBurstState state, int index) {
+            this.state = state;
+            this.index = index;
+        }
+
+        @Override
+        protected void onError(Throwable th) {
+            state.failure.compareAndSet(null, th);
+        }
+
+        @Override
+        protected boolean runStep() {
+            long value = ((long) state.generation << 32) ^ (index + 1L);
+            for (int i = 0; i < state.workTokens; i++) {
+                value ^= value << 13;
+                value ^= value >>> 7;
+                value ^= value << 17;
+            }
+            state.checksums[index] = value;
+            state.workerIds[index] = Objects.requireNonNull(Worker.current()).getWorkerId();
+            state.completedCount.incrementAndGet();
+            return true;
+        }
+    }
+
     private static final class ExternalResumeTask extends FiberTask {
         private volatile boolean isLastResumeOnSameWorker;
         private volatile boolean isStopped;
@@ -578,8 +648,8 @@ public class FiberSchedulerWorkloadBenchmark {
     }
 
     private static final class PublishJob implements Job {
-        private final SameRuntimeState state;
         private final FiberRuntime runtime;
+        private final SameRuntimeState state;
 
         private PublishJob(SameRuntimeState state, FiberRuntime runtime) {
             this.state = state;
@@ -595,7 +665,7 @@ public class FiberSchedulerWorkloadBenchmark {
             if (!state.inFlight.compareAndSet(workerId, 0, 1)) {
                 return true;
             }
-            final PublishTask task = state.tasks[workerId];
+            final PublishTask task = state.tasks.getQuick(workerId);
             if (task.isDone()) {
                 task.reopen();
             }
@@ -647,75 +717,6 @@ public class FiberSchedulerWorkloadBenchmark {
             }
             state.remaining.decrementAndGet(publishingWorkerId);
             state.completedCount.incrementAndGet(publishingWorkerId);
-            return true;
-        }
-    }
-
-    private static final class BurstPublishJob implements Job {
-        private int observedGeneration;
-        private final FiberRuntime runtime;
-        private final SameRuntimeBurstState state;
-
-        private BurstPublishJob(SameRuntimeBurstState state, FiberRuntime runtime) {
-            this.state = state;
-            this.runtime = runtime;
-        }
-
-        @Override
-        public boolean run(@NotNull WorkerContext workerContext) {
-            state.isPublisherStarted = true;
-            final int requestedGeneration = state.generation;
-            if (requestedGeneration == observedGeneration) {
-                // Keep only this publisher active while every peer follows the normal idle path.
-                return true;
-            }
-            if (requestedGeneration != observedGeneration + 1) {
-                state.failure.compareAndSet(null, new IllegalStateException(
-                        "single-publisher generation skipped [expected=" + (observedGeneration + 1)
-                                + ", actual=" + requestedGeneration + ']'
-                ));
-                observedGeneration = requestedGeneration;
-                return true;
-            }
-            observedGeneration = requestedGeneration;
-            for (int i = 0; i < state.burstSize; i++) {
-                final LaunchResult result = runtime.launch(state.tasks[i]);
-                if (result != LaunchResult.LAUNCHED) {
-                    state.failure.compareAndSet(null, new IllegalStateException(
-                            "single-publisher Fiber launch failed [index=" + i + ", result=" + result + ']'
-                    ));
-                    return true;
-                }
-            }
-            return true;
-        }
-    }
-
-    private static final class BurstTask extends FiberTask {
-        private final int index;
-        private final SameRuntimeBurstState state;
-
-        private BurstTask(SameRuntimeBurstState state, int index) {
-            this.state = state;
-            this.index = index;
-        }
-
-        @Override
-        protected void onError(Throwable th) {
-            state.failure.compareAndSet(null, th);
-        }
-
-        @Override
-        protected boolean runStep() {
-            long value = ((long) state.generation << 32) ^ (index + 1L);
-            for (int i = 0; i < state.workTokens; i++) {
-                value ^= value << 13;
-                value ^= value >>> 7;
-                value ^= value << 17;
-            }
-            state.checksums[index] = value;
-            state.workerIds[index] = Objects.requireNonNull(Worker.current()).getWorkerId();
-            state.completedCount.incrementAndGet();
             return true;
         }
     }

@@ -163,106 +163,6 @@ public class FiberSchedulerBenchmark {
         }
     }
 
-    @AuxCounters(AuxCounters.Type.EVENTS)
-    @State(Scope.Thread)
-    public static class ResumeCounters {
-        public long mounts;
-        public long sameLastMounter;
-
-        @Setup(Level.Iteration)
-        public void reset() {
-            mounts = 0;
-            sameLastMounter = 0;
-        }
-    }
-
-    @State(Scope.Benchmark)
-    public static class IdleResumeState {
-        private WorkerPool pool;
-        private ResumeLoopTask task;
-        private final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
-        @Param({"1", "2", "8"})
-        public int workerCount;
-
-        @Setup(Level.Trial)
-        public void setup() {
-            pool = new WorkerPool(fiberPoolConfiguration("fiber-resume-benchmark", workerCount));
-            task = new ResumeLoopTask(waitQueue);
-            pool.start();
-            awaitReadyWorkers(pool, workerCount);
-            if (pool.getFiberRuntime().launch(task) != LaunchResult.LAUNCHED) {
-                throw new IllegalStateException("could not launch resume benchmark Fiber");
-            }
-            awaitReadyWorkers(pool, workerCount);
-            if (waitQueue.size() != 1) {
-                throw new IllegalStateException("resume benchmark Fiber did not enter its wait");
-            }
-        }
-
-        @TearDown(Level.Trial)
-        public void close() {
-            try {
-                task.isStopped = true;
-                waitQueue.fire(1, false);
-            } finally {
-                pool.halt();
-            }
-        }
-    }
-
-    @State(Scope.Thread)
-    public static class LocalQueueState {
-        private Fiber fiber;
-        private FiberRuntime runtime;
-        @Param({"1", "8", "32"})
-        public int workerCount;
-
-        @Setup(Level.Trial)
-        public void setup() {
-            runtime = new FiberRuntime(256, 256, 64, workerCount, FiberWakeSink.NO_OP);
-            fiber = runtime.tryReserveFiber();
-            if (fiber == null) {
-                throw new IllegalStateException("could not reserve local queue benchmark Fiber");
-            }
-        }
-
-        @TearDown(Level.Trial)
-        public void close() {
-            runtime.releaseReservedFiber(fiber, fiber.getReservationEpoch());
-            runtime.beginQuiesce();
-            final long deadline = System.nanoTime() + AWAIT_TIMEOUT_NANOS;
-            while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() - deadline < 0) {
-                runtime.drain(64);
-            }
-            if (!runtime.awaitClosed(deadline)) {
-                throw new IllegalStateException("local queue benchmark runtime did not close");
-            }
-            runtime.closeAfterDrained();
-        }
-    }
-
-    @State(Scope.Thread)
-    public static class WakeControllerState {
-        private WorkerPool pool;
-        private int preferredWorkerId;
-        @Param({"1", "8", "32", "65"})
-        public int workerCount;
-
-        @Setup(Level.Trial)
-        public void setup() {
-            pool = new WorkerPool(fiberPoolConfiguration("fiber-wake-benchmark", workerCount));
-            preferredWorkerId = workerCount / 2;
-            for (int i = 0; i < workerCount; i++) {
-                pool.registerWakeTargetForTesting(i, new Thread());
-            }
-        }
-
-        @TearDown(Level.Trial)
-        public void close() {
-            pool.halt();
-        }
-    }
-
     private static WorkerPoolConfiguration fiberPoolConfiguration(String poolName, int workerCount) {
         return new WorkerPoolConfiguration() {
             @Override
@@ -320,6 +220,106 @@ public class FiberSchedulerBenchmark {
                 return true;
             }
         };
+    }
+
+    @State(Scope.Benchmark)
+    public static class IdleResumeState {
+        @Param({"1", "2", "8"})
+        public int workerCount;
+        private WorkerPool pool;
+        private ResumeLoopTask task;
+        private final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
+
+        @TearDown(Level.Trial)
+        public void close() {
+            try {
+                task.isStopped = true;
+                waitQueue.fire(1, false);
+            } finally {
+                pool.halt();
+            }
+        }
+
+        @Setup(Level.Trial)
+        public void setup() {
+            pool = new WorkerPool(fiberPoolConfiguration("fiber-resume-benchmark", workerCount));
+            task = new ResumeLoopTask(waitQueue);
+            pool.start();
+            awaitReadyWorkers(pool, workerCount);
+            if (pool.getFiberRuntime().launch(task) != LaunchResult.LAUNCHED) {
+                throw new IllegalStateException("could not launch resume benchmark Fiber");
+            }
+            awaitReadyWorkers(pool, workerCount);
+            if (waitQueue.size() != 1) {
+                throw new IllegalStateException("resume benchmark Fiber did not enter its wait");
+            }
+        }
+    }
+
+    @State(Scope.Thread)
+    public static class LocalQueueState {
+        @Param({"1", "8", "32"})
+        public int workerCount;
+        private Fiber fiber;
+        private FiberRuntime runtime;
+
+        @TearDown(Level.Trial)
+        public void close() {
+            runtime.releaseReservedFiber(fiber, fiber.getReservationEpoch());
+            runtime.beginQuiesce();
+            final long deadline = System.nanoTime() + AWAIT_TIMEOUT_NANOS;
+            while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() - deadline < 0) {
+                runtime.drain(64);
+            }
+            if (!runtime.awaitClosed(deadline)) {
+                throw new IllegalStateException("local queue benchmark runtime did not close");
+            }
+            runtime.closeAfterDrained();
+        }
+
+        @Setup(Level.Trial)
+        public void setup() {
+            runtime = new FiberRuntime(256, 256, 64, workerCount, FiberWakeSink.NO_OP);
+            fiber = runtime.tryReserveFiber();
+            if (fiber == null) {
+                throw new IllegalStateException("could not reserve local queue benchmark Fiber");
+            }
+        }
+    }
+
+    @AuxCounters(AuxCounters.Type.EVENTS)
+    @State(Scope.Thread)
+    public static class ResumeCounters {
+        public long mounts;
+        public long sameLastMounter;
+
+        @Setup(Level.Iteration)
+        public void reset() {
+            mounts = 0;
+            sameLastMounter = 0;
+        }
+    }
+
+    @State(Scope.Thread)
+    public static class WakeControllerState {
+        @Param({"1", "8", "32", "65"})
+        public int workerCount;
+        private WorkerPool pool;
+        private int preferredWorkerId;
+
+        @TearDown(Level.Trial)
+        public void close() {
+            pool.halt();
+        }
+
+        @Setup(Level.Trial)
+        public void setup() {
+            pool = new WorkerPool(fiberPoolConfiguration("fiber-wake-benchmark", workerCount));
+            preferredWorkerId = workerCount / 2;
+            for (int i = 0; i < workerCount; i++) {
+                pool.registerWakeTargetForTesting(i, new Thread());
+            }
+        }
     }
 
     private static class ResumeLoopTask extends FiberTask {
