@@ -480,6 +480,28 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyIntoNewTableAgreesOnWalFlag() throws Exception {
+        CopyRunnable stmt = () -> runAndFetchCopyID(
+                "copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;",
+                sqlExecutionContext
+        );
+
+        // tables() reads _meta, verifyTableName() reads the registry. They disagreed: _meta claimed
+        // WAL, the registry said plain, and INSERT then took the TableWriter path into a WAL table.
+        CopyRunnable test = () -> {
+            assertEquals(walEnabled, engine.verifyTableName("x").isWal());
+            assertQuery("SELECT walEnabled FROM tables() WHERE table_name = 'x'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("walEnabled\n" + walEnabled + "\n");
+            assertQuotesTableContent();
+        };
+
+        testCopy(stmt, test);
+    }
+
+    @Test
     public void testParallelCopyIntoNewTableNoTsFormat() throws Exception {
         CopyRunnable stmt = () -> runAndFetchCopyID(
                 "copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
