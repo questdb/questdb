@@ -82,7 +82,10 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
                 }
                 return new DiffVarVarFunction(start, end, driver, diffMethod, startType, endType, period);
             }
-            return driver.getTimestampConstantNull();
+            // An invalid constant unit produces a null result, but datediff() is a
+            // long-valued function, so the null must carry the LONG type rather than
+            // the timestamp driver's TIMESTAMP-typed null. See issue #7022.
+            return LongConstant.NULL;
         }
         return new DateDiffFunc(args.getQuick(0), args.getQuick(1), args.getQuick(2), driver, startType, endType);
     }
