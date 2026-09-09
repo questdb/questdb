@@ -324,6 +324,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getDebugWalApplyMaxTxnBlockSize() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return EN_LOCALE;
     }
@@ -891,6 +896,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getPartitionCompactionIdleTimeout() {
         return 60 * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getPartitionCompactionHotCommits() {
+        return 10;
     }
 
     @Override

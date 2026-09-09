@@ -305,6 +305,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getDebugWalApplyMaxTxnBlockSize() {
+        return getDelegate().getDebugWalApplyMaxTxnBlockSize();
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return getDelegate().getDefaultDateLocale();
     }
@@ -872,6 +877,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getPartitionCompactionIdleTimeout() {
         return getDelegate().getPartitionCompactionIdleTimeout();
+    }
+
+    @Override
+    public int getPartitionCompactionHotCommits() {
+        return getDelegate().getPartitionCompactionHotCommits();
     }
 
     @Override

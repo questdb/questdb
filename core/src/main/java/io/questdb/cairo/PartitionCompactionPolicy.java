@@ -43,6 +43,7 @@ public class PartitionCompactionPolicy implements Mutable {
     // (partitionTimestamp, nextAttemptMicros, currentBackoffMicros)
     private final LongList backoff = new LongList();
     private final CairoConfiguration configuration;
+    private boolean isSelectedPartitionHot;
     private int selectedPartitionIndex = -1;
     private int selectedReason = REASON_NONE;
     private boolean tablePressureOn;
@@ -57,6 +58,7 @@ public class PartitionCompactionPolicy implements Mutable {
         tablePressureOn = false;
         selectedReason = REASON_NONE;
         selectedPartitionIndex = -1;
+        isSelectedPartitionHot = false;
     }
 
     /**
@@ -91,6 +93,15 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     /**
+     * True when the last {@link #selectPartition} picked, for {@link #REASON_TABLE_PRESSURE} alone, a
+     * partition one of the last {@link CairoConfiguration#getPartitionCompactionHotCommits()} commits
+     * wrote. The caller withholds REWRITE from such a partition; every cheaper step stays available.
+     */
+    public boolean isSelectedPartitionHot() {
+        return isSelectedPartitionHot;
+    }
+
+    /**
      * Why the last {@link #selectPartition} picked what it picked.
      */
     public int getSelectedReason() {
@@ -121,6 +132,7 @@ public class PartitionCompactionPolicy implements Mutable {
     public int selectPartition(TxWriter txWriter, PartitionGeometry geometry, long avgRecordSize, long nowMicros) {
         selectedReason = REASON_NONE;
         selectedPartitionIndex = -1;
+        isSelectedPartitionHot = false;
         if (txWriter.getLagRowCount() > 0) {
             return -1;
         }
@@ -133,7 +145,15 @@ public class PartitionCompactionPolicy implements Mutable {
                 : configuration.getPartitionCompactionDeadMinSize();
         final long idleTimeout = configuration.getPartitionCompactionIdleTimeout();
         final double ratio = configuration.getPartitionCompactionDeadRowsRatio();
-
+        // A partition the last few commits wrote is one the next few will write again, so REWRITE - a copy
+        // of every live row it holds - only moves rows the next commit dirties straight back. The caller
+        // reads isSelectedPartitionHot() and withholds REWRITE alone: JOIN, MOVE-TAIL and MAKE-PLAIN stay
+        // available, and on the active partition they are the whole point. MOVE-TAIL is what keeps that
+        // partition bounded, by splitting its settled front off into a partition of its own, and it is
+        // reached only through a partition this method selects. Suppressing the SELECTION instead lets the
+        // active partition grow without limit until O3PartitionJob's own threshold check rewrites it whole.
+        final int hotCommits = configuration.getPartitionCompactionHotCommits();
+        final long hotSinceTxn = txWriter.getTxn() - hotCommits;
         int chosen = -1;
         int chosenReason = REASON_NONE;
         int coldest = -1;
@@ -202,6 +222,15 @@ public class PartitionCompactionPolicy implements Mutable {
         if (chosen > -1) {
             selectedReason = chosenReason;
             selectedPartitionIndex = chosen;
+            // Only the table-wide rule defers to the hot window. The three per-partition rules each name a
+            // condition on the partition itself that is worth a full copy even while it is being written -
+            // dead rows past a multiple of live, a piece count past its cap, a partition idle for hours -
+            // whereas this one fires on a table-level average, at a far lower bar, and picks the coldest
+            // partition precisely because the hot one is the wrong one to rewrite.
+            // A writerTxn of -1 means no committed geometry record, so nothing says the partition is hot.
+            final long writerTxn = geometry.getWriterTxn(chosen);
+            isSelectedPartitionHot = chosenReason == REASON_TABLE_PRESSURE
+                    && hotCommits > 0 && writerTxn >= 0 && writerTxn > hotSinceTxn;
         }
         return chosen;
     }
@@ -230,7 +259,7 @@ public class PartitionCompactionPolicy implements Mutable {
      * MOVE-TAIL's own end state, JOIN folding everything into one, or any commit that merely happened to leave it that
      * way - with real dead space above it, and none of the ordinary reasons a partition is off-limits (the last/active.
      */
-    public static boolean isMakePlainShape(TxWriter txWriter, PartitionGeometry geometry, int partitionIndex) {
+    public static boolean isMakePlainShape(TxReader txWriter, PartitionGeometry geometry, int partitionIndex) {
         if (partitionIndex >= txWriter.getPartitionCount() - 1 || txWriter.getLagRowCount() > 0) {
             return false;
         }

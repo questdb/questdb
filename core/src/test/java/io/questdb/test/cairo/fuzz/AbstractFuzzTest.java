@@ -99,6 +99,16 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         return rnd.nextInt(10) < 7 ? rnd.nextLong(1_000) : Micros.SECOND_MICROS * (1 + rnd.nextInt(180));
     }
 
+    public static int getRndPartitionCompactionHotCommits(Rnd rnd) {
+        // 0 to 3, well under the shipped default of 10. A fuzz run applies its whole workload in a few
+        // dozen commits, so at the default EVERY partition it writes stays hot for the rest of the run,
+        // and the table-pressure rule - the one rule whose pick the hot window filters - would never fire
+        // again, taking the REWRITE, MOVE-TAIL and MAKE-PLAIN coverage that rule drives with it. 0 turns
+        // the window off outright; 1 to 3 leave it narrow enough that a partition the workload has moved
+        // on from cools within a few commits, which is the regime this filter has to get right.
+        return rnd.nextInt(4);
+    }
+
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
@@ -430,6 +440,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndParquetRowGroupSize(rnd));
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, getRndPartitionCompactionCheckInterval(rnd));
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, getRndPartitionCompactionIdleTimeout(rnd));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, getRndPartitionCompactionHotCommits(rnd));
 
         int txnCount = Math.max(10, fuzzer.getTransactionCount());
         long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);

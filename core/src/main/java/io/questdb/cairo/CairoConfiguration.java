@@ -254,6 +254,15 @@ public interface CairoConfiguration {
 
     boolean getDebugWalApplyBlockFailureNoRetry();
 
+    /**
+     * Upper bound on how many WAL transactions {@code WalTxnDetails.calculateInsertTransactionBlock}
+     * may fold into a single commit. Unlimited by default; a small value makes each transaction land
+     * on its own, which is what a test needs when it wants a later transaction to merge INTO data an
+     * earlier one already put on disk rather than be sorted alongside it into a partition the same
+     * commit creates.
+     */
+    int getDebugWalApplyMaxTxnBlockSize();
+
     @NotNull
     DateLocale getDefaultDateLocale();
 
@@ -658,6 +667,8 @@ public interface CairoConfiguration {
     double getPartitionCompactionDeadRowsRatio();
 
     long getPartitionCompactionDeclineBackoffMax();
+
+    int getPartitionCompactionHotCommits();
 
     long getPartitionCompactionIdleTimeout();
 

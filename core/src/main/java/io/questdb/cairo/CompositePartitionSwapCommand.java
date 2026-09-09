@@ -29,8 +29,16 @@ import io.questdb.cairo.wal.MetadataService;
 import io.questdb.tasks.TableWriterTask;
 
 /**
- * Swaps in a composite partition REWRITE built off a {@link TableReader} snapshot - see {@code
- * PartitionCompactionScanJob} - without ever holding the writer for the copy itself.
+ * Carries the compaction sweep's decision for one composite partition to its writer - see {@code
+ * PartitionCompactionScanJob} - in one of two modes:
+ * <ul>
+ *     <li>REWRITE, the default: swaps in a copy built off a {@link TableReader} snapshot, without ever holding the
+ *     writer for the copy itself.</li>
+ *     <li>MAKE-PLAIN ({@link #ofMakePlain}): for a partition already reduced to a single piece at row 0, where the
+ *     copy buys nothing - the writer drops the dead space and trims the files in place. Nothing is staged, so
+ *     {@code liveRows} and the recorded tops go unused.</li>
+ * </ul>
+ * Both are the same errand - compact this partition - so they share one command and one lock reason.
  */
 public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     private final ColumnTopRecorder columnTops = new ColumnTopRecorder();
@@ -38,6 +46,7 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     private long expectedMetadataVersion;
     private long expectedSrcNameTxn;
     private long expectedWriterTxn;
+    private boolean isMakePlain;
     private long liveRows;
     private long partitionTimestamp;
     private int tableId;
@@ -45,14 +54,23 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
 
     @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
-        ((TableWriter) svc).swapCompactedCompositePartition(
-                partitionTimestamp,
-                expectedSrcNameTxn,
-                expectedWriterTxn,
-                expectedMetadataVersion,
-                liveRows,
-                columnTops
-        );
+        if (isMakePlain) {
+            ((TableWriter) svc).makePartitionPlainInPlace(
+                    partitionTimestamp,
+                    expectedSrcNameTxn,
+                    expectedWriterTxn,
+                    expectedMetadataVersion
+            );
+        } else {
+            ((TableWriter) svc).swapCompactedCompositePartition(
+                    partitionTimestamp,
+                    expectedSrcNameTxn,
+                    expectedWriterTxn,
+                    expectedMetadataVersion,
+                    liveRows,
+                    columnTops
+            );
+        }
         return 0;
     }
 
@@ -127,6 +145,10 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         return 0;
     }
 
+    public boolean isMakePlain() {
+        return isMakePlain;
+    }
+
     @Override
     public boolean isStructural() {
         return false;
@@ -148,7 +170,23 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         this.expectedWriterTxn = expectedWriterTxn;
         this.expectedMetadataVersion = expectedMetadataVersion;
         this.liveRows = liveRows;
+        this.isMakePlain = false;
         this.columnTops.clear();
+    }
+
+    /**
+     * The MAKE-PLAIN mode: no staging directory, no copy, so no live row count and no recorded tops.
+     */
+    public void ofMakePlain(
+            TableToken tableToken,
+            int tableId,
+            long partitionTimestamp,
+            long expectedSrcNameTxn,
+            long expectedWriterTxn,
+            long expectedMetadataVersion
+    ) {
+        of(tableToken, tableId, partitionTimestamp, expectedSrcNameTxn, expectedWriterTxn, expectedMetadataVersion, 0);
+        this.isMakePlain = true;
     }
 
     @Override

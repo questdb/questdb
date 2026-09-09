@@ -183,6 +183,26 @@ public class PartitionGeometry implements Closeable, Mutable {
         return res < 0 ? 0 : resolved.getQuick(res + RES_LAST_WRITE_MICROS);
     }
 
+    /**
+     * The highest FILE row a live piece of {@code partitionIndex} reaches: {@code max(rowOffset + rowCount)} over its
+     * pieces. This, and not {@link #getE}, is how far a reader's mapping of the directory's column files has to go - a
+     * reader only ever resolves a row that sits inside a piece, so the dead space between the last live piece and
+     * {@code E} is bytes nothing can reach. Keeping the two apart is what lets TRIM-FILES cut those bytes off while
+     * readers of the partition's current shape are still running.
+     */
+    public long getLiveFileExtent(int partitionIndex) {
+        final int res = resolveInternal(partitionIndex);
+        if (res < 0) {
+            return txReader.getPartitionSize(partitionIndex);
+        }
+        final int count = (int) resolved.getQuick(res + RES_PIECE_COUNT);
+        long extent = 0;
+        for (int p = 0; p < count; p++) {
+            extent = Math.max(extent, pieceLong(res, p, PIECE_ROW_OFFSET) + pieceLong(res, p, PIECE_ROW_COUNT));
+        }
+        return extent;
+    }
+
     public long getLiveRows(int partitionIndex) {
         return txReader.getPartitionSize(partitionIndex);
     }

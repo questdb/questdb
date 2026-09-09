@@ -203,6 +203,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final int COMPACTION_MOVED_TAIL = 3;
     private static final int COMPACTION_NONE = 0;
     private static final int COMPACTION_REWRITTEN = 2;
+    // REWRITE was the only step left and the partition is hot, so nothing ran. Distinct from
+    // COMPACTION_NONE because it must NOT earn the decline backoff: the partition stays eligible so its
+    // next commit can reach JOIN or MOVE-TAIL the moment their shape appears.
+    private static final int COMPACTION_SKIPPED_HOT = 5;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     /*
@@ -3084,6 +3088,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
         final int newPartitionDirLen = other.size();
         linkPartitionIndexFiles(partitionTimestamp, oldPartitionNameTxn, partitionDirLen, newPartitionDirLen);
+    }
+
+    /**
+     * MAKE-PLAIN plus TRIM-FILES on one partition, on behalf of {@code PartitionCompactionScanJob}. The sweep sends
+     * this for a partition a writer left in MAKE-PLAIN's shape - one piece at row 0 with dead space above it - and
+     * then stopped ingesting, so the per-commit path that would have retried it never runs again.
+     * <p>
+     * Everything is re-checked here against the live state: the sweep decided off a {@code _txn} snapshot it read
+     * without holding the writer, and a queued command can sit for a while before a busy writer applies it. Anything
+     * that has moved on since simply ends the call - there is nothing staged to clean up, and the next sweep sees
+     * whatever the partition looks like then.
+     */
+    public void makePartitionPlainInPlace(
+            long partitionTimestamp,
+            long expectedSrcNameTxn,
+            long expectedWriterTxn,
+            long expectedMetadataVersion
+    ) {
+        if (inTransaction()) {
+            throw CairoException.nonCritical().put("cannot make partition plain, in transaction [table=")
+                    .put(tableToken).put(']');
+        }
+        final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp);
+        final long liveWriterTxn = partitionIndex < 0 ? -1L : getGeometry().getWriterTxn(partitionIndex);
+        if (partitionIndex < 0
+                || txWriter.isPartitionReadOnly(partitionIndex)
+                || txWriter.isPartitionRemote(partitionIndex)
+                || liveWriterTxn != expectedWriterTxn
+                || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
+                || getMetadataVersion() != expectedMetadataVersion
+                || !isMakePlainEligible(partitionIndex)) {
+            LOG.info().$("skipping stale MAKE-PLAIN request [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", expectedWriterTxn=").$(expectedWriterTxn)
+                    .$(", liveWriterTxn=").$(liveWriterTxn)
+                    .I$();
+            return;
+        }
+        if (!makePartitionPlain(partitionIndex)) {
+            // A reader on the record this shape came from, or a running checkpoint. Nothing is staged, so
+            // there is nothing to undo - the next sweep picks the partition up again.
+            LOG.info().$("MAKE-PLAIN declined for the compaction sweep [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
+            return;
+        }
+        processPartitionRemoveCandidates();
     }
 
     public void markDistressed() {
@@ -6184,7 +6235,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void compactPartitionToPlain(int partitionIndex, String reason) {
         final PartitionGeometry geometry = getGeometry();
         while (geometry.isComposite(partitionIndex)) {
-            if (compactPhysicalPartition(partitionIndex, false, Long.MAX_VALUE) != COMPACTION_NONE) {
+            if (compactPhysicalPartition(partitionIndex, false, true, Long.MAX_VALUE) != COMPACTION_NONE) {
                 continue;
             }
             // MAKE-PLAIN can decline on a reader still resolving the geometry record; REWRITE copies into
@@ -6207,7 +6258,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return {@link #COMPACTION_NONE}, {@link #COMPACTION_JOINED}, {@link #COMPACTION_MOVED_TAIL}, {@link
      * #COMPACTION_MADE_PLAIN} or {@link #COMPACTION_REWRITTEN}
      */
-    private int compactPhysicalPartition(int partitionIndex, boolean allowMoveTail, long deadlineMicros) {
+    private int compactPhysicalPartition(int partitionIndex, boolean allowMoveTail, boolean allowRewrite, long deadlineMicros) {
         if (txWriter.isPartitionReadOnly(partitionIndex)) {
             return COMPACTION_NONE;
         }
@@ -6233,6 +6284,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // MAKE-PLAIN reaches REWRITE's result for free on this shape, so it is always its call - even
             // when it is still waiting on a reader, which the caller's decline/backoff handles.
             return makePartitionPlain(partitionIndex) ? COMPACTION_MADE_PLAIN : COMPACTION_NONE;
+        }
+        if (!allowRewrite) {
+            return COMPACTION_SKIPPED_HOT;
         }
         return compactPartition(partitionIndex) ? COMPACTION_REWRITTEN : COMPACTION_NONE;
     }
@@ -9451,7 +9505,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * MAKE-PLAIN (PARTITION_COMPACTION.md Sec.5).
      *
      * @return true if the partition was made plain this call; false if a reader still resolves the geometry record this
-     * shape came from, leaving it to the caller's decline/backoff bookkeeping
+     * shape came from, or a checkpoint is running, leaving it to the caller's decline/backoff bookkeeping
      */
     private boolean makePartitionPlain(int partitionIndex) {
         final PartitionGeometry geometry = getGeometry();
@@ -9461,6 +9515,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long fromTxn = Math.max(0, txWriter.getPartitionNameTxn(partitionIndex));
         final long toTxn = geometry.getWriterTxn(partitionIndex);
         if (toTxn <= fromTxn || !txnScoreboard.isRangeAvailable(fromTxn, toTxn)) {
+            return false;
+        }
+        // A running checkpoint is the one thing left that TRIM-FILES has to wait for, and it is not a reader:
+        // backup sizes this partition's column files by the physical row extent E its manifest copied out of
+        // the checkpoint, then reads them from the LIVE db root, so shortening them would leave the upload
+        // asking for more rows than the file holds. Decline the whole of MAKE-PLAIN rather than commit a plain
+        // partition whose files TRIM-FILES could not touch - the dead bytes would then be reported by nothing
+        // (deadRows reads 0) and picked up by nothing (selectMakePlainCandidate skips a plain partition).
+        if (isCheckpointInProgress()) {
             return false;
         }
         final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
@@ -9475,14 +9538,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", deadRows=").$(deadRows)
                 .I$();
         commitTxWriterAndPublishPendingPostingSealPurges();
-        // TRIM-FILES needs to be sure all the readers switched to the newest committed transactions
-        if (!txnScoreboard.isRangeAvailable(fromTxn, txWriter.getTxn())) {
-            LOG.info().$("TRIM-FILES deferred, a reader still resolves the partition as composite [table=").$(tableToken)
-                    .$(", dir=").$(formatPartitionForTimestamp(partitionTs, partitionNameTxn))
-                    .$(", deadRows=").$(deadRows)
-                    .I$();
-            return true;
-        }
+        // TRIM-FILES needs no reader wait of its own. A reader maps a partition's column files only as far as
+        // its highest live piece reaches (TableReader#mappedRowCount), and the check at the top of this method
+        // has already cleared every reader that could still resolve a shape with a piece above the single one
+        // at row 0 - so the bytes cut below are bytes no live or arriving reader can ask for.
         // Best-effort and strictly after the commit above: a failure leaves dead bytes in place, wasted
         // disk and nothing more. POSTING index files are left alone - their size tracks seal history, and
         // PostingSealPurgeJob already reclaims old generations.
@@ -15519,7 +15578,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean allowMoveTail = reason != PartitionCompactionPolicy.REASON_AGE;
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
         final boolean isActivePartition = partitionIndex == txWriter.getPartitionCount() - 1;
-        final int result = compactPhysicalPartition(partitionIndex, allowMoveTail, deadline);
+        // A partition the last few commits wrote gets every step but REWRITE: copying all of its live rows
+        // reclaims space the next commit dirties again, while JOIN and MOVE-TAIL cost a fraction of that
+        // and are what hold the partition's size down in the first place.
+        final boolean allowRewrite = !partitionCompactionPolicy.isSelectedPartitionHot();
+        final int result = compactPhysicalPartition(partitionIndex, allowMoveTail, allowRewrite, deadline);
         switch (result) {
             case COMPACTION_REWRITTEN -> partitionCompactionPolicy.onCompacted(partitionTs);
             case COMPACTION_MOVED_TAIL -> {
@@ -15531,6 +15594,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             case COMPACTION_NONE -> partitionCompactionPolicy.onDeclined(partitionTs, wallClockMicros);
+            // COMPACTION_SKIPPED_HOT takes no backoff on purpose - see the constant.
             default -> {
             }
         }
