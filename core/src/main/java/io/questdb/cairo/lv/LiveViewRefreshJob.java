@@ -2792,18 +2792,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean lvConsumedPersisted = false;
             // LV-table applied seqTxn for the fence stamp; LONG_NULL until apply.
             long lvAppliedSeqTxn = Numbers.LONG_NULL;
+            // LV-table committed seqTxn, alongside the applied one: the un-stamp branch below
+            // rebuilds only when the two agree. LONG_NULL until apply.
+            long lvCommittedSeqTxn = Numbers.LONG_NULL;
             long removedRows = 0;
             if (appendedRows > 0) {
                 // LV apply runs inline on this thread. The
                 // global ApplyWal2TableJob.doRun skips LV tokens, so without
                 // applyWalDirect here the LIVE_VIEW_DATA block would sit
                 // unapplied and the on-disk tier would not catch up.
+                final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
                 removedRows = applyLiveViewWal(instance);
                 // Capture the just-applied LV-table seqTxn (matches a query
                 // reader's getSeqTxn()) to stamp the slot below.
-                lvAppliedSeqTxn = engine.getTableSequencerAPI()
-                        .getTxnTracker(instance.getLiveViewToken())
-                        .getWriterTxn();
+                lvAppliedSeqTxn = lvTracker.getWriterTxn();
+                // Read the committed seqTxn once, right after it: the rebuild decision below
+                // compares the two, and a DDL sequenced between two reads would make the same
+                // apply look fully drained to one comparison and partial to the other.
+                lvCommittedSeqTxn = lvTracker.getSeqTxn();
                 // Apply has committed the _txn (the durability cut for the rows).
                 // Now publish the new lvConsumedSeqTxn floor and persist _lv.s
                 // through the refresh worker's reusable BlockFileWriter + Path so
@@ -2851,26 +2857,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // handleRefreshFailure which ticks the flush-retry budget.
                 persistState(instance);
             }
+            // Set by the un-stamp branch below when the apply left disk fully current: the
+            // rebuild at the end of this cycle then re-establishes the slot as a subset of disk,
+            // instead of leaving reads disk-only until the next base commit.
+            boolean isTierRebuildDue = false;
             if (lvConsumedPersisted && populateTier && appendedRows > 0) {
                 if (removedRows > 0) {
                     // The apply that landed this cycle's rows also removed durable ones, so
                     // the slot's retained band may hold rows disk no longer has. Publishing
                     // on top of it would re-stamp those rows as a subset of disk; un-stamp
-                    // instead so the fence routes reads disk-only, and let the next cycle
-                    // rebuild the slot from the surviving table. flushLead applies the same
-                    // un-stamp on the lead path and rebuilds in the same cycle; this path is
-                    // effectively unreachable (see the publish branch below) and keeps the
-                    // deferred rebuild.
+                    // instead so the fence routes reads disk-only, and rebuild the slot from
+                    // the surviving table below - the same disposition flushLead and
+                    // drainAppliedBase take.
                     restampSlot(instance, Numbers.LONG_NULL, 0);
                     instance.setTierStale(true);
+                    // Only when the apply drained the LV WAL whole. A part-way apply leaves
+                    // blocks outstanding, and retryPendingLiveViewApply rebuilds when it lands
+                    // them, so a rebuild here would be repeated.
+                    isTierRebuildDue = lvCommittedSeqTxn == lvAppliedSeqTxn;
                 } else {
                     // Publish the just-applied rows into the tier as a subset of disk
                     // (leadRowCount = 0). Failure to acquire a write slot is a
                     // non-fatal stall: the on-disk tier still advanced, the in-mem
-                    // tier just trails this cycle. Any tier-populating output schema
-                    // (fixed-width, SYMBOL via eager interning, or var-length) is
-                    // lead-eligible and takes the refresh/flush split instead, so this
-                    // disk-subset publish is effectively unreachable; kept defensively.
+                    // tier just trails this cycle. A view whose output schema the tier
+                    // cannot store never gets here (populateTier is false above), so the
+                    // one route that reaches it with a live tier is a DEDUP base whose
+                    // range isRangeProvablyClean admitted: dedup makes the view coupled,
+                    // and the clean range sends it down this raw-WAL drain rather than
+                    // drainAppliedBase. That is this publish's real workload, not a
+                    // defensive leftover.
                     publishToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows, false);
                 }
             }
@@ -2889,6 +2904,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // in-WAL-order draft and hands off to o3Replay, which writes
                 // its own fresh head on completion (follow-up commit).
                 maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, batchMaxTs, appendedRows, false);
+                if (isTierRebuildDue) {
+                    // After the reconcile and the seal, as on the lead path: a rebuild failure
+                    // must not skip either.
+                    rebuildInMemoryTierAfterApply(instance);
+                }
             }
         }
     }
@@ -3220,11 +3240,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
             boolean lvConsumedPersisted = false;
             long removedRows = 0;
+            // LV-table committed seqTxn, alongside the applied one: the un-stamp branch below
+            // rebuilds only when the two agree. LONG_NULL until apply.
+            long lvCommittedSeqTxn = Numbers.LONG_NULL;
             if (appendedRows > 0) {
+                final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
                 removedRows = applyLiveViewWal(instance);
-                lvAppliedSeqTxn = engine.getTableSequencerAPI()
-                        .getTxnTracker(instance.getLiveViewToken())
-                        .getWriterTxn();
+                lvAppliedSeqTxn = lvTracker.getWriterTxn();
+                // Read the committed seqTxn once, right after it: the rebuild decision below
+                // compares the two, and a DDL sequenced between two reads would make the same
+                // apply look fully drained to one comparison and partial to the other.
+                lvCommittedSeqTxn = lvTracker.getSeqTxn();
             }
             try {
                 engine.advanceLiveViewConsumedSeqTxn(instance.getLiveViewToken(), effectiveSeqTxn, blockFileWriter, path);
@@ -3238,16 +3264,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (!lvConsumedPersisted) {
                 persistState(instance);
             }
+            // Set by the un-stamp branch below when the apply left disk fully current: the
+            // rebuild at the end of this cycle then re-establishes the slot as a subset of disk.
+            // It matters more here than on the lead path: this disk-subset publish is the tier's
+            // only feed for a dedup base, so a deferred rebuild leaves the view reading disk-only
+            // until its next base commit - which never comes for an idle view.
+            boolean isTierRebuildDue = false;
             if (lvConsumedPersisted && populateTier && appendedRows > 0) {
                 if (removedRows > 0) {
                     // Same un-stamp as flushLead: the apply removed durable rows, so the slot's
-                    // retained band is not provably a subset of disk any more. Un-stamp and
-                    // let the next cycle rebuild it from the surviving table. flushLead rebuilds
-                    // in the same cycle (rebuildInMemoryTierAfterFlush); this path still defers,
-                    // so a dedup-base view whose apply evicted reads disk-only until its next
-                    // base commit.
+                    // retained band is not provably a subset of disk any more. Un-stamp so the
+                    // fence routes reads disk-only, and rebuild it from the surviving table below.
                     restampSlot(instance, Numbers.LONG_NULL, 0);
                     instance.setTierStale(true);
+                    // Only when the apply drained the LV WAL whole. A part-way apply leaves
+                    // blocks outstanding, and retryPendingLiveViewApply rebuilds when it lands
+                    // them (this path never carries an un-flushed lead, so hasPendingLiveViewApply
+                    // picks the view up), so a rebuild here would be repeated.
+                    isTierRebuildDue = lvCommittedSeqTxn == lvAppliedSeqTxn;
                 } else {
                     // Publish the just-applied rows into the tier as a subset of disk
                     // (leadRowCount = 0). This disk-subset publish is the tier's only feed
@@ -3258,6 +3292,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (lvConsumedPersisted && appendedRows > 0) {
                 reconcilePendingPartitionRemovals(instance);
                 maybeWriteHeadCheckpoint(instance, windowFactory, effectiveSeqTxn, batchMaxTs, appendedRows, false);
+                if (isTierRebuildDue) {
+                    // After the reconcile and the seal, as on the lead path: a rebuild failure
+                    // must not skip either. instance.leadRowCount was set to 0 above, which is
+                    // the identity restageInMemoryTierFromDisk requires.
+                    rebuildInMemoryTierAfterApply(instance);
+                }
             }
         } finally {
             if (reader != null) {
@@ -4236,31 +4276,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             reconcilePendingPartitionRemovals(instance);
             maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, flushedMaxTs, flushRows, false);
             if (isTierRebuildDue) {
-                rebuildInMemoryTierAfterFlush(instance);
+                rebuildInMemoryTierAfterApply(instance);
             }
         }
     }
 
     /**
-     * Rebuilds the in-memory tier from the LV table right after a flush whose apply left the
-     * table fully applied but could not re-stamp the published slot: the commit's own
-     * housekeeping evicted TTL partitions, or the apply drained a backlog under this flush's
-     * block (a DROP PARTITION sequenced while a lead was un-flushed lands that way). Disk holds
-     * every committed row and {@code instance.leadRowCount} is already 0, which is the identity
+     * Rebuilds the in-memory tier from the LV table right after an inline apply that left the
+     * table fully applied but cost the published slot its stamp: the commit's own housekeeping
+     * evicted TTL partitions, or the apply drained a backlog under this cycle's own block (a
+     * DROP PARTITION sequenced while a lead was un-flushed lands that way). Disk holds every
+     * committed row and {@code instance.leadRowCount} is already 0, which is the identity
      * {@link #restageInMemoryTierFromDisk} needs, so a fresh cursor regains seam routing in the
      * same cycle instead of running disk-only until the next base commit - which never comes
-     * for an idle view. Runs after the head seal so a rebuild failure cannot skip it.
+     * for an idle view. Every caller runs it after the head seal, so a rebuild failure cannot
+     * skip that or the removal's reconciliation.
      * <p>
-     * A failure is logged and swallowed: the flush itself is complete and durable, the slot is
+     * All three cycles that apply inline and publish the tier call it: {@link #flushLead} on the
+     * lead path, and the two disk-subset publishes a DEDUP base takes - {@link #drainAppliedBase}'s
+     * forward append, and {@link #incrementalRefresh}'s coupled raw-WAL cycle over a range
+     * {@code isRangeProvablyClean} admitted.
+     * <p>
+     * A failure is logged and swallowed: the cycle itself is complete and durable, the slot is
      * un-stamped, and the seqTxn fence keeps reads correct (disk-only) until a later cycle
      * rebuilds. Same disposition as {@link #retryPendingLiveViewApply}.
      */
-    private void rebuildInMemoryTierAfterFlush(LiveViewInstance instance) {
+    private void rebuildInMemoryTierAfterApply(LiveViewInstance instance) {
         try {
             rebuildInMemoryTier(instance);
         } catch (Throwable t) {
             instance.setTierStale(true);
-            LOG.error().$("live view in-mem tier rebuild after flush failed, reads stay disk-only [view=")
+            LOG.error().$("live view in-mem tier rebuild after apply failed, reads stay disk-only [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
         }

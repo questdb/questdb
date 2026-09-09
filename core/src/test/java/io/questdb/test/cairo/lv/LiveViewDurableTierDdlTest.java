@@ -1350,6 +1350,190 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testTtlEvictionInsideDedupCleanCycleRebuildsTier() throws Exception {
+        // A view over a DEDUP base is coupled: it has no un-flushed lead, applies inline every
+        // cycle, and its disk-subset publish is the tier's only feed. When the range is provably
+        // clean the cycle runs through incrementalRefresh's raw-WAL drain, and when that cycle's
+        // own apply evicts a TTL partition it un-stamps the slot. It has to rebuild it in the same
+        // cycle: there is no flush to come back for, and refreshInstance only runs again on a new
+        // base commit, so an idle view would otherwise read disk-only for good.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createDedupBaseAndView();
+            execute("INSERT INTO base VALUES " +
+                    "('1970-01-01T00:00:00.000000Z', 1, 'a'), " +
+                    "('1970-01-02T00:00:00.000000Z', 2, 'b')");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveUntilDurableRowCount(job, 2);
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals("a dedup base is coupled and carries no lead", 0, instance.getLeadRowCount());
+                assertLadder(instance, ts("1970-01-02"), 2);
+
+                execute("ALTER LIVE VIEW lv SET TTL 1 DAY");
+                driveLiveViewWalApply(job);
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                Assert.assertEquals(2, instance.getLvRowsTotal());
+
+                // Nothing in the range dedups, so isRangeProvablyClean admits it and the cycle
+                // takes the raw-WAL drain. TTL judges age by the smaller of the table frontier and
+                // the wall clock, so move the clock up to the frontier this commit creates.
+                final long cleanCyclesBefore = instance.getDedupRawWalCleanCycles();
+                setCurrentMicros(ts("1970-01-03T00:00:00.000000Z"));
+                execute("INSERT INTO base VALUES ('1970-01-03T00:00:00.000000Z', 3, 'c')");
+                driveUntil(
+                        job,
+                        () -> {
+                            try (TableReader reader = engine.getReader(lvToken)) {
+                                return reader.size() == 2 && reader.getPartitionCount() == 2 && reader.getMinTimestamp() == ts("1970-01-02");
+                            }
+                        },
+                        "the dedup-clean cycle never evicted 1970-01-01"
+                );
+                Assert.assertTrue(
+                        "the evicting cycle must take the clean raw-WAL drain, not drainAppliedBase",
+                        instance.getDedupRawWalCleanCycles() > cleanCyclesBefore
+                );
+                assertQuery("SELECT name FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name
+                                1970-01-02
+                                1970-01-03
+                                """);
+                // The cycle un-stamped the slot and rebuilt it from the surviving table before it
+                // returned: no base commit has arrived since, and a fresh cursor seams again.
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertFalse("the cycle must rebuild the tier itself", instance.isTierStale());
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-02T00:00:00.000000Z\t2\t1
+                                1970-01-03T00:00:00.000000Z\t3\t1
+                                """);
+                assertQuery("SELECT min(x), max(x) FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("min\tmax\n2\t3\n");
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                Assert.assertEquals("the evicted row must leave the lifetime counter", 2, instance.getLvRowsTotal());
+                assertRetentionMarker(lvToken, false);
+                assertTimelineExists(lvToken, true);
+                Assert.assertEquals(0, readRetiredCheckpointCount(lvToken));
+                assertLadder(instance, ts("1970-01-02"), 1, ts("1970-01-03"), 2);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT * FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn
+                            1970-01-02T00:00:00.000000Z\t2\t1
+                            1970-01-03T00:00:00.000000Z\t3\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testTtlEvictionInsideDedupForwardAppendRebuildsTier() throws Exception {
+        // The other coupled cycle of a DEDUP base: a range that actually deduped is not provably
+        // clean, so the refresh reads the applied, post-dedup base through drainAppliedBase. Its
+        // forward append un-stamps the slot on an eviction exactly as the clean cycle does, and
+        // owes the rebuild in that same cycle for the same reason.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createDedupBaseAndView();
+            execute("INSERT INTO base VALUES " +
+                    "('1970-01-01T00:00:00.000000Z', 1, 'a'), " +
+                    "('1970-01-02T00:00:00.000000Z', 2, 'b')");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveUntilDurableRowCount(job, 2);
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                assertLadder(instance, ts("1970-01-02"), 2);
+
+                execute("ALTER LIVE VIEW lv SET TTL 1 DAY");
+                driveLiveViewWalApply(job);
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+
+                // Both rows of this commit share (ts, sym), so the apply dedups one away and the
+                // base's clean-range signal diverges - which routes the refresh through
+                // drainAppliedBase. The commit's minimum timestamp is still above the view's
+                // frontier, so it takes the forward append there rather than an O3 replay.
+                final long cleanCyclesBefore = instance.getDedupRawWalCleanCycles();
+                setCurrentMicros(ts("1970-01-03T00:00:00.000000Z"));
+                execute("INSERT INTO base VALUES " +
+                        "('1970-01-03T00:00:00.000000Z', 3, 'c'), " +
+                        "('1970-01-03T00:00:00.000000Z', 33, 'c')");
+                driveUntil(
+                        job,
+                        () -> {
+                            try (TableReader reader = engine.getReader(lvToken)) {
+                                return reader.size() == 2 && reader.getPartitionCount() == 2 && reader.getMinTimestamp() == ts("1970-01-02");
+                            }
+                        },
+                        "the dedup forward append never evicted 1970-01-01"
+                );
+                Assert.assertEquals(
+                        "the evicting cycle must take drainAppliedBase, not the clean raw-WAL drain",
+                        cleanCyclesBefore,
+                        instance.getDedupRawWalCleanCycles()
+                );
+                assertQuery("SELECT name FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name
+                                1970-01-02
+                                1970-01-03
+                                """);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertFalse("the cycle must rebuild the tier itself", instance.isTierStale());
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+                // The deduped row is the survivor of the pair, so x = 33 rather than 3.
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-02T00:00:00.000000Z\t2\t1
+                                1970-01-03T00:00:00.000000Z\t33\t1
+                                """);
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                Assert.assertEquals("the evicted row must leave the lifetime counter", 2, instance.getLvRowsTotal());
+                assertRetentionMarker(lvToken, false);
+                assertTimelineExists(lvToken, true);
+                Assert.assertEquals(0, readRetiredCheckpointCount(lvToken));
+                assertLadder(instance, ts("1970-01-02"), 1, ts("1970-01-03"), 2);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT * FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn
+                            1970-01-02T00:00:00.000000Z\t2\t1
+                            1970-01-03T00:00:00.000000Z\t33\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testTtlEvictionDuringSeedCompletesWithoutDuplicating() throws Exception {
         // TTL enforcement stays live while the view is SEEDING, so the sweep's own commits evict
         // days its earlier turns wrote. The sweep has to ride that out, because its coordinates
@@ -2182,6 +2366,19 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         try (TableReader reader = engine.getReader(lvToken)) {
             return reader.size();
         }
+    }
+
+    /**
+     * Base table with DEDUP keys, so the view it backs is coupled: no un-flushed lead, an inline
+     * apply every cycle, and the tier fed only by the cycle's disk-subset publish. Which of the two
+     * coupled cycles runs depends on the range - a provably clean one takes {@code incrementalRefresh}'s
+     * raw-WAL drain, a range that deduped takes {@code drainAppliedBase}.
+     */
+    private void createDedupBaseAndView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL " +
+                "DEDUP UPSERT KEYS(ts, sym)");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY DAY START FROM NOW AS " +
+                "(SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
     }
 
     private void createBaseAndView(String partitionByClause) throws Exception {
