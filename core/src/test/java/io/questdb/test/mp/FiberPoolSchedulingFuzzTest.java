@@ -281,6 +281,7 @@ public class FiberPoolSchedulingFuzzTest {
         final CountDownLatch killFired = new CountDownLatch(1);
         final AtomicBoolean isKilledWithLocalWork = new AtomicBoolean();
         final CountDownLatch haltReady = new CountDownLatch(1);
+        final CountDownLatch poolExercised = new CountDownLatch(1);
         final AtomicLong opCount = new AtomicLong();
         final AtomicLong ownerNestedLaunchCount = new AtomicLong();
         final AtomicLong capacityWaitCount = new AtomicLong();
@@ -295,7 +296,8 @@ public class FiberPoolSchedulingFuzzTest {
                     new FiberCancellationSignal(),
                     firstError,
                     ownerNestedLaunchCount,
-                    capacityWaitCount
+                    capacityWaitCount,
+                    poolExercised
             ));
         }
 
@@ -383,6 +385,9 @@ public class FiberPoolSchedulingFuzzTest {
                 // an exit observed after the runtime closes stops the shard instead of orphaning it
                 awaitKilledWorkerExit(runtime, firstError);
             }
+            // Driver API calls can reach the halt checkpoint before any Worker executes a task.
+            // Wait for a real step while the runtime is open, before halt can abandon queued work.
+            awaitLatch(poolExercised, firstError, "Worker did not execute a fuzz task before halt");
             haltPool(pool, isBoundedHalt);
             isStopRequested.set(true);
             isEventDone.set(true);
@@ -543,6 +548,7 @@ public class FiberPoolSchedulingFuzzTest {
         private final AtomicReference<Throwable> firstError;
         private final AtomicBoolean isRunning = new AtomicBoolean();
         private final AtomicLong ownerNestedLaunchCount;
+        private final CountDownLatch poolExercised;
         private final Rnd rnd;
         private final FiberRuntime runtime;
         private final ObjList<FuzzTask> tasks;
@@ -556,12 +562,14 @@ public class FiberPoolSchedulingFuzzTest {
                 FiberCancellationSignal cancellationSignal,
                 AtomicReference<Throwable> firstError,
                 AtomicLong ownerNestedLaunchCount,
-                AtomicLong capacityWaitCount
+                AtomicLong capacityWaitCount,
+                CountDownLatch poolExercised
         ) {
             this.cancellationSignal = cancellationSignal;
             this.capacityWaitCount = capacityWaitCount;
             this.firstError = firstError;
             this.ownerNestedLaunchCount = ownerNestedLaunchCount;
+            this.poolExercised = poolExercised;
             this.rnd = rnd;
             this.runtime = runtime;
             this.tasks = tasks;
@@ -655,7 +663,9 @@ public class FiberPoolSchedulingFuzzTest {
                 exclusionViolationCount.incrementAndGet();
             }
             try {
-                stepCount.incrementAndGet();
+                if (stepCount.incrementAndGet() == 1) {
+                    poolExercised.countDown();
+                }
                 final int dice = rnd.nextInt(10);
                 if (dice < 2) {
                     launchPeer();
