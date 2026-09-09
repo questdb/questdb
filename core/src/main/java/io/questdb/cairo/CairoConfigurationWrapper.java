@@ -1095,6 +1095,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSequencerCheckMinInterval() {
+        return getDelegate().getSequencerCheckMinInterval();
+    }
+
+    @Override
     public @NotNull CharSequence getSnapshotInstanceId() {
         return getDelegate().getSnapshotInstanceId();
     }

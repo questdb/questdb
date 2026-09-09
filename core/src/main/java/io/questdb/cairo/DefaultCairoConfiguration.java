@@ -1084,6 +1084,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSequencerCheckMinInterval() {
+        return 500;
+    }
+
+    @Override
     public long getSequencerCheckInterval() {
         return 10_000;
     }
