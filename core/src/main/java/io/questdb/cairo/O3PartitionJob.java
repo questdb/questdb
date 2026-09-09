@@ -83,6 +83,12 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
 
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
+    /**
+     * Stride of the executor's result piece list: the four longs a piece has always carried, then the
+     * commit that last moved its bytes and when.
+     */
+    private static final int PIECES_STRIDE = 6;
+
 
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
     // Bin cap for transaction clustering: the finest bin is a minute, widened when a partition's span
@@ -183,7 +189,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         tsLo,
                         tsHi,
                         rowOffset,
-                        rowCount
+                        rowCount,
+                        geometry.getPieceWriterTxn(partitionIndex, p),
+                        geometry.getPieceLastWriteMicros(partitionIndex, p)
                 );
             }
 
@@ -410,7 +418,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         boolean isComposite = txReader.isPartitionComposite(partitionIndex);
         if (!isComposite) {
             long tiledTo = 0;
-            for (int i = 0, n = ctx.pieces.size(); i < n; i += 4) {
+            for (int i = 0, n = ctx.pieces.size(); i < n; i += PIECES_STRIDE) {
                 if (ctx.pieces.getQuick(i + 2) != tiledTo) {
                     isComposite = true;
                     break;
@@ -459,12 +467,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // Pieces are recorded by the executor in timestamp order, which is what addPiece requires.
         long liveRows = 0;
         geometry.beginUpdate(partitionIndex);
-        for (int i = 0, n = ctx.pieces.size(); i < n; i += 4) {
+        for (int i = 0, n = ctx.pieces.size(); i < n; i += PIECES_STRIDE) {
             geometry.addPiece(
                     ctx.pieces.getQuick(i),
                     ctx.pieces.getQuick(i + 1),
                     ctx.pieces.getQuick(i + 2),
-                    ctx.pieces.getQuick(i + 3)
+                    ctx.pieces.getQuick(i + 3),
+                    ctx.pieces.getQuick(i + 4),
+                    ctx.pieces.getQuick(i + 5)
             );
             liveRows += ctx.pieces.getQuick(i + 3);
         }
@@ -496,7 +506,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 .$(", dir=").$substr(tableWriter.getPathRootSize(), dirPath)
                 // What the partition ENDS UP with: a plan whose pieces tile publishes no geometry, and
                 // such a partition holds one piece by definition.
-                .$(", pieces=").$(piecesBefore).$("->").$(isComposite ? ctx.pieces.size() / 4 : (fullyReplaced ? 0 : 1))
+                .$(", pieces=").$(piecesBefore).$("->").$(isComposite ? ctx.pieces.size() / PIECES_STRIDE : (fullyReplaced ? 0 : 1))
                 .$(", split=").$(piecesBefore - piecesBeforeCuts)
                 .$(", keep=").$(keepCount)
                 .$(", merge=").$(mergeCount)
@@ -714,6 +724,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final FrameFactory frameFactory = tableWriter.getFrameFactory();
         final int commitMode = tableWriter.getConfiguration().getCommitMode();
         final long upcomingTableTxn = tableWriter.getTxn() + 1;
+        final long nowMicros = tableWriter.getConfiguration().getMicrosecondClock().getTicks();
         partitionPath.of(pathToTable);
         TableUtils.setPathForNativePartition(
                 partitionPath,
@@ -771,7 +782,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex),
                                     appendTsHi,
                                     O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex),
-                                    appendRowCount
+                                    appendRowCount,
+                                    upcomingTableTxn,
+                                    nowMicros
                             );
                     case DROP -> {
                         // The replace range covers this piece and no O3 rows landed on it: nothing is read
@@ -784,7 +797,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex),
                                     O3CompositeMergeStrategy.getTsHi(bounds, action.pieceIndex),
                                     O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex),
-                                    O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex)
+                                    O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex),
+                                    O3CompositeMergeStrategy.getWriterTxn(bounds, action.pieceIndex),
+                                    O3CompositeMergeStrategy.getLastWriteMicros(bounds, action.pieceIndex)
                             );
                     case NEW_PIECE -> {
                         final long at = e;
@@ -798,7 +813,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 getTimestampIndexValue(sortedTimestampsAddr, action.o3Lo),
                                 getTimestampIndexValue(sortedTimestampsAddr, action.o3Hi),
                                 at,
-                                o3Rows
+                                o3Rows,
+                                upcomingTableTxn,
+                                nowMicros
                         );
                     }
                     case MERGE -> {
@@ -897,7 +914,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex),
                                     O3CompositeMergeStrategy.getTsHi(bounds, action.pieceIndex),
                                     pieceLo,
-                                    pieceRows
+                                    pieceRows,
+                                    O3CompositeMergeStrategy.getWriterTxn(bounds, action.pieceIndex),
+                                    O3CompositeMergeStrategy.getLastWriteMicros(bounds, action.pieceIndex)
                             );
                             continue;
                         }
@@ -915,7 +934,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         getTimestampIndexValue(sortedTimestampsAddr, action.o3Hi)
                                 ),
                                 at,
-                                mergeRows
+                                mergeRows,
+                                upcomingTableTxn,
+                                nowMicros
                         );
                     }
                 }
@@ -949,6 +970,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final FrameFactory frameFactory = tableWriter.getFrameFactory();
         final int commitMode = tableWriter.getConfiguration().getCommitMode();
         final long upcomingTableTxn = tableWriter.getTxn() + 1;
+        final long nowMicros = tableWriter.getConfiguration().getMicrosecondClock().getTicks();
         // The CURRENT (pre-increment) txn names both the fresh directory and, once the sink is consumed,
         // the attachedPartitions entry pointing at it.
         final long newNameTxn = tableWriter.getTxn();
@@ -1302,9 +1324,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * Records one piece of the geometry being built: {@code tsLo}, {@code tsHi}, {@code rowOffset},
      * {@code rowCount}, in the order {@link PartitionGeometry#addPiece} takes them.
      */
-    private static void addNewPiece(LongList piecesOut, long tsLo, long tsHi, long rowOffset, long rowCount) {
+    private static void addNewPiece(
+            LongList piecesOut, long tsLo, long tsHi, long rowOffset, long rowCount, long writerTxn, long lastWriteMicros
+    ) {
         piecesOut.add(tsLo, tsHi);
         piecesOut.add(rowOffset, rowCount);
+        piecesOut.add(writerTxn, lastWriteMicros);
     }
 
     /**
@@ -1313,20 +1338,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      */
     private static void foldAdjacentPieces(LongList pieces) {
         final int n = pieces.size();
-        if (n <= 4) {
+        if (n <= PIECES_STRIDE) {
             return;
         }
         int w = 0;
-        for (int r = 0; r < n; r += 4) {
+        for (int r = 0; r < n; r += PIECES_STRIDE) {
             final long tsLo = pieces.getQuick(r);
             final long tsHi = pieces.getQuick(r + 1);
             final long rowOffset = pieces.getQuick(r + 2);
             final long rowCount = pieces.getQuick(r + 3);
-            if (w > 0 && rowOffset == pieces.getQuick(w - 2) + pieces.getQuick(w - 1)) {
+            final long writerTxn = pieces.getQuick(r + 4);
+            final long lastWriteMicros = pieces.getQuick(r + 5);
+            if (w > 0 && rowOffset == pieces.getQuick(w - 4) + pieces.getQuick(w - 3)) {
                 if (rowCount > 0) {
-                    pieces.setQuick(w - 3, tsHi);
+                    pieces.setQuick(w - 5, tsHi);
                 }
-                pieces.setQuick(w - 1, pieces.getQuick(w - 1) + rowCount);
+                pieces.setQuick(w - 3, pieces.getQuick(w - 3) + rowCount);
+                // The fold is as recent as its freshest input: a run holding one piece this commit moved
+                // is not settled, whatever the pieces beside it carry.
+                pieces.setQuick(w - 2, Math.max(pieces.getQuick(w - 2), writerTxn));
+                pieces.setQuick(w - 1, Math.max(pieces.getQuick(w - 1), lastWriteMicros));
                 continue;
             }
             if (w != r) {
@@ -1334,8 +1365,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 pieces.setQuick(w + 1, tsHi);
                 pieces.setQuick(w + 2, rowOffset);
                 pieces.setQuick(w + 3, rowCount);
+                pieces.setQuick(w + 4, writerTxn);
+                pieces.setQuick(w + 5, lastWriteMicros);
             }
-            w += 4;
+            w += PIECES_STRIDE;
         }
         pieces.setPos(w);
     }

@@ -170,6 +170,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
+    // Stride of compactionPieceScratch: a piece's four longs plus the commit that last moved its bytes.
+    private static final int PIECE_SCRATCH_STRIDE = 6;
     public static final int O3_BLOCK_O3 = 1;
     // Oversized partitionUpdateSink (offset, description):
     // 0, partitionTimestamp
@@ -8229,6 +8231,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *
      * @return true when a run was folded and a transaction committed
      */
+    private static void addScratchPiece(PartitionGeometry geometry, LongList pieces, int p) {
+        final int at = p * PIECE_SCRATCH_STRIDE;
+        geometry.addPiece(
+                pieces.getQuick(at),
+                pieces.getQuick(at + 1),
+                pieces.getQuick(at + 2),
+                pieces.getQuick(at + 3),
+                pieces.getQuick(at + 4),
+                pieces.getQuick(at + 5)
+        );
+    }
+
     private boolean foldContiguousPieces(int partitionIndex) {
         final PartitionGeometry geometry = getGeometry();
         final int pieceCount = geometry.getPieceCount(partitionIndex);
@@ -8244,6 +8258,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     geometry.getPieceRowOffset(partitionIndex, p),
                     geometry.getPieceRowCount(partitionIndex, p)
             );
+            pieces.add(
+                    geometry.getPieceWriterTxn(partitionIndex, p),
+                    geometry.getPieceLastWriteMicros(partitionIndex, p)
+            );
         }
 
         int bestLo = -1;
@@ -8252,9 +8270,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         while (lo < pieceCount) {
             int hi = lo + 1;
             while (hi < pieceCount) {
-                final long prevOffset = pieces.getQuick((hi - 1) * 4 + 2);
-                final long prevCount = pieces.getQuick((hi - 1) * 4 + 3);
-                final long curOffset = pieces.getQuick(hi * 4 + 2);
+                final long prevOffset = pieces.getQuick((hi - 1) * PIECE_SCRATCH_STRIDE + 2);
+                final long prevCount = pieces.getQuick((hi - 1) * PIECE_SCRATCH_STRIDE + 3);
+                final long curOffset = pieces.getQuick(hi * PIECE_SCRATCH_STRIDE + 2);
                 if (curOffset != prevOffset + prevCount) {
                     break;
                 }
@@ -8268,7 +8286,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // The survivor keeps its own row offset, so the run must not start on an empty piece, whose
         // offset is not the run's. Dropping it loses nothing - it carries no rows.
-        while (bestLen > 1 && pieces.getQuick(bestLo * 4 + 3) == 0) {
+        while (bestLen > 1 && pieces.getQuick(bestLo * PIECE_SCRATCH_STRIDE + 3) == 0) {
             bestLo++;
             bestLen--;
         }
@@ -8276,18 +8294,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
 
-        final long survivorTsLo = pieces.getQuick(bestLo * 4);
-        final long survivorRowOffset = pieces.getQuick(bestLo * 4 + 2);
+        final long survivorTsLo = pieces.getQuick(bestLo * PIECE_SCRATCH_STRIDE);
+        final long survivorRowOffset = pieces.getQuick(bestLo * PIECE_SCRATCH_STRIDE + 2);
         long rowCount = 0;
         long timestampHi = Numbers.LONG_NULL;
+        // JOIN moves no bytes, so the survivor is exactly as settled as its freshest input.
+        long survivorWriterTxn = -1;
+        long survivorLastWriteMicros = Numbers.LONG_NULL;
         for (int p = bestLo; p < bestLo + bestLen; p++) {
-            final long size = pieces.getQuick(p * 4 + 3);
+            final long size = pieces.getQuick(p * PIECE_SCRATCH_STRIDE + 3);
             rowCount += size;
             if (size > 0) {
                 // Must not fall back to an earlier piece's value: unset means unknown, and a tsHi that
                 // is too small makes the transaction clusterer cut the survivor's range short.
-                timestampHi = pieces.getQuick(p * 4 + 1);
+                timestampHi = pieces.getQuick(p * PIECE_SCRATCH_STRIDE + 1);
             }
+            survivorWriterTxn = Math.max(survivorWriterTxn, pieces.getQuick(p * PIECE_SCRATCH_STRIDE + 4));
+            survivorLastWriteMicros = Math.max(survivorLastWriteMicros, pieces.getQuick(p * PIECE_SCRATCH_STRIDE + 5));
         }
 
         final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
@@ -8305,11 +8328,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         geometry.beginUpdate(partitionIndex);
         for (int p = 0; p < bestLo; p++) {
-            geometry.addPiece(pieces.getQuick(p * 4), pieces.getQuick(p * 4 + 1), pieces.getQuick(p * 4 + 2), pieces.getQuick(p * 4 + 3));
+            addScratchPiece(geometry, pieces, p);
         }
-        geometry.addPiece(survivorTsLo, timestampHi, survivorRowOffset, rowCount);
+        geometry.addPiece(survivorTsLo, timestampHi, survivorRowOffset, rowCount, survivorWriterTxn, survivorLastWriteMicros);
         for (int p = bestLo + bestLen; p < pieceCount; p++) {
-            geometry.addPiece(pieces.getQuick(p * 4), pieces.getQuick(p * 4 + 1), pieces.getQuick(p * 4 + 2), pieces.getQuick(p * 4 + 3));
+            addScratchPiece(geometry, pieces, p);
         }
         if (stillComposite) {
             geometry.commitUpdate(partitionIndex, e);
@@ -9851,7 +9874,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 geometry.getPieceTimestampLo(partitionIndex, 0),
                 geometry.getPieceTimestampHi(partitionIndex, 0),
                 0,
-                prefixRows
+                prefixRows,
+                // The front's bytes do not move, so it keeps piece 0's provenance.
+                geometry.getPieceWriterTxn(partitionIndex, 0),
+                geometry.getPieceLastWriteMicros(partitionIndex, 0)
         );
         geometry.commitUpdate(partitionIndex, e);
         // E must not move: assert what commitUpdate's own max() already enforces, defensively.
