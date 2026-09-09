@@ -35,6 +35,7 @@ pub mod parquet_metadata;
 pub mod parquet_read;
 pub mod parquet_write;
 pub mod qwp_zstd;
+pub mod regex_match;
 mod wal_lock;
 
 use jni::sys::jlong;
