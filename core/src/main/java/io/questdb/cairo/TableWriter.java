@@ -514,7 +514,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 repairMetaRename(todoMem);
             }
             this.metadata = new TableWriterMetadata(this.tableToken);
-            openMetaFile(ff, path, pathSize, ddlMem, metadata);
+            if (metadataFileIsMissingOrTooShort()) {
+                repairCommittedMetadataFromSwap(Long.MIN_VALUE, true);
+            }
+            try {
+                openMetaFile(ff, path, pathSize, ddlMem, metadata);
+            } catch (CairoException e) {
+                ddlMem.close(false);
+                if (!repairCommittedMetadataFromSwap(Long.MIN_VALUE, false)) {
+                    throw e;
+                }
+                openMetaFile(ff, path, pathSize, ddlMem, metadata);
+            }
+            if (metadata.getMetadataVersion() != txWriter.getMetadataVersion()) {
+                final long currentVersion = metadata.getMetadataVersion();
+                ddlMem.close(false);
+                repairCommittedMetadataFromSwap(currentVersion, true);
+                openMetaFile(ff, path, pathSize, ddlMem, metadata);
+            }
             this.metadata.setTxReader(txWriter);
             this.timestampType = metadata.getTimestampType();
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
@@ -12823,6 +12840,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void recoverFromTodoWriteFailure() {
         restoreMetaFrom(META_PREV_FILE_NAME, metaPrevIndex);
+        // The rollback rename is the on-disk state _txn still describes. Make
+        // that directory entry durable before the caller clears _todo_.
+        syncTableDirectoryAfterMetadataRename();
         openMetaFile(ff, path, pathSize, ddlMem, metadata);
         columnCount = metadata.getColumnCount();
     }
@@ -13292,6 +13312,45 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean metadataFileIsMissingOrTooShort() {
+        try {
+            path.concat(META_FILE_NAME).$();
+            return !ff.exists(path.$()) || ff.length(path.$()) < META_OFFSET_COLUMN_TYPES;
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
+    private boolean repairCommittedMetadataFromSwap(long currentVersion, boolean failIfNoMatch) {
+        final long expectedVersion = txWriter.getMetadataVersion();
+        for (int index = 0, n = configuration.getMaxSwapFileCount(); index < n; index++) {
+            final long swapVersion = readValidatedMetadataVersion(META_SWAP_FILE_NAME, index);
+            if (swapVersion == expectedVersion) {
+                LOG.info()
+                        .$("recovering committed metadata from swap [table=").$(tableToken)
+                        .$(", expectedVersion=").$(expectedVersion)
+                        .$(", currentVersion=").$(currentVersion)
+                        .$(", swapIndex=").$(index)
+                        .I$();
+                ff.remove(other.concat(META_FILE_NAME).$());
+                other.trimTo(pathSize);
+                restoreMetaFrom(META_SWAP_FILE_NAME, index);
+                syncTableDirectoryAfterMetadataRename();
+                clearTodoLog();
+                return true;
+            }
+        }
+
+        if (failIfNoMatch) {
+            throw CairoException.critical(0)
+                    .put("unrecoverable metadata version mismatch [table=").put(tableToken)
+                    .put(", txnVersion=").put(expectedVersion)
+                    .put(", metaVersion=").put(currentVersion)
+                    .put(", no valid metadata swap matches the committed transaction]");
+        }
+        return false;
+    }
+
     private long repairDataGaps(final long timestamp) {
         if (txWriter.getMaxTimestamp() != Numbers.LONG_NULL && PartitionBy.isPartitioned(partitionBy)) {
             long fixedRowCount = 0;
@@ -13384,6 +13443,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         return timestamp;
+    }
+
+    private long readValidatedMetadataVersion(CharSequence fileName, int index) {
+        try {
+            path.concat(fileName);
+            if (index > 0) {
+                path.put('.').put(index);
+            }
+            path.$();
+            if (!ff.exists(path.$())) {
+                return Long.MIN_VALUE;
+            }
+
+            final long len = ff.length(path.$());
+            if (len < 1) {
+                return Long.MIN_VALUE;
+            }
+
+            ddlMem.of(ff, path.$(), ff.getPageSize(), len, MemoryTag.MMAP_TABLE_WRITER, CairoConfiguration.O_NONE, POSIX_MADV_RANDOM);
+            validationMap.clear();
+            validateMeta(path, ddlMem, validationMap, ColumnType.VERSION);
+            return ddlMem.getLong(META_OFFSET_METADATA_VERSION);
+        } catch (CairoException e) {
+            LOG.info().$("ignoring invalid metadata recovery candidate [path=").$(path)
+                    .$(", error=").$safe(e.getFlyweightMessage()).I$();
+            return Long.MIN_VALUE;
+        } finally {
+            ddlMem.close(false);
+            path.trimTo(pathSize);
+        }
     }
 
     private void repairMetaRename(MemoryMARW todoMem) {
@@ -13712,6 +13801,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // rename _meta.swp to _meta
         renameSwapMetaToMeta();
+
+        // The following _txn commit publishes the metadata version to readers.
+        // Persist both renames before that commit can become durable, otherwise a
+        // power loss may restore the old _meta while retaining the new _txn.
+        // Readers then wait forever for a metadata version that does not exist.
+        try {
+            syncTableDirectoryAfterMetadataRename();
+        } catch (CairoException e) {
+            runFragile(RECOVER_FROM_SWAP_RENAME_FAILURE, e);
+        }
+    }
+
+    private void syncTableDirectoryAfterMetadataRename() {
+        if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
+            ff.fsyncAndClose(openRONoCache(ff, path.trimTo(pathSize).$(), LOG));
+        }
     }
 
     private int rewriteMetadata(TableWriterMetadata metadata) {
