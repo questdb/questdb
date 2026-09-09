@@ -17,6 +17,12 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ConcurrentHashMap;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.LPSZ;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -45,6 +51,55 @@ public class WalEventChecksumTest extends AbstractCairoTest {
                     WalUtils.WALE_CHECKSUM_HEADER_SIZE + WalUtils.WALE_CHECKSUM_ENTRY_LENGTH_OFFSET));
             Assert.assertEquals(WalUtils.WALE_HEADER_SIZE, readLong(checksum,
                     WalUtils.WALE_CHECKSUM_HEADER_SIZE + WalUtils.WALE_CHECKSUM_ENTRY_OFFSET_OFFSET));
+        });
+    }
+
+    /**
+     * The sidecar mapping must be sized from the OPEN fd, not from a path stat taken beforehand.
+     * <p>
+     * {@code WalEventReader.of()} used to stat {@code _event.c} by path and then open and map it as two
+     * separate steps. A writer finalising the segment truncates the preallocated sidecar down to its used
+     * size in between, so the reader asks to map the PREALLOCATED length of a file that is now much
+     * shorter. On Linux that oversized read-only mapping succeeds -- the reader only touches entries
+     * inside the valid region, so nothing faults and the bug is invisible. On Windows
+     * {@code CreateFileMapping} cannot extend a file under {@code PAGE_READONLY} and fails outright with
+     * {@code ERROR_NOT_ENOUGH_MEMORY} (8), so {@code ApplyWal2TableJob} suspends the table:
+     * <pre>
+     * cannot read WAL event file for seqTxn=1179, could not mmap [size=65536, offset=0, fileLen=88]
+     * </pre>
+     * Reported against a 100M-row Windows ingest under adaptive, 4/4 runs, never on Linux with the same
+     * jar and workload. Linux masks the defect rather than not having it, which is why this test models
+     * the Windows mapping rule explicitly instead of relying on the host platform.
+     */
+    @Test
+    public void testSidecarMappingIsSizedFromTheOpenFdNotAStalePathStat() throws Exception {
+        final StaleStatWindowsMappingFacade ff = new StaleStatWindowsMappingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            // Arm only now: the table is built, so from here every _event.c stat reports the size the
+            // sidecar had BEFORE the writer finalised the segment, which is what the reader would have
+            // captured had it stat'd a moment earlier.
+            ff.arm();
+            engine.releaseInactive();
+            execute("insert into x values ('2024-01-01T00:00:01.000000Z', 2)");
+            drainWalQueue();
+
+            Assert.assertTrue(
+                    "precondition: the reader must have mapped a sidecar while the stale stat was armed",
+                    ff.sawSidecarMapping()
+            );
+            Assert.assertFalse(
+                    "the sidecar mapping must never exceed the file's real length; Windows rejects that"
+                            + " outright and the table suspends. Oversized request: " + ff.oversizedDetail(),
+                    ff.sawOversizedMapping()
+            );
+            assertQuery("select count() from x").noRandomAccess().expectSize().returns("""
+                    count
+                    2
+                    """);
         });
     }
 
@@ -142,4 +197,80 @@ public class WalEventChecksumTest extends AbstractCairoTest {
     private static void writeInt(byte[] bytes, int offset, int value) {
         ByteBuffer.wrap(bytes, offset, Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN).putInt(value);
     }
+
+    /**
+     * Models the two halves of the reported Windows failure: a path stat that reports the sidecar's
+     * PREALLOCATED size (the writer truncates it immediately afterwards), and a read-only mmap that
+     * refuses to extend the file, as {@code CreateFileMapping} does under {@code PAGE_READONLY}.
+     * <p>
+     * Fault injection only -- it models a documented platform rule, and asserts nothing about what a
+     * correct reader would ask for beyond "not more than the file holds".
+     */
+    private static class StaleStatWindowsMappingFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean armed = new AtomicBoolean();
+        private final AtomicLong oversizedLen = new AtomicLong(-1);
+        private final AtomicLong oversizedReal = new AtomicLong(-1);
+        private final AtomicBoolean sawSidecarMapping = new AtomicBoolean();
+        private final ConcurrentHashMap<Long, Long> sidecarFds = new ConcurrentHashMap<>();
+
+        public void arm() {
+            armed.set(true);
+        }
+
+        @Override
+        public long length(LPSZ name) {
+            final long real = super.length(name);
+            if (armed.get() && Utf8s.endsWithAscii(name, WalUtils.EVENT_CHECKSUM_FILE_NAME) && real > 0) {
+                // The stat the reader would have taken before the writer finalised the segment.
+                return Math.max(real, PREALLOCATED_SIDECAR_SIZE);
+            }
+            return real;
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            final Long real = sidecarFds.get(fd);
+            if (real != null) {
+                sawSidecarMapping.set(true);
+                if (flags == io.questdb.std.Files.MAP_RO && offset + len > real) {
+                    // CreateFileMapping under PAGE_READONLY cannot grow the file: ERROR_NOT_ENOUGH_MEMORY.
+                    oversizedLen.set(len);
+                    oversizedReal.set(real);
+                    return -1;
+                }
+            }
+            return super.mmap(fd, len, offset, flags, memoryTag);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            final long fd = super.openRO(name);
+            if (fd > -1 && Utf8s.endsWithAscii(name, WalUtils.EVENT_CHECKSUM_FILE_NAME)) {
+                // Record the REAL length against the open fd, which is what Windows enforces against.
+                sidecarFds.put(fd, super.length(fd));
+            }
+            return fd;
+        }
+
+        @Override
+        public boolean close(long fd) {
+            sidecarFds.remove(fd);
+            return super.close(fd);
+        }
+
+        public String oversizedDetail() {
+            return "size=" + oversizedLen.get() + " fileLen=" + oversizedReal.get();
+        }
+
+        public boolean sawOversizedMapping() {
+            return oversizedLen.get() >= 0;
+        }
+
+        public boolean sawSidecarMapping() {
+            return sawSidecarMapping.get();
+        }
+    }
+
+    private static final long PREALLOCATED_SIDECAR_SIZE = 64 * 1024;
+
 }

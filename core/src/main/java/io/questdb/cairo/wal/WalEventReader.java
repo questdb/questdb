@@ -110,20 +110,33 @@ public class WalEventReader implements Closeable {
             // absent means read unverified, and a sidecar that IS present still has to be well-formed.
             final boolean checksumRequired;
             path.trimTo(pathLen).concat(EVENT_CHECKSUM_FILE_NAME);
-            final long checksumSize = ff.length(path.$());
-            if (checksumSize >= WALE_CHECKSUM_HEADER_SIZE) {
-                checksumRequired = true;
-                // Map the actual sidecar length, not an untrusted _event maxTxn-derived size. The cursor
-                // validates that the requested transaction's entry is present before reading it.
+            // Presence probe ONLY. This stat must not size the mapping: the writer preallocates the
+            // sidecar and truncates it down to its used size when it finalises the segment, so a size
+            // captured here is stale the moment that truncation lands.
+            if (ff.length(path.$()) >= WALE_CHECKSUM_HEADER_SIZE) {
+                // Size from the OPEN fd (size < 0), so the length used is the one the file has once this
+                // reader holds it open. Passing the stat above instead asks to map more than the file
+                // holds, which Linux allows -- the reader never touches past the valid entries, so it
+                // goes unnoticed -- while Windows rejects it outright: CreateFileMapping cannot extend a
+                // file under PAGE_READONLY, and ApplyWal2TableJob suspends the table. See
+                // WalEventChecksumTest#testSidecarMappingIsSizedFromTheOpenFdNotAStalePathStat.
                 eventChecksumMem.of(
                         ff,
                         path.$(),
                         ff.getPageSize(),
-                        checksumSize,
+                        -1,
                         MemoryTag.MMAP_TABLE_WAL_READER,
                         CairoConfiguration.O_NONE,
                         Files.POSIX_MADV_RANDOM
                 );
+                // Re-validate against what was actually mapped, not what the stat promised.
+                final long checksumSize = eventChecksumMem.size();
+                if (checksumSize < WALE_CHECKSUM_HEADER_SIZE) {
+                    throw TableUtils.validationException()
+                            .put("WAL event checksum sidecar is truncated [path=").put(path)
+                            .put(", size=").put(checksumSize).put(']');
+                }
+                checksumRequired = true;
                 if (eventChecksumMem.getLong(0) != WALE_CHECKSUM_MAGIC
                         || eventChecksumMem.getInt(Long.BYTES) != WALE_CHECKSUM_FILE_VERSION
                         || eventChecksumMem.getInt(Long.BYTES + Integer.BYTES) != WALE_CHECKSUM_ENTRY_SIZE) {
