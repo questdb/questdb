@@ -52,8 +52,9 @@ import java.util.Base64;
  */
 public final class QwpWireTestFixtures {
     /**
-     * RFC 6455 handshake nonce. A public protocol value, not a secret -- see the
-     * {@code generic-api-key} allowlist entry in {@code .gitleaks.toml}.
+     * RFC 6455 handshake nonce. A public protocol value, not a secret; this
+     * repository's {@code .gitleaks.toml} exempts it through the blanket
+     * {@code (^|/)src/test/} path allowlist rather than a per-value rule.
      */
     public static final String WEBSOCKET_KEY = "AQIDBAUGBwgJCgsMDQ4PEA==";
 

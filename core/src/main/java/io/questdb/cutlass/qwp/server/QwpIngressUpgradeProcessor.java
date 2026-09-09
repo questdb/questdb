@@ -495,7 +495,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // frame below as SERVER_INFO_CAP_DURABLE_ACK instead. RFC 6455 is
         // satisfied either way -- we still never name a token the client did
         // not offer.
-        boolean durableAckWebSocketProtocolEnabled = durableAckWebSocketProtocolRequested;
         Utf8Sequence browserHandshake = requestHeader.getUrlParam(
                 QwpIngressHttpProcessor.URL_PARAM_QWP_BROWSER_HANDSHAKE);
         // Either browser carrier pulls the frame: a client that only wants
@@ -510,7 +509,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
-                effectiveMaxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocolEnabled);
+                effectiveMaxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocolRequested);
         if (browserServerInfoRequested) {
             requiredHandshakeSize += BROWSER_SERVER_INFO_WS_FRAME_BYTES;
         }
@@ -539,7 +538,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
-                effectiveMaxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocolEnabled);
+                effectiveMaxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocolRequested);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }

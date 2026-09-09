@@ -84,11 +84,11 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     public static final Utf8String URL_PARAM_QWP_MAX_BATCH_ROWS = new Utf8String("qwp_max_batch_rows");
     // Header values
     public static final Utf8String VALUE_WEBSOCKET = new Utf8String("websocket");
-    public static final Utf8String WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK = new Utf8String("questdb.qwp.durable-ack.v1");
     /**
      * The WebSocket magic GUID used in the Sec-WebSocket-Accept calculation.
      */
     public static final String WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    public static final Utf8String WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK = new Utf8String("questdb.qwp.durable-ack.v1");
     /**
      * The required WebSocket version (RFC 6455).
      */
@@ -145,9 +145,13 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     private static final byte[] RESPONSE_ROLE_PREFIX = "\r\nX-QuestDB-Role: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_SESSION_COOKIE_PREFIX = ("\r\nSet-Cookie: " + HttpConstants.SESSION_COOKIE_NAME + "=").getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_SUFFIX = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
-    // Browser-carrier counterpart of RESPONSE_DURABLE_ACK_ENABLED: echoed only
-    // when the client offered the subprotocol AND the registry is enabled, so
-    // the server never names a subprotocol the client did not offer.
+    // Browser-carrier counterpart of RESPONSE_DURABLE_ACK_ENABLED, but NOT its
+    // equivalent: this token is echoed whenever the client offered the
+    // subprotocol, enabled or not, so the server never names a subprotocol the
+    // client did not offer while still completing a handshake it must complete
+    // in order to report that durable ACK is unavailable. The capability, as
+    // opposed to the dialect, is carried by SERVER_INFO_CAP_DURABLE_ACK -- see
+    // QwpIngressUpgradeProcessor.onHeadersReady.
     private static final byte[] RESPONSE_WEBSOCKET_PROTOCOL_DURABLE_ACK =
             "\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1".getBytes(StandardCharsets.US_ASCII);
     private static final int SHA1_BASE64_SIZE = 28;
@@ -428,20 +432,13 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * {@code X-QWP-Content-Encoding} header echoing the negotiated compression
      * codec, an optional {@code X-QWP-Durable-Ack: enabled} confirmation
      * header, an optional {@code X-QuestDB-Role} header advertising the
-     * server role, and an optional {@code X-QWP-Max-Batch-Size} header
-     * advertising the server's ingest payload cap in bytes. Pass {@code null}
-     * / {@code false} to skip any of them. All byte[] arguments are written
-     * verbatim, so callers are expected to cache them on the hot path rather
-     * than allocating per handshake.
-     */
-    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
-        return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, maxBatchSizeBytes, null);
-    }
-
-    /**
-     * Same as the other response-size overloads, with an optional formatted
-     * {@code qdb_session} cookie value for session creation or rotation. The
-     * value must include cookie attributes but not the cookie name.
+     * server role, an optional {@code X-QWP-Max-Batch-Size} header advertising
+     * the server's ingest payload cap in bytes, and an optional formatted
+     * {@code qdb_session} cookie value for session creation or rotation (which
+     * must include cookie attributes but not the cookie name). Pass
+     * {@code null} / {@code false} to skip any of them. All byte[] arguments
+     * are written verbatim, so callers are expected to cache them on the hot
+     * path rather than allocating per handshake.
      */
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes) {
         return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, false);
@@ -576,21 +573,14 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * codec (e.g. {@code zstd;level=1}), an optional
      * {@code X-QWP-Durable-Ack: enabled} confirmation that this connection
      * will receive {@code STATUS_DURABLE_ACK} frames, an optional
-     * {@code X-QuestDB-Role} header advertising the server role, and an
-     * optional {@code X-QWP-Max-Batch-Size} header advertising the server's
-     * ingest payload cap in bytes. Pass {@code null} / {@code false} to skip
-     * any of them. All byte[] arguments are written verbatim, so callers are
-     * expected to cache them on the hot path rather than allocating per
+     * {@code X-QuestDB-Role} header advertising the server role, an optional
+     * {@code X-QWP-Max-Batch-Size} header advertising the server's ingest
+     * payload cap in bytes, and an optional formatted {@code qdb_session}
+     * cookie value for session creation or rotation (which must include cookie
+     * attributes but not the cookie name). Pass {@code null} / {@code false} to
+     * skip any of them. All byte[] arguments are written verbatim, so callers
+     * are expected to cache them on the hot path rather than allocating per
      * handshake.
-     */
-    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
-        return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, maxBatchSizeBytes, null);
-    }
-
-    /**
-     * Same as the other response-writing overloads, with an optional formatted
-     * {@code qdb_session} cookie value for session creation or rotation. The
-     * value must include cookie attributes but not the cookie name.
      */
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes) {
         return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, false);

@@ -248,12 +248,12 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
             int maxBatchSize = 16 * 1024 * 1024;
             byte[] maxBatchSizeBytes = Integer.toString(maxBatchSize).getBytes(StandardCharsets.US_ASCII);
             int expectedSize = QwpIngressHttpProcessor.responseSize(
-                    acceptKey, 1, null, false, null, maxBatchSizeBytes);
+                    acceptKey, 1, null, false, null, maxBatchSizeBytes, null);
 
             long buf = allocateBuffer(512);
             try {
                 int written = QwpIngressHttpProcessor.writeResponse(
-                        buf, acceptKey, 1, null, false, null, maxBatchSizeBytes);
+                        buf, acceptKey, 1, null, false, null, maxBatchSizeBytes, null);
                 Assert.assertEquals(expectedSize, written);
 
                 String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
@@ -393,7 +393,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
             long buf = allocateBuffer(256);
             try {
                 int written = QwpIngressHttpProcessor.writeResponse(
-                        buf, acceptKey, 1, null, false, null, null);
+                        buf, acceptKey, 1, null, false, null, null, null);
 
                 String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
                 Assert.assertFalse("did not expect X-QWP-Max-Batch-Size header, got: " + response,
