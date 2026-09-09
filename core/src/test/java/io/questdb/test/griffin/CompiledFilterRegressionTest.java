@@ -9187,14 +9187,14 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * {@code executionContext.isParallelFilterEnabled()} - so it pins the oracle itself rather than
      * a fourth backend, and asserts that no compiled filter is in play there.
      */
-    private void assertBooleanFilterInAllModes(String whereExpr, long expectedRows) throws SqlException {
+    private void assertBooleanFilterInAllModes(String whereExpr, long expectedRows) throws Exception {
         // expectedRows is this site's own declaration of the answer, so it also decides whether
         // the predicate is one of the contradictions whose answer IS no rows.
         assertJitMatchesJavaInAllModes("b WHERE " + whereExpr, expectedRows == 0);
 
         final String countQuery = "SELECT count() FROM b WHERE " + whereExpr;
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        assertBooleanFilterRowCount(countQuery, SqlJitMode.JIT_MODE_DISABLED, expectedRows);
+        assertBooleanFilterRowCount(countQuery, expectedRows);
         // The two JIT modes go through assertJitCountQuery, which walks the same count cursor and
         // additionally asserts usesCompiledFilter(). Without that the count() query's JIT usage
         // sits unpinned: count() takes a different code path from the row-returning form
@@ -9211,22 +9211,19 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                         factory.usesCompiledFilter()
                 );
             }
-            assertBooleanFilterRowCount(countQuery, SqlJitMode.JIT_MODE_ENABLED, expectedRows);
+            assertBooleanFilterRowCount(countQuery, expectedRows);
         } finally {
             sqlExecutionContext.setParallelFilterEnabled(true);
         }
     }
 
-    private void assertBooleanFilterRowCount(String countQuery, int jitMode, long expectedRows) throws SqlException {
+    private void assertBooleanFilterRowCount(String countQuery, long expectedRows) throws Exception {
         try (RecordCursorFactory factory = select(countQuery)) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Assert.assertTrue(countQuery, cursor.hasNext());
-                Assert.assertEquals(
-                        "row count mismatch at jitMode=" + jitMode + " for: " + countQuery,
-                        expectedRows,
-                        cursor.getRecord().getLong(0)
-                );
-            }
+            assertFactory(factory)
+                    .withContext(sqlExecutionContext)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n" + expectedRows + "\n");
         }
     }
 
@@ -9256,7 +9253,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * from going vacuous if the fixture ever stops discriminating. Every count passed here is a
      * proper non-empty subset of the fixture's 35 rows.
      */
-    private void assertColumnFreeComparisonDeclines(String predicate, long expectedRows) throws SqlException {
+    private void assertColumnFreeComparisonDeclines(String predicate, long expectedRows) throws Exception {
         assertPredicateDeclines(predicate, expectedRows);
     }
 
@@ -9269,7 +9266,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * since both runs are then the same Java filter, so {@code expectJit == false} is what keeps
      * the site live and {@code expectedRows} keeps it from going vacuous.
      */
-    private void assertPredicateDeclines(String predicate, long expectedRows) throws SqlException {
+    private void assertPredicateDeclines(String predicate, long expectedRows) throws Exception {
         final String rowQuery = "x WHERE " + predicate;
         final String countQuery = "SELECT count() FROM x WHERE " + predicate;
         // JIT_MODE_DISABLED versus JIT_MODE_ENABLED, plus the non-empty guard.
@@ -9287,7 +9284,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * mode rather than merely tolerating it, and still demands the decline: a defect that starts
      * adding rows, or a fixture that silently starts matching, has to redden a test somewhere.
      */
-    private void assertPredicateDeclinesOnEmptyResult(String predicate) throws SqlException {
+    private void assertPredicateDeclinesOnEmptyResult(String predicate) throws Exception {
         final String rowQuery = "x WHERE " + predicate;
         final String countQuery = "SELECT count() FROM x WHERE " + predicate;
         assertJitMatchesJavaOnEmptyResult(rowQuery, false);
@@ -9298,21 +9295,18 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     // JIT_MODE_FORCE_SCALAR is the third execution mode. Both backends must decline, not only
     // the vectorized one: they were wrong in the same direction, which is why parity between
     // them never flagged the shape.
-    private void assertPredicateDeclinesInScalarMode(String rowQuery, String countQuery, long expectedRows) throws SqlException {
+    private void assertPredicateDeclinesInScalarMode(String rowQuery, String countQuery, long expectedRows) throws Exception {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
         try (RecordCursorFactory factory = select(rowQuery)) {
             Assert.assertFalse("compiled filter is expected to decline for: " + rowQuery, factory.usesCompiledFilter());
         }
         try (RecordCursorFactory factory = select(countQuery)) {
             Assert.assertFalse("compiled filter is expected to decline for: " + countQuery, factory.usesCompiledFilter());
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Assert.assertTrue(countQuery, cursor.hasNext());
-                Assert.assertEquals(
-                        "[scalar mode] count mismatch for query: " + countQuery,
-                        expectedRows,
-                        cursor.getRecord().getLong(0)
-                );
-            }
+            assertFactory(factory)
+                    .withContext(sqlExecutionContext)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n" + expectedRows + "\n");
         }
     }
 

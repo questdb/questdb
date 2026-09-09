@@ -1107,6 +1107,10 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 CoveringCompressor.maxCompressedSize(200_000_000, ColumnType.DOUBLE)
         );
         Assert.assertEquals(
+                CoveringCompressor.FLOAT_ALP_HEADER_SIZE + 300_000_000L * 4 + 300_000_000L * 8,
+                CoveringCompressor.maxCompressedSize(300_000_000, ColumnType.FLOAT)
+        );
+        Assert.assertEquals(
                 CoveringCompressor.LONG_HEADER_SIZE + 300_000_000L * 8,
                 CoveringCompressor.maxCompressedSize(300_000_000, ColumnType.LONG)
         );
