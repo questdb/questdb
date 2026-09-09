@@ -97,6 +97,20 @@ public final class RawFileAccess {
         }
     }
 
+    public static void pokeInt(FilesFacade ff, LPSZ path, long offset, int value) {
+        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
+        Assert.assertTrue(fd > -1);
+        long buf = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putInt(buf, value);
+            Assert.assertEquals(Integer.BYTES, ff.write(fd, buf, Integer.BYTES, offset));
+            ff.fsync(fd);
+        } finally {
+            Unsafe.free(buf, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            ff.close(fd);
+        }
+    }
+
     public static void pokeLong(FilesFacade ff, LPSZ path, long offset, long value) {
         long fd = ff.openRW(path, CairoConfiguration.O_NONE);
         Assert.assertTrue(fd > -1);
