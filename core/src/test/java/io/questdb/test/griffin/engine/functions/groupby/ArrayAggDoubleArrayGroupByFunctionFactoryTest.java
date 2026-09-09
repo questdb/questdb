@@ -785,8 +785,8 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
             execute("CREATE TABLE tab (arr DOUBLE[])");
             assertExceptionNoLeakCheck(
                     "SELECT array_agg(DISTINCT arr) FROM tab",
-                    26,
-                    "dangling literal"
+                    17,
+                    "'distinct' is not allowed here"
             );
         });
     }
