@@ -86,7 +86,7 @@ public class O3CompositeMergeStrategy {
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_TS_HI, tsHi);
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_ROW_OFFSET, rowOffset + below);
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_ROW_COUNT, rows - below);
-        // A cut moves no bytes, so both halves are exactly as settled as the piece they came from.
+        // A cut moves no bytes, so both halves inherit the parent's pair.
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_WRITER_TXN, bounds.getQuick(at + BOUND_WRITER_TXN));
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_LAST_WRITE_MICROS, bounds.getQuick(at + BOUND_LAST_WRITE_MICROS));
         return true;

@@ -116,9 +116,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
         Unsafe.putLong(p + PIECE_OFFSET_TS_HI_64, tsHi);
         Unsafe.putLong(p + PIECE_OFFSET_ROW_OFFSET_64, rowOffset);
         Unsafe.putLong(p + PIECE_OFFSET_ROW_COUNT_64, rowCount);
-        // Per-piece provenance: which commit last MOVED this piece's bytes, and when. A piece the plan
-        // only KEEPs carries its predecessor's pair forward, so "settled" is a property of the piece and
-        // not of the partition, whose own header pair is refreshed by every commit that touches any of it.
+        // Which commit last moved this piece's bytes, and when. A KEEP carries the old pair forward.
         Unsafe.putLong(p + PIECE_OFFSET_WRITER_TXN_64, writerTxn);
         Unsafe.putLong(p + PIECE_OFFSET_LAST_WRITE_MICROS_64, lastWriteMicros);
         pieceCount++;
