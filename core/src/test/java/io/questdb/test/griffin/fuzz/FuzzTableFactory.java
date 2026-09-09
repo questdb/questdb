@@ -60,7 +60,7 @@ import java.time.format.DateTimeFormatter;
  * silent storage divergence surfaces as a row-set mismatch.
  * <p>
  * With {@link #COMPOSITE_PARTITION_CHANCE} probability the primary backdates
- * a handful of rows into one of its own non-active days, landing exactly on
+ * a handful of rows into one of its own non-active days, landing between
  * that day's existing timestamps. With merge-append enabled (see
  * {@code QueryFuzzTest#runFuzz}) this leaves the day a real composite
  * partition -- a relocated piece and dead space, not a simulated one. This
@@ -133,9 +133,9 @@ public final class FuzzTableFactory {
 
     /**
      * With {@link #COMPOSITE_PARTITION_CHANCE} probability, backdates a few rows
-     * into one non-active day the table already holds, landing exactly on that
-     * day's own existing timestamps ({@link #config}'s step evenly divides a day,
-     * so a day boundary is always a row boundary too). With merge-append enabled
+     * into one non-active day the table already holds, landing between that day's
+     * own existing timestamps ({@link #config}'s step evenly divides a day, so a
+     * day boundary is always a row boundary too). With merge-append enabled
      * this relocates the overlapping stride to the tail as its own piece and
      * leaves the superseded copy dead, making the day a genuine composite
      * partition. Returns the backdated day (ISO date), or {@code null} if the
@@ -260,7 +260,15 @@ public final class FuzzTableFactory {
     }
 
     /**
-     * Same shape as {@link #buildInsertDml}, but landing exactly on one day's own existing rows.
+     * Same shape as {@link #buildInsertDml}, but landing INSIDE one day's own existing rows: half a
+     * step above the day's start, so every backdated row falls between two rows the day already holds.
+     * Half a step and not zero, because a row landing exactly on an existing timestamp would give the
+     * table a tied pair, and the order a query returns a tie in is not decided by any storage layer -
+     * a cursor reading through a symbol index emits rows grouped by symbol key rather than in physical
+     * order, so a tie-sensitive projection such as {@code row_number() OVER (ORDER BY ts DESC)}
+     * numbers the pair differently on the indexed primary than on its non-indexed shadow, and the
+     * diff-shadow oracle reads that as storage divergence. Equal-timestamp merge order is covered
+     * directly instead, by {@code CompositeEqualTimestampOrderTest}.
      */
     private String buildOverlapInsertDml(String tableName, ObjList<FuzzColumn> columns, String day, int rowCount) {
         StringSink dml = new StringSink();
@@ -272,7 +280,8 @@ public final class FuzzTableFactory {
             FuzzColumn c = columns.getQuick(i);
             if (c.getName().equals(TS_COLUMN)) {
                 dml.put("timestamp_sequence(to_timestamp('").put(day)
-                        .put("', 'yyyy-MM-dd'), ").put(config.getStepMicros()).put("L)");
+                        .put("', 'yyyy-MM-dd') + ").put(config.getStepMicros() / 2).put("L, ")
+                        .put(config.getStepMicros()).put("L)");
             } else {
                 dml.put(c.getType().getRndCall());
             }
