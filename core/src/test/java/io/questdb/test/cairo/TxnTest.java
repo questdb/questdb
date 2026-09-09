@@ -322,16 +322,15 @@ public class TxnTest extends AbstractCairoTest {
                 expectedTxn = txWriter.getTxn();
             }
 
-            // Simulate an "old format" record by zeroing the checksum slot of the current area. The file-level
-            // capability marker has to go too: an old-format _txn predates the body checksum entirely, so it
-            // carries neither. Leaving the marker in place would describe a file that PROMISED a checksum
-            // here - the torn case, covered by TxnCapabilityChecksumTest, not the legacy one under test.
+            // Simulate an "old format" record by zeroing the checksum slot of the current area AND its stamp.
+            // An old-format _txn predates the body checksum entirely, so it carries neither. Leaving the stamp
+            // would describe a record that HAD a checksum and lost it - the torn case, covered by
+            // TxnChecksumStampTest, not the legacy one under test.
             try (Path path = new Path()) {
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                 pokeLong(ff, path.$(), currentBaseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64, 0L);
-                pokeLong(ff, path.$(), TableUtils.TX_BASE_OFFSET_CAPABILITY_MAGIC_64, 0L);
-                pokeLong(ff, path.$(), TableUtils.TX_BASE_OFFSET_CAPABILITY_WATERMARK_64, 0L);
+                pokeInt(ff, path.$(), currentBaseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_STAMP_32, 0);
             }
 
             TxReader.resetBodyChecksumFallbackCount();
@@ -381,14 +380,13 @@ public class TxnTest extends AbstractCairoTest {
                 legacyBaseOffset = txWriter.getBaseOffset();
             }
 
-            // Make it look like a record written before the checksum existed: no checksum AND no file-level
-            // capability marker, which is what such a file actually looks like. Clearing the marker is also
-            // what makes the migration real rather than assumed - the commit below has to re-stamp it.
+            // Make it look like a record written before the checksum existed: no checksum AND no stamp, which
+            // is what such a record actually looks like. Clearing the stamp is also what makes the migration
+            // real rather than assumed - the commit below has to write a fresh pair.
             try (Path path = new Path()) {
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                 pokeLong(ff, path.$(), legacyBaseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64, 0L);
-                pokeLong(ff, path.$(), TableUtils.TX_BASE_OFFSET_CAPABILITY_MAGIC_64, 0L);
-                pokeLong(ff, path.$(), TableUtils.TX_BASE_OFFSET_CAPABILITY_WATERMARK_64, 0L);
+                pokeInt(ff, path.$(), legacyBaseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_STAMP_32, 0);
                 Assert.assertEquals("precondition: the record must look old-format",
                         0L, peekLong(ff, path.$(), legacyBaseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64));
             }
@@ -412,17 +410,12 @@ public class TxnTest extends AbstractCairoTest {
                         0L,
                         peekLong(ff, path.$(), migratedBaseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64)
                 );
-                // The migration must also re-arm the file-level capability, otherwise a later torn write that
-                // zeroes this slot would read as legacy again and the guard would be back to being advisory.
-                Assert.assertEquals(
-                        "the migrating commit must re-stamp the checksum capability",
-                        TableUtils.TX_CHECKSUM_CAPABILITY_MAGIC,
-                        peekLong(ff, path.$(), TableUtils.TX_BASE_OFFSET_CAPABILITY_MAGIC_64)
-                );
-                Assert.assertTrue(
-                        "the re-stamped watermark must not be 0: it would cover the checksum-free records"
-                                + " already on disk",
-                        peekLong(ff, path.$(), TableUtils.TX_BASE_OFFSET_CAPABILITY_WATERMARK_64) > 0L
+                // The migration must also stamp the checksum with the record it belongs to, otherwise a later
+                // torn write that zeroes the slot would read as legacy again and the guard would be advisory.
+                Assert.assertNotEquals(
+                        "the migrating commit must stamp the checksum with its record",
+                        0,
+                        peekInt(ff, path.$(), migratedBaseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_STAMP_32)
                 );
             }
 
@@ -1835,6 +1828,10 @@ public class TxnTest extends AbstractCairoTest {
 
     // Positional 8-byte write of the _txn file. Used to corrupt a committed record on disk WITHOUT
     // recomputing its body checksum and WITHOUT truncating the file (a writable mmap would truncate).
+    private static void pokeInt(FilesFacade ff, LPSZ path, long offset, int value) {
+        RawFileAccess.pokeInt(ff, path, offset, value);
+    }
+
     private static void pokeLong(FilesFacade ff, LPSZ path, long offset, long value) {
         long fd = ff.openRW(path, CairoConfiguration.O_NONE);
         Assert.assertTrue(fd > -1);

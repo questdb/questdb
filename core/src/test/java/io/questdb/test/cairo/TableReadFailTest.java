@@ -165,13 +165,11 @@ public class TableReadFailTest extends AbstractCairoTest {
                 mem.jumpTo(recOffset + TableUtils.TX_OFFSET_TXN_64);
                 mem.putLong(txn + 2);
                 // The restored record is hand-written, so it has no valid body checksum. Zero the slot to mark
-                // it absent AND clear the file's capability marker: absent is only "legacy, skip the check"
-                // below the capability watermark. Leaving the marker (stamped by the writer's own commits
-                // above) would make this checksum-free record read as TORN - correctly so, which is the point
-                // of the fail-fast asserted a few lines up - and the restore would never load.
+                // it absent AND clear its stamp: a stamp naming this record says a checksum WAS written for
+                // it, which would make this hand-written record read as TORN - correctly so, which is the
+                // point of the fail-fast asserted a few lines up - and the restore would never load.
                 mem.putLong(recOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64, 0L);
-                mem.putLong(TableUtils.TX_BASE_OFFSET_CAPABILITY_MAGIC_64, 0L);
-                mem.putLong(TableUtils.TX_BASE_OFFSET_CAPABILITY_WATERMARK_64, 0L);
+                mem.putInt(recOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_STAMP_32, 0);
                 mem.jumpTo(offset);
                 mem.close();
                 mem.close();

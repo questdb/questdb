@@ -84,10 +84,10 @@ public class ChecksumArtifactsCrashTest extends AbstractCrashConsistencyTest {
     }
 
     @Test
-    public void testTornTxnCapabilityMarkerDegradesToLegacy() throws Exception {
-        // Tear the capability marker itself. Losing it must cost DETECTION (records fall back to
-        // "legacy, unverified"), never availability -- the alternative, condemning every record whose
-        // checksum the file no longer promises, would take out a healthy table.
+    public void testTornChecksumStampDegradesToLegacy() throws Exception {
+        // Tear the checksum and the stamp that names its record. Losing them must cost DETECTION (the record
+        // falls back to "unstamped, unverified"), never availability -- the alternative, condemning a record
+        // whose checksum metadata is gone, would take out a healthy table.
         runWithCrashFacade(() -> {
             execute("create table txntorn (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into txntorn values ('2024-01-01T00:00:00.000000Z', 1)");
@@ -97,7 +97,8 @@ public class ChecksumArtifactsCrashTest extends AbstractCrashConsistencyTest {
             markDurableBaseline();
             try (Path path = new Path()) {
                 path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME);
-                crashFf.tornTail(path.$(), TableUtils.TX_BASE_OFFSET_CAPABILITY_MAGIC_64, 16);
+                // [116,128) of area A: the 8 checksum bytes plus the 4-byte stamp.
+                crashFf.tornTail(path.$(), TableUtils.TX_BASE_HEADER_SIZE + TableUtils.TX_OFFSET_BODY_CHECKSUM_64, 12);
             }
             crashAndReopen();
 

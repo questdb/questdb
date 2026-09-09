@@ -163,13 +163,6 @@ public class TxReader implements Closeable, Mutable {
 
     public void dumpTo(MemoryW mem) {
         mem.putLong(TX_BASE_OFFSET_VERSION_64, version);
-        // Clear the capability marker for the same reason the body-checksum slot below is zeroed: a dumped
-        // record carries no body checksum, so the destination must not claim one was guaranteed. Explicit so
-        // the result is correct even if `mem` is a reused buffer with a stale marker in the base header -
-        // that would make the checksum-free record this writes read as TORN. The first commit after a restore
-        // from this dump re-stamps both.
-        mem.putLong(TX_BASE_OFFSET_CAPABILITY_MAGIC_64, 0L);
-        mem.putLong(TX_BASE_OFFSET_CAPABILITY_WATERMARK_64, 0L);
         boolean isA = (version & 1L) == 0L;
         final int baseOffset = TX_BASE_HEADER_SIZE;
         mem.putInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32, baseOffset);
@@ -191,11 +184,13 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
         mem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, lagOrdered ? lagTxnCount : -lagTxnCount);
-        // Write the absent (0) body-checksum sentinel: a dumped record carries no body checksum, so a reader
-        // skips the verify (back-compatible). Explicit so the result is correct even if `mem` is a reused
-        // buffer with stale bytes in the checksum slot [116,124). The first commit after a restore from this
-        // dump writes a real checksum.
+        // Write the absent (0) body-checksum sentinel and clear its stamp: a dumped record carries no body
+        // checksum, so a reader must skip the verify (back-compatible). Both are explicit because `mem` may
+        // be a reused buffer, and a stale stamp left beside the zeroed checksum would name this record and
+        // turn "no checksum" into "checksum missing" -- torn. The first commit after a restore from this dump
+        // writes a real pair.
         mem.putLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64, 0L);
+        mem.putInt(baseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32, 0);
         mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         int symbolMapCount = symbolCountSnapshot.size();
@@ -890,33 +885,38 @@ public class TxReader implements Closeable, Mutable {
      * ahead of a version bump, and the caller re-checks the version after this returns.
      */
     private boolean unsafeVerifyBodyChecksum() {
-        final long stored = roTxMemBase.getLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64);
-        final int classification;
-        if (stored == 0) {
-            classification = ChecksumTrailer.ABSENT;
-        } else {
-            classification = stored == calculateTxnBodyChecksum(
-                    roTxMemBase.addressOf(baseOffset),
-                    size,
-                    getPartitionTableSizeOffset(symbolColumnCount)
-            ) ? ChecksumTrailer.PRESENT_OK : ChecksumTrailer.MISMATCH;
+        // The stamp decides first, and it decides both questions at once. If it does not name this record,
+        // no checksum was ever written FOR this record -- the slot is legacy, or it belongs to a record a
+        // binary without the checksum overwrote in place -- so it is not evidence about this one. If it DOES
+        // name this record then a checksum was written for it, and a slot that is now zero or wrong is a
+        // torn write. That second half is why the stamp replaces the capability watermark rather than merely
+        // working around it: it recovers the same detection without recording a promise a downgrade cannot
+        // withdraw.
+        if (!unsafeChecksumStampNamesThisRecord(baseOffset, roTxMemBase.getLong(baseOffset + TX_OFFSET_TXN_64))) {
+            return true;
         }
-        final boolean covered = unsafeIsChecksumCovered(roTxMemBase.getLong(baseOffset + TX_OFFSET_TXN_64));
-        return ChecksumTrailer.applyCapability(classification, covered) != ChecksumTrailer.MISMATCH;
+        return roTxMemBase.getLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64) == calculateTxnBodyChecksum(
+                roTxMemBase.addressOf(baseOffset),
+                size,
+                getPartitionTableSizeOffset(symbolColumnCount)
+        );
     }
 
     /**
-     * True when the file's capability marker says a record with this txn was guaranteed a body checksum, so
-     * an absent one is tearing rather than legacy. False for any file written before the capability existed
-     * (the base-header slots are then zero, and no txn ever satisfies a magic that is not there).
+     * True when the checksum slot at {@code areaBaseOffset} was written for the record now occupying that
+     * area, rather than for an earlier one whose bytes a binary without the checksum overwrote in place.
+     * <p>
+     * Comparing the low 32 bits is enough: two records sharing an area offset would have to be 2^32 txns
+     * apart to collide, and even then the checksum itself still has to match.
+     * <p>
+     * 0 is the "no stamp" sentinel, and it has to be, because these bytes are zero in every file written
+     * before the stamp existed -- including a freshly created {@code _txn}, whose area txn is also 0. The
+     * cost is that one txn in 2^32 goes unverified instead of being checked; the alternative is condemning
+     * every legacy file and every empty table.
      */
-    private boolean unsafeIsChecksumCovered(long areaTxn) {
-        return ChecksumTrailer.isCovered(
-                roTxMemBase.getLong(TX_BASE_OFFSET_CAPABILITY_MAGIC_64),
-                TableUtils.TX_CHECKSUM_CAPABILITY_MAGIC,
-                roTxMemBase.getLong(TX_BASE_OFFSET_CAPABILITY_WATERMARK_64),
-                areaTxn
-        );
+    private boolean unsafeChecksumStampNamesThisRecord(long areaBaseOffset, long areaTxn) {
+        final int stamp = roTxMemBase.getInt(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32);
+        return stamp != 0 && stamp == (int) areaTxn;
     }
 
     /**
@@ -950,23 +950,15 @@ public class TxReader implements Closeable, Mutable {
         } else if (roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_TXN_64) != selectedVersion) {
             intact = false;
         } else {
-            final long stored = roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_64);
-            final int classification;
-            if (stored == 0) {
-                classification = ChecksumTrailer.ABSENT;
-            } else {
-                classification = stored == calculateTxnBodyChecksum(
-                        roTxMemBase.addressOf(areaBaseOffset),
-                        areaSize,
-                        getPartitionTableSizeOffset(areaSymbolsSize / Long.BYTES)
-                ) ? ChecksumTrailer.PRESENT_OK : ChecksumTrailer.MISMATCH;
-            }
-            // Same capability promotion as unsafeVerifyBodyChecksum, and it MUST be the same: the load path
-            // and this diagnosis path disagreeing would mean one file reported as corruption by one and as
-            // reader contention by the other. The area's stored txn equals selectedVersion here (guarded
-            // immediately above), so that is the record id the watermark is compared against.
-            intact = ChecksumTrailer.applyCapability(classification, unsafeIsChecksumCovered(selectedVersion))
-                    != ChecksumTrailer.MISMATCH;
+            // Same rule as unsafeVerifyBodyChecksum, and it MUST be the same: the load path and this
+            // diagnosis path disagreeing would mean one file reported as corruption by one and as reader
+            // contention by the other. The area's stored txn equals selectedVersion (guarded just above).
+            intact = !unsafeChecksumStampNamesThisRecord(areaBaseOffset, selectedVersion)
+                    || roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_64) == calculateTxnBodyChecksum(
+                    roTxMemBase.addressOf(areaBaseOffset),
+                    areaSize,
+                    getPartitionTableSizeOffset(areaSymbolsSize / Long.BYTES)
+            );
         }
 
         Unsafe.loadFence();
