@@ -170,7 +170,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
-    // Stride of compactionPieceScratch: a piece's four longs plus the commit that last moved its bytes.
+    // Stride of compactionPieceScratch: a piece's four longs, then the txn and time it last moved.
     private static final int PIECE_SCRATCH_STRIDE = 6;
     public static final int O3_BLOCK_O3 = 1;
     // Oversized partitionUpdateSink (offset, description):
@@ -8225,12 +8225,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /**
-     * JOIN (PARTITION_COMPACTION.md Sec.5): folds the longest run of {@code partitionIndex}'s pieces that are
-     * neighbours both in ordinal order and in the directory's column files (adjacent {@code rowOffset}s).
-     *
-     * @return true when a run was folded and a transaction committed
-     */
     private static void addScratchPiece(PartitionGeometry geometry, LongList pieces, int p) {
         final int at = p * PIECE_SCRATCH_STRIDE;
         geometry.addPiece(
@@ -8243,6 +8237,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         );
     }
 
+    /**
+     * JOIN (PARTITION_COMPACTION.md Sec.5): folds the longest run of {@code partitionIndex}'s pieces that are
+     * neighbours both in ordinal order and in the directory's column files (adjacent {@code rowOffset}s).
+     *
+     * @return true when a run was folded and a transaction committed
+     */
     private boolean foldContiguousPieces(int partitionIndex) {
         final PartitionGeometry geometry = getGeometry();
         final int pieceCount = geometry.getPieceCount(partitionIndex);
@@ -8298,7 +8298,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long survivorRowOffset = pieces.getQuick(bestLo * PIECE_SCRATCH_STRIDE + 2);
         long rowCount = 0;
         long timestampHi = Numbers.LONG_NULL;
-        // JOIN moves no bytes, so the survivor is exactly as settled as its freshest input.
+        // JOIN moves no bytes; the survivor takes the freshest pair in the run.
         long survivorWriterTxn = -1;
         long survivorLastWriteMicros = Numbers.LONG_NULL;
         for (int p = bestLo; p < bestLo + bestLen; p++) {
@@ -9875,7 +9875,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 geometry.getPieceTimestampHi(partitionIndex, 0),
                 0,
                 prefixRows,
-                // The front's bytes do not move, so it keeps piece 0's provenance.
+                // The front's bytes do not move, so it keeps piece 0's pair.
                 geometry.getPieceWriterTxn(partitionIndex, 0),
                 geometry.getPieceLastWriteMicros(partitionIndex, 0)
         );

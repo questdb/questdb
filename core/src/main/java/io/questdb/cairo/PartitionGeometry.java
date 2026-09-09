@@ -41,8 +41,8 @@ public class PartitionGeometry implements Closeable, Mutable {
     public static final int NO_PARTITION = -1;
     private static final long FLAG_DIRTY = 1L;
     /**
-     * Stride of {@link #pieces}: the six longs of the on-disk piece entry, then the piece's cumulative row - the
-     * running sum of the row counts before it.
+     * Stride of {@link #pieces}: the six longs of the on-disk piece entry, then the piece's cumulative row -
+     * the running sum of the row counts before it.
      */
     private static final int LONGS_PER_PIECE = 7;
     private static final int MIN_PIECE_HOLES = 1024;
@@ -236,9 +236,8 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * When the commit that last MOVED this piece's bytes ran. A KEEP carries its predecessor's value, so
-     * unlike {@link #getLastWriteMicros(int)} - which is the partition's, refreshed by every commit that
-     * touches any part of it - this is what makes one piece settled while its neighbour is hot.
+     * When this piece's bytes last moved. Unlike {@link #getLastWriteMicros(int)}, which every commit
+     * refreshes for the whole partition, this stays put while the piece does.
      */
     public long getPieceLastWriteMicros(int partitionIndex, int ordinal) {
         final int res = resolveInternal(partitionIndex);
@@ -286,8 +285,7 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * The writer txn of the commit that last MOVED this piece's bytes, or -1 when unknown. See
-     * {@link #getPieceLastWriteMicros(int, int)}.
+     * The txn that last moved this piece's bytes, or -1 when unknown.
      */
     public long getPieceWriterTxn(int partitionIndex, int ordinal) {
         final int res = resolveInternal(partitionIndex);

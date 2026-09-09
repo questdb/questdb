@@ -84,8 +84,7 @@ import static io.questdb.cairo.TableWriter.*;
 
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     /**
-     * Stride of the executor's result piece list: the four longs a piece has always carried, then the
-     * commit that last moved its bytes and when.
+     * Stride of the executor's result piece list: a piece's four longs, then the txn and time it last moved.
      */
     private static final int PIECES_STRIDE = 6;
 
@@ -1354,8 +1353,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     pieces.setQuick(w - 5, tsHi);
                 }
                 pieces.setQuick(w - 3, pieces.getQuick(w - 3) + rowCount);
-                // The fold is as recent as its freshest input: a run holding one piece this commit moved
-                // is not settled, whatever the pieces beside it carry.
+                // A fold is as recent as its freshest input.
                 pieces.setQuick(w - 2, Math.max(pieces.getQuick(w - 2), writerTxn));
                 pieces.setQuick(w - 1, Math.max(pieces.getQuick(w - 1), lastWriteMicros));
                 continue;
