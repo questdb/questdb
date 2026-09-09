@@ -120,15 +120,33 @@ public class WalEventReader implements Closeable {
                 // goes unnoticed -- while Windows rejects it outright: CreateFileMapping cannot extend a
                 // file under PAGE_READONLY, and ApplyWal2TableJob suspends the table. See
                 // WalEventChecksumTest#testSidecarMappingIsSizedFromTheOpenFdNotAStalePathStat.
-                eventChecksumMem.of(
-                        ff,
-                        path.$(),
-                        ff.getPageSize(),
-                        -1,
-                        MemoryTag.MMAP_TABLE_WAL_READER,
-                        CairoConfiguration.O_NONE,
-                        Files.POSIX_MADV_RANDOM
-                );
+                try {
+                    eventChecksumMem.of(
+                            ff,
+                            path.$(),
+                            ff.getPageSize(),
+                            -1,
+                            MemoryTag.MMAP_TABLE_WAL_READER,
+                            CairoConfiguration.O_NONE,
+                            Files.POSIX_MADV_RANDOM
+                    );
+                } catch (CairoException _couldNotMapSidecar) {
+                    // Sizing from the open fd narrows the window but does not close it: of() reads the
+                    // length and maps on the next line, and a truncation landing between the two asks
+                    // Windows to map past EOF again. Measure and map once more -- the segment is finalised
+                    // only once, so the second attempt sees a file that is no longer shrinking. Same
+                    // bounded retry as the _event.i mapping below, for the same platform reason. A second
+                    // failure propagates, so this cannot mask a persistent fault.
+                    eventChecksumMem.of(
+                            ff,
+                            path.$(),
+                            ff.getPageSize(),
+                            -1,
+                            MemoryTag.MMAP_TABLE_WAL_READER,
+                            CairoConfiguration.O_NONE,
+                            Files.POSIX_MADV_RANDOM
+                    );
+                }
                 // Re-validate against what was actually mapped, not what the stat promised.
                 final long checksumSize = eventChecksumMem.size();
                 if (checksumSize < WALE_CHECKSUM_HEADER_SIZE) {

@@ -71,6 +71,72 @@ public class WalEventChecksumTest extends AbstractCairoTest {
      * jar and workload. Linux masks the defect rather than not having it, which is why this test models
      * the Windows mapping rule explicitly instead of relying on the host platform.
      */
+    /**
+     * Sizing from the open fd narrows the window but does not close it: the length is read inside
+     * {@code MemoryCMRImpl.of()} and used by the {@code mmap} on the next line. A truncation landing
+     * between those two statements asks Windows to map more than the file holds all over again, and the
+     * table suspends with the same error the path stat produced.
+     * <p>
+     * The window is two adjacent statements with no syscall between them rather than the
+     * stat-open-validate span the reported failure needed, so this is far less likely -- but the
+     * truncation comes from another thread and can land anywhere, and the cost on Windows is a suspended
+     * table needing manual intervention. {@code _event.i} already carries the same bounded retry a few
+     * lines below, for this exact platform reason.
+     */
+    @Test
+    public void testSidecarMappingSurvivesTruncationBetweenLengthAndMap() throws Exception {
+        final StaleStatWindowsMappingFacade ff = new StaleStatWindowsMappingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            ff.armFdLengthRace();
+            engine.releaseInactive();
+            execute("insert into x values ('2024-01-01T00:00:01.000000Z', 2)");
+            drainWalQueue();
+
+            Assert.assertTrue(
+                    "precondition: the fd-length race must have fired, else this asserts nothing",
+                    ff.fdLengthRaceFired()
+            );
+            assertQuery("select count() from x").noRandomAccess().expectSize().returns("""
+                    count
+                    2
+                    """);
+        });
+    }
+
+    /**
+     * The retry above must be bounded, not a swallow. With the over-report made permanent both attempts
+     * fail, and the table must still suspend -- otherwise a genuine mapping fault would be retried once
+     * and then silently ignored, which is worse than the bug the retry fixes.
+     */
+    @Test
+    public void testPersistentMappingFailureStillSuspendsRatherThanBeingRetriedAway() throws Exception {
+        final StaleStatWindowsMappingFacade ff = new StaleStatWindowsMappingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("x");
+
+            ff.armFdLengthRacePermanently();
+            engine.releaseInactive();
+            execute("insert into x values ('2024-01-01T00:00:01.000000Z', 2)");
+            drainWalQueue();
+
+            Assert.assertTrue(
+                    "precondition: the over-report must have been served",
+                    ff.fdLengthRaceFired()
+            );
+            Assert.assertTrue(
+                    "a mapping that fails every attempt must surface, not be retried away",
+                    engine.getTableSequencerAPI().isSuspended(tt)
+            );
+        });
+    }
+
     @Test
     public void testSidecarMappingIsSizedFromTheOpenFdNotAStalePathStat() throws Exception {
         final StaleStatWindowsMappingFacade ff = new StaleStatWindowsMappingFacade();
@@ -208,6 +274,9 @@ public class WalEventChecksumTest extends AbstractCairoTest {
      */
     private static class StaleStatWindowsMappingFacade extends TestFilesFacadeImpl {
         private final AtomicBoolean armed = new AtomicBoolean();
+        private final AtomicBoolean fdLengthRaceArmed = new AtomicBoolean();
+        private final AtomicBoolean fdLengthRaceFired = new AtomicBoolean();
+        private final AtomicBoolean fdLengthRacePermanent = new AtomicBoolean();
         private final AtomicLong oversizedLen = new AtomicLong(-1);
         private final AtomicLong oversizedReal = new AtomicLong(-1);
         private final AtomicBoolean sawSidecarMapping = new AtomicBoolean();
@@ -215,6 +284,38 @@ public class WalEventChecksumTest extends AbstractCairoTest {
 
         public void arm() {
             armed.set(true);
+        }
+
+        /**
+         * Makes the NEXT length-of-open-fd call for the sidecar over-report, modelling a truncation that
+         * lands after the reader has measured the file but before it maps it. One-shot, so a retry that
+         * measures again sees the true length.
+         */
+        public void armFdLengthRace() {
+            fdLengthRaceArmed.set(true);
+        }
+
+        /**
+         * Over-reports the sidecar length on EVERY measurement, so the retry fails too. Discriminates a
+         * bounded retry from a swallowed error.
+         */
+        public void armFdLengthRacePermanently() {
+            fdLengthRacePermanent.set(true);
+        }
+
+        public boolean fdLengthRaceFired() {
+            return fdLengthRaceFired.get();
+        }
+
+        @Override
+        public long length(long fd) {
+            final long real = super.length(fd);
+            if (real > 0 && sidecarFds.containsKey(fd)
+                    && (fdLengthRacePermanent.get() || fdLengthRaceArmed.compareAndSet(true, false))) {
+                fdLengthRaceFired.set(true);
+                return real * 2;
+            }
+            return real;
         }
 
         @Override
