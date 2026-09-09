@@ -101,7 +101,16 @@ public class PerQueryMemoryTrackerProvider implements MemoryTrackerProvider {
         return pool.count();
     }
 
-    /** Resolves a limit for a new workload invocation. Existing trackers retain their acquired limit. */
+    private void drainPool() {
+        PerQueryMemoryTracker tracker;
+        while ((tracker = pool.pop()) != null) {
+            tracker.destroy();
+        }
+    }
+
+    /**
+     * Resolves a limit for a new workload invocation. Existing trackers retain their acquired limit.
+     */
     protected long limitFor(@NotNull SecurityContext securityContext, @NotNull MemoryTrackerWorkload workload) {
         return switch (workload) {
             case QUERY -> configuration.getQueryMemoryLimitBytes();
@@ -109,13 +118,6 @@ public class PerQueryMemoryTrackerProvider implements MemoryTrackerProvider {
             case WAL_APPLY -> configuration.getWalApplyMemoryLimitBytes();
             case LIVE_VIEW_REFRESH -> configuration.getLiveViewRefreshMemoryLimitBytes();
         };
-    }
-
-    private void drainPool() {
-        PerQueryMemoryTracker tracker;
-        while ((tracker = pool.pop()) != null) {
-            tracker.destroy();
-        }
     }
 
     void release(PerQueryMemoryTracker tracker) {
