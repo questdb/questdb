@@ -679,6 +679,115 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testDropPartitionAgainstUnflushedLeadLandsWithTheFlushAndRebuildsTier() throws Exception {
+        // A DROP sequenced while the view holds an un-flushed lead cannot land through the lagging
+        // scan's retry (hasPendingLiveViewApply defers to the flush while a lead is pending), so it
+        // waits for the FLUSH EVERY tick and the flush's own inline apply drains it together with
+        // the lead's block. That apply advances the writer txn by two, so the flush must not
+        // re-stamp the slot - the DROP's rows sit under the slot's band and the band is no longer
+        // the table's trailing rows - and, since the LV WAL is fully applied afterwards, it must
+        // rebuild the tier from the surviving table in the same cycle rather than leave the view
+        // disk-only until the next base commit. The lifetime counter and the timeline are
+        // reconciled in the same flush, and the seal lands on top of the corrected head.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createBaseAndView("PARTITION BY DAY");
+            execute("INSERT INTO base VALUES " +
+                    "('1970-01-01T00:00:00.000000Z', 1), " +
+                    "('1970-01-02T00:00:00.000000Z', 2), " +
+                    "('1970-01-03T00:00:00.000000Z', 3)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveUntilDurableRowCount(job, 3);
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+                assertLadder(instance, ts("1970-01-03"), 3);
+
+                // Drain a base row into the lead without moving the clock: quiescence returned on
+                // the tick after the last flush, so the FLUSH EVERY 1s deadline is not due and the
+                // row stays in RAM.
+                execute("INSERT INTO base VALUES ('1970-01-04T00:00:00.000000Z', 4)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertTrue("the row must sit in the un-flushed lead", instance.getLeadRowCount() > 0);
+                assertQuery("SELECT count() FROM table_partitions('lv')").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+                final long writerTxnBefore = tracker.getWriterTxn();
+
+                // The DROP is sequenced but nothing applies it: the retry path defers to the flush
+                // while the lead is pending, and a tick at the same clock flushes nothing.
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-01'");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertTrue("the DROP must wait for the flush", tracker.getSeqTxn() > tracker.getWriterTxn());
+                Assert.assertEquals(writerTxnBefore, tracker.getWriterTxn());
+                assertQuery("SELECT count() FROM table_partitions('lv')").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+
+                // The flush's apply lands the DROP and the lead's block in one pass.
+                setCurrentMicros(currentMicros + 1_000_000);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals("the flush must land the DROP and its own block", writerTxnBefore + 2, tracker.getWriterTxn());
+                Assert.assertEquals("the LV WAL must be fully applied", tracker.getSeqTxn(), tracker.getWriterTxn());
+                Assert.assertEquals(0, instance.getLeadRowCount());
+                assertQuery("SELECT name FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name
+                                1970-01-02
+                                1970-01-03
+                                1970-01-04
+                                """);
+                // The tier was rebuilt from the surviving table in the same flush: no base commit
+                // has arrived since, and a fresh cursor seams again instead of reading disk-only.
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertFalse("the flush must rebuild the tier itself", instance.isTierStale());
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-02T00:00:00.000000Z\t2\t1
+                                1970-01-03T00:00:00.000000Z\t3\t1
+                                1970-01-04T00:00:00.000000Z\t4\t1
+                                """);
+                assertQuery("SELECT min(x), max(x) FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("min\tmax\n2\t4\n");
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                Assert.assertEquals("the dropped row must leave the lifetime counter", 3, instance.getLvRowsTotal());
+                assertRetentionMarker(lvToken, false);
+                // The root above the dropped day survives, lowered by the row that went, and the
+                // seal appends the flush's own frontier on top of it; nothing counted as a mismatch.
+                assertTimelineExists(lvToken, true);
+                Assert.assertEquals(0, readRetiredCheckpointCount(lvToken));
+                assertLadder(instance, ts("1970-01-03"), 2, ts("1970-01-04"), 3);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                driveRefreshToQuiescence(job);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                assertNoRefreshFaults("lv");
+            }
+
+            // A restart restores from the reconciled timeline, and the dropped day stays dropped.
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT * FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn
+                            1970-01-02T00:00:00.000000Z\t2\t1
+                            1970-01-03T00:00:00.000000Z\t3\t1
+                            1970-01-04T00:00:00.000000Z\t4\t1
+                            """);
+            Assert.assertEquals(3, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
     public void testDropInteriorPartitionRetiresItsRootAndKeepsTheAnchorsAroundIt() throws Exception {
         // One root per day, then the middle day goes. The retention retires exactly the root
         // whose boundary sat inside the dropped day, keeps the anchor below it at its position
@@ -1096,8 +1205,8 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         // writer txn advances by exactly one and the flush would otherwise re-stamp a slot
         // holding rows the table just lost. The flush must un-stamp it instead, take the
         // evicted rows off the lifetime counter, and seal the fresh history at the corrected
-        // position - with no row-count mismatch recorded and the next cycle rebuilding the
-        // tier from the surviving table.
+        // position - with no row-count mismatch recorded - and rebuild the tier from the
+        // surviving table in the same cycle, so reads regain seam routing without a base commit.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
             createBaseAndView("PARTITION BY DAY");
@@ -1161,9 +1270,13 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 assertLadder(instance, ts("1970-01-02"), 1, ts("1970-01-03"), 2);
                 assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
                         .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                // The flush un-stamped the slot and rebuilt it from the surviving table in the
+                // same cycle: with no further base commit, a fresh cursor seams again instead of
+                // running disk-only until one arrives - which never happens on an idle view.
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertFalse("the flush must rebuild the tier itself", instance.isTierStale());
 
-                // The tier was un-stamped by the flush; the next cycle rebuilds it from the
-                // surviving table and seam routing resumes.
+                // A later refresh publishes on top of the rebuilt slot.
                 execute("INSERT INTO base VALUES ('1970-01-03T01:00:00.000000Z', 4)");
                 driveUntilDurableRowCount(job, 3);
                 driveRefreshToQuiescence(job);

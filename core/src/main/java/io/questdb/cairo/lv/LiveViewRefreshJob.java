@@ -2857,8 +2857,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // the slot's retained band may hold rows disk no longer has. Publishing
                     // on top of it would re-stamp those rows as a subset of disk; un-stamp
                     // instead so the fence routes reads disk-only, and let the next cycle
-                    // rebuild the slot from the surviving table. See flushLead for the
-                    // same rule on the lead path.
+                    // rebuild the slot from the surviving table. flushLead applies the same
+                    // un-stamp on the lead path and rebuilds in the same cycle; this path is
+                    // effectively unreachable (see the publish branch below) and keeps the
+                    // deferred rebuild.
                     restampSlot(instance, Numbers.LONG_NULL, 0);
                     instance.setTierStale(true);
                 } else {
@@ -3238,9 +3240,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             if (lvConsumedPersisted && populateTier && appendedRows > 0) {
                 if (removedRows > 0) {
-                    // Same rule as flushLead: the apply removed durable rows, so the slot's
+                    // Same un-stamp as flushLead: the apply removed durable rows, so the slot's
                     // retained band is not provably a subset of disk any more. Un-stamp and
-                    // let the next cycle rebuild it from the surviving table.
+                    // let the next cycle rebuild it from the surviving table. flushLead rebuilds
+                    // in the same cycle (rebuildInMemoryTierAfterFlush); this path still defers,
+                    // so a dedup-base view whose apply evicted reads disk-only until its next
+                    // base commit.
                     restampSlot(instance, Numbers.LONG_NULL, 0);
                     instance.setTierStale(true);
                 } else {
@@ -4110,6 +4115,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // the slot/disk seam, falling back to stale disk-only content (see
         // LiveViewRecordCursor.isSlotNewerThanDisk).
         final long lvAppliedSeqTxn = lvTracker.getWriterTxn();
+        // Read once: the branches below compare it against the applied seqTxn twice, and a DDL
+        // sequenced between two reads would make the same apply look fully drained to one
+        // comparison and partial to the other.
+        final long lvCommittedSeqTxn = lvTracker.getSeqTxn();
         boolean lvConsumedPersisted = false;
         try {
             try {
@@ -4142,6 +4151,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // keyOf; drop the per-window intern maps. The id -> string lists stay
             // (a pinned pre-flush cursor still resolves its slot from them).
             tier.getSymbolCache().onFlush();
+            // Set by the two branches below that un-stamp the slot while disk is fully current: the
+            // rebuild at the end of this method then re-establishes the slot as a subset of disk
+            // in this same flush, instead of leaving reads disk-only until the next base commit.
+            boolean isTierRebuildDue = false;
             if (stagingRowsToInclude > 0) {
                 // Emergency flush: the published slot never received the staging
                 // rows (the publish that would have added them failed), so it is an
@@ -4161,7 +4174,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // guard retryPendingLiveViewApply uses.
                 restampSlot(instance, Numbers.LONG_NULL, 0);
                 instance.setTierStale(true);
-            } else if (lvAppliedSeqTxn != lvAppliedBefore + 1 || lvTracker.getSeqTxn() != lvAppliedSeqTxn) {
+            } else if (lvAppliedSeqTxn != lvAppliedBefore + 1 || lvCommittedSeqTxn != lvAppliedSeqTxn) {
                 // The apply landed something other than exactly this flush's own block, in one of
                 // two shapes. The first half catches an advance of more than one transaction: an
                 // earlier flush left a committed-but-unapplied backlog (its inline apply hit a busy
@@ -4191,6 +4204,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // one transaction was outstanding, and it is the one committed above.
                 restampSlot(instance, Numbers.LONG_NULL, 0);
                 instance.setTierStale(true);
+                // A drained backlog leaves disk fully current, so the slot can be rebuilt from it
+                // right away (below) - this is where a DROP PARTITION sequenced against an
+                // un-flushed lead lands, and an idle view would otherwise serve disk-only until
+                // the next base commit. A part-way apply leaves blocks outstanding; the rebuild
+                // waits for retryPendingLiveViewApply to land them, since it rebuilds itself.
+                isTierRebuildDue = lvCommittedSeqTxn == lvAppliedSeqTxn;
             } else if (removedRows > 0) {
                 // The apply landed exactly this flush's block, but the commit's own
                 // housekeeping evicted TTL partitions on the way (a DROP PARTITION is a
@@ -4199,10 +4218,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // partitions, so the band is still the table's trailing rows, or the
                 // band outgrows disk and both read paths fall back to lead-only - but
                 // re-stamping would keep rows the table no longer holds resident and
-                // re-served. Un-stamp so reads run disk-only, and let the next cycle
-                // rebuild the slot from the surviving table.
+                // re-served. Un-stamp so reads run disk-only, and rebuild the slot from
+                // the surviving table below, once the removal is reconciled.
                 restampSlot(instance, Numbers.LONG_NULL, 0);
                 instance.setTierStale(true);
+                isTierRebuildDue = true;
             } else {
                 // Normal flush: the lead rows are now on disk and still in the slot,
                 // so it is a complete subset of disk. Re-stamp it so reads regain
@@ -4215,6 +4235,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // outstanding, and a no-op when nothing was removed.
             reconcilePendingPartitionRemovals(instance);
             maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, flushedMaxTs, flushRows, false);
+            if (isTierRebuildDue) {
+                rebuildInMemoryTierAfterFlush(instance);
+            }
+        }
+    }
+
+    /**
+     * Rebuilds the in-memory tier from the LV table right after a flush whose apply left the
+     * table fully applied but could not re-stamp the published slot: the commit's own
+     * housekeeping evicted TTL partitions, or the apply drained a backlog under this flush's
+     * block (a DROP PARTITION sequenced while a lead was un-flushed lands that way). Disk holds
+     * every committed row and {@code instance.leadRowCount} is already 0, which is the identity
+     * {@link #restageInMemoryTierFromDisk} needs, so a fresh cursor regains seam routing in the
+     * same cycle instead of running disk-only until the next base commit - which never comes
+     * for an idle view. Runs after the head seal so a rebuild failure cannot skip it.
+     * <p>
+     * A failure is logged and swallowed: the flush itself is complete and durable, the slot is
+     * un-stamped, and the seqTxn fence keeps reads correct (disk-only) until a later cycle
+     * rebuilds. Same disposition as {@link #retryPendingLiveViewApply}.
+     */
+    private void rebuildInMemoryTierAfterFlush(LiveViewInstance instance) {
+        try {
+            rebuildInMemoryTier(instance);
+        } catch (Throwable t) {
+            instance.setTierStale(true);
+            LOG.error().$("live view in-mem tier rebuild after flush failed, reads stay disk-only [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
         }
     }
 
