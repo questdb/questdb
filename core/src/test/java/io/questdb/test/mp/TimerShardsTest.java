@@ -27,6 +27,7 @@ package io.questdb.test.mp;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.continuation.DelayedFireable;
+import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.TimerShards;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -38,8 +39,12 @@ import java.lang.management.ThreadMXBean;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.concurrent.locks.LockSupport;
 
 public class TimerShardsTest {
     private static final Log LOG = LogFactory.getLog(TimerShardsTest.class);
@@ -68,15 +73,10 @@ public class TimerShardsTest {
     }
 
     @Test
-    public void testConcurrentHaltAndShutdownSerializeJoin() throws Exception {
+    public void testConcurrentHaltAndShutdown() throws Exception {
         final TimerShards shards = new TimerShards(1, "test-concurrent-stop", LOG);
         final CyclicBarrier startBarrier = new CyclicBarrier(3);
-        final AtomicInteger joinCalls = new AtomicInteger();
         final AtomicReference<Throwable> failure = new AtomicReference<>();
-        shards.setJoinThreadsHook(() -> {
-            joinCalls.incrementAndGet();
-            Assert.assertTrue("join must hold the TimerShards monitor", Thread.holdsLock(shards));
-        });
 
         final Thread haltThread = new Thread(() -> {
             try {
@@ -102,7 +102,6 @@ public class TimerShardsTest {
             haltThread.join(TimeUnit.SECONDS.toMillis(5));
             shutdownThread.join(TimeUnit.SECONDS.toMillis(5));
         } finally {
-            shards.setJoinThreadsHook(null);
             haltThread.interrupt();
             shutdownThread.interrupt();
             haltThread.join(TimeUnit.SECONDS.toMillis(5));
@@ -113,7 +112,6 @@ public class TimerShardsTest {
         Assert.assertFalse("halt thread did not stop", haltThread.isAlive());
         Assert.assertFalse("shutdown thread did not stop", shutdownThread.isAlive());
         Assert.assertNull("concurrent lifecycle call failed", failure.get());
-        Assert.assertEquals(2, joinCalls.get());
     }
 
     @Test
@@ -274,8 +272,17 @@ public class TimerShardsTest {
         shards.start();
         shards.shutdown();
         AtomicInteger shutdownCount = new AtomicInteger();
-        shards.register(new TestEntry(System.currentTimeMillis() + 100_000, null, shutdownCount::incrementAndGet));
-        Assert.assertEquals(1, shutdownCount.get());
+        SourceRegistrationResult result = shards.register(
+                new TestEntry(System.currentTimeMillis() + 100_000, null, shutdownCount::incrementAndGet)
+        );
+        Assert.assertSame(SourceRegistrationResult.NOT_ACCEPTED, result);
+        Assert.assertEquals(0, shutdownCount.get());
+    }
+
+    @Test
+    public void testNonPowerOfTwoShardCountIsExact() {
+        TimerShards shards = new TimerShards(3, "test-timer", LOG);
+        Assert.assertEquals(3, shards.getShardCount());
     }
 
     @Test
@@ -294,12 +301,96 @@ public class TimerShardsTest {
         Thread.sleep(2);
         shards.shutdown();
         // Either expire or shutdown won - exactly one terminal transition.
-        Assert.assertEquals("one CAS should win, one no-op", 1, terminalCount.get() == 1 ? 1 : 0);
+        Assert.assertEquals("one CAS should win, one no-op", 1, terminalCount.get());
         Assert.assertEquals(1, fired.get() + shutdown.get());
     }
 
     @Test
-    public void testSentinelWakesBlockedTake() throws InterruptedException {
+    public void testRegistrationRejectedWhenShutdownStartsAfterOffer() throws InterruptedException {
+        CountDownLatch blockerEntered = new CountDownLatch(1);
+        CountDownLatch releaseBlocker = new CountDownLatch(1);
+        AtomicBoolean isShutdownHookEnabled = new AtomicBoolean();
+        AtomicInteger terminalCount = new AtomicInteger();
+        AtomicReference<Thread> shutdownThreadRef = new AtomicReference<>();
+        AtomicReference<TimerShards> shardsRef = new AtomicReference<>();
+        TimerShards shards = new TimerShards(1, "test-timer", LOG, () -> {
+            if (isShutdownHookEnabled.compareAndSet(true, false)) {
+                Thread shutdownThread = new Thread(shardsRef.get()::shutdown);
+                shutdownThread.setDaemon(true);
+                shutdownThreadRef.set(shutdownThread);
+                shutdownThread.start();
+                awaitThreadWaiting(shutdownThread);
+            }
+        });
+        shardsRef.set(shards);
+        shards.start();
+        try {
+            Assert.assertSame(
+                    SourceRegistrationResult.ACCEPTED,
+                    shards.register(new TestEntry(System.currentTimeMillis(), () -> {
+                        blockerEntered.countDown();
+                        try {
+                            releaseBlocker.await();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }, null))
+            );
+            Assert.assertTrue(blockerEntered.await(5, TimeUnit.SECONDS));
+
+            isShutdownHookEnabled.set(true);
+            TestEntry entry = new TestEntry(
+                    System.currentTimeMillis() + 60_000,
+                    terminalCount::incrementAndGet,
+                    terminalCount::incrementAndGet
+            );
+            Assert.assertSame(SourceRegistrationResult.NOT_ACCEPTED, shards.register(entry));
+            Assert.assertEquals(0, terminalCount.get());
+
+            releaseBlocker.countDown();
+            Thread shutdownThread = shutdownThreadRef.get();
+            shutdownThread.join(TimeUnit.SECONDS.toMillis(10));
+            Assert.assertFalse(shutdownThread.isAlive());
+            Assert.assertEquals(0, terminalCount.get());
+        } finally {
+            releaseBlocker.countDown();
+            shards.shutdown();
+        }
+    }
+
+    @Test
+    public void testRegistrationResultOwnsShutdownRace() throws InterruptedException {
+        final int count = 1_000;
+        TimerShards shards = new TimerShards(1, "test-timer", LOG);
+        shards.start();
+        AtomicIntegerArray terminalCounts = new AtomicIntegerArray(count);
+        AtomicReferenceArray<SourceRegistrationResult> results = new AtomicReferenceArray<>(count);
+        Thread registerThread = new Thread(() -> {
+            for (int i = 0; i < count; i++) {
+                final int index = i;
+                results.set(i, shards.register(new TestEntry(
+                        System.currentTimeMillis() + 60_000,
+                        () -> terminalCounts.incrementAndGet(index),
+                        () -> terminalCounts.incrementAndGet(index)
+                )));
+            }
+        });
+        registerThread.start();
+        shards.shutdown();
+        registerThread.join();
+
+        for (int i = 0; i < count; i++) {
+            SourceRegistrationResult result = results.get(i);
+            Assert.assertNotNull(result);
+            Assert.assertEquals(
+                    result == SourceRegistrationResult.ACCEPTED ? 1 : 0,
+                    terminalCounts.get(i)
+            );
+        }
+    }
+
+    @Test
+    public void testSentinelWakesBlockedTake() {
         TimerShards shards = new TimerShards(2, "test-timer", LOG);
         shards.start();
         // Register a far-future entry so the take() is parked.
@@ -315,14 +406,11 @@ public class TimerShardsTest {
     public void testShardDistribution() {
         int shardCount = 4;
         TimerShards shards = new TimerShards(shardCount, "test-timer", LOG);
-        // Don't start threads - just register far-future entries and check size grows.
-        // We can't probe per-shard size directly without exposing it, so we verify the
-        // total reflects every register call (no silent drop on a healthy register).
+        // Register far-future entries and check size grows. We can't probe per-shard
+        // size directly without exposing it, so we verify the total reflects every
+        // register call (no silent drop on a healthy register).
         int n = 1_000;
         long deadline = System.currentTimeMillis() + 60_000;
-        for (int i = 0; i < n; i++) {
-            // Force running to true via start() since register guards on running.
-        }
         shards.start();
         try {
             for (int i = 0; i < n; i++) {
@@ -333,6 +421,21 @@ public class TimerShardsTest {
         } finally {
             shards.shutdown();
         }
+    }
+
+    @Test
+    public void testShutdownCallbackCanReenterShutdown() {
+        TimerShards shards = new TimerShards(1, "test-timer", LOG);
+        AtomicInteger shutdownCount = new AtomicInteger();
+        long deadline = System.currentTimeMillis() + 60_000;
+        shards.start();
+        shards.register(new TestEntry(deadline, null, () -> {
+            shutdownCount.incrementAndGet();
+            shards.shutdown();
+        }));
+        shards.register(new TestEntry(deadline + 60_000, null, shutdownCount::incrementAndGet));
+        shards.shutdown();
+        Assert.assertEquals(2, shutdownCount.get());
     }
 
     @Test
@@ -379,16 +482,93 @@ public class TimerShardsTest {
     }
 
     @Test
+    public void testShutdownFromShardDoesNotSelfJoin() throws InterruptedException {
+        final AtomicReference<Throwable> shutdownFailure = new AtomicReference<>();
+        final CountDownLatch shutdownReturned = new CountDownLatch(1);
+        final TimerShards shards = new TimerShards(1, "test-timer", LOG);
+        shards.start();
+        try {
+            Assert.assertSame(
+                    SourceRegistrationResult.ACCEPTED,
+                    shards.register(new TestEntry(System.currentTimeMillis(), () -> {
+                        try {
+                            shards.shutdown();
+                        } catch (Throwable th) {
+                            shutdownFailure.set(th);
+                        } finally {
+                            shutdownReturned.countDown();
+                        }
+                    }, null))
+            );
+            Assert.assertTrue(shutdownReturned.await(5, TimeUnit.SECONDS));
+            Assert.assertTrue(shutdownFailure.get() instanceof IllegalStateException);
+            shards.shutdown();
+        } finally {
+            shards.shutdown();
+        }
+    }
+
+    @Test
     public void testShutdownIsIdempotent() {
         TimerShards shards = new TimerShards(2, "test-timer", LOG);
         shards.start();
         shards.shutdown();
+        Assert.assertEquals(0, shards.size());
         shards.shutdown();
+        Assert.assertEquals(0, shards.size());
         shards.halt();
+    }
+
+    @Test
+    public void testShutdownRestoresInterruptAfterJoining() {
+        TimerShards shards = new TimerShards(1, "test-timer", LOG);
+        shards.start();
+        Thread.currentThread().interrupt();
+        try {
+            shards.shutdown();
+            Assert.assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+            shards.shutdown();
+        }
+    }
+
+    @Test
+    public void testUnregisterReleasesAcceptedEntry() {
+        TimerShards shards = new TimerShards(1, "test-timer", LOG);
+        shards.start();
+        AtomicInteger terminalCount = new AtomicInteger();
+        TestEntry entry = new TestEntry(
+                System.currentTimeMillis() + 60_000,
+                terminalCount::incrementAndGet,
+                terminalCount::incrementAndGet
+        );
+        Assert.assertSame(SourceRegistrationResult.ACCEPTED, shards.register(entry));
+        Assert.assertTrue(shards.unregister(entry));
+        shards.shutdown();
+        Assert.assertEquals(0, terminalCount.get());
+    }
+
+    private static void awaitThreadWaiting(Thread thread) {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            final Thread.State state = thread.getState();
+            if (state == Thread.State.BLOCKED
+                    || state == Thread.State.TIMED_WAITING
+                    || state == Thread.State.WAITING) {
+                return;
+            }
+            if (state == Thread.State.TERMINATED) {
+                Assert.fail("thread terminated before waiting [name=" + thread.getName() + ']');
+            }
+            LockSupport.parkNanos(100_000);
+        }
+        Assert.fail("thread did not wait [name=" + thread.getName() + ", state=" + thread.getState() + ']');
     }
 
     private static final class TestEntry implements DelayedFireable {
         private final long deadlineMillis;
+        private int heapIndex = -1;
         private final Runnable onExpire;
         private final Runnable onShutdown;
 
@@ -411,6 +591,16 @@ public class TimerShardsTest {
         @Override
         public long getDelay(@NotNull TimeUnit unit) {
             return unit.convert(deadlineMillis - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+        }
+
+        @Override
+        public int getHeapIndex() {
+            return heapIndex;
+        }
+
+        @Override
+        public void setHeapIndex(int heapIndex) {
+            this.heapIndex = heapIndex;
         }
 
         @Override

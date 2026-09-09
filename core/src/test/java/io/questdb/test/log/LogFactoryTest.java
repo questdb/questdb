@@ -73,6 +73,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -103,6 +104,76 @@ public class LogFactoryTest {
                 Assert.assertEquals("Class not found com.questdb.log.StdOutWriter2", e.getMessage());
             }
         }
+    }
+
+    @Test
+    public void testCloseRetriesAfterWorkerHaltTimeout() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicInteger closeCount = new AtomicInteger();
+            final AtomicBoolean isClosedWhileRunning = new AtomicBoolean();
+            final AtomicBoolean isReleaseRequested = new AtomicBoolean();
+            final AtomicBoolean isWriterRunning = new AtomicBoolean();
+            final SOCountDownLatch runEntered = new SOCountDownLatch(1);
+            final SOCountDownLatch runExited = new SOCountDownLatch(1);
+            final LogFactory factory = new LogFactory();
+
+            class BlockingLogWriter implements Closeable, LogWriter {
+                @Override
+                public void bindProperties(LogFactory factory) {
+                }
+
+                @Override
+                public void close() {
+                    closeCount.incrementAndGet();
+                    if (isWriterRunning.get()) {
+                        isClosedWhileRunning.set(true);
+                    }
+                }
+
+                @Override
+                public boolean run(@NotNull WorkerContext workerContext) {
+                    isWriterRunning.set(true);
+                    runEntered.countDown();
+                    try {
+                        while (!isReleaseRequested.get()) {
+                            Os.pause();
+                        }
+                    } finally {
+                        isWriterRunning.set(false);
+                        runExited.countDown();
+                    }
+                    return false;
+                }
+            }
+
+            try {
+                factory.setWorkerPoolHaltTimeoutForTesting(TimeUnit.MILLISECONDS.toNanos(10));
+                factory.add(new LogWriterConfig(LogLevel.ALL, (ring, seq, level) -> new BlockingLogWriter()));
+                factory.bind();
+                factory.startThread();
+                Assert.assertTrue("logging writer never started", runEntered.await(TimeUnit.SECONDS.toNanos(10)));
+
+                final IllegalStateException timeout = Assert.assertThrows(IllegalStateException.class, factory::close);
+                Assert.assertEquals("logging worker pool did not halt within timeout", timeout.getMessage());
+                Assert.assertEquals(0, closeCount.get());
+                Assert.assertFalse(isClosedWhileRunning.get());
+
+                final IllegalStateException restart = Assert.assertThrows(IllegalStateException.class, factory::startThread);
+                Assert.assertEquals("logging worker pool cannot restart after halt", restart.getMessage());
+
+                isReleaseRequested.set(true);
+                Assert.assertTrue("logging writer never exited", runExited.await(TimeUnit.SECONDS.toNanos(10)));
+                factory.setWorkerPoolHaltTimeoutForTesting(TimeUnit.SECONDS.toNanos(10));
+                factory.close();
+
+                Assert.assertEquals(1, closeCount.get());
+                Assert.assertFalse(isClosedWhileRunning.get());
+            } finally {
+                isReleaseRequested.set(true);
+                factory.setWorkerPoolHaltTimeoutForTesting(TimeUnit.SECONDS.toNanos(10));
+                factory.close();
+            }
+        });
     }
 
     @Test
