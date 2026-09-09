@@ -856,6 +856,20 @@ public class BlockFileTest extends AbstractCairoTest {
             return syncCount;
         }
 
+        /**
+         * Off Darwin {@code FilesFacadeImpl.barrierFsync} routes through the overridable
+         * {@code fdatasync}, which has already been recorded; on Darwin it calls the static directly, so
+         * a facade that does not override this sees no WAL ordering barrier at all and its assertions
+         * pass having observed nothing.
+         */
+        @Override
+        public void barrierFsync(long fd) {
+            super.barrierFsync(fd);
+            if (Os.isOSX()) {
+                syncCount++;
+            }
+        }
+
         @Override
         public void fdatasync(long fd) {
             super.fdatasync(fd);

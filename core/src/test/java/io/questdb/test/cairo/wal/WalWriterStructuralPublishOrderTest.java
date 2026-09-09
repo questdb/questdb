@@ -32,6 +32,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -97,6 +98,21 @@ public class WalWriterStructuralPublishOrderTest extends AbstractCairoTest {
             final long fd = super.openRW(name, opts);
             fdPaths.put(fd, path);
             return fd;
+        }
+
+        /**
+         * Off Darwin {@code FilesFacadeImpl.barrierFsync} routes through the overridable
+         * {@code fdatasync}, which has already been recorded; on Darwin it calls the static directly, so
+         * a facade that does not override this sees no WAL ordering barrier at all and its assertions
+         * pass having observed nothing.
+         */
+        @Override
+        public void barrierFsync(long fd) {
+            if (Os.isOSX()) {
+                final String path = fdPaths.get(fd);
+                ops.add("fdatasync " + (path == null ? "fd:" + fd : path));
+            }
+            super.barrierFsync(fd);
         }
 
         @Override

@@ -29,6 +29,7 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -275,6 +276,20 @@ public class AdaptiveReplicaBlockFileSkipTest extends AbstractCairoTest {
         public boolean close(long fd) {
             fdToPath.remove(fd);
             return super.close(fd);
+        }
+
+        /**
+         * Off Darwin {@code FilesFacadeImpl.barrierFsync} routes through the overridable
+         * {@code fdatasync}, which has already been recorded; on Darwin it calls the static directly, so
+         * a facade that does not override this sees no WAL ordering barrier at all and its assertions
+         * pass having observed nothing.
+         */
+        @Override
+        public void barrierFsync(long fd) {
+            super.barrierFsync(fd);
+            if (Os.isOSX()) {
+                record(fdToPath.get(fd), "fdatasync");
+            }
         }
 
         @Override
