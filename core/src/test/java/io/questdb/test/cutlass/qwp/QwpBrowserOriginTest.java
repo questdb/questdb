@@ -114,6 +114,32 @@ public class QwpBrowserOriginTest {
                 new Utf8String("questdb.example.com"),
                 false
         ));
+        // The four character-class terms of the byte loop, each with a Host
+        // forged to mirror the Origin authority byte for byte so the length
+        // check cannot decide the case first. Without an equal-length pair the
+        // '@' case above returns at the length check (24 bytes vs 19) and none
+        // of these terms is load-bearing in any assertion -- all four could be
+        // deleted and the suite would stay green.
+        Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("http://user@questdb.example.com"),
+                new Utf8String("user@questdb.example.com"),
+                false
+        ));
+        Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("http://questdb.example.com?a"),
+                new Utf8String("questdb.example.com?a"),
+                false
+        ));
+        Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("http://questdb.example.com#a"),
+                new Utf8String("questdb.example.com#a"),
+                false
+        ));
+        Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("http://questdb.example com"),
+                new Utf8String("questdb.example com"),
+                false
+        ));
     }
 
     @Test

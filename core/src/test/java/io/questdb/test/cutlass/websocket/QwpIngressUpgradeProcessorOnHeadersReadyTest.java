@@ -88,6 +88,22 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     }
 
     @Test
+    public void testBrowserSubprotocolServerInfoReportsDurableAckOn() throws Exception {
+        // The only assertion that pins the capability bit SET through
+        // onHeadersReady. Without it, hard-coding the durableAckEnabled
+        // argument of writeBrowserServerInfoFrame to false leaves every other
+        // browser test green while every browser is told durable ACK is
+        // unavailable and silently never enters durable mode -- the frame is
+        // the browser's only carrier for that verdict.
+        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo(
+                null,
+                "questdb.qwp.durable-ack.v1",
+                new FakeEnabledDurableAckRegistry(),
+                true,
+                true));
+    }
+
+    @Test
     public void testBrowserHandshakeOmitsIngressServerInfoWhenParamVersionUnknown() throws Exception {
         // Guards the equalsAscii("v1", ...) term. A future browser handshake
         // revision must not be answered with a v1 frame.
@@ -589,6 +605,15 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         assertBrowserHandshakeServerInfo(browserHandshakeParam, null, expectFrame, false);
     }
 
+    private static void assertBrowserHandshakeServerInfo(
+            String browserHandshakeParam,
+            String protocols,
+            boolean expectFrame,
+            boolean expectDurableAck
+    ) throws Exception {
+        assertBrowserHandshakeServerInfo(browserHandshakeParam, protocols, null, expectFrame, expectDurableAck);
+    }
+
     /**
      * Drives a handshake with the given {@code qwp_browser_handshake} value and
      * optional {@code Sec-WebSocket-Protocol} offer (null omits either), then
@@ -605,9 +630,14 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     private static void assertBrowserHandshakeServerInfo(
             String browserHandshakeParam,
             String protocols,
+            DurableAckRegistry registry,
             boolean expectFrame,
             boolean expectDurableAck
     ) throws Exception {
+        DurableAckRegistry previous = engine.getDurableAckRegistry();
+        if (registry != null) {
+            engine.setDurableAckRegistry(registry);
+        }
         HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
         QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
         long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -668,6 +698,7 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             );
         } finally {
             Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            engine.setDurableAckRegistry(previous);
         }
     }
 
