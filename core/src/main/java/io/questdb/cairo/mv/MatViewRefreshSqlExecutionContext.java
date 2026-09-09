@@ -114,6 +114,8 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return getSimpleCircuitBreaker(); // mat view refresh should use cancellable circuit breaker instead of no-op
     }
 
+    // Only the declared base uses the fixed refresh snapshot. Other referenced
+    // tables use current readers and may change while the refresh runs.
     @Override
     public TableReader getReader(TableToken tableToken, long version) {
         if (tableToken.equals(baseTableReader.getTableToken())) {
@@ -133,6 +135,7 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return getCairoEngine().getReader(tableToken, version, this.getReaderPoolSupervisor());
     }
 
+    // As in the versioned overload, this does not fix snapshots across all sources.
     @Override
     public TableReader getReader(TableToken tableToken) {
         if (tableToken.equals(baseTableReader.getTableToken())) {

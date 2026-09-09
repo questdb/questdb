@@ -164,6 +164,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private static final int COMPACTION_MAX_LIVE_FRACTION_PERCENT = 50;
     private static final int COMPACTION_MAX_SOURCE_SEGMENTS = 8;
     private static final int COMPACTION_MIN_SOURCE_SEGMENTS = 2;
+    // Busy workers scan their registry shard at most once per second. Idle turns
+    // retain the immediate fallback so quiet views need not wait for this cadence.
+    private static final long LAG_SCAN_INTERVAL_US = Micros.SECOND_MICROS;
     // Consecutive failed cadence seals that prove the fault is deterministic rather
     // than transient. Below this the seal simply retries at its cadence, which is
     // right for a held writer or a momentarily full disk. At it, the view releases
@@ -248,6 +251,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // per row.
     private final ObjList<LiveViewCheckpointTimelineEntry> emptyRepairBoundaries = new ObjList<>();
     private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
+    private long lastLagScanUs = Numbers.LONG_NULL;
     private final PageFrameMemoryPool memoryPool;
     private final Path path = new Path();
     private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
@@ -8191,14 +8195,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             didWork = true;
             drained++;
         }
-        if (!didWork) {
-            // Notification queue empty: scan all registered views and refresh any whose
-            // base sequencer head is past their last-processed seqTxn. Catches missed /
-            // coalesced commit notifications (e.g., a CREATE that races a writer or a
-            // notification dropped while the worker was busy on another task) and serves
-            // as the periodic FLUSH-EVERY tick this build doesn't yet have a dedicated
-            // timer for.
-            didWork = scanForLaggingViews();
+        final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        if (!didWork || lastLagScanUs == Numbers.LONG_NULL || nowUs - lastLagScanUs >= LAG_SCAN_INTERVAL_US) {
+            // Acknowledging a base notification does not mean every dependent advanced:
+            // pending expiry publication, for example, defers work without moving its
+            // watermark. Scan this worker's shard on a bounded cadence even under busy
+            // notification traffic, and retain the immediate idle fallback. Record the
+            // attempt even if no view progresses, so pending publication cannot make
+            // every busy turn scan the registry. Do not short-circuit the scan on didWork.
+            lastLagScanUs = nowUs;
+            didWork |= scanForLaggingViews();
         }
         return didWork;
     }
@@ -8927,6 +8933,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             final String expiryPreflightResult = preflightExpiryPolicy(instance);
             if (expiryPreflightResult == EXPIRY_PREFLIGHT_DEFERRED) {
+                // Leave the watermark and failure budget untouched. The lag scan retries
+                // even if unrelated notifications keep this worker busy.
                 return false;
             }
             invalidationReason = expiryPreflightResult;
@@ -9254,6 +9262,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return attempted;
     }
 
+    // Checks permission to start this refresh, not immediate invalidation on policy
+    // publication. A refresh approved against an earlier snapshot may still finish.
     private String preflightExpiryPolicy(LiveViewInstance instance) {
         final MetadataCache metadataCache = engine.getMetadataCache();
         final MetadataCache.ExpiryPolicyGuard initialGuard = metadataCache.sampleExpiryPolicyGuard();

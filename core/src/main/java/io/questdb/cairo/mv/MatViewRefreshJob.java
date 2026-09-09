@@ -1144,6 +1144,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         }
                         return false;
                     }
+                    // Preflight avoids predictable destructive failures, but does not
+                    // make the rebuild atomic. Later cursor opens can still reject a
+                    // changed source after this truncate; failure does not restore rows.
                     runBaseReaderSnapshotSeamForTesting();
                     fencedTruncateSoft(walWriter);
                     resetInvalidState(viewState, walWriter);

@@ -680,8 +680,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Installs a one-shot test barrier that fires after a metadata version becomes reader-visible and before
-     * the corresponding MetadataCache hydration. Pass null to uninstall.
+     * Installs a one-shot test barrier that fires after the writer marks an expiry policy update pending
+     * and before it swaps _meta. Pass null to uninstall.
      */
     @TestOnly
     public static void setExpiryMetaSwapBarrier(@Nullable Runnable barrier) {
