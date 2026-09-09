@@ -4388,6 +4388,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
         }
+        instance.recordCheckpointTimelineReset();
         instance.clearCheckpointTimelineOwnership();
     }
 
@@ -11931,7 +11932,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             if (replayedRows == REPLAY_TO_APPLIED_O3) {
                 // The legacy O3 path completed a full, timestamp-ordered rewrite.
-                instance.setCheckpointRestoreSucceeded();
+                // Still a timeline restore: the rewrite ran over state this restore
+                // rehydrated from the root below, which is the lineage the witness
+                // names.
+                instance.recordCheckpointRestoreRestored(restored.generation, restored.checkpointId);
                 return;
             }
 
@@ -11968,7 +11972,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // that shows up as a runtime frontier beyond the head's maxTs, which is
             // what canReuseRuntimeAnchor tests separately.
             instance.setHeadCheckpointRoot(restored.checkpointId, windowFactory);
-            instance.setCheckpointRestoreSucceeded();
+            instance.recordCheckpointRestoreRestored(restored.generation, restored.checkpointId);
             LOG.info().$("restored live view from checkpoint timeline [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", generation=").$(restored.generation)
@@ -12000,6 +12004,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(instance.getDefinition().getViewName())
                 .$(", cause=").$(cause)
                 .$(", appliedWatermark=").$(durableBaseSeqTxn).I$();
+        instance.recordCheckpointRebuildAttempt();
         try {
             o3HeadMissReplay(
                     instance,
@@ -12009,11 +12014,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     durableBaseSeqTxn,
                     true
             );
-            instance.setCheckpointRestoreSucceeded();
+            instance.recordCheckpointRestoreRebuilt();
         } catch (Throwable t) {
             LOG.critical().$("live view restart applied-base rebuild failed [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
+            instance.recordCheckpointRestoreBlocked();
             instance.setPendingInvalidationReason("live view restart timeline recovery failed");
         }
     }

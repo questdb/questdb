@@ -417,12 +417,27 @@ public class LiveViewInstance implements QuietCloseable {
     // under the refresh latch; volatile so the catalogue thread can read
     // the latest value without additional synchronisation.
     private volatile boolean checkpointRestoreAttempted;
-    // Set true only when a timeline root restore actually rehydrated the window
-    // state. Stays false when no usable root existed or the restore failed and
-    // fell back to a from-base rebuild. Distinguishes a real
-    // restore from the replay fallback for observability and tests. Mutated only
+    // Which route that one attempt took, as a LiveViewCheckpointRestoreRoute
+    // constant, and the root a TIMELINE_RESTORE selected. The route replaces the
+    // boolean "did the restart resolve its derived state" flag this class used to
+    // carry: both the restore and the applied-base rebuild resolve it, so the
+    // boolean named the outcome without naming the operation, and a restore
+    // regression could hide behind the fallback that covered for it. Each route is
+    // recorded by the branch that finished the operation it names. Mutated only
     // under the refresh latch; volatile for the catalogue thread.
-    private volatile boolean checkpointRestoreSucceeded;
+    private volatile int checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.NONE;
+    private volatile long checkpointRestoreCheckpointId = Numbers.LONG_NULL;
+    private volatile long checkpointRestoreGeneration = Numbers.LONG_NULL;
+    // Lifetime counts of the two destructive events a restart witness has to rule
+    // out: applied-base rebuilds this instance started (one per restart at most
+    // today, since the restore attempt is single-shot) and whole-timeline
+    // retirements it ran, from the restart rebuild or from any later out-of-order
+    // repair that could splice nothing. A restart that restored off published roots
+    // leaves both at zero until something else retires the ladder. Bumped only on
+    // the refresh worker; volatile for the catalogue thread. In-memory only - they
+    // reset on restart, like the counters above.
+    private volatile long checkpointRebuildAttempts;
+    private volatile long checkpointTimelineResets;
     // Wall-clock (micros) of the most recent head-checkpoint seal. Numbers.LONG_NULL
     // until the first cycle that seals a root. The refresh worker compares
     // (nowUs - lastCheckpointWrittenUs) against
@@ -1225,6 +1240,15 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return applied-base rebuilds this instance has started since it was built.
+     * A restart that restored off its published roots leaves this at zero; see
+     * {@link #checkpointRebuildAttempts}
+     */
+    public long getCheckpointRebuildAttempts() {
+        return checkpointRebuildAttempts;
+    }
+
+    /**
      * @return the bounds of the localized repair currently suspended across
      * refresh turns, as {@code {inProgress, C, L, H}}. The array is published by
      * volatile store and never mutated afterwards, so the caller reads a
@@ -1303,6 +1327,36 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return the {@code checkpointId} of the timeline root
+     * {@link LiveViewCheckpointRestoreRoute#TIMELINE_RESTORE} rehydrated this view
+     * from, or {@link Numbers#LONG_NULL} on every other route. Pair it with
+     * {@link #getCheckpointRestoreGeneration()} to pin the restore to an expected
+     * pre-existing root rather than to any root at all.
+     */
+    public long getCheckpointRestoreCheckpointId() {
+        return checkpointRestoreCheckpointId;
+    }
+
+    /**
+     * @return the generation of the timeline root
+     * {@link LiveViewCheckpointRestoreRoute#TIMELINE_RESTORE} rehydrated this view
+     * from, or {@link Numbers#LONG_NULL} on every other route
+     */
+    public long getCheckpointRestoreGeneration() {
+        return checkpointRestoreGeneration;
+    }
+
+    /**
+     * @return the {@code LiveViewCheckpointRestoreRoute} constant naming the route
+     * this view's single restart recovery attempt took, or
+     * {@link LiveViewCheckpointRestoreRoute#NONE} while no attempt has completed
+     * one. See {@link #checkpointRestoreRoute}
+     */
+    public int getCheckpointRestoreRoute() {
+        return checkpointRestoreRoute;
+    }
+
+    /**
      * @return seals this view has refused because its emitted-row counter and its
      * durable row count disagreed. Any non-zero value means rows the view emitted
      * never reached its table - or rows it never emitted did - and that the
@@ -1329,6 +1383,16 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long[] getCheckpointTimeline() {
         return checkpointTimeline;
+    }
+
+    /**
+     * @return whole-timeline retirements this instance has run: the restart
+     * rebuild's own, plus any later out-of-order repair that could splice nothing.
+     * A restart that restored off its published roots leaves this at zero until
+     * something else retires the ladder; see {@link #checkpointTimelineResets}
+     */
+    public long getCheckpointTimelineResets() {
+        return checkpointTimelineResets;
     }
 
     public long getCheckpointTimelineWalPurgeFloor() {
@@ -1762,12 +1826,18 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * @return {@code true} once a head-checkpoint restore for this LV actually
-     * rehydrated the window state. Remains {@code false} when no head existed
-     * or the restore failed and the LV fell back to a head-miss replay.
+     * @return {@code true} once this LV's restart recovery resolved its derived
+     * state, whichever way it got there: a timeline root restore or the
+     * applied-base rebuild that covers for one. Remains {@code false} while the
+     * attempt has not run, when identity state made it unnecessary, and when the
+     * rebuild failed too. This is the necessary half of a restart assertion -
+     * {@link #getCheckpointRestoreRoute()} is the half that says which operation
+     * actually ran.
      */
     public boolean isCheckpointRestoreSucceeded() {
-        return checkpointRestoreSucceeded;
+        final int route = checkpointRestoreRoute;
+        return route == LiveViewCheckpointRestoreRoute.TIMELINE_RESTORE
+                || route == LiveViewCheckpointRestoreRoute.FALLBACK_REBUILD;
     }
 
     public boolean isInvalid() {
@@ -2029,6 +2099,16 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Records that the applied-base rebuild started. Bumped where the rebuild
+     * begins rather than where it ends, so an attempt that threw still counts: the
+     * point of the counter is that a restart which restored off its published roots
+     * started none at all. See {@link #checkpointRebuildAttempts}.
+     */
+    public void recordCheckpointRebuildAttempt() {
+        checkpointRebuildAttempts++;
+    }
+
+    /**
      * Records that a localized repair could not publish its splice, which retires
      * the timeline and leaves the next seal to open a fresh history.
      */
@@ -2066,11 +2146,53 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Records that the restart recovery attempt left this view without derived
+     * state: the timeline restore failed and the applied-base rebuild that covers
+     * for it failed too. The caller stamps the pending invalidation reason that
+     * takes the view out of service; this only names the route for an observer.
+     */
+    public void recordCheckpointRestoreBlocked() {
+        checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.BLOCKED;
+    }
+
+    /**
+     * Records that the applied-base rebuild finished and the view's derived state
+     * came from the base table rather than from a published root. No generation or
+     * checkpoint id goes with it: the rebuild retired the timeline before it
+     * replayed, so there is no root to name.
+     */
+    public void recordCheckpointRestoreRebuilt() {
+        checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.FALLBACK_REBUILD;
+    }
+
+    /**
+     * Records that the restart restored this view's window state from a published
+     * timeline root, and which root that was. Called only from the branch that
+     * completed the restore, so the route can never name work that did not run.
+     *
+     * @param generation   the generation the timeline reader selected under its pin
+     * @param checkpointId the logical id of the root within that generation
+     */
+    public void recordCheckpointRestoreRestored(long generation, long checkpointId) {
+        checkpointRestoreGeneration = generation;
+        checkpointRestoreCheckpointId = checkpointId;
+        checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.TIMELINE_RESTORE;
+    }
+
+    /**
      * Records one seal refused because the emitted-row counter and the durable row
      * count disagreed. See {@link #checkpointRowCountMismatches}.
      */
     public void recordCheckpointRowCountMismatch() {
         checkpointRowCountMismatches++;
+    }
+
+    /**
+     * Records that this view retired its whole timeline, whichever seam did it. See
+     * {@link #checkpointTimelineResets}.
+     */
+    public void recordCheckpointTimelineReset() {
+        checkpointTimelineResets++;
     }
 
     /**
@@ -2299,15 +2421,6 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void setCheckpointRestoreAttempted() {
         this.checkpointRestoreAttempted = true;
-    }
-
-    /**
-     * Single-shot setter for {@link #isCheckpointRestoreSucceeded()}. The
-     * refresh worker calls this only when the window state was rehydrated from
-     * a checkpoint timeline root.
-     */
-    public void setCheckpointRestoreSucceeded() {
-        this.checkpointRestoreSucceeded = true;
     }
 
     public void setCompiledFactory(RecordCursorFactory factory, LiveViewCompiledPlan plan) {

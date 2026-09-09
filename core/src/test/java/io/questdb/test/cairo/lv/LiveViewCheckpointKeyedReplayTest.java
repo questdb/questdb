@@ -354,10 +354,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 restartCycle();
                 try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                     driveRefreshToQuiescence(job);
-                    Assert.assertTrue(
-                            "the restart must restore off the unfused seals' roots, or the case reads nothing",
-                            viewInstance().isCheckpointRestoreSucceeded()
-                    );
+                    assertRestoredFromTimeline("lv");
                     // Below every row the second holds, on one account: a keyed correction
                     // whose interval is exactly those ten roots.
                     commit(row(2, 0, 30, 0, "acct-1"), job);
@@ -551,14 +548,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
             // straight after the restart.
             try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
                 commit("('2026-01-02T01:05:30.000000Z', 'acct-2', 1.0)", resumed);
-                Assert.assertTrue(
-                        "the correction must have driven the view to restore its state",
-                        viewInstance().isCheckpointRestoreAttempted()
-                );
-                Assert.assertTrue(
-                        "the state must come back off the repaired timeline rather than a head-miss replay",
-                        viewInstance().isCheckpointRestoreSucceeded()
-                );
+                assertRestoredFromTimeline("lv");
                 assertNoRefreshFaults("lv");
                 assertViewMatchesRecompute();
                 assertAccountSum("acct-3", "2026-01-02T01:06:00.000000Z", 7.0);
@@ -659,7 +649,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
             restartCycle();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
-                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                assertRestoredFromTimeline("lv");
                 driveRefreshToQuiescence(job);
                 // The rows that read the restored accumulators back: one for a key the
                 // keyed replay described and one for a key it did not.
@@ -696,7 +686,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
             restartCycle();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
-                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                assertRestoredFromTimeline("lv");
                 driveRefreshToQuiescence(job);
                 assertViewMatchesRecompute();
             }

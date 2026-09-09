@@ -108,10 +108,7 @@ public class LiveViewFusionDisabledTest extends AbstractLiveViewTest {
             // Without this the case cannot tell a restore from a rebuild: a view that
             // failed to restore and re-derived itself from the applied base would match
             // the recompute just as well, and prove nothing about the roots.
-            Assert.assertTrue(
-                    "the restart must restore off the timeline rather than rebuild from the base",
-                    instance().isCheckpointRestoreSucceeded()
-            );
+            assertRestoredFromTimeline("lv");
             Assert.assertTrue("the restored head must still be a window root", isWindowRootHead());
             assertViewMatchesRecompute();
             assertNoRefreshFaults("lv");
@@ -186,10 +183,7 @@ public class LiveViewFusionDisabledTest extends AbstractLiveViewTest {
                     "the recompiled window must adopt the plan once the switch is back on",
                     window().getCheckpointWindowStatePlan()
             );
-            Assert.assertTrue(
-                    "the restart must restore off the unfused seal's window root rather than rebuild",
-                    instance().isCheckpointRestoreSucceeded()
-            );
+            assertRestoredFromTimeline("lv");
             Assert.assertTrue("the head the fused runtime restored must be a window root", isWindowRootHead());
             assertViewMatchesRecompute();
             assertNoRefreshFaults("lv");

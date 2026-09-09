@@ -30,6 +30,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
@@ -41,6 +42,7 @@ import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.mp.Job;
 import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -149,6 +151,14 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      * engine's own configuration for the time, then puts the clock back. A derived clock answers
      * with the stamp; a pinned real one answers with wall time.
      */
+    private static void assertRestoreRoute(String viewName, int expected, LiveViewInstance instance) {
+        Assert.assertEquals(
+                "live view '" + viewName + "' took the wrong restart recovery route",
+                LiveViewCheckpointRestoreRoute.name(expected),
+                LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute())
+        );
+    }
+
     private static boolean isEngineMillisecondClockDerivedFromTestClock() {
         // 2100-01-01T00:00:00Z in micros, far enough from now that no real clock reads it.
         final long probeMicros = 4_102_444_800_000_000L;
@@ -210,6 +220,54 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                         + " full recompute from the applied base, so a recompute-based oracle passes either way",
                 0L,
                 instance.getRefreshFaultCount()
+        );
+    }
+
+    /**
+     * Asserts the named view's restart recovery rebuilt its whole window from the applied base
+     * rather than restoring a published root, and that the rebuild retired the timeline on its
+     * way through. The mirror image of {@link #assertRestoredFromTimeline(String)}: a case that
+     * means to exercise the fallback needs this, because a restore that quietly succeeded would
+     * satisfy the same rows.
+     */
+    protected void assertRebuiltFromAppliedBase(String viewName) {
+        final LiveViewInstance instance = restoreWitnessInstance(viewName);
+        assertRestoreRoute(viewName, LiveViewCheckpointRestoreRoute.FALLBACK_REBUILD, instance);
+        Assert.assertTrue(
+                "live view '" + viewName + "' took the rebuild route without starting a rebuild",
+                instance.getCheckpointRebuildAttempts() > 0
+        );
+    }
+
+    /**
+     * Asserts the named view's restart recovery restored its window state from a published timeline
+     * root, and that nothing rebuilt or reset on the way there.
+     * <p>
+     * {@code isCheckpointRestoreSucceeded()} alone cannot carry this assertion. Both restart routes
+     * report it: {@code tryRestoreFromTimeline} catches every {@link Throwable} and falls through to
+     * the applied-base rebuild, which recomputes the whole window, produces correct rows, faults no
+     * refresh cycle and fails no seal. A recompute oracle, the fault count and the seal-failure
+     * count are all green over that fallback, so a test that asserts only the flag proves the view
+     * has state - not that the roots it published are the state it came back on.
+     */
+    protected void assertRestoredFromTimeline(String viewName) {
+        final LiveViewInstance instance = restoreWitnessInstance(viewName);
+        assertRestoreRoute(viewName, LiveViewCheckpointRestoreRoute.TIMELINE_RESTORE, instance);
+        Assert.assertEquals(
+                "live view '" + viewName + "' restored, but only after rebuilding from the applied base first",
+                0L,
+                instance.getCheckpointRebuildAttempts()
+        );
+        Assert.assertEquals(
+                "live view '" + viewName + "' restored, but retired the timeline it restored from;"
+                        + " the roots the previous process published are gone",
+                0L,
+                instance.getCheckpointTimelineResets()
+        );
+        Assert.assertTrue(
+                "live view '" + viewName + "' restored without naming the root it came back on",
+                instance.getCheckpointRestoreCheckpointId() != Numbers.LONG_NULL
+                        && instance.getCheckpointRestoreGeneration() != Numbers.LONG_NULL
         );
     }
 
@@ -347,5 +405,16 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             LiveViewCheckpointLifecycle.retireTimeline(engine.getConfiguration(), p, null, true);
         }
+    }
+
+    private LiveViewInstance restoreWitnessInstance(String viewName) {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+        Assert.assertNotNull("live view '" + viewName + "' is not registered", instance);
+        Assert.assertTrue(
+                "live view '" + viewName + "' has not run its restart recovery attempt yet, so it"
+                        + " witnesses no route: drive refresh to quiescence first",
+                instance.isCheckpointRestoreAttempted()
+        );
+        return instance;
     }
 }
