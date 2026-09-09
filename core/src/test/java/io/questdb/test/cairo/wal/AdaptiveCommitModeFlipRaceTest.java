@@ -310,6 +310,81 @@ public class AdaptiveCommitModeFlipRaceTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The same race, on the paths that are not {@code commit0}.
+     * <p>
+     * ALTER, UPDATE, mat-view invalidate, mat-view seed and truncateSoft all sequence through
+     * {@code syncAdaptiveEventsBeforeSequencing()}, which decides whether to barrier, and then decide
+     * separately whether to record a pending frontier. A flip landing between those two decisions makes
+     * the second one disagree with the first: no barrier was taken, yet the frontier is recorded, and the
+     * batched flush later advances the ack watermark over an _event file nothing made durable.
+     * <p>
+     * This is the same defect {@code commit0} was fixed for, on four sibling paths that were missed. The
+     * blast radius is narrower -- structural txns, W>0 only -- and the failure is identical: a client is
+     * told data is durable when it is not.
+     */
+    @Test
+    public void testFlipDuringAlterMustNotRecordUnbarrieredData() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 50_000);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+
+        final AdaptiveWalDurabilityTest.FdatasyncOrderFacade trackFf =
+                new AdaptiveWalDurabilityTest.FdatasyncOrderFacade();
+        assertMemoryLeak(trackFf, () -> {
+            execute("create table nwalter (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into nwalter values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("nwalter");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            trackFf.resetFdatasyncOrder();
+            final java.util.concurrent.atomic.AtomicInteger flips = new java.util.concurrent.atomic.AtomicInteger();
+            WalWriter.deferredCommitInterceptor = new WalWriter.DeferredCommitInterceptor() {
+                @Override
+                public void onStructuralSyncDecidedBeforeSequencing(int walId) {
+                    flips.incrementAndGet();
+                    // The barrier decision has been taken under NOSYNC. Flip now, so the record decision
+                    // that follows reads ADAPTIVE and believes barriers were taken.
+                    tracker.setCommitModeAtSeqTxn(CommitMode.ADAPTIVE, tracker.getSeqTxn());
+                }
+
+                @Override
+                public void onSequencedBeforePin(int walId, long seqTxn) {
+                }
+            };
+            try {
+                // UPDATE, not ALTER ADD COLUMN: an UPDATE is non-structural, so it sequences through
+                // applyNonStructural() -- one of the four paths that decide barrier and record separately.
+                execute("update nwalter set v = 2");
+            } finally {
+                WalWriter.deferredCommitInterceptor = null;
+            }
+
+            long eventBarriers = 0;
+            for (String path : trackFf.getFdatasyncOrder()) {
+                if (path.contains("wal") && path.contains("_event")) {
+                    eventBarriers++;
+                }
+            }
+            final long sequenced = tracker.getSeqTxn();
+            final long durable = tracker.getLocalDurableSeqTxn();
+
+            // The mode is NOT asserted here: the apply that follows re-publishes it from _meta, so by now
+            // it reads NOSYNC again. What matters is that the flip landed inside the window, which the
+            // interceptor firing proves -- without it this test would pass having raced nothing.
+            Assert.assertTrue("precondition: the UPDATE must have been sequenced", sequenced > 0);
+            Assert.assertTrue("precondition: the interceptor must have fired inside the window",
+                    flips.get() > 0);
+            Assert.assertTrue(
+                    "a frontier must never be recorded over an _event no barrier covered:"
+                            + " eventBarriers=" + eventBarriers + " durable=" + durable
+                            + " sequenced=" + sequenced,
+                    eventBarriers > 0 || durable < sequenced
+            );
+        });
+    }
+
     private static void TableWriterRow(WalWriter writer) {
         io.questdb.cairo.TableWriter.Row row = writer.newRow(0L);
         row.putLong(1, 1L);

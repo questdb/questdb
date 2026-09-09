@@ -639,11 +639,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     refreshIntervals,
                     refreshIntervalsBaseTxn
             );
-            syncAdaptiveEventsBeforeSequencing();
+            final int syncedMode = syncAdaptiveEventsBeforeSequencing();
             final long seqTxn = getSequencerTxn();
             // W>0: private events are already durable; record the deferred shared-sequencer barrier so the
             // next commit/background flusher bounds visibility to <= W even if commits stop.
-            if (walCommitMode() == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+            if (syncedMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
                 recordPendingDurable(seqTxn);
             }
         } catch (Throwable th) {
@@ -823,11 +823,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         0,
                         WAL_DEDUP_MODE_DEFAULT
                 );
-                syncAdaptiveEventsBeforeSequencing();
+                final int syncedMode = syncAdaptiveEventsBeforeSequencing();
                 final long seqTxn = getSequencerTxn();
                 // W>0: carry the remaining shared-sequencer barrier in the batched flush, which
                 // cleanupBeforeClose runs when this writer closes after the seeds.
-                if (walCommitMode() == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+                if (syncedMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
                     recordPendingDurable(seqTxn);
                 }
             }
@@ -851,10 +851,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     public void truncateSoft() {
         try {
             lastSegmentTxn = events.truncate();
-            syncAdaptiveEventsBeforeSequencing();
+            final int syncedMode = syncAdaptiveEventsBeforeSequencing();
             final long seqTxn = getSequencerTxn();
             // W>0: private events are durable; record the remaining shared-sequencer barrier pending.
-            if (walCommitMode() == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+            if (syncedMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
                 recordPendingDurable(seqTxn);
             }
         } catch (Throwable th) {
@@ -998,7 +998,16 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
-    private void syncAdaptiveEventsBeforeSequencing() {
+    /**
+     * Syncs this txn's private event files ahead of sequencing, and returns THE MODE IT ACTED ON.
+     * <p>
+     * The return value is the point. The caller has to decide whether to record a pending durable frontier,
+     * and that decision must be made on the mode this method barriered under, not on a fresh read: a flip
+     * landing in between makes the two disagree, so a frontier is recorded over an {@code _event} nothing
+     * made durable, the batched flush advances the ack watermark over it, and a client is told data is
+     * durable when it is not. {@code commit0} carries the same rule as {@code adaptiveBarriersTaken}.
+     */
+    private int syncAdaptiveEventsBeforeSequencing() {
         final int commitMode = walCommitMode();
         if (commitMode == CommitMode.ADAPTIVE) {
             events.sync(commitMode);
@@ -1008,6 +1017,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 events.barrierFsync();
             }
         }
+        final DeferredCommitInterceptor commitInterceptor = deferredCommitInterceptor;
+        if (commitInterceptor != null) {
+            commitInterceptor.onStructuralSyncDecidedBeforeSequencing(walId);
+        }
+        return commitMode;
     }
 
     private long applyNonStructural(AbstractOperation op, boolean verifyStructureVersion) {
@@ -1026,14 +1040,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // records it. This is required for both W=0 and W>0: another writer may fdatasync the shared
             // sequencer while this writer's batch is pending, so deferring private WAL durability would let
             // that peer publish a seqTxn whose _event.i entry can disappear on crash.
-            final int commitMode = walCommitMode();
-            if (commitMode == CommitMode.ADAPTIVE) {
-                events.sync(commitMode);
-                if (deferDeviceFlush()) {
-                    // sync(ADAPTIVE) is MS_ASYNC when W>0; explicitly finish the private barrier now.
-                    events.barrierFsync();
-                }
-            }
+            final int syncedMode = syncAdaptiveEventsBeforeSequencing();
             final long seqTxn = getSequencerTxn();
             // Deferred 2 (group commit, W>0): mirror the commit0 durable-ack path. The callers
             // (apply(AlterOperation) and apply(UpdateOperation)) already flushed any prior pending DATA
@@ -1041,7 +1048,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // start a NEW pending batch for THIS SQL txn. Without this call, a SQL-only-then-idle table's
             // localDurableSeqTxn would never advance over the SQL txn under W>0 (durable-ack liveness gap); the
             // batched flush carries the SQL txn's shared sequencer barrier to durable within ≤W even when commits stop.
-            if (walCommitMode() == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+            if (syncedMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
                 recordPendingDurable(seqTxn);
             }
             return seqTxn;
@@ -1208,6 +1215,16 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
          * is the narrow window the {@code adaptiveBarriersTaken} guard exists to make safe.
          */
         default void onStrengthenDecidedBeforeSequencing(int walId) {
+        }
+
+        /**
+         * Fires on the NON-{@code commit0} paths (ALTER/UPDATE, mat-view invalidate, mat-view seed,
+         * truncateSoft), between the barrier decision in
+         * {@code syncAdaptiveEventsBeforeSequencing()} and the separate decision to record a pending
+         * frontier. A flip landing here makes the second decision disagree with the first.
+         * Default no-op, so interceptors written for the commit0 window are unaffected.
+         */
+        default void onStructuralSyncDecidedBeforeSequencing(int walId) {
         }
 
         void onSequencedBeforePin(int walId, long seqTxn);
