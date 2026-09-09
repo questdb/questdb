@@ -20,6 +20,7 @@
 # separate row of the matrix measured from the same state the steady rows leave behind.
 set -euo pipefail
 
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JAR="${1:?usage: run-matrix.sh <benchmarks.jar> <output-dir> [cardinalities] [runs]}"
 OUT="${2:?usage: run-matrix.sh <benchmarks.jar> <output-dir> [cardinalities] [runs]}"
 CARDINALITIES="${3:-10000 100000}"
@@ -59,7 +60,11 @@ for keys in $CARDINALITIES; do
                 fi
                 echo "run  $(basename "$file")"
                 # shellcheck disable=SC2086
+                # -Dout sends the server log to a file. The default configuration writes it
+                # to stdout on a thread that does not share System.out's lock, so a log
+                # record lands inside a printf'd report line often enough to corrupt a run.
                 java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED "$(heap "$keys")" \
+                    -Dout="$DIR/quiet-log.conf" \
                     -cp "$JAR" org.questdb.LiveViewSteadyStateBenchmark \
                     --seed="$keys" --recycle-accounts="$keys" \
                     --batch=$BATCH --batches=$BATCHES --checkpoint-rows=$BATCH \

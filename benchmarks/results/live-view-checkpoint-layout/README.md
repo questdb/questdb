@@ -1,8 +1,12 @@
 # Live-view checkpoint layout removal: performance acceptance matrix
 
 Everything needed to repeat the matrix: the harness changes are in the benchmarks module,
-the driver and the aggregator are here, and `RESULTS.md` holds a run's output with the
-machine and settings it was produced on.
+the driver and the aggregator are here, and [RESULTS.md](RESULTS.md) holds a measured run
+with the machine and settings that produced it.
+
+Raw per-run files are not committed - 360 of them, about 12 MB - and `run-matrix.sh`
+regenerates them. `RESULTS.md` carries every aggregated cell, including the full gate
+table.
 
 ## What is measured
 
@@ -73,6 +77,11 @@ git -C /tmp/baseline-repo apply .../baseline-harness.patch
 
 ./summarize-matrix.py /tmp/matrix/baseline /tmp/matrix/candidate --md
 ```
+
+Every run passes `-Dout=quiet-log.conf`, which sends the server log to a file. The default
+configuration writes it to stdout on a writer thread that does not share `System.out`'s
+lock, so a log record lands inside a printf'd report line often enough to corrupt a run's
+output; the driver does this for you.
 
 Run the two revisions on the same machine and filesystem with the same JVM, heap, worker
 count, input, maintenance settings and cache policy. `run-matrix.sh` fixes every one of
