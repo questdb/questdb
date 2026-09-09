@@ -26,12 +26,10 @@ package io.questdb.test.mp;
 
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.ValueHolder;
-import io.questdb.std.ObjList;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ConcurrentQueueTest {
@@ -150,7 +148,7 @@ public class ConcurrentQueueTest {
     }
 
     @Test
-    public void testNeverReportsUnavailableWhileCommittedItemsRemain() throws InterruptedException {
+    public void testNeverReportsUnavailableWhileCommittedItemsRemain() throws Exception {
         // Mirrors ConcurrentQueueFuzzTest.testTryDequeueNeverMissesCommittedItem: the queue starts
         // with one item per thread and every thread holds at most one dequeued item at a time, so it
         // always contains at least one committed item. The tiny segment keeps enqueues overflowing
@@ -163,36 +161,20 @@ public class ConcurrentQueueTest {
             queue.enqueue(new Object());
         }
 
-        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
         final AtomicInteger unavailableReadings = new AtomicInteger();
-        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
-        final ObjList<Thread> threads = new ObjList<>();
-        for (int i = 0; i < threadCount; i++) {
-            final Thread th = new Thread(() -> {
-                try {
-                    barrier.await();
-                    for (int j = 0; j < iterations; j++) {
-                        if (!queue.hasAvailable()) {
-                            unavailableReadings.incrementAndGet();
-                        }
-                        Object item = queue.tryDequeueValue(null);
-                        if (item == null) {
-                            item = new Object();
-                        }
-                        queue.enqueue(item);
-                    }
-                } catch (Throwable e) {
-                    errors.add(e);
+        TestUtils.runConcurrently(threadCount, i -> {
+            for (int j = 0; j < iterations; j++) {
+                if (!queue.hasAvailable()) {
+                    unavailableReadings.incrementAndGet();
                 }
-            });
-            th.start();
-            threads.add(th);
-        }
-        for (int i = 0; i < threadCount; i++) {
-            threads.getQuick(i).join();
-        }
+                Object item = queue.tryDequeueValue(null);
+                if (item == null) {
+                    item = new Object();
+                }
+                queue.enqueue(item);
+            }
+        });
 
-        Assert.assertTrue(errors.toString(), errors.isEmpty());
         Assert.assertEquals("hasAvailable() reported an empty queue while it held committed items", 0, unavailableReadings.get());
     }
 
