@@ -2632,6 +2632,39 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testIPv4ArithmeticDeclinesJit() throws Exception {
+        // IPv4 arithmetic is not i32 arithmetic: `ip - ip2` and `ip - '1.1.1.1'` answer a signed
+        // LONG in the Java filter, LONG_NULL for a NULL operand, and `ip + 1` / `ip - 1` answer an
+        // IPv4 that is NULL for a NULL operand or a carry out of 32 bits. The serializer has no
+        // result type to give the arithmetic node - every constant and comparison in an IPv4
+        // predicate takes the column's own I4 typing and the unsigned IPv4 order - so it declines
+        // the predicate and the Java filter answers. Pinned by
+        // CompiledFilterRegressionTest#testIPv4ArithmeticDeclinesCompiledFilter.
+        final String[] filters = {
+                "anipv4 - anipv4 < 1",
+                "(anipv4 - anipv4) > (anipv4 - anipv4)",
+                "(anipv4 - '10.0.0.1') = null",
+                "anipv4 + 1 = '10.0.0.2'",
+                "anipv4 - 1 >= '10.0.0.1'",
+                "'10.0.0.2' - anipv4 = 1",
+                "anipv4 * 2 = 4",
+                "anipv4 / 2 = 4",
+                "anint = 1 and anipv4 - anipv4 = 0",
+                "(anipv4 < anipv4) = (anipv4 - anipv4 < 0)",
+        };
+        for (String filter : filters) {
+            try {
+                serialize(filter);
+                Assert.fail("expected JIT compilation to be declined for: " + filter);
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "is not supported for IPv4 type");
+            }
+        }
+        // An IPv4 ordering with no arithmetic keeps compiling.
+        serialize("anipv4 < '10.0.0.1'");
+    }
+
+    @Test
     public void testIPv4Ordering() throws Exception {
         // https://github.com/questdb/questdb/issues/7547
         final String[] literals = {

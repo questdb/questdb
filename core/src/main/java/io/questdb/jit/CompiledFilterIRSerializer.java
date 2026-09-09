@@ -1038,6 +1038,32 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (predicateLeft) {
             // We're out of a predicate
 
+            // Arithmetic in an IPv4 predicate. The Java filter answers `ip - ip2` and
+            // `ip - '1.1.1.1'` with a signed LONG (IPv4MinusIPv4FunctionFactory), LONG_NULL for a
+            // NULL operand, and `ip + 1` / `ip - 1` with an IPv4 that is NULL for a NULL operand or
+            // for a carry out of 32 bits. The backends run i32 arithmetic on the raw lane instead:
+            // IPv4 NULL is zero there, the difference wraps, and every constant and comparison in
+            // the predicate keeps the COLUMN's typing - the NULL constant is the IPv4 zero
+            // sentinel, and the ordering operators take the unsigned IPv4 expansion, which reads a
+            // negative difference as a huge address. `(ip - ip2) < (ip2 - ip)` answered NO rows
+            // over a table where every row has ip = 1.1.1.1 and ip2 = 1.1.1.2, and
+            // `(ip - '1.1.1.1') = NULL` selected the row whose difference is ZERO instead of the
+            // row whose ip is NULL. Until the serializer types an arithmetic node by its own
+            // result, decline the predicate; the Java filter is always correct. This runs ahead
+            // of the constant backfill so that the decline names the operator rather than a
+            // constant the backfill would have refused for its own reasons.
+            if (predicateContext.hasArithmeticOperations
+                    && ColumnType.tagOf(predicateContext.columnType) == ColumnType.IPv4) {
+                final ExpressionNode arithmeticNode = predicateContext.arithmeticNode;
+                if (arithmeticNode != null) {
+                    throw SqlException.position(arithmeticNode.position)
+                            .put("operator: ").put(arithmeticNode.token)
+                            .put(" is not supported for IPv4 type");
+                }
+                throw SqlException.position(node.position)
+                        .put("arithmetic is not supported for IPv4 type");
+            }
+
             // A comparison - or an IN pairing - inside this predicate that reads NO column, under a
             // predicate whose columns are not numeric. Every constant the serializer emits takes
             // its type from predicateContext.columnType, which the columns of the WHOLE predicate
@@ -6046,6 +6072,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final TypesObserver localTypesObserver = new TypesObserver();
         private final LongList inIntervals = new LongList();
         int columnType;
+        // The first arithmetic operation the predicate holds, for the IPv4 decline's message.
+        // Null when the predicate has none, or only a pure-constant subtree descend() folded.
+        ExpressionNode arithmeticNode;
         boolean hasArithmeticOperations;
         // True when the predicate has at least one FLOAT / DOUBLE column,
         // bind variable, or numeric constant. Captured up front by
@@ -6223,7 +6252,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         private void handleOperation(ExpressionNode node) {
-            hasArithmeticOperations |= isArithmeticOperation(node);
+            if (isArithmeticOperation(node)) {
+                hasArithmeticOperations = true;
+                if (arithmeticNode == null) {
+                    arithmeticNode = node;
+                }
+            }
         }
 
         private void reset() {
@@ -6232,6 +6266,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             symbolTable = null;
             symbolColumnIndex = -1;
             singleBooleanColumn = false;
+            arithmeticNode = null;
             hasArithmeticOperations = false;
             hasFloatInPredicate = false;
             localTypesObserver.clear();

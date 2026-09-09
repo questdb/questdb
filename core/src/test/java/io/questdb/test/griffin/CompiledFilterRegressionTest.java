@@ -5815,6 +5815,73 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4ArithmeticDeclinesCompiledFilter() throws Exception {
+        // IPv4 arithmetic is not the i32 arithmetic the backends run. `ip - ip2` and
+        // `ip - '1.1.1.1'` answer a signed LONG in the Java filter (IPv4MinusIPv4FunctionFactory),
+        // LONG_NULL for a NULL operand, and `ip + 1` / `ip - 1` answer an IPv4, IPv4_NULL for a
+        // NULL operand or a carry out of 32 bits. An i32 lane wraps the difference, reads IPv4
+        // NULL as zero, and the unsigned IPv4 ordering then takes a negative difference for a huge
+        // address: `(ip - ip2) < (ip2 - ip)` answered NO rows over a fixture where every row
+        // has ip = 1.1.1.1 and ip2 = 1.1.1.2, and `(ip - '1.1.1.1') = NULL` selected the row
+        // whose difference is ZERO instead of the row whose ip is NULL. The serializer declines
+        // arithmetic in an IPv4 predicate and the Java filter answers.
+        assertMemoryLeak(() -> {
+            // Five value classes, seven rows each, so that the SIMD body and its scalar tail both
+            // see every class: a negative difference that fits i32, a NULL on either side, a
+            // positive difference that does NOT fit i32, and a negative difference across the
+            // sign boundary.
+            execute("CREATE TABLE x (ip IPv4, ip2 IPv4, id LONG, k TIMESTAMP) TIMESTAMP(k)");
+            execute(
+                    """
+                            INSERT INTO x
+                            SELECT
+                                (CASE x % 5
+                                    WHEN 0 THEN '1.1.1.1'
+                                    WHEN 1 THEN NULL
+                                    WHEN 2 THEN '1.1.1.2'
+                                    WHEN 3 THEN '255.255.255.255'
+                                    ELSE '128.0.0.0'
+                                END)::IPv4,
+                                (CASE x % 5
+                                    WHEN 0 THEN '1.1.1.2'
+                                    WHEN 1 THEN '1.1.1.1'
+                                    WHEN 2 THEN NULL
+                                    WHEN 3 THEN '1.1.1.1'
+                                    ELSE '128.0.0.1'
+                                END)::IPv4,
+                                x,
+                                timestamp_sequence(0, 1)
+                            FROM long_sequence(35)
+                            """
+            );
+
+            // IPv4 - IPv4 is a signed LONG: -1 for classes 0 and 4, NULL for 1 and 2, and
+            // 4_278_124_286 for class 3, which an i32 lane wraps negative.
+            assertPredicateDeclines("(ip - ip2) < (ip2 - ip)", 14);
+            assertPredicateDeclines("(ip - ip2) > (ip2 - ip)", 7);
+            assertPredicateDeclines("ip - ip2 < 0", 14);
+            assertPredicateDeclines("ip - ip2 > 0", 7);
+            assertPredicateDeclines("ip - ip2 = -1", 14);
+            assertPredicateDeclines("ip - ip2 > 4_000_000_000", 7);
+            // The quoted-literal spelling routes through the same LONG function.
+            assertPredicateDeclines("(ip - '1.1.1.1') = NULL", 7);
+            assertPredicateDeclines("(ip - '1.1.1.1') != NULL", 28);
+            assertPredicateDeclines("(ip - '1.1.1.1') = 0", 7);
+            assertPredicateDeclines("('1.1.1.2' - ip) = 1", 7);
+            // IPv4 +/- INT answers an IPv4: NULL for a NULL operand or a carry out of 32 bits,
+            // where an i32 lane holds 1 for NULL + 1 and wraps 255.255.255.255 + 1 to zero.
+            assertPredicateDeclines("ip + 1 = '1.1.1.2'", 7);
+            assertPredicateDeclines("ip - 1 = '1.1.1.1'", 7);
+            assertPredicateDeclines("ip + 1 = NULL", 14);
+            assertPredicateDeclines("ip - 1 >= '128.0.0.0'", 7);
+            // Nested under a comparison that does compile on its own - every class agrees on the
+            // two sides, the NULL classes as false = false - and behind an AND.
+            assertPredicateDeclines("(ip < ip2) = (ip - ip2 < 0)", 35);
+            assertPredicateDeclines("id > 5 AND ip - ip2 < 0", 12);
+        });
+    }
+
+    @Test
     public void testIPv4OrderingUsesCompiledFilter() throws Exception {
         // https://github.com/questdb/questdb/issues/7547
         assertMemoryLeak(() -> {
@@ -8985,6 +9052,19 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * proper non-empty subset of the fixture's 35 rows.
      */
     private void assertColumnFreeComparisonDeclines(String predicate, long expectedRows) throws SqlException {
+        assertPredicateDeclines(predicate, expectedRows);
+    }
+
+    /**
+     * Runs {@code predicate} over the {@code x} table the calling test built and asserts that the
+     * JIT declines it in every execution mode - vectorized, {@code JIT_MODE_FORCE_SCALAR}, and
+     * the {@code count()} factory - and that the Java filter selects {@code expectedRows}. The
+     * shared body of {@link #assertColumnFreeComparisonDeclines} and
+     * {@link #testIPv4ArithmeticDeclinesCompiledFilter()}: parity alone cannot pin a decline,
+     * since both runs are then the same Java filter, so {@code expectJit == false} is what keeps
+     * the site live and {@code expectedRows} keeps it from going vacuous.
+     */
+    private void assertPredicateDeclines(String predicate, long expectedRows) throws SqlException {
         final String rowQuery = "x WHERE " + predicate;
         final String countQuery = "SELECT count() FROM x WHERE " + predicate;
         // JIT_MODE_DISABLED versus JIT_MODE_ENABLED, plus the non-empty guard.
