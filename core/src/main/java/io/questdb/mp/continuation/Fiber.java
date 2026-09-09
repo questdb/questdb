@@ -24,6 +24,9 @@
 
 package io.questdb.mp.continuation;
 
+import io.questdb.std.FiberLocal;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -73,6 +76,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private final Outcome outcomeScratch = new Outcome();
     private final FiberPool pool;
     private final SuspensionScope.RoleSwitchReadLockState roleSwitchReadLocks = new SuspensionScope.RoleSwitchReadLockState();
+    private final ObjList<Object> scratch = new ObjList<>();
     private final FiberWaitCoordinator waitCoordinator;
     private FiberCancellationSignal assignedCancellationSignal;
     private long assignedCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
@@ -764,6 +768,11 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     @Nullable
+    void freeScratch() {
+        Misc.freeObjListIfCloseable(scratch);
+        scratch.clear();
+    }
+
     FiberTask getAssignedTask() {
         return assignedTask;
     }
@@ -1251,5 +1260,13 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         protected void onPinned(Pinned reason) {
             pinnedReason = reason;
         }
+    }
+
+    static {
+        FiberLocal.installSlotProvider(() -> {
+            final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+            final Fiber fiber = scope.fiber;
+            return fiber != null ? fiber.scratch : scope.scratch;
+        });
     }
 }
