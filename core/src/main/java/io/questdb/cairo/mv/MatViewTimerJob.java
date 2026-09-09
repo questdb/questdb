@@ -570,7 +570,12 @@ public class MatViewTimerJob extends SynchronizedJob {
             final TableToken viewToken = timerTask.getMatViewToken();
             switch (timerTask.getOperation()) {
                 case MatViewTimerTask.ADD:
-                    addTimers(viewToken, nowUs);
+                    // CREATE publishes state before ADD, so a concurrent ALTER can register timers
+                    // first. Skip the delayed ADD without scanning timers belonging to other views.
+                    final MatViewState state = matViewStateStore.getViewState(viewToken);
+                    if (state == null || state.getRegisteredTimerCount() == 0) {
+                        addTimers(viewToken, nowUs);
+                    }
                     break;
                 case MatViewTimerTask.REMOVE:
                     removeTimers(viewToken);

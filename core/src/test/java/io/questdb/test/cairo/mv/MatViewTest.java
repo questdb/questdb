@@ -46,6 +46,7 @@ import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.mv.MatViewTimerJob;
+import io.questdb.cairo.mv.MatViewTimerTask;
 import io.questdb.cairo.mv.WalTxnRangeLoader;
 import io.questdb.cairo.security.AbstractPrincipalAwareSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -9386,6 +9387,16 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimersRegisteredOnceWhenAddFollowsProcessedUpdate() throws Exception {
+        testTimersRegisteredOnceWhenAddFollowsUpdate(true);
+    }
+
+    @Test
+    public void testTimersRegisteredOnceWhenAddFollowsQueuedUpdate() throws Exception {
+        testTimersRegisteredOnceWhenAddFollowsUpdate(false);
+    }
+
+    @Test
     public void testTimerViewRegisteredWhileRefreshQueueStaysBusy() throws Exception {
         // The reported outage, read through timers_registered: a timer view stayed unregistered for a
         // week while immediate views on the same base table stayed current. The refresh queue never
@@ -11048,6 +11059,50 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\n" +
                             "price_1h\ttimer\tbase_price\t" + tsSink + "\t" + tsSink + "\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t1\t1\t" + (timeZone != null ? timeZone : "") + "\t" + start + "\t" + interval + "\t" + unitStr + "\n");
+        });
+    }
+
+    private void testTimersRegisteredOnceWhenAddFollowsUpdate(boolean isUpdateProcessedFirst) throws Exception {
+        assertMemoryLeak(() -> {
+            currentMicros = parseFloorPartialTimestamp("2024-12-12T12:00:00.000000Z");
+            executeWithRewriteTimestamp("""
+                    CREATE TABLE base_price (ts #TIMESTAMP, price DOUBLE)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    CREATE MATERIALIZED VIEW price_1h REFRESH EVERY 2h DEFERRED AS
+                    SELECT ts, last(price) AS price FROM base_price SAMPLE BY 1h
+                    """);
+
+            // CREATE publishes the view state before enqueueing ADD. Hold its real task to
+            // model a concurrent ALTER publishing UPDATE first, without racing test threads.
+            final Queue<MatViewTimerTask> timerTasks = engine.getMatViewTimerQueue();
+            final MatViewTimerTask delayedAdd = new MatViewTimerTask();
+            Assert.assertTrue(timerTasks.tryDequeue(delayedAdd));
+            Assert.assertEquals(MatViewTimerTask.ADD, delayedAdd.getOperation());
+
+            execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH EVERY 1h;");
+            drainWalQueue();
+            final MatViewTimerTask update = new MatViewTimerTask();
+            Assert.assertTrue(timerTasks.tryDequeue(update));
+            Assert.assertEquals(MatViewTimerTask.UPDATE, update.getOperation());
+            timerTasks.enqueue(update);
+
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            if (isUpdateProcessedFirst) {
+                drainMatViewTimerQueue(timerJob);
+            }
+            timerTasks.enqueue(delayedAdd);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQuery("SELECT view_name, timer_interval, timers_registered FROM materialized_views()")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\ttimer_interval\ttimers_registered
+                            price_1h\t1\t2
+                            """);
         });
     }
 
