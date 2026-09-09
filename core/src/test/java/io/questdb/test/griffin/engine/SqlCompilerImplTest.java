@@ -8497,7 +8497,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         compiler,
                         "create materialized view injected as (select * from erb_base) " +
                                 "expire rows keep highest v partition by k) and (1=0 owned by 'group'",
-                        "invalid EXPIRE ROWS KEEP HIGHEST PARTITION BY column"
+                        "',' expected"
                 );
 
                 execute(

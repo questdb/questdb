@@ -210,7 +210,8 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
                     Object fullOwner = null;
                     switch (operation) {
                         case MatViewRefreshTask.INCREMENTAL_REFRESH -> store.enqueueIncrementalRefresh(dependentToken);
-                        case MatViewRefreshTask.RANGE_REFRESH -> store.enqueueRangeRefresh(dependentToken, 11, Long.MAX_VALUE - 1);
+                        case MatViewRefreshTask.RANGE_REFRESH ->
+                                store.enqueueRangeRefresh(dependentToken, 11, Long.MAX_VALUE - 1);
                         default -> {
                             state.markAsPendingFullRefreshForTesting();
                             fullOwner = state.getPendingFullRefreshOwnerForTesting();
