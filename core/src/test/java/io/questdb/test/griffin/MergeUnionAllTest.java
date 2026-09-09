@@ -38,6 +38,28 @@ import org.junit.Test;
 public class MergeUnionAllTest extends AbstractCairoTest {
 
     @Test
+    public void testAsofJoinOverUnionAllWithoutOrderByResolvesAllBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinUnionTables();
+            // No user-written ORDER BY at all. The ordering requirement comes from the ASOF JOIN
+            // itself, so the merge must still be selected rather than a concatenating UNION ALL.
+            assertQuery("SELECT sum(CASE WHEN p.price IS NOT NULL THEN 1 ELSE 0 END) resolved " +
+                    "FROM trades t " +
+                    "ASOF JOIN (SELECT * FROM (" +
+                    "SELECT ts, token, price FROM px_bridge " +
+                    "UNION ALL " +
+                    "SELECT ts, token, price FROM px_tail" +
+                    ") TIMESTAMP(ts)) p ON (t.token = p.token)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            resolved
+                            4
+                            """);
+        });
+    }
+
+    @Test
     public void testCalculateSizeHonorsCircuitBreakerAfterHasNext() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a (px double, ts timestamp) timestamp(ts) partition by day");
@@ -307,6 +329,30 @@ public class MergeUnionAllTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerJoinOverUnionAllKeepsConcat() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinUnionTables();
+            // A hash join imposes no ordering requirement on its operands, so the cheaper
+            // concatenating UNION ALL must survive. Guards against the merge being selected
+            // for every join rather than the time-series ones.
+            assertQuery("SELECT count() FROM trades t " +
+                    "JOIN (SELECT * FROM (" +
+                    "SELECT ts, token, price FROM px_bridge " +
+                    "UNION ALL " +
+                    "SELECT ts, token, price FROM px_tail" +
+                    ") TIMESTAMP(ts)) p ON (t.token = p.token)")
+                    .withPlanContaining("Hash Join", "Union All")
+                    .withPlanNotContaining("Union All Merge")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            40
+                            """);
+        });
+    }
+
+    @Test
     public void testInnerUnionAsBranchMergesFully() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a (px double, ts timestamp) timestamp(ts) partition by day");
@@ -349,6 +395,118 @@ public class MergeUnionAllTest extends AbstractCairoTest {
                             30.0
                             20.0
                             10.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLtJoinOverOrderedUnionAllResolvesAllBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinUnionTables();
+            // Every trade must resolve a price: both tokens are priced across the whole range,
+            // one in each UNION ALL branch. Concatenating the branches without a merge leaves
+            // the right-hand cursor non-monotonic, and the join silently drops the second branch.
+            assertQuery("SELECT sum(CASE WHEN p.price IS NOT NULL THEN 1 ELSE 0 END) resolved " +
+                    "FROM trades t " +
+                    "LT JOIN (SELECT * FROM (" +
+                    "SELECT ts, token, price FROM px_bridge " +
+                    "UNION ALL " +
+                    "SELECT ts, token, price FROM px_tail " +
+                    "ORDER BY ts" +
+                    ") TIMESTAMP(ts)) p ON (t.token = p.token)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            resolved
+                            4
+                            """);
+        });
+    }
+
+    @Test
+    public void testLtJoinOverThreeBranchUnionAllResolvesAllBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE px_bridge (ts TIMESTAMP, token SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE px_tail (ts TIMESTAMP, token SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE px_third (ts TIMESTAMP, token SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (ts TIMESTAMP, token SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO px_bridge SELECT timestamp_sequence(0, 1000000), 'BRIDGE', 600.0 FROM long_sequence(10)");
+            execute("INSERT INTO px_tail SELECT timestamp_sequence(0, 1000000), 'TAIL', 1.5 FROM long_sequence(10)");
+            execute("INSERT INTO px_third SELECT timestamp_sequence(0, 1000000), 'THIRD', 9.0 FROM long_sequence(10)");
+            execute("INSERT INTO trades SELECT timestamp_sequence(5000000, 1000000), " +
+                    "CASE WHEN x % 3 = 0 THEN 'BRIDGE' WHEN x % 3 = 1 THEN 'TAIL' ELSE 'THIRD' END " +
+                    "FROM long_sequence(6)");
+
+            // Concatenation resolves only the first branch, so branches two and three both
+            // return nothing. Every trade must resolve.
+            assertQuery("SELECT sum(CASE WHEN p.price IS NOT NULL THEN 1 ELSE 0 END) resolved " +
+                    "FROM trades t " +
+                    "LT JOIN (SELECT * FROM (" +
+                    "SELECT ts, token, price FROM px_bridge " +
+                    "UNION ALL " +
+                    "SELECT ts, token, price FROM px_tail " +
+                    "UNION ALL " +
+                    "SELECT ts, token, price FROM px_third" +
+                    ") TIMESTAMP(ts)) p ON (t.token = p.token)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            resolved
+                            6
+                            """);
+        });
+    }
+
+    @Test
+    public void testLtJoinOverUnionAllSelectsMerge() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinUnionTables();
+            // Pin the plan: the union feeding a time-series join must be a merge, not a concat.
+            assertQuery("SELECT t.ts, p.price " +
+                    "FROM trades t " +
+                    "LT JOIN (SELECT * FROM (" +
+                    "SELECT ts, token, price FROM px_bridge " +
+                    "UNION ALL " +
+                    "SELECT ts, token, price FROM px_tail " +
+                    "ORDER BY ts" +
+                    ") TIMESTAMP(ts)) p ON (t.token = p.token)")
+                    .withPlanContaining("Union All Merge")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestampAsc("ts")
+                    .returns("""
+                            ts\tprice
+                            1970-01-01T00:00:05.000000Z\t1.5
+                            1970-01-01T00:00:06.000000Z\t600.0
+                            1970-01-01T00:00:07.000000Z\t1.5
+                            1970-01-01T00:00:08.000000Z\t600.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLtJoinOverUnionAllViewResolvesAllBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinUnionTables();
+            // The shape reported from the field: the two price sources are combined by a view,
+            // and the view is the right-hand side of the join. Wrapping in a view changes
+            // nothing about the requirement - the join still needs an ascending stream.
+            execute("CREATE VIEW v_prices AS (SELECT * FROM (" +
+                    "SELECT ts, token, price FROM px_bridge " +
+                    "UNION ALL " +
+                    "SELECT ts, token, price FROM px_tail" +
+                    ") TIMESTAMP(ts))");
+            drainWalAndViewQueues();
+
+            assertQuery("SELECT sum(CASE WHEN p.price IS NOT NULL THEN 1 ELSE 0 END) resolved " +
+                    "FROM trades t " +
+                    "LT JOIN v_prices p ON (t.token = p.token)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            resolved
+                            4
                             """);
         });
     }
@@ -1120,6 +1278,18 @@ public class MergeUnionAllTest extends AbstractCairoTest {
             offset += term.length();
         }
         return count;
+    }
+
+    // Two price sources with disjoint token sets over the same time range, one per UNION ALL
+    // branch, plus trades that alternate between them.
+    private void createTimeSeriesJoinUnionTables() throws Exception {
+        execute("CREATE TABLE px_bridge (ts TIMESTAMP, token SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE px_tail (ts TIMESTAMP, token SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE trades (ts TIMESTAMP, token SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO px_bridge SELECT timestamp_sequence(0, 1000000), 'BRIDGE', 600.0 FROM long_sequence(10)");
+        execute("INSERT INTO px_tail SELECT timestamp_sequence(0, 1000000), 'TAIL', 1.5 FROM long_sequence(10)");
+        execute("INSERT INTO trades SELECT timestamp_sequence(5000000, 1000000), " +
+                "CASE WHEN x % 2 = 0 THEN 'BRIDGE' ELSE 'TAIL' END FROM long_sequence(4)");
     }
 
     private void createLongUnionTable() throws Exception {
