@@ -45,7 +45,6 @@ import io.questdb.cairo.idx.FSSTNative;
 import io.questdb.cairo.idx.IndexBwdNullReader;
 import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
-import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
@@ -80,7 +79,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.QueryAssertion;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
@@ -13165,6 +13163,43 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalOpeningInsideThePartitionServesTheRightCoveredValues() throws Exception {
+        // A covered scan whose time filter opens PART WAY INTO a partition, so the posting
+        // cursor jumps whole DELTA blocks to reach the interval's first posting and records how
+        // many postings it skipped over.
+        //
+        // That skip has to reach the covered values exactly once. The fixed-width accessors read
+        // the key's OWN sidecar block and take the skip through cachedSidecarIdx; the
+        // variable-length ones read the STRIDE-wide block and add the key's base to that same
+        // index. Adding the skip to the base as well counted it twice, and every STRING, VARCHAR,
+        // BINARY and ARRAY covered value came back from a row further down the partition -- with
+        // the fixed-width columns beside it staying right, so nothing looked wrong.
+        //
+        // The openings ascend, so a fix that only holds for a small skip still fails here.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 1024);
+        assertMemoryLeak(() -> {
+            createIntervalSidecarTable();
+            assertCoveredIntervalMatchesUncovered("2022-02-18T05:56:40.000000Z", "null");
+            assertCoveredIntervalMatchesUncovered("2022-02-18T06:00:00.000000Z", "null");
+            assertCoveredIntervalMatchesUncovered("2022-02-18T10:00:00.729279Z", "null");
+            assertCoveredIntervalMatchesUncovered("2022-02-18T14:33:07.000000Z", "null");
+            assertCoveredIntervalMatchesUncovered("2022-02-18T18:33:07.000000Z", "null");
+        });
+    }
+
+    @Test
+    public void testIntervalOpeningInsideThePartitionServesTheRightCoveredValuesForANonNullKey() throws Exception {
+        // The same skip on a key that resolves to a real symbol. Nothing about the double count
+        // was specific to NULL, and this key builds no backup plan at all.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 1024);
+        assertMemoryLeak(() -> {
+            createIntervalSidecarTable();
+            assertCoveredIntervalMatchesUncovered("2022-02-18T10:00:00.729279Z", "'DE'");
+            assertCoveredIntervalMatchesUncovered("2022-02-18T18:33:07.000000Z", "'DE'");
+        });
+    }
+
+    @Test
     public void testLatestByAllColumnTypes() throws Exception {
         // LATEST BY through CoveringRecord — exercises every type accessor
         assertMemoryLeak(() -> {
@@ -19823,6 +19858,27 @@ public class CoveringIndexTest extends AbstractCairoTest {
      * match {@code sym2 = null} through the reader's synthetic null prefix and the
      * covered read for them comes from the INCLUDE columns' own .d/.i files.
      */
+    /**
+     * One day's worth of rows starting part way through the day, indexed after the fact so the
+     * whole partition seals in one pass, with covered columns on both sides of the fixed/variable
+     * split. Big enough that a key's postings span several DELTA blocks, which is what lets an
+     * interval skip whole blocks.
+     */
+    private static void createIntervalSidecarTable() throws Exception {
+        execute("CREATE TABLE t_interval_sidecar (ts TIMESTAMP, ip4 IPV4, s STRING, b BINARY, sym SYMBOL)"
+                + " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO t_interval_sidecar SELECT"
+                + " timestamp_sequence('2022-02-18T05:56:40', 1_000_000L) ts,"
+                + " rnd_ipv4() ip4,"
+                + " rnd_str(1, 20, 1) s,"
+                + " rnd_bin(1, 24, 1) b,"
+                + " rnd_symbol('DE', null, 'EF', 'FG') sym"
+                + " FROM long_sequence(60_000)");
+        execute("ALTER TABLE t_interval_sidecar ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (ip4, s, b)");
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+    }
+
     private static void createNullPrefixCoveringTable() throws Exception {
         execute("""
                 CREATE TABLE t_np_filter (
@@ -20023,6 +20079,21 @@ public class CoveringIndexTest extends AbstractCairoTest {
      * non-zero count. Counts mmap calls rather than wall-clock time, so the assertion is
      * deterministic.
      */
+    /**
+     * The covered columns of one interval-bounded scan, against the same scan with covering
+     * turned off. The scan has to stay on the covering plan for that to mean anything, so the
+     * plan is asserted too: a fixture that drifted into the backup would pass while reading no
+     * sidecar at all.
+     */
+    private void assertCoveredIntervalMatchesUncovered(String from, String key) throws Exception {
+        final String tail = " sym, ip4, s, b, ts FROM t_interval_sidecar WHERE sym = " + key
+                + " AND ts BETWEEN '" + from + "' AND '2022-02-18T23:59:59.999999Z'";
+        assertQuery("SELECT" + tail)
+                .noLeakCheck()
+                .assertsPlanContaining("CoveringIndex", "on: sym with:");
+        assertSqlCursors("SELECT /*+ no_covering */" + tail, "SELECT" + tail);
+    }
+
     private void assertNullPrefixQueryOpensNoColumnMappings(String query, String expected) throws Exception {
         final CoveredColumnMapCounter counter = new CoveredColumnMapCounter("tag.d", "tag.i", "price.d", "qty.d");
         ff = counter;

@@ -908,7 +908,8 @@ public class FuzzRunner {
             String tableName,
             String symbolColumnName,
             CharSequence projection,
-            String whereClause
+            String whereClause,
+            boolean alsoCompareUnindexed
     ) throws SqlException {
         final String covered = "select " + projection + " from " + tableName + whereClause;
         final String uncovered = "select /*+ no_covering */ " + projection + " from " + tableName + whereClause;
@@ -925,6 +926,97 @@ public class FuzzRunner {
         );
         LOG.info().$("checking covered values: ").$safe(covered).I$();
         TestUtils.assertSqlCursors(compiler, sqlExecutionContext, uncovered, covered, LOG);
+        if (alsoCompareUnindexed) {
+            // no_covering still reaches the rows through the same index, so the two plans agree
+            // whenever the index itself is what is wrong. no_index reads no index at all, which
+            // is the only ground truth the covering plan can be held against.
+            final String unindexed = "select /*+ no_index */ " + projection + " from " + tableName + whereClause;
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, unindexed, covered, LOG);
+        }
+    }
+
+    /**
+     * Builds {@code key, covered...} for the covering index on {@code symbolColumnName}, the only
+     * projection that makes codegen construct a covering cursor at all. Returns false when the
+     * column no longer carries a covering index, in which case there is nothing to check.
+     */
+    private boolean buildCoveredProjection(String tableName, String symbolColumnName, StringSink projection) {
+        try (TableReader reader = getReader(tableName)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            final int keyIndex = metadata.getColumnIndexQuiet(symbolColumnName);
+            if (keyIndex < 0 || !metadata.isColumnIndexed(keyIndex)) {
+                return false; // the column was dropped or un-indexed on this table
+            }
+            final IntList coveringIndices = metadata.getCoveringColumnIndices(keyIndex);
+            if (coveringIndices == null || coveringIndices.size() == 0) {
+                return false; // not a COVERING index
+            }
+            projection.put('"').put(symbolColumnName).put('"');
+            for (int c = 0, cn = coveringIndices.size(); c < cn; c++) {
+                final int writerIndex = coveringIndices.getQuick(c);
+                if (writerIndex < 0) {
+                    continue; // covered column was dropped
+                }
+                for (int r = 0, rn = metadata.getColumnCount(); r < rn; r++) {
+                    if (metadata.getWriterIndex(r) == writerIndex) {
+                        projection.put(", \"").put(metadata.getColumnName(r)).put('"');
+                        break;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The NULL key again, this time confined to a random time range.
+     * <p>
+     * {@link #checkCoveredValueScan} always reads the whole table, and a whole-table scan reads
+     * every partition, so it can only ever ask "does the table have a column top". Which
+     * partitions a scan reads is what decides whether the covering plan may serve a NULL key at
+     * all, and the interesting boundaries live inside a partition: a range opening after the
+     * point the key column was added, but inside a partition that started before it. A scan
+     * bounded to a random range walks over those boundaries; an unbounded one never reaches them.
+     * <p>
+     * Two shapes are drawn: a range between two rows' timestamps, which opens and closes at
+     * arbitrary points inside partitions, and a single whole day, which lands on partition
+     * boundaries exactly.
+     */
+    private void checkCoveredNullScanOverInterval(
+            SqlCompiler compiler,
+            String tableName,
+            String symbolColumnName,
+            String tsColumnName,
+            Rnd rnd,
+            long recordCount
+    ) throws SqlException {
+        if (recordCount < 1) {
+            return;
+        }
+        final StringSink projection = new StringSink();
+        if (!buildCoveredProjection(tableName, symbolColumnName, projection)) {
+            return;
+        }
+        final String lo = randomRowTimestamp(compiler, tableName, tsColumnName, rnd, recordCount);
+        if (lo == null) {
+            return; // the table shrank under us; nothing to bound the scan with
+        }
+        final String whereClause;
+        if (rnd.nextBoolean()) {
+            final String hi = randomRowTimestamp(compiler, tableName, tsColumnName, rnd, recordCount);
+            if (hi == null) {
+                return;
+            }
+            final String from = lo.compareTo(hi) <= 0 ? lo : hi;
+            final String to = lo.compareTo(hi) <= 0 ? hi : lo;
+            whereClause = " where \"" + symbolColumnName + "\" = null and \"" + tsColumnName
+                    + "\" between '" + from + "' and '" + to + "'";
+        } else {
+            // the day the row falls in, so the range starts and ends on partition boundaries
+            whereClause = " where \"" + symbolColumnName + "\" = null and \"" + tsColumnName
+                    + "\" in '" + lo.substring(0, 10) + "'";
+        }
+        assertCoveredCursors(compiler, tableName, symbolColumnName, projection, whereClause, true);
     }
 
     /**
@@ -954,29 +1046,8 @@ public class FuzzRunner {
             String symbolColumnName
     ) throws SqlException {
         final StringSink projection = new StringSink();
-        try (TableReader reader = getReader(tableName)) {
-            final TableReaderMetadata metadata = reader.getMetadata();
-            final int keyIndex = metadata.getColumnIndexQuiet(symbolColumnName);
-            if (keyIndex < 0 || !metadata.isColumnIndexed(keyIndex)) {
-                return; // the column was dropped or un-indexed on this table
-            }
-            final IntList coveringIndices = metadata.getCoveringColumnIndices(keyIndex);
-            if (coveringIndices == null || coveringIndices.size() == 0) {
-                return; // not a COVERING index
-            }
-            projection.put('"').put(symbolColumnName).put('"');
-            for (int c = 0, cn = coveringIndices.size(); c < cn; c++) {
-                final int writerIndex = coveringIndices.getQuick(c);
-                if (writerIndex < 0) {
-                    continue; // covered column was dropped
-                }
-                for (int r = 0, rn = metadata.getColumnCount(); r < rn; r++) {
-                    if (metadata.getWriterIndex(r) == writerIndex) {
-                        projection.put(", \"").put(metadata.getColumnName(r)).put('"');
-                        break;
-                    }
-                }
-            }
+        if (!buildCoveredProjection(tableName, symbolColumnName, projection)) {
+            return;
         }
 
         sink.clear();
@@ -992,8 +1063,11 @@ public class FuzzRunner {
                 continue; // a quote would need escaping; skip this key
             }
             checked++;
+            // The NULL key is the one a column top can make wrong, so it is the one held against
+            // a plan that reads no index.
             assertCoveredCursors(compiler, tableName, symbolColumnName, projection,
-                    " where \"" + symbolColumnName + "\" = " + (value.isEmpty() ? "null" : "'" + value + "'"));
+                    " where \"" + symbolColumnName + "\" = " + (value.isEmpty() ? "null" : "'" + value + "'"),
+                    value.isEmpty());
         }
         if (checked == MAX_COVERED_KEYS_CHECKED) {
             LOG.info().$("covered value check capped at ").$(MAX_COVERED_KEYS_CHECKED)
@@ -1023,7 +1097,34 @@ public class FuzzRunner {
             String orderBy = " order by " + tsColumnName + " desc";
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + orderBy + limit, actualTableName + indexedWhereClause + orderBy + limit, LOG);
             checkCoveredValueScan(compiler, actualTableName, symbolColumnName);
+            checkCoveredNullScanOverInterval(compiler, actualTableName, symbolColumnName, tsColumnName, rnd, recordCount);
         }
+    }
+
+    /**
+     * The timestamp of a random row, printed the way SQL parses it back, or null when the row is
+     * no longer there.
+     */
+    private String randomRowTimestamp(
+            SqlCompiler compiler,
+            String tableName,
+            String tsColumnName,
+            Rnd rnd,
+            long recordCount
+    ) throws SqlException {
+        final long row = rnd.nextLong(recordCount);
+        final StringSink ts = new StringSink();
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select \"" + tsColumnName + "\" a from " + tableName + " limit " + row + ", " + (row + 1),
+                ts
+        );
+        final String prefix = "a\n";
+        if (ts.length() < prefix.length() + 11) {
+            return null;
+        }
+        return ts.subSequence(prefix.length(), ts.length() - 1).toString();
     }
 
     private void checkNoSuspendedTables(int tableId, TableToken tableName, long lastTxn) {
