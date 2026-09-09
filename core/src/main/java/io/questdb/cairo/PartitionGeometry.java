@@ -41,10 +41,10 @@ public class PartitionGeometry implements Closeable, Mutable {
     public static final int NO_PARTITION = -1;
     private static final long FLAG_DIRTY = 1L;
     /**
-     * Stride of {@link #pieces}: the four longs of the on-disk piece entry, then the piece's cumulative row - the
+     * Stride of {@link #pieces}: the six longs of the on-disk piece entry, then the piece's cumulative row - the
      * running sum of the row counts before it.
      */
-    private static final int LONGS_PER_PIECE = 5;
+    private static final int LONGS_PER_PIECE = 7;
     private static final int MIN_PIECE_HOLES = 1024;
     private static final int MIN_RESOLVED_BEFORE_EVICT = 256;
     /**
@@ -52,11 +52,13 @@ public class PartitionGeometry implements Closeable, Mutable {
      * change for a directory - unlike a partition index, which shifts whenever a partition is inserted or removed.
      */
     private static final int LONGS_PER_RESOLVED = 11;
-    private static final int PIECE_CUMULATIVE_LO = 4;
+    private static final int PIECE_CUMULATIVE_LO = 6;
+    private static final int PIECE_LAST_WRITE_MICROS = 5;
     private static final int PIECE_ROW_COUNT = 3;
     private static final int PIECE_ROW_OFFSET = 2;
     private static final int PIECE_TS_HI = 1;
     private static final int PIECE_TS_LO = 0;
+    private static final int PIECE_WRITER_TXN = 4;
     private static final int RES_COMMITTED_RECORD_SIZE = 7;
     private static final int RES_PARTITION_TS = 0;
     private static final int RES_E = 4;
@@ -233,6 +235,19 @@ public class PartitionGeometry implements Closeable, Mutable {
         return pieceLong(res, ordinal, PIECE_ROW_COUNT);
     }
 
+    /**
+     * When the commit that last MOVED this piece's bytes ran. A KEEP carries its predecessor's value, so
+     * unlike {@link #getLastWriteMicros(int)} - which is the partition's, refreshed by every commit that
+     * touches any part of it - this is what makes one piece settled while its neighbour is hot.
+     */
+    public long getPieceLastWriteMicros(int partitionIndex, int ordinal) {
+        final int res = resolveInternal(partitionIndex);
+        if (res < 0) {
+            return Numbers.LONG_NULL;
+        }
+        return pieceLong(res, ordinal, PIECE_LAST_WRITE_MICROS);
+    }
+
     public long getPieceRowOffset(int partitionIndex, int ordinal) {
         final int res = resolveInternal(partitionIndex);
         if (res < 0) {
@@ -268,6 +283,18 @@ public class PartitionGeometry implements Closeable, Mutable {
                 rowLo = subHi;
             }
         }
+    }
+
+    /**
+     * The writer txn of the commit that last MOVED this piece's bytes, or -1 when unknown. See
+     * {@link #getPieceLastWriteMicros(int, int)}.
+     */
+    public long getPieceWriterTxn(int partitionIndex, int ordinal) {
+        final int res = resolveInternal(partitionIndex);
+        if (res < 0) {
+            return -1L;
+        }
+        return pieceLong(res, ordinal, PIECE_WRITER_TXN);
     }
 
     public long getPieceTimestampHi(int partitionIndex, int ordinal) {
@@ -352,7 +379,7 @@ public class PartitionGeometry implements Closeable, Mutable {
         pendingRec = NO_PARTITION;
     }
 
-    public void addPiece(long tsLo, long tsHi, long rowOffset, long rowCount) {
+    public void addPiece(long tsLo, long tsHi, long rowOffset, long rowCount, long writerTxn, long lastWriteMicros) {
         assert pendingRec != NO_PARTITION : "addPiece outside beginUpdate/commitUpdate";
         assert pending.size() == 0 || tsLo > pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_TS_LO)
                 : "pieces must ascend by tsLo";
@@ -361,6 +388,7 @@ public class PartitionGeometry implements Closeable, Mutable {
                 : pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_CUMULATIVE_LO)
                   + pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_ROW_COUNT);
         pending.add(tsLo, tsHi, rowOffset, rowCount);
+        pending.add(writerTxn, lastWriteMicros);
         pending.add(cumulativeLo);
     }
 
@@ -419,7 +447,9 @@ public class PartitionGeometry implements Closeable, Mutable {
                     pieces.getQuick(at + PIECE_TS_LO),
                     pieces.getQuick(at + PIECE_TS_HI),
                     pieces.getQuick(at + PIECE_ROW_OFFSET),
-                    pieces.getQuick(at + PIECE_ROW_COUNT)
+                    pieces.getQuick(at + PIECE_ROW_COUNT),
+                    pieces.getQuick(at + PIECE_WRITER_TXN),
+                    pieces.getQuick(at + PIECE_LAST_WRITE_MICROS)
             );
             liveRows += pieces.getQuick(at + PIECE_ROW_COUNT);
         }
@@ -600,6 +630,8 @@ public class PartitionGeometry implements Closeable, Mutable {
             pieces.setQuick(at + PIECE_TS_HI, geometryFile.getPieceTimestampHi(p));
             pieces.setQuick(at + PIECE_ROW_OFFSET, geometryFile.getPieceRowOffset(p));
             pieces.setQuick(at + PIECE_ROW_COUNT, geometryFile.getPieceRowCount(p));
+            pieces.setQuick(at + PIECE_WRITER_TXN, geometryFile.getPieceWriterTxn(p));
+            pieces.setQuick(at + PIECE_LAST_WRITE_MICROS, geometryFile.getPieceLastWriteMicros(p));
             pieces.setQuick(at + PIECE_CUMULATIVE_LO, cumulativeLo);
             cumulativeLo += geometryFile.getPieceRowCount(p);
         }

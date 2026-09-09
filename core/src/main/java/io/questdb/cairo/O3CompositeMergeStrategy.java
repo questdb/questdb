@@ -37,23 +37,28 @@ public class O3CompositeMergeStrategy {
     /**
      * Stride of the piece bounds list: {@code tsLo}, {@code tsHi}, {@code rowOffset}, {@code rowCount}.
      */
-    public static final int LONGS_PER_BOUND = 4;
+    public static final int LONGS_PER_BOUND = 6;
     /**
      * Stride of the cut list {@link #computeCuts} fills: {@code pieceIndex}, {@code cutTimestamp}, and the rows the cut
      * must leave below and above it once resolved against the real timestamp column.
      */
     public static final int LONGS_PER_CUT = 4;
+    private static final int BOUND_LAST_WRITE_MICROS = 5;
     private static final int BOUND_ROW_COUNT = 3;
     private static final int BOUND_ROW_OFFSET = 2;
     private static final int BOUND_TS_HI = 1;
     private static final int BOUND_TS_LO = 0;
+    private static final int BOUND_WRITER_TXN = 4;
 
     /**
      * @param rowOffset the FILE row this piece's first row sits at
      */
-    public static void addPieceBounds(LongList bounds, long tsLo, long tsHi, long rowOffset, long rowCount) {
+    public static void addPieceBounds(
+            LongList bounds, long tsLo, long tsHi, long rowOffset, long rowCount, long writerTxn, long lastWriteMicros
+    ) {
         bounds.add(tsLo, tsHi);
         bounds.add(rowOffset, rowCount);
+        bounds.add(writerTxn, lastWriteMicros);
     }
 
     /**
@@ -81,6 +86,9 @@ public class O3CompositeMergeStrategy {
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_TS_HI, tsHi);
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_ROW_OFFSET, rowOffset + below);
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_ROW_COUNT, rows - below);
+        // A cut moves no bytes, so both halves are exactly as settled as the piece they came from.
+        bounds.setQuick(at + LONGS_PER_BOUND + BOUND_WRITER_TXN, bounds.getQuick(at + BOUND_WRITER_TXN));
+        bounds.setQuick(at + LONGS_PER_BOUND + BOUND_LAST_WRITE_MICROS, bounds.getQuick(at + BOUND_LAST_WRITE_MICROS));
         return true;
     }
 
@@ -263,12 +271,20 @@ public class O3CompositeMergeStrategy {
         return lastAtOrBelow(sortedTimestampsAddr, lo, hi, value - 1) + 1;
     }
 
+    public static long getLastWriteMicros(LongList bounds, int piece) {
+        return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_LAST_WRITE_MICROS);
+    }
+
     public static long getRowCount(LongList bounds, int piece) {
         return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_ROW_COUNT);
     }
 
     public static long getRowOffset(LongList bounds, int piece) {
         return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_ROW_OFFSET);
+    }
+
+    public static long getWriterTxn(LongList bounds, int piece) {
+        return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_WRITER_TXN);
     }
 
     public static long getTsHi(LongList bounds, int piece) {
