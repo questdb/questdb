@@ -203,6 +203,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final int COMPACTION_MOVED_TAIL = 3;
     private static final int COMPACTION_NONE = 0;
     private static final int COMPACTION_REWRITTEN = 2;
+    // REWRITE was the only step left and the partition is hot, so nothing ran. Distinct from
+    // COMPACTION_NONE because it must NOT earn the decline backoff: the partition stays eligible so its
+    // next commit can reach JOIN or MOVE-TAIL the moment their shape appears.
+    private static final int COMPACTION_SKIPPED_HOT = 5;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     /*
@@ -6231,7 +6235,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void compactPartitionToPlain(int partitionIndex, String reason) {
         final PartitionGeometry geometry = getGeometry();
         while (geometry.isComposite(partitionIndex)) {
-            if (compactPhysicalPartition(partitionIndex, false, Long.MAX_VALUE) != COMPACTION_NONE) {
+            if (compactPhysicalPartition(partitionIndex, false, true, Long.MAX_VALUE) != COMPACTION_NONE) {
                 continue;
             }
             // MAKE-PLAIN can decline on a reader still resolving the geometry record; REWRITE copies into
@@ -6254,7 +6258,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return {@link #COMPACTION_NONE}, {@link #COMPACTION_JOINED}, {@link #COMPACTION_MOVED_TAIL}, {@link
      * #COMPACTION_MADE_PLAIN} or {@link #COMPACTION_REWRITTEN}
      */
-    private int compactPhysicalPartition(int partitionIndex, boolean allowMoveTail, long deadlineMicros) {
+    private int compactPhysicalPartition(int partitionIndex, boolean allowMoveTail, boolean allowRewrite, long deadlineMicros) {
         if (txWriter.isPartitionReadOnly(partitionIndex)) {
             return COMPACTION_NONE;
         }
@@ -6280,6 +6284,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // MAKE-PLAIN reaches REWRITE's result for free on this shape, so it is always its call - even
             // when it is still waiting on a reader, which the caller's decline/backoff handles.
             return makePartitionPlain(partitionIndex) ? COMPACTION_MADE_PLAIN : COMPACTION_NONE;
+        }
+        if (!allowRewrite) {
+            return COMPACTION_SKIPPED_HOT;
         }
         return compactPartition(partitionIndex) ? COMPACTION_REWRITTEN : COMPACTION_NONE;
     }
@@ -15571,7 +15578,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean allowMoveTail = reason != PartitionCompactionPolicy.REASON_AGE;
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
         final boolean isActivePartition = partitionIndex == txWriter.getPartitionCount() - 1;
-        final int result = compactPhysicalPartition(partitionIndex, allowMoveTail, deadline);
+        // A partition the last few commits wrote gets every step but REWRITE: copying all of its live rows
+        // reclaims space the next commit dirties again, while JOIN and MOVE-TAIL cost a fraction of that
+        // and are what hold the partition's size down in the first place.
+        final boolean allowRewrite = !partitionCompactionPolicy.isSelectedPartitionHot();
+        final int result = compactPhysicalPartition(partitionIndex, allowMoveTail, allowRewrite, deadline);
         switch (result) {
             case COMPACTION_REWRITTEN -> partitionCompactionPolicy.onCompacted(partitionTs);
             case COMPACTION_MOVED_TAIL -> {
@@ -15583,6 +15594,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             case COMPACTION_NONE -> partitionCompactionPolicy.onDeclined(partitionTs, wallClockMicros);
+            // COMPACTION_SKIPPED_HOT takes no backoff on purpose - see the constant.
             default -> {
             }
         }
