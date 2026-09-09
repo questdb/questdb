@@ -35,6 +35,7 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRetentionMarker;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -76,7 +77,8 @@ import java.util.function.BooleanSupplier;
  * the removal events the writer records, the in-memory tier's consistency, the lifetime row
  * counter, the checkpoint-timeline retention it publishes, the durable retention marker, and the
  * in-memory tier rebuild over a Parquet partition the conversion left inside the view's
- * {@code IN MEMORY} window. Seed recovery and replica propagation belong to the later stages.
+ * {@code IN MEMORY} window, and what a removal taken while the view is still SEEDING does to the
+ * sweep's resume. Replica propagation belongs to a later stage.
  */
 public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
@@ -1120,6 +1122,193 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testTtlEvictionDuringSeedCompletesWithoutDuplicating() throws Exception {
+        // TTL enforcement stays live while the view is SEEDING, so the sweep's own commits evict
+        // days its earlier turns wrote. The sweep has to ride that out, because its coordinates
+        // are the base cursor offset and the emitted-output total and neither may follow the
+        // table's shrinking row count. Two things then have to hold at the end: the window values
+        // must be the ones a single uninterrupted pass over the whole base produces - which is
+        // what rn pins, the survivors carrying 3, 4 and 5 rather than 1, 2 and 3 - and the rows
+        // that went have to leave lvRowsTotal before the completion boundary seals the head root
+        // that carries it, or the seal would record a mismatch and retire the fresh history.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per seed turn
+        assertMemoryLeak(() -> {
+            createSeedBase();
+            createSeedView("TTL 2 DAYS ");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                assertSurvivingSeedRows();
+                Assert.assertEquals("the evicted rows must leave the lifetime counter", 3, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                // The completion boundary retires the sweep's own roots and seals one over the
+                // finished state, at the position the table can account for.
+                assertTimelineExists(lvToken, true);
+                assertLadder(instance, ts("1970-01-05"), 3);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            // The head the seed sealed is restorable, so the restart takes the timeline rather
+            // than re-deriving, and the evicted days stay evicted.
+            restartAndAssertRestoredFromTimeline();
+            assertSurvivingSeedRows();
+            Assert.assertEquals(3, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
+    public void testRestartAfterTtlEvictionMidSeedReplacesUnprovenOutput() throws Exception {
+        // The same sweep, interrupted after one of its commits evicted a day. The durable output
+        // is no longer the prefix the resumed sweep would recompute: the newest seed root stands
+        // at an emitted position the table no longer holds, and the table's own row count - which
+        // is what the skip-write floor reads - now names a smaller ordinal than the rows already
+        // written. Resuming off either would re-emit rows on top of the retained ones.
+        //
+        // The retention marker is what makes that detectable, so the resume abandons the partial
+        // output and re-sweeps from the membership lower bound behind a full-range replacement.
+        // The result must be exactly what an uninterrupted seed produces, which is what the shared
+        // assertion pins: without the reset the re-sweep skip-writes the surviving rows and
+        // appends the tail a second time.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per seed turn
+        assertMemoryLeak(() -> {
+            createSeedBase();
+            createSeedView("TTL 2 DAYS ");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = driveSeedTurnsUntilEviction(job);
+                Assert.assertTrue(
+                        "the sweep must still be mid-flight when the process ends",
+                        instance.getLvRowsTotal() < 5
+                );
+                assertRetentionMarker(lvToken, true);
+            }
+
+            final LogCapture capture = new LogCapture();
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            capture.start();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                capture.waitFor("live view seed sweep replacing unproven durable output [view=lv");
+            } finally {
+                capture.stop();
+            }
+
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            assertSurvivingSeedRows();
+            Assert.assertEquals(3, reloaded.getLvRowsTotal());
+            Assert.assertFalse(reloaded.hasPendingPartitionRemovals());
+            assertRetentionMarker(lvToken, false);
+            assertLadder(reloaded, ts("1970-01-05"), 3);
+            assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                    .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testDropPartitionWhileSeedingReconcilesTheCounterAtCompletion() throws Exception {
+        // A DROP PARTITION sequenced against a SEEDING view is applied by the next sweep turn,
+        // whose own apply carries it. The sweep keeps its cursor and its emitted-output total,
+        // so the rows the DROP took do NOT come back - it removed output the sweep had already
+        // written and moved past - and the completion boundary takes them off the counter.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per seed turn
+        assertMemoryLeak(() -> {
+            createSeedBase();
+            createSeedView("");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = driveSeedTurnsUntil(
+                        job,
+                        () -> lvRowCount(lvToken) >= 3,
+                        "the seed never reached three durable rows"
+                );
+                // 1970-01-01 is three partitions below the one the sweep is writing, so the
+                // active-partition guard admits it.
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-01'");
+                driveSeedTurnsUntil(
+                        job,
+                        instance::hasPendingPartitionRemovals,
+                        "the seed never applied the DROP PARTITION"
+                );
+
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-02T00:00:00.000000Z\t2\t2
+                                1970-01-03T00:00:00.000000Z\t3\t3
+                                1970-01-04T00:00:00.000000Z\t4\t4
+                                1970-01-05T00:00:00.000000Z\t5\t5
+                                """);
+                Assert.assertEquals("the dropped row must leave the lifetime counter", 4, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertLadder(instance, ts("1970-01-05"), 4);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testSeedResetWithNoQualifyingRowClearsThePartialOutput() throws Exception {
+        // The reset's other half: a re-seed that qualifies no row at all still owes the deletion.
+        // The base loses every row while the view is mid-sweep and its timeline is gone, so the
+        // resumed sweep finds nothing to emit - and the partial output it wrote earlier must go
+        // with the same replacement a non-empty re-seed would have carried, rather than survive
+        // because there was no row to trigger a commit.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per seed turn
+        assertMemoryLeak(() -> {
+            createSeedBase();
+            createSeedView("");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = driveSeedTurnsUntil(
+                        job,
+                        () -> lvRowCount(lvToken) >= 2,
+                        "the seed never reached two durable rows"
+                );
+                // No root survives to prove what the two durable rows are.
+                retireSeedCheckpointTimeline(instance);
+            }
+            execute("ALTER TABLE base DROP PARTITION WHERE ts < '1970-01-06'");
+            drainWalQueue();
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+            }
+
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            Assert.assertEquals(0, reloaded.getLvRowsTotal());
+            Assert.assertEquals(
+                    "the seed must still complete",
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    reloaded.getStateReader().getSeedState()
+            );
+            assertRetentionMarker(lvToken, false);
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
     public void testConvertPartitionToParquetAndBackKeepsReadsExact() throws Exception {
         // A settled partition converted to Parquet is still read whole by both live view
         // cursor paths, and converting it back to native leaves the same rows behind. The
@@ -1646,6 +1835,95 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL, v VARCHAR) TIMESTAMP(ts) " + partitionByClause + " WAL");
         execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY " + inMemory + " " + partitionByClause + " START FROM NOW AS " +
                 "(SELECT ts, x, sym, v, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+    }
+
+    /**
+     * The rows a five-day seed under {@code TTL 2 DAYS} leaves behind. The {@code rn} column is
+     * the point: the window ran over all five days, so the survivors carry 3, 4 and 5 - a sweep
+     * that restarted its accumulators, or one that re-emitted a row it had already written,
+     * cannot produce them.
+     */
+    private void assertSurvivingSeedRows() throws Exception {
+        assertQuery("SELECT ts, x, rn FROM lv")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tx\trn
+                        1970-01-03T00:00:00.000000Z\t3\t3
+                        1970-01-04T00:00:00.000000Z\t4\t4
+                        1970-01-05T00:00:00.000000Z\t5\t5
+                        """);
+    }
+
+    /**
+     * Five daily base rows under one symbol, and a wall clock parked above them so TTL measures
+     * partition age against the live view's own frontier rather than against the clock.
+     */
+    private void createSeedBase() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("""
+                INSERT INTO base (ts, sym, x) VALUES
+                ('1970-01-01T00:00:00.000000Z', 'a', 1),
+                ('1970-01-02T00:00:00.000000Z', 'a', 2),
+                ('1970-01-03T00:00:00.000000Z', 'a', 3),
+                ('1970-01-04T00:00:00.000000Z', 'a', 4),
+                ('1970-01-05T00:00:00.000000Z', 'a', 5)""");
+        drainWalQueue();
+        setCurrentMicros(ts("1970-02-01T00:00:00.000000Z"));
+    }
+
+    /**
+     * A view over {@link #createSeedBase}'s history that seeds the lot: START FROM BEGINNING, so
+     * every base row is admitted and the sweep's cursor offset and output ordinal are both counted
+     * from the first base row. {@code ttlClause} is either empty or a full {@code TTL n UNIT }
+     * clause, trailing space included.
+     */
+    private void createSeedView(String ttlClause) throws Exception {
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY DAY " + ttlClause + "START FROM BEGINNING AS "
+                + "(SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+    }
+
+    /**
+     * Drives seed turns until {@code condition} holds, leaving the view SEEDING. Fails when the
+     * sweep completes first, which would make every assertion after it vacuous.
+     */
+    private LiveViewInstance driveSeedTurnsUntil(LiveViewRefreshJob job, BooleanSupplier condition, String failure) {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        for (int i = 0; i < SEED_COMPLETION_PASSES; i++) {
+            if (condition.getAsBoolean()) {
+                return instance;
+            }
+            Assert.assertEquals(
+                    "the sweep completed first: " + failure,
+                    LiveViewState.SEED_STATE_SEEDING,
+                    instance.getStateReader().getSeedState()
+            );
+            // One turn per pass, not drainJob's up-to-64: the states these callers stop on are
+            // mid-sweep ones, and a whole sweep inside one pass would run straight past them.
+            job.run();
+            drainWalQueue();
+        }
+        Assert.fail(failure);
+        return instance;
+    }
+
+    /**
+     * Drives seed turns until one of the sweep's own commits has evicted a partition under TTL.
+     */
+    private LiveViewInstance driveSeedTurnsUntilEviction(LiveViewRefreshJob job) {
+        return driveSeedTurnsUntil(
+                job,
+                () -> engine.getLiveViewRegistry().getViewInstance("lv").hasPendingPartitionRemovals(),
+                "the seed never evicted a partition"
+        );
+    }
+
+    private long lvRowCount(TableToken lvToken) {
+        try (TableReader reader = engine.getReader(lvToken)) {
+            return reader.size();
+        }
     }
 
     private void createBaseAndView(String partitionByClause) throws Exception {

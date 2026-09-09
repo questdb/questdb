@@ -36,6 +36,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -409,17 +410,24 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
     @Test
     public void testRestartMidSeedWithoutCheckpointReSweepsUnderFiniteBoundary() throws Exception {
         // No timeline survives (a crash before the first cadence write, or a view whose window
-        // functions cannot snapshot). The resumed sweep re-runs from offset 0 and leans
-        // on the skip-write floor: rows whose output position sits below the on-disk row count are
-        // re-fed to rebuild the accumulators but NOT re-appended.
+        // functions cannot snapshot). Nothing then proves what the two rows already on disk are:
+        // a root's stored position is the only durable statement of the emitted ordinal those
+        // rows stand at, and a row count is not one - a partition removal can leave the count
+        // equal by coincidence while the rows behind it are not the prefix the re-sweep computes.
+        // So the resumed sweep re-runs from offset 0 with no skip-write floor and discards the
+        // partial output with a full-range replacement on its first commit, rather than keeping
+        // it and appending over the top.
         //
-        // Under a cutting boundary the floor's coordinate space is the one that matters. It counts
-        // LV OUTPUT rows (2 on disk here), not base rows (6 scanned to produce them). A floor read
-        // in base-row terms would skip-write four rows too many and lose half the view.
+        // Under a cutting boundary the coordinate spaces are what make that visible: the sweep's
+        // cursor offset counts BASE rows of the bounded cursor (6 scanned) and the output ordinal
+        // counts LV OUTPUT rows (2 on disk). The proven-resume sibling above is where a resume has
+        // to keep them apart; here the replacement makes the question moot, and the rows below are
+        // what say the re-swept output landed exactly once.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per turn
         assertMemoryLeak(() -> {
             createCutBaseAndView();
 
+            final LogCapture capture = new LogCapture();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 LiveViewInstance instance = driveSeedTurnsToOffset(job, 2);
                 Assert.assertEquals(
@@ -444,18 +452,28 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
                         durableSeedCursorOffset(reloaded)
                 );
 
-                driveSeedToCompletion(job, "lv");
-                driveRefreshToQuiescence(job);
+                capture.start();
+                try {
+                    driveSeedToCompletion(job, "lv");
+                    driveRefreshToQuiescence(job);
+                    capture.waitFor("live view seed sweep replacing unproven durable output [view=lv");
+                } finally {
+                    capture.stop();
+                }
 
                 Assert.assertEquals(
-                        "the re-sweep must skip-write exactly the LV rows already on disk",
-                        2,
+                        "an unproven re-sweep skip-writes nothing; the replacement carries the discard",
+                        0,
                         reloaded.getSeedSkipWriteFloor()
+                );
+                Assert.assertFalse(
+                        "the replacement must be discharged by the time the sweep completes",
+                        reloaded.isSeedReplacePending()
                 );
             }
 
-            // The two rows the first sweep committed are still there exactly once, and the two the
-            // re-sweep appended carry a running sum that saw all four.
+            // The four admitted rows are there exactly once - the two the first sweep committed
+            // came back through the replacement, not beside it - and their running sum saw all four.
             assertSeededRows();
             execute("DROP LIVE VIEW lv");
         });

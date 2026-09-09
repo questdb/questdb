@@ -697,6 +697,13 @@ public class LiveViewInstance implements QuietCloseable {
     // restart. Numbers.LONG_NULL until the first seed turn initialises it; 0
     // means "swept nothing yet". Mutated under the refresh latch only.
     private long seedDataOffset = Numbers.LONG_NULL;
+    // The seed sweep owes a full-range REPLACE_RANGE commit before any of its
+    // output counts: the durable partial output it found could not be proven to
+    // be the deterministic prefix the sweep is recomputing, so the first commit
+    // of the re-sweep replaces the whole range rather than appending onto it.
+    // Armed by the resume setup and cleared by the commit that carries it.
+    // Mutated under the refresh latch only.
+    private boolean seedReplacePending;
     // Single-shot flag: the first seed turn of the process restores window
     // state + data offset from the timeline's newest root (if it holds one),
     // then later turns continue from the in-memory state. Mirrors
@@ -704,11 +711,14 @@ public class LiveViewInstance implements QuietCloseable {
     // latch only.
     private boolean seedResumeAttempted;
     // Skip-write floor for the seed sweep: the LV table's on-disk row count
-    // captured on the first turn of the process. Output rows whose position is
-    // below it are already durable (deterministic recompute), so the sweep
-    // recomputes them to advance window state but skips the WAL append. Spans
-    // however many turns the catch-up needs; persists across turns (the per-turn
-    // budget can split the catch-up). Mutated under the refresh latch only.
+    // captured on the first turn of the process, in the sweep's EMITTED-OUTPUT
+    // coordinate. Output rows whose position is below it are already durable
+    // (deterministic recompute), so the sweep recomputes them to advance window
+    // state but skips the WAL append. Spans however many turns the catch-up
+    // needs; persists across turns (the per-turn budget can split the catch-up).
+    // The two coordinates only coincide while nothing has removed rows from the
+    // table: a resume that cannot prove that takes the replacement above and a
+    // zero floor instead. Mutated under the refresh latch only.
     private long seedSkipWriteFloor;
     // The pinned snapshot's seqTxn, fixed for the whole sweep (see seedBaseReader).
     // The SEEDING -> ACTIVE handoff advances the watermarks to exactly this value
@@ -1826,6 +1836,15 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return {@code true} while the seed sweep still owes the full-range
+     * replacement that discards the durable partial output it could not prove.
+     * See {@link #seedReplacePending}.
+     */
+    public boolean isSeedReplacePending() {
+        return seedReplacePending;
+    }
+
+    /**
      * @return {@code true} once the refresh worker has attempted to resume the
      * seed sweep from the timeline's newest root on the first turn of this
      * process (whether a resume point was found or not). Single-shot per
@@ -2260,8 +2279,10 @@ public class LiveViewInstance implements QuietCloseable {
      * {@link #isSeedResumeAttempted()}). Called by the refresh worker after
      * {@link #prepareForBaseSchemaRecompile()} on a SEEDING view so the next
      * sweep turn restores window state and the data offset from the timeline's
-     * newest root against the recompiled factory, or re-sweeps from offset 0
-     * behind the skip-write floor. Mutated under the refresh latch only.
+     * newest root against the recompiled factory, re-sweeps from offset 0 behind
+     * the skip-write floor, or - when a partition removal is still outstanding -
+     * re-sweeps from offset 0 behind the replacement {@link #seedReplacePending}
+     * arms. Mutated under the refresh latch only.
      */
     public void resetSeedResumeAttempted() {
         seedResumeAttempted = false;
@@ -2538,6 +2559,14 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setSeedDataOffset(long seedDataOffset) {
         this.seedDataOffset = seedDataOffset;
+    }
+
+    /**
+     * Arms or clears the seed sweep's owed full-range replacement. See
+     * {@link #seedReplacePending}.
+     */
+    public void setSeedReplacePending(boolean seedReplacePending) {
+        this.seedReplacePending = seedReplacePending;
     }
 
     /**

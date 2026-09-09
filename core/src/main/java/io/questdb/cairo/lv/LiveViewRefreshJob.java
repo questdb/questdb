@@ -4416,8 +4416,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * unapplied: the counter legitimately leads the table by that block, and a partial
      * apply may have committed removals whose transactions are not all in yet. Also
      * deferred for a SEEDING view: its counter doubles as the sweep's skip-write ordinal,
-     * and lowering that ordinal would make later turns skip rows they never wrote. The
-     * seed sweep's own recovery owns that case.
+     * and lowering that ordinal would make later turns skip rows they never wrote.
+     * {@link #reconcileSeedPartitionRemovals} disposes of the events the sweep collected,
+     * at the completion boundary where the counter has no second role left.
      */
     private void reconcilePendingPartitionRemovals(LiveViewInstance instance) {
         final PartitionRemovalEvents removals = instance.getPendingPartitionRemovals();
@@ -4556,6 +4557,42 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             LiveViewRetentionMarker.clear(engine.getConfiguration().getFilesFacade(), checkpointsDir);
+        }
+    }
+
+    /**
+     * Reports whether the view carries the durable evidence that rows left its table
+     * without the checkpoint coordinates accounting for it - the marker
+     * {@link TableWriter} writes before a TTL eviction or a {@code DROP PARTITION}
+     * commits, and that only a retention publication or a timeline retire removes.
+     * <p>
+     * Present means live; there is no staleness rule. See {@link LiveViewRetentionMarker}.
+     */
+    private boolean hasRetentionMarker(LiveViewInstance instance) {
+        try (Path checkpointsDir = new Path()) {
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            return LiveViewRetentionMarker.exists(engine.getConfiguration().getFilesFacade(), checkpointsDir);
+        }
+    }
+
+    /**
+     * Reads the local apply seqTxn the retention marker records, for logging.
+     * {@link Numbers#LONG_NULL} when the marker is absent or unreadable - a
+     * {@code LONG_NULL} from a marker {@link #hasRetentionMarker} reports is a
+     * diagnostic gap, never proof the marker is not live.
+     */
+    private long readRetentionMarkerSeqTxn(LiveViewInstance instance) {
+        try (Path checkpointsDir = new Path()) {
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            return LiveViewRetentionMarker.readSeqTxn(
+                    engine.getConfiguration(),
+                    checkpointsDir,
+                    instance.getLiveViewToken().getTableId()
+            );
         }
     }
 
@@ -10480,10 +10517,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * qualifies nothing and completes in its first turn.
      * <ul>
      *     <li>The first turn of a process resumes window state + the data-cursor
-     *     offset from the checkpoint timeline's newest root (restart mid-sweep),
-     *     or starts from offset 0 with empty state (fresh CREATE, or no usable
-     *     timeline). Later turns continue from the in-memory window state +
-     *     offset ({@code getIncrementalCursor} preserves accumulated state
+     *     offset from the checkpoint timeline's newest root, but only from one
+     *     that proves what the durable output is (restart mid-sweep); otherwise
+     *     it starts from offset 0 with empty state and replaces whatever partial
+     *     output the table holds (fresh CREATE, no usable timeline, or a live
+     *     retention marker). Later turns continue from the in-memory window state
+     *     + offset ({@code getIncrementalCursor} preserves accumulated state
      *     across turns), so no per-turn restore is needed.</li>
      *     <li>The first turn pins ONE MVCC base snapshot (an
      *     {@link LiveViewInstance#getSeedBaseReader() instance-held reader}) at
@@ -10501,13 +10540,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     ACTIVE phase's O3 detection materialises anything the base committed
      *     after the snapshot.</li>
      * </ul>
-     * Crash idempotency: the on-disk output is a deterministic prefix of the
-     * eventual result, so a re-feed past the last sealed boundary recomputes
-     * rows already on disk to advance state but skips their WAL append
-     * ({@code skipWriteUntil}). A crash before any boundary re-sweeps from
-     * offset 0 and skip-writes the entire stale prefix. The resume applies any
-     * committed-but-unapplied block first, so that prefix - and the floor read
-     * off it - covers every block the sweep has already committed.
+     * Crash idempotency rests on a proof, not on the row count. Behind a root the sweep
+     * can prove, the on-disk output is a deterministic prefix of the eventual result, so
+     * a re-feed past that root recomputes rows already on disk to advance state but skips
+     * their WAL append ({@code skipWriteUntil}). Without one, the re-sweep runs from
+     * offset 0 and its first commit REPLACEs the view's whole range, so the partial
+     * output leaves the table in the same commit that lays the recomputed prefix down.
+     * Either way the resume applies any committed-but-unapplied block first, so what it
+     * reads off the table covers every block the sweep has already committed.
+     * <p>
+     * The proof is what TTL enforcement and {@code ALTER LIVE VIEW ... DROP PARTITION}
+     * take away, and they stay live during a sweep: the table then holds fewer rows than
+     * the sweep has emitted, so neither the seed root's stored position nor the table's
+     * row count names the emitted ordinal any more. The three coordinates the sweep
+     * carries are distinct for exactly that reason - the base cursor offset
+     * ({@code seedDataOffset}), the emitted-output total ({@code lvRowsTotal}, which
+     * nothing lowers while the view is SEEDING) and the durable output position
+     * ({@code seedSkipWriteFloor}) - and the resume setup only equates the last two
+     * behind a restored root and a durable {@link LiveViewRetentionMarker} that says no
+     * removal is outstanding. A smaller row count proves nothing on its own: output
+     * appended in the same apply, or rows tied at a boundary timestamp, can leave the
+     * count equal by coincidence. {@link #reconcileSeedPartitionRemovals} then settles
+     * the counter against the table at the completion boundary.
      */
     private void runSeedSweep(LiveViewInstance instance) throws SqlException {
         final long seedTargetSeqTxn = instance.getStateReader().getSeedTargetSeqTxn();
@@ -10576,8 +10630,29 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             // Always start from a clean slate; restore (if any) repopulates on top.
             clearWindowState(windowFactory, anchorWindow);
+            // Rows left the table under coordinates that still count them: TTL or DROP
+            // PARTITION committed against the view's own table and no retention publication
+            // has accounted for it (a SEEDING view defers that reconciliation, so a removal
+            // taken mid-sweep leaves the marker standing for the rest of the sweep). Both
+            // resume coordinates the block below would otherwise derive are unsound while
+            // that is true. The seed root's stored position counts EMITTED output and the
+            // table now holds less than that, so a resume off the root would append its
+            // next output onto a table the position overstates; and the skip-write floor,
+            // which reads the emitted ordinal straight off the table's row count, would fall
+            // below the rows already written and re-emit them on top of the retained ones -
+            // the 300-emitted-rows-lose-their-first-100 case, where a from-zero re-sweep
+            // skips 200 outputs and appends the last 100 a second time. A smaller row count
+            // does not expose it on its own: output appended in the same apply, or rows tied
+            // at a boundary timestamp, can leave the count equal by coincidence.
+            //
+            // So take the SEEDING mirror of what tryRestoreFromTimeline does for an ACTIVE
+            // view, which rebuilds from the applied base rather than trusting any root:
+            // re-sweep from the membership lower bound and replace the whole durable range
+            // with the re-swept output. The replacement is what makes the reset safe to
+            // repeat - see the seedReplacePending commit below.
+            final boolean retentionUnaccounted = hasRetentionMarker(instance);
             boolean restored = false;
-            if (restoreSeedFromTimeline(instance, windowFactory, restoredSeedState)) {
+            if (!retentionUnaccounted && restoreSeedFromTimeline(instance, windowFactory, restoredSeedState)) {
                 // A surviving seed root can be AHEAD of the on-disk LV output. A
                 // checkpoint restore no longer produces one - TableSnapshotRestore wipes
                 // the live _checkpoints/ dir and lays the snapshot's back down, so the
@@ -10614,11 +10689,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             .$(", onDiskLvRows=").$(onDiskLvRows).I$();
                 }
             }
-            if (!restored) {
-                // Fresh CREATE, no timeline, an unreadable one, one holding no seed
-                // resume point, or one rejected as ahead of the restored disk: re-sweep
-                // from offset 0 with empty state. The on-disk prefix (if any) is a
-                // deterministic match, kept via skip-write below.
+            if (restored) {
+                // A proven resume: the root names the emitted ordinal its own position
+                // stands at, nothing has removed a row from under the table since, and the
+                // output is append-only above it. So the two coordinates coincide and the
+                // skip-write floor is simply the table's row count - rows re-fed between
+                // the root and it are recomputed to advance state but not re-appended.
+                instance.setSeedSkipWriteFloor(onDiskLvRows);
+                instance.setSeedReplacePending(false);
+            } else {
+                // Nothing proves the durable output is the prefix this sweep is about to
+                // recompute: a fresh CREATE, no timeline, an unreadable one, one holding no
+                // seed resume point, one rejected as ahead of the restored disk, or a live
+                // retention marker. Re-sweep from offset 0 with empty state, skip-write
+                // nothing, and - when there is durable output to discard - replace the
+                // view's whole range with the re-swept result on the first commit.
                 //
                 // Re-clear the window state unconditionally: a seed restore that threw
                 // partway has already written the anchor + some functions into the live
@@ -10628,18 +10713,44 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // re-clears; this covers the throw path. Cheap and idempotent for the
                 // fresh / no-timeline cases (nothing was restored).
                 clearWindowState(windowFactory, anchorWindow);
-                // Retire whatever the timeline holds. Every root in it describes a
-                // sweep prefix this re-sweep is about to recompute from scratch, and
-                // the append refuses a boundary at or below the current head, so
-                // leaving them would silently starve the re-sweep of resume points.
-                retireSeedCheckpointTimeline(instance);
                 instance.setSeedDataOffset(0);
                 instance.setLvRowsTotal(0);
+                // latestSeenTs goes back with the rest of the runtime: an in-process re-arm
+                // carries the pre-reset value, and a re-seed that qualifies no row at all
+                // must reach the completion path with no boundary to seal rather than
+                // anchor a head at a timestamp its identity-state accumulators never saw.
+                instance.setLatestSeenTs(Numbers.LONG_NULL);
+                // The pending removal events go too. They describe rows the replacement is
+                // about to discard, and lvRowsTotal no longer counts them - subtracting
+                // them at completion would take the counter below the table's own size.
+                instance.getPendingPartitionRemovals().clear();
+                instance.setSeedSkipWriteFloor(0);
+                instance.setSeedReplacePending(onDiskLvRows > 0);
+                if (onDiskLvRows > 0) {
+                    // The retire waits for the replacement commit. It takes the retention
+                    // marker with the timeline, and that marker is the durable evidence
+                    // that the table's partial output cannot be trusted; dropping it here
+                    // would leave a crash between this point and the replacement looking
+                    // exactly like a re-sweep over a clean prefix. The commit retires the
+                    // timeline once the stale range is gone from disk, and until then the
+                    // absence of any root is itself enough to bring the next attempt back
+                    // to this branch.
+                    LOG.info().$("live view seed sweep replacing unproven durable output [view=")
+                            .$(viewName)
+                            .$(", onDiskLvRows=").$(onDiskLvRows)
+                            .$(", retentionMarkerSeqTxn=").$(retentionUnaccounted
+                                    ? readRetentionMarkerSeqTxn(instance)
+                                    : Numbers.LONG_NULL)
+                            .I$();
+                } else {
+                    // Nothing on disk to protect, so retire whatever the timeline holds
+                    // right away. Every root in it describes a sweep prefix this re-sweep
+                    // is about to recompute from scratch, and the append refuses a boundary
+                    // at or below the current head, so leaving them would silently starve
+                    // the re-sweep of resume points.
+                    retireSeedCheckpointTimeline(instance);
+                }
             }
-            // On-disk output is append-only (>= the restored row count), so the
-            // skip-write floor is simply the on-disk row count: rows re-fed
-            // below it are recomputed to advance state but not re-appended.
-            instance.setSeedSkipWriteFloor(onDiskLvRows);
         }
 
         final long skipWriteUntil = instance.getSeedSkipWriteFloor();
@@ -10680,6 +10791,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long processedThisTurn = 0;
         boolean yielded = false;
         boolean readerBound = false;
+        boolean replacePending = instance.isSeedReplacePending();
+        boolean replaceCommitted = false;
         try {
             // The pinned reader is borrowed (not detached), so the base SELECT reads a
             // copy at the reader's fixed snapshot txn via getReaderAtTxn's copy path.
@@ -10774,7 +10887,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // base-rows-consumed counter.
                         dataOffset += (filter != null ? filteringCursor.getBaseRowsConsumed() : processedThisTurn);
                     }
-                    if (appendedThisTurn > 0) {
+                    if (replacePending) {
+                        // The reset the resume setup armed, discharged: one REPLACE_RANGE
+                        // over the view's whole membership range carrying this turn's rows,
+                        // so the partial output the sweep could not prove leaves the table
+                        // in the same commit that lays the re-swept prefix down. Later turns
+                        // append onto it as usual - the sweep emits in ascending timestamp
+                        // order, so everything after this batch lands in order.
+                        //
+                        // Runs even when the turn appended nothing: a re-seed that qualifies
+                        // no row at all still owes the deletion, and an empty replacement is
+                        // exactly how the head-miss replay clears a range it recomputed to
+                        // empty. Without it the old output would stay on disk purely because
+                        // there was no new row to carry the commit.
+                        commitLiveViewWithReplaceRangeFenced(
+                                instance,
+                                walWriter,
+                                sweepSeqTxn,
+                                viewLowerBoundTimestamp,
+                                Long.MAX_VALUE
+                        );
+                        replaceCommitted = true;
+                    } else if (appendedThisTurn > 0) {
                         commitLiveViewBlock(instance, walWriter, sweepSeqTxn);
                     }
                 }
@@ -10787,7 +10921,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         instance.setLvRowsTotal(lvRows);
         instance.setSeedDataOffset(dataOffset);
-        if (appendedThisTurn > 0) {
+        if (replaceCommitted) {
+            // The stale range is sequenced away, so the roots that described it may go too
+            // - and the retention marker the resume setup deliberately left standing goes
+            // with them. Ordered after the commit, which is where the replacement becomes
+            // durable, and BEFORE the apply below, which can evict a partition of its own
+            // under TTL and write a fresh marker: retiring after it would clear evidence
+            // that belongs to the sweep's own new removal. A crash between the commit and
+            // this point re-runs the reset off the marker; a crash after it re-runs the
+            // reset off the empty timeline, and the resume applies the sequenced
+            // replacement before reading the table either way. A retire that fails leaves
+            // the marker, which costs one more reset on the next restart.
+            retireSeedCheckpointTimeline(instance);
+            instance.setSeedReplacePending(false);
+        }
+        if (appendedThisTurn > 0 || replaceCommitted) {
             applyLiveViewWal(instance);
         }
 
@@ -10829,6 +10977,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // re-sweeps from offset zero - the same disposition a crash before the
         // first cadence event already had.
         retireSeedCheckpointTimeline(instance);
+        // Settle the rows retention took while the sweep ran, before the boundary that
+        // publishes the counter is sealed. lvRowsTotal counts EMITTED output for the whole
+        // sweep - a coordinate nothing lowers while the view is SEEDING, so that a
+        // TTL eviction cannot drag the skip-write ordinal below rows the sweep has already
+        // written - and the table holds that minus whatever went. Correcting it here, over
+        // a timeline that was retired one statement ago, is the whole of the reconciliation:
+        // there are no surviving roots left to lower, so the head sealed below is born at
+        // the corrected position and the ACTIVE phase starts with its counter equal to the
+        // table's size. Leaving it to the first ACTIVE reconcile would work too, but only
+        // through a retention publication over a one-root timeline that was just written
+        // from the wrong number.
+        reconcileSeedPartitionRemovals(instance);
         // Only when the seed actually emitted a row. A seed that qualified none - the normal
         // outcome for START FROM NOW over a base of past data, and for any boundary in the
         // future - has nothing to anchor a head on: latestSeenTs is only stamped per emitted
@@ -10893,6 +11053,50 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         retireCheckpointTimeline(instance);
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
         instance.clearSeedCheckpoint();
+    }
+
+    /**
+     * Settles the rows a partition removal took while the view was SEEDING, at the
+     * completion boundary where the sweep has retired its own timeline and has not
+     * sealed the finished one yet.
+     * <p>
+     * {@link #reconcilePendingPartitionRemovals} defers for a SEEDING view because the
+     * counter it corrects doubles as the sweep's skip-write ordinal: lowering it
+     * mid-sweep would make later turns skip rows nothing has written. So the events
+     * accumulate on the instance for the whole sweep and are disposed of here, where
+     * the counter has no second role left and the timeline holds no root to correct.
+     * The subtraction is the same one the ACTIVE path makes; what it does not need is
+     * the publication, because {@link #retireSeedCheckpointTimeline} has just removed
+     * every root the removal could have overstated - along with the retention marker
+     * that guarded them.
+     */
+    private void reconcileSeedPartitionRemovals(LiveViewInstance instance) {
+        final PartitionRemovalEvents removals = instance.getPendingPartitionRemovals();
+        if (removals.isEmpty()) {
+            return;
+        }
+        final long removedRows = removals.getTotalRemovedRows();
+        final long emittedRows = instance.getLvRowsTotal();
+        long correctedRows = emittedRows - removedRows;
+        if (correctedRows < 0) {
+            // Every removed row was emitted by this sweep or by the durable prefix it
+            // resumed onto, so the difference cannot go negative. Clamp rather than
+            // publish a negative lifetime count, and say so: the next cadence seal
+            // would carry the number into the timeline.
+            LOG.critical().$("live view seed removed more rows than it emitted [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", rowsEmitted=").$(emittedRows)
+                    .$(", removedRows=").$(removedRows).I$();
+            correctedRows = 0;
+        }
+        LOG.info().$("live view seed reconciling durable rows removed while seeding [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", partitions=").$(removals.size())
+                .$(", removedRows=").$(removedRows)
+                .$(", rowsEmitted=").$(emittedRows)
+                .I$();
+        instance.setLvRowsTotal(correctedRows);
+        removals.clear();
     }
 
     /**
