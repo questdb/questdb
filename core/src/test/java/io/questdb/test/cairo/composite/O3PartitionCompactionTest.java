@@ -66,10 +66,10 @@ import org.junit.Test;
  * resolve a row in. MAKE-PLAIN's own check is what clears the readers that could still resolve an EARLIER
  * shape, with pieces higher up the files. A running CHECKPOINT is the one thing left that blocks the trim,
  * and it blocks the whole of MAKE-PLAIN: a folder that cannot be trimmed must not be recorded as plain, or
- * its dead bytes are left with nothing to report or reclaim them. REWRITE
- * itself needs no reader gate at all: it copies into a brand-new directory and leaves the old one for the
- * ordinary purge to remove once no reader still needs it, so a pinned reader's data stays correct with
- * nothing to wait for - see {@link #testRewriteLeavesAPinnedReadersDataIntact}.
+ * its dead bytes are left with nothing to report or reclaim them. REWRITE itself needs no reader gate at
+ * all: it copies into a brand-new directory and leaves the old one for the ordinary purge to remove once no
+ * reader still needs it, so a pinned reader's data stays correct with nothing to wait for - see
+ * {@link #testRewriteLeavesAPinnedReadersDataIntact}.
  * <p>
  * JOIN has no dedicated test of its own here. {@code O3PartitionJob} folds list-and-file-adjacent pieces
  * INLINE, as part of the same commit that creates them (PARTITION_COMPACTION.md's "JOIN, inlined"),
@@ -93,29 +93,21 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     private static int passDay;
 
     /**
-     * A running CHECKPOINT must not let TRIM-FILES shorten a live partition's column files. Backup sizes those
-     * files by the physical row extent {@code E} its manifest copied out of the checkpoint, and it reads them
-     * from the LIVE db root, not from the checkpoint copy - see {@code TableWriter#processPartitionRemoveCandidates0},
-     * which defers partition removal for the same reason. TRIM-FILES shortens those live files in place, so a trim
-     * under a checkpoint would leave the upload asking for more rows than the file holds. It is the shortening this
-     * test observes, not the writer's only one -- {@code TableWriter#truncateColumns} shortens live column files
-     * too, on the TRUNCATE and cancelRow paths.
+     * A running CHECKPOINT must not let TRIM-FILES shorten a live partition's column files: backup sizes those
+     * files by the physical row extent its manifest copied out of the checkpoint but reads them from the LIVE db
+     * root, so a trim under a checkpoint leaves the upload asking for more rows than the file holds.
      * <p>
-     * Nothing names the checkpoint here: {@link io.questdb.cairo.DatabaseCheckpointAgent} pins the transaction it
-     * captured on the {@link io.questdb.cairo.TxnScoreboard} for the whole checkpoint, and MAKE-PLAIN's PRE-COMMIT
-     * check - the closed range {@code [partitionNameTxn, txWriter.getTxn()]} - sees that pin like any other
-     * reader's and declines. Its FIRST check does not: the checkpoint captured the geometry record MAKE-PLAIN is
-     * retiring, so its pin sits at or above that record's writer txn, outside the range that check asks about.
+     * Nothing names the checkpoint here. {@link io.questdb.cairo.DatabaseCheckpointAgent} pins its transaction on
+     * the {@link io.questdb.cairo.TxnScoreboard}, but that is not what stops the trim: MAKE-PLAIN asks
+     * {@code isCheckpointInProgress()} outright, before it commits anything. Its scoreboard check does not see the
+     * pin either way, that pin sitting at or above the geometry record MAKE-PLAIN retires.
      * <p>
-     * So MAKE-PLAIN does not commit at all here. That is the point: the check that guards TRIM-FILES can only be
-     * taken after the commit, so a MAKE-PLAIN that committed anyway would leave a plain partition with its dead
-     * bytes still on disk, reported by nothing and reclaimed by nothing. The second half of the test releases the
-     * checkpoint and asserts the same partition then goes all the way, plain and trimmed.
+     * So MAKE-PLAIN does not commit at all here, and that is the point: a partition it cannot trim must not be
+     * recorded as plain, or its dead bytes are left with nothing to report them and nothing to reclaim them. The
+     * second half of the test releases the checkpoint and asserts the partition then goes all the way.
      * <p>
-     * Same fixture as {@link #testMakePlainWaitsForAPinnedReaderThenReclaimsOnceItGoes}, run past the point where
-     * the reader goes away; without the checkpoint it trims (see
-     * {@link #testMakePlainReclaimsAMoveTailedFrontsDeadSpace}), so the unchanged disk size below is the
-     * checkpoint's doing and not a fixture that never reached TRIM-FILES.
+     * Fixture of {@link #testMakePlainWaitsForAPinnedReaderThenReclaimsOnceItGoes} run past the reader's exit;
+     * without the checkpoint it trims ({@link #testMakePlainReclaimsAMoveTailedFrontsDeadSpace}).
      */
     @Test
     public void testACheckpointDefersTrimFiles() throws Exception {
@@ -137,8 +129,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             backdate("x", "2024-01-01T05:00:00", 200);
             pinPieceCap(2);
 
-            // A pinned reader gets the day to MAKE-PLAIN's eligible shape - MOVE-TAIL runs, MAKE-PLAIN declines -
-            // and then goes, so the checkpoint below is the only thing left holding anything.
+            // The pinned reader gets the day to MAKE-PLAIN's eligible shape, then goes: MOVE-TAIL has run,
+            // MAKE-PLAIN has declined, and the checkpoint below is the only thing left holding anything.
             try (TableReader pinned = engine.getReader(engine.verifyTableName("x"))) {
                 Assert.assertNotNull(pinned);
                 runCompactionPasses("x");
@@ -154,7 +146,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
             execute("checkpoint create");
             try {
-                // Clear the backoff the decline above started, so what happens next is the checkpoint's doing.
+                // Clear the decline's backoff, so what happens next is the checkpoint's doing.
                 setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
                 runCompactionPasses("x");
 

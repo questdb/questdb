@@ -758,6 +758,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     EXPORT_WORKER_YIELD_THRESHOLD("export.worker.yield.threshold"),
     CAIRO_TXN_SCOREBOARD_FORMAT("cairo.txn.scoreboard.format"),
     DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY("debug.wal.apply.block.failure.no.retry", false, true),
+    DEBUG_WAL_APPLY_MAX_TXN_BLOCK_SIZE("debug.wal.apply.max.txn.block.size", false, true),
     DEBUG_DB_LOG_NAME("debug.db.log.name", false, true),
     CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED("cairo.sql.column.alias.expression.enabled"),
     CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size"),

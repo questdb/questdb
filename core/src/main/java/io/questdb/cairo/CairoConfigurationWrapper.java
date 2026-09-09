@@ -305,6 +305,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getDebugWalApplyMaxTxnBlockSize() {
+        return getDelegate().getDebugWalApplyMaxTxnBlockSize();
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return getDelegate().getDefaultDateLocale();
     }
