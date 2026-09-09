@@ -512,6 +512,29 @@ public class MergeUnionAllTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtJoinWithToleranceOverUnionAllResolvesAllBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinUnionTables();
+            // The field report joined with TOLERANCE. It reaches the same join factory and carries
+            // the same ordering requirement, and the bound must not hide a branch either: every
+            // price here is well inside 300s of its trade.
+            assertQuery("SELECT sum(CASE WHEN p.price IS NOT NULL THEN 1 ELSE 0 END) resolved " +
+                    "FROM trades t " +
+                    "LT JOIN (SELECT * FROM (" +
+                    "SELECT ts, token, price FROM px_bridge " +
+                    "UNION ALL " +
+                    "SELECT ts, token, price FROM px_tail" +
+                    ") TIMESTAMP(ts)) p ON (t.token = p.token) TOLERANCE 300s")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            resolved
+                            4
+                            """);
+        });
+    }
+
+    @Test
     public void testMergePreservesDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a (px double, ts timestamp) timestamp(ts) partition by day");
