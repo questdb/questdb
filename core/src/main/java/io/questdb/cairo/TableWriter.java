@@ -3086,6 +3086,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         linkPartitionIndexFiles(partitionTimestamp, oldPartitionNameTxn, partitionDirLen, newPartitionDirLen);
     }
 
+    /**
+     * MAKE-PLAIN plus TRIM-FILES on one partition, on behalf of {@code PartitionCompactionScanJob}. The sweep sends
+     * this for a partition a writer left in MAKE-PLAIN's shape - one piece at row 0 with dead space above it - and
+     * then stopped ingesting, so the per-commit path that would have retried it never runs again.
+     * <p>
+     * Everything is re-checked here against the live state: the sweep decided off a {@code _txn} snapshot it read
+     * without holding the writer, and a queued command can sit for a while before a busy writer applies it. Anything
+     * that has moved on since simply ends the call - there is nothing staged to clean up, and the next sweep sees
+     * whatever the partition looks like then.
+     */
+    public void makePartitionPlainInPlace(
+            long partitionTimestamp,
+            long expectedSrcNameTxn,
+            long expectedWriterTxn,
+            long expectedMetadataVersion
+    ) {
+        if (inTransaction()) {
+            throw CairoException.nonCritical().put("cannot make partition plain, in transaction [table=")
+                    .put(tableToken).put(']');
+        }
+        final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp);
+        final long liveWriterTxn = partitionIndex < 0 ? -1L : getGeometry().getWriterTxn(partitionIndex);
+        if (partitionIndex < 0
+                || txWriter.isPartitionReadOnly(partitionIndex)
+                || txWriter.isPartitionRemote(partitionIndex)
+                || liveWriterTxn != expectedWriterTxn
+                || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
+                || getMetadataVersion() != expectedMetadataVersion
+                || !isMakePlainEligible(partitionIndex)) {
+            LOG.info().$("skipping stale MAKE-PLAIN request [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", expectedWriterTxn=").$(expectedWriterTxn)
+                    .$(", liveWriterTxn=").$(liveWriterTxn)
+                    .I$();
+            return;
+        }
+        if (!makePartitionPlain(partitionIndex)) {
+            // A reader on the record this shape came from, or a running checkpoint. Nothing is staged, so
+            // there is nothing to undo - the next sweep picks the partition up again.
+            LOG.info().$("MAKE-PLAIN declined for the compaction sweep [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
+            return;
+        }
+        processPartitionRemoveCandidates();
+    }
+
     public void markDistressed() {
         this.distressed = true;
     }

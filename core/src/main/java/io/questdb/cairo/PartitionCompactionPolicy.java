@@ -230,7 +230,7 @@ public class PartitionCompactionPolicy implements Mutable {
      * MOVE-TAIL's own end state, JOIN folding everything into one, or any commit that merely happened to leave it that
      * way - with real dead space above it, and none of the ordinary reasons a partition is off-limits (the last/active.
      */
-    public static boolean isMakePlainShape(TxWriter txWriter, PartitionGeometry geometry, int partitionIndex) {
+    public static boolean isMakePlainShape(TxReader txWriter, PartitionGeometry geometry, int partitionIndex) {
         if (partitionIndex >= txWriter.getPartitionCount() - 1 || txWriter.getLagRowCount() > 0) {
             return false;
         }

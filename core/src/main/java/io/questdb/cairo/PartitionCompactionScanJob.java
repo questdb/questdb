@@ -271,6 +271,44 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
+     * Asks the table's writer to run MAKE-PLAIN and TRIM-FILES on one partition, in place - the same {@link
+     * CompositePartitionSwapCommand} {@link #dispatchComposite} sends, in its MAKE-PLAIN mode. Nothing is staged and
+     * nothing is copied, so there is no pending-swap record to keep: a command that lands on a partition that has
+     * moved on is simply dropped by the writer, and the next sweep decides again.
+     */
+    private void dispatchMakePlain(TableToken tableToken, long partitionTimestamp) {
+        final CompositePartitionSwapCommand command = new CompositePartitionSwapCommand();
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final int partitionIndex = reader.getTxFile().getPartitionIndex(partitionTimestamp);
+            if (partitionIndex < 0 || !reader.getTxFile().isPartitionComposite(partitionIndex)) {
+                return;
+            }
+            reader.getGeometry().resolve(partitionIndex);
+            if (!PartitionCompactionPolicy.isMakePlainShape(reader.getTxFile(), reader.getGeometry(), partitionIndex)) {
+                // The sweep read a _txn snapshot without holding anything; this reader is the current one.
+                return;
+            }
+            command.ofMakePlain(
+                    tableToken,
+                    tableToken.getTableId(),
+                    partitionTimestamp,
+                    reader.getTxFile().getPartitionNameTxn(partitionIndex),
+                    reader.getGeometry().getWriterTxn(partitionIndex),
+                    reader.getMetadataVersion()
+            );
+        }
+        // This reader has to be gone before the writer runs: MAKE-PLAIN waits for the readers that still
+        // resolve the geometry record it is about to retire, and this one is holding exactly that record.
+        try (TableWriter writer = engine.getWriterOrPublishCommand(tableToken, command)) {
+            if (writer != null) {
+                command.apply(writer, true);
+            }
+            // Queued onto a busy writer instead: it applies the command on its own thread, via tick(). A busy
+            // writer is also one whose own per-commit compaction is running, so either path is fine.
+        }
+    }
+
+    /**
      * The parquet twin of {@link #buildCompactedComposite}: copies the partition's live row groups off {@code reader}'s
      * snapshot into a staging directory, index files included, and returns the swap command describing the result.
      */
@@ -625,7 +663,15 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         continue;
                     }
                     dispatchBudget--;
-                    dispatchComposite(tableToken, partitionTimestamp, nowMicros);
+                    if (PartitionCompactionPolicy.isMakePlainShape(txReader, geometry, partitionIndex)) {
+                        // Already one piece at row 0: MAKE-PLAIN and TRIM-FILES reach REWRITE's result in
+                        // place, with no copy at all. This is the shape a writer leaves behind when it has
+                        // to defer the trim - for a reader or a checkpoint - and then stops ingesting, so
+                        // its own per-commit retry never comes round again.
+                        dispatchMakePlain(tableToken, partitionTimestamp);
+                    } else {
+                        dispatchComposite(tableToken, partitionTimestamp, nowMicros);
+                    }
                 } else {
                     final long nameTxn = txReader.getPartitionNameTxn(partitionIndex);
                     if (!isParquetPartitionIdle(tableToken, timestampType, partitionBy, partitionTimestamp, nameTxn, parquetFileSize, metadata, nowMicros)) {

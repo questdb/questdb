@@ -27,6 +27,7 @@ package io.questdb.test.cairo.composite;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionCompactionPolicy;
+import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxReader;
@@ -773,6 +774,81 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                         fingerprintOfDay("x", "2024-01-01")
                 );
             }
+        });
+    }
+
+    /**
+     * The background sweep already picks this partition up - it is composite and idle, so it is a candidate
+     * either way. What changes is what it does with it: the partition is already one piece at row 0 with
+     * dead space above it, so MAKE-PLAIN and TRIM-FILES reach REWRITE's result IN PLACE, with no copy and
+     * no new directory. The unchanged {@code nameTxn} below is what proves the sweep took that route.
+     * <p>
+     * This is the case the writer's own per-commit path cannot finish on its own: it deferred MAKE-PLAIN
+     * for a reader, and then ingestion stopped, so nothing ever commits to that table again and the retry
+     * never comes round.
+     */
+    @Test
+    public void testTheCompactionSweepMakesAnIdlePartitionPlainInPlace() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            letPreSplitCut();
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+            createDayTable("x", "2024-01-01", 20_000);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            pinPieceCap(2);
+
+            // A pinned reader gets the day to MAKE-PLAIN's shape - MOVE-TAIL runs, MAKE-PLAIN declines.
+            try (TableReader pinned = engine.getReader(engine.verifyTableName("x"))) {
+                Assert.assertNotNull(pinned);
+                runCompactionPasses("x");
+                Assert.assertTrue("fixture did not reach MOVE-TAIL", isComposite("x", "2024-01-01"));
+                Assert.assertEquals(1, pieceCountOfDay("x", "2024-01-01"));
+                Assert.assertTrue("MOVE-TAIL left no dead space to protect", deadRowsOfDay("x", "2024-01-01") > 0);
+            }
+            engine.releaseInactive();
+
+            final String before = fingerprintOfDay("x", "2024-01-01");
+            final long diskBefore = diskSizeOfDay("x", "2024-01-01");
+            final long deadBefore = deadRowsOfDay("x", "2024-01-01");
+            final long nameTxnBefore = frontNameTxnOfDay("x", "2024-01-01");
+
+            // Nothing writes to the table from here on, so the writer's own per-commit retry never runs
+            // again - only the sweep can finish this off.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(parseMicros("2024-06-01T00:00:00.000000Z"));
+            Assert.assertTrue("the writer already reclaimed it, the sweep has nothing to do",
+                    deadRowsOfDay("x", "2024-01-01") == deadBefore);
+
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                job.run();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            Assert.assertFalse(
+                    "the sweep left the idle partition composite; dead rows: " + deadRowsOfDay("x", "2024-01-01"),
+                    isComposite("x", "2024-01-01")
+            );
+            Assert.assertEquals(0, deadRowsOfDay("x", "2024-01-01"));
+            Assert.assertTrue(
+                    "the sweep did not reclaim the dead bytes [before=" + diskBefore
+                            + ", after=" + diskSizeOfDay("x", "2024-01-01") + ']',
+                    diskSizeOfDay("x", "2024-01-01") < diskBefore
+            );
+            Assert.assertEquals(
+                    "the sweep REWROTE the partition into a new directory instead of making it plain in place",
+                    nameTxnBefore,
+                    frontNameTxnOfDay("x", "2024-01-01")
+            );
+            Assert.assertEquals("the sweep changed the data", before, fingerprintOfDay("x", "2024-01-01"));
         });
     }
 
