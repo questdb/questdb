@@ -323,7 +323,9 @@ public class FrameImpl implements Frame {
             long colTop = columnTops.getQuick(i);
             // -1 (untouched, this frame has no sink and nothing wrote through it): nothing to record.
             if (colTop > -1) {
-                sink.setColumnTop(i, colTop);
+                // columnTops is this frame's own array, so it stays dense; a sink writes through to _cv,
+                // which is keyed by the writer index.
+                sink.setColumnTop(metadata.getWriterIndex(i), colTop);
             }
         }
     }
@@ -338,7 +340,7 @@ public class FrameImpl implements Frame {
         final long columnTop = Math.max(frameColumn.getColumnTop(), columnTops.getQuick(columnIndex));
         columnTops.setQuick(columnIndex, columnTop);
         if (columnTopSink != null) {
-            columnTopSink.setColumnTop(columnIndex, columnTop);
+            columnTopSink.setColumnTop(metadata.getWriterIndex(columnIndex), columnTop);
         }
     }
 
@@ -553,11 +555,16 @@ public class FrameImpl implements Frame {
         // A tracked top (only ever set by this frame's own saveChanges, when it has no external sink) takes over from
         // crv entirely once present: it already reflects everything crv would resolve to PLUS every piece this frame.
         long columnTop = columnTops.getQuick(columnIndex);
+        // _cv records are keyed by the WRITER index. TableReaderMetadata is dense - it drops every retired
+        // column - so an ALTER COLUMN TYPE or a DROP COLUMN makes the two index spaces diverge, and a dense
+        // lookup then reads some other column's name txn and top. TableWriterMetadata's writer index is the
+        // identity, so this is a no-op for the writer's own callers.
+        final int writerIndex = metadata.getWriterIndex(columnIndex);
         if (columnTop < 0) {
-            int crvRecIndex = crv.getRecordIndex(partitionTimestamp, columnIndex);
-            columnTop = crv.getColumnTopByIndexOrDefault(crvRecIndex, partitionTimestamp, columnIndex, rowCount);
+            int crvRecIndex = crv.getRecordIndex(partitionTimestamp, writerIndex);
+            columnTop = crv.getColumnTopByIndexOrDefault(crvRecIndex, partitionTimestamp, writerIndex, rowCount);
         }
-        long columnTxn = crv.getColumnNameTxn(partitionTimestamp, columnIndex);
+        long columnTxn = crv.getColumnNameTxn(partitionTimestamp, writerIndex);
 
         FrameColumnTypePool columnTypePool = columnPool.getPool(columnType);
         boolean createNew = columnTop >= rowCount || create;

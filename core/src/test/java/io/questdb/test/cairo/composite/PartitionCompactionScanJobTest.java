@@ -1398,6 +1398,84 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
+     * A composite partition compacted AFTER an ALTER COLUMN TYPE, which retires the converted column's
+     * writer index and appends a new one. {@code TableReaderMetadata} is DENSE - it skips the retired
+     * index - while {@code _cv} records are keyed by the WRITER index, so the two spaces diverge from
+     * that point on. {@link io.questdb.cairo.TableReader} bridges them at every {@code _cv} access
+     * ({@code metadata.getWriterIndex(columnIndex)}); {@code FrameImpl} does not, and
+     * {@code PartitionCompactionScanJob} is the only caller that hands it reader metadata.
+     * <p>
+     * A shifted lookup reads some other column's name txn and column top, which is how a compaction can
+     * map a retired, empty column file at a live column's row count.
+     */
+    @Test
+    public void testCompactionAfterColumnTypeChangeReadsTheRightColumnFiles() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+
+            execute("CREATE TABLE cx AS (" +
+                    "SELECT x::INT a, x::INT i, timestamp_sequence('2020-01-01', 15*1000000L) ts " +
+                    "FROM long_sequence(5760)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later, plain day, so 2020-01-01 is never the active partition.
+            execute("INSERT INTO cx SELECT x::INT + 90000, x::INT + 90000, " +
+                    "timestamp_sequence('2020-01-03', 60*1000000L) FROM long_sequence(50)");
+            drainWalQueue();
+
+            // Added late, so it carries a real column top in both existing partitions.
+            execute("ALTER TABLE cx ADD COLUMN late LONG");
+            drainWalQueue();
+
+            // Lands only inside 2020-01-01, cutting it into pieces, and gives `late` rows above its top.
+            execute("INSERT INTO cx (a, i, ts, late) SELECT x::INT + 70000, x::INT + 70000, " +
+                    "timestamp_sequence('2020-01-01T04:00:07', 5*1000000L), x + 500000 FROM long_sequence(200)");
+            drainWalQueue();
+
+            // The writer-index hole.
+            execute("ALTER TABLE cx ALTER COLUMN a TYPE LONG");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("cx");
+            boolean hasIndexHole = false;
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertTrue("2020-01-01 should be composite", reader.getTxFile().isPartitionComposite(0));
+                Assert.assertTrue("2020-01-01 should have more than one piece", reader.getGeometry().getPieceCount(0) > 1);
+                for (int i = 0, n = reader.getMetadata().getColumnCount(); i < n; i++) {
+                    if (reader.getMetadata().getWriterIndex(i) != i) {
+                        hasIndexHole = true;
+                        break;
+                    }
+                }
+            }
+            Assert.assertTrue("the conversion must leave dense != writer index, or this proves nothing", hasIndexHole);
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                job.run();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertFalse("2020-01-01 is idle, should have been compacted", reader.getTxFile().isPartitionComposite(0));
+            }
+
+            execute("CREATE TABLE cx_oracle AS (SELECT a::LONG a, i, ts, late FROM (" +
+                    "SELECT x::INT a, x::INT i, timestamp_sequence('2020-01-01', 15*1000000L) ts, NULL::LONG late FROM long_sequence(5760)" +
+                    " UNION ALL SELECT x::INT + 90000, x::INT + 90000, timestamp_sequence('2020-01-03', 60*1000000L), NULL::LONG FROM long_sequence(50)" +
+                    " UNION ALL SELECT x::INT + 70000, x::INT + 70000, timestamp_sequence('2020-01-01T04:00:07', 5*1000000L), x + 500000 FROM long_sequence(200)" +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            TestUtils.assertSqlCursors(
+                    engine, sqlExecutionContext,
+                    "SELECT * FROM cx_oracle ORDER BY ts, i", "SELECT * FROM cx ORDER BY ts, i", LOG
+            );
+        });
+    }
+
+    /**
      * The directory a partition's data actually lives in.
      */
     private static String partitionDir(

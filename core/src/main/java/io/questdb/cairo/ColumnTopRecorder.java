@@ -74,6 +74,13 @@ public class ColumnTopRecorder implements ColumnTopSink {
 
     @Override
     public void setColumnTop(int columnIndex, long columnTop) {
+        // Reports arrive in WRITER index space, which a dense metadata's ofColumnCount under-sizes: every
+        // retired column leaves the live writer indexes above it beyond the dense count.
+        if (columnIndex >= tops.size()) {
+            final int from = tops.size();
+            tops.setPos(columnIndex + 1);
+            tops.fill(from, columnIndex + 1, NOT_REPORTED);
+        }
         tops.setQuick(columnIndex, columnTop);
     }
 }
