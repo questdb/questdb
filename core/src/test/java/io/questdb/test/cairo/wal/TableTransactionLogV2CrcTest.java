@@ -168,65 +168,20 @@ public class TableTransactionLogV2CrcTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testOversizedChecksumBoundarySuspends() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, SEQ_PART_TXN_COUNT);
-        assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
-            final TableToken tt = engine.verifyTableName("x");
-            engine.releaseInactive();
-
-            final CairoConfiguration cfg = engine.getConfiguration();
-            try (Path path = new Path()) {
-                path.of(cfg.getDbRoot())
-                        .concat(tt.getDirName())
-                        .concat(WalUtils.SEQ_DIR)
-                        .concat(WalUtils.TXNLOG_FILE_NAME);
-                pokeLong(cfg, path.$(), HEADER_SEQ_PART_SIZE_32 + Integer.BYTES + Long.BYTES, 1_000_000L);
-            }
-
-            drainWalQueue();
-            Assert.assertTrue("checksum capability boundary beyond maxTxn must suspend the table",
-                    engine.getTableSequencerAPI().isSuspended(tt));
-        });
-    }
-
-    @Test
-    public void testZeroChecksumInCapabilityDeclaredRecordSuspends() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, SEQ_PART_TXN_COUNT);
-        assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
-            final TableToken tt = engine.verifyTableName("x");
-            engine.releaseInactive();
-
-            final CairoConfiguration cfg = engine.getConfiguration();
-            try (Path path = new Path()) {
-                path.of(cfg.getDbRoot())
-                        .concat(tt.getDirName())
-                        .concat(WalUtils.SEQ_DIR)
-                        .concat(WalUtils.TXNLOG_PARTS_DIR)
-                        .slash().put(0L);
-                pokeLong(cfg, path.$(), RESERVED_OFFSET, 0L);
-            }
-
-            drainWalQueue();
-            Assert.assertTrue(
-                    "a capability-declared record may not downgrade a missing checksum to legacy",
-                    engine.getTableSequencerAPI().isSuspended(tt)
-            );
-        });
-    }
-
     /**
-     * LEGACY back-compat test.
+     * A zero in the reserved slot is read as "no checksum" and the record goes unverified.
      * <p>
-     * Zeroes the reserved slot of the first record in the part file.
-     * A zero slot means "legacy record — no CRC present": the reader must skip verification
-     * and not suspend the table.
+     * That is a deliberate trade, and it is the one detection V2 gives up. A QuestDB that predates the
+     * checksum writes a literal zero into this slot, so a zero cannot be told from a checksum a torn write
+     * erased. Treating it as damage suspends the table on records an older binary wrote perfectly well --
+     * see {@code OlderBinaryWriteCompatTest#testV2SequencerLogWrittenByOlderBinaryStillOpens}, which is the
+     * test that forced this change. A file-level "checksummed from txn N" watermark is what used to
+     * distinguish them, and it is exactly what an older binary cannot withdraw.
      * <p>
-     * Passes in both old and new code (the 0-sentinel skip is always present after the change).
+     * V1 does not pay this price: its per-entry stamp names the txn its CRC belongs to, so a zeroed CRC
+     * beside a live stamp is still detected ({@code TxnLogV1CrcVerifyTest#testStampedButWrongCrcIsStillTorn}).
+     * A corrupt (non-zero, wrong) V2 checksum is still detected here by
+     * {@link #testCorruptedBodyByteSuspendsTable()}.
      */
     @Test
     public void testZeroReservedSlotIsLegacyAndNotSuspended() throws Exception {
@@ -250,13 +205,6 @@ public class TableTransactionLogV2CrcTest extends AbstractCairoTest {
                 // Zero the reserved/CRC slot in the first record (offset = RESERVED_OFFSET in record 0).
                 pokeLong(cfg, path.$(), RESERVED_OFFSET, 0L);
 
-                // Positively identify the existing records as legacy by removing the checksum-capability
-                // header. A reader may skip verification only under this file-level discriminator.
-                path.of(cfg.getDbRoot())
-                        .concat(tt.getDirName())
-                        .concat(WalUtils.SEQ_DIR)
-                        .concat(WalUtils.TXNLOG_FILE_NAME);
-                pokeLong(cfg, path.$(), HEADER_SEQ_PART_SIZE_32 + Integer.BYTES, 0L);
             }
 
             drainWalQueue();

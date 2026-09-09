@@ -497,7 +497,6 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                     address + txnOffset,
                     RECORD_SIZE,
                     lastReadCrc,
-                    Long.MIN_VALUE, // applicability already decided by the stamp
                     txnOffset
             );
         }

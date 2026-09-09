@@ -77,17 +77,16 @@ public final class TxnLogRecordVerifier {
             long recordBaseAddr,
             long bodySize,
             long storedCrc,
-            long firstCoveredTxn,
             long txnOffset
     ) {
+        // The CALLER decides whether this record was checksummed at all, and only calls in when it was:
+        // V1 because a sidecar entry's stamp named this txn, V2 because the reserved slot is non-zero. So a
+        // zero reaching here is not a legacy record, it is a checksum that was written and has since gone.
         if (storedCrc == 0L) {
-            if (txn >= firstCoveredTxn || Unsafe.getInt(recordBaseAddr + TX_LOG_WAL_ID_OFFSET) == 0) {
-                throw CairoException.critical(CairoException.METADATA_VALIDATION)
-                        .put("absent/torn sequencer txnlog record beyond the durable frontier [txn=").put(txn)
-                        .put(", txnOffset=").put(txnOffset)
-                        .put(']');
-            }
-            return; // legacy record without CRC — read unverified for backward compatibility
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("absent/torn sequencer txnlog record [txn=").put(txn)
+                    .put(", txnOffset=").put(txnOffset)
+                    .put(']');
         }
         final long actual = TableUtils.calculateCvAreaChecksum(recordBaseAddr, bodySize);
         if (actual != storedCrc) {

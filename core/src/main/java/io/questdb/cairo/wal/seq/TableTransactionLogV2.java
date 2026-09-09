@@ -266,15 +266,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
         maxTxn.set(lastTxn);
-        if (txnMem.getLong(HEADER_CHECKSUM_MAGIC_OFFSET) != CHECKSUM_CAPABILITY_MAGIC) {
-            // Upgrade an existing V2 log in place. Records below lastTxn remain genuine legacy records;
-            // every subsequently appended record is positively declared checksummed. Publish the
-            // capability before writing such a record so a torn checksum cannot masquerade as legacy.
-            txnMem.putLong(HEADER_CHECKSUM_FROM_TXN_OFFSET, lastTxn);
-            txnMem.putLong(HEADER_CHECKSUM_MAGIC_OFFSET, CHECKSUM_CAPABILITY_MAGIC);
-            txnMem.sync(false);
-            ff.fdatasync(txnMem.getFd());
-        }
         partTransactionCount = txnMem.getInt(HEADER_SEQ_PART_SIZE_32);
         if (partTransactionCount < 1) {
             throw new CairoException().put("invalid sequencer file part size [size=").put(partTransactionCount).put(", path=").put(path).put(']');
@@ -436,7 +427,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         private long txnCount = -1;
         private long txnLo;
         private long txnOffset;
-        private long checksumFromTxn = Long.MAX_VALUE;
 
         public TransactionLogCursorImpl(FilesFacade ff, boolean bypassWalFdCache, long txnLo, final @Transient Path path, int partTransactionCount) {
             rootPath = new Path();
@@ -579,14 +569,14 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             // same code. Divergence would make one format fatal and the other blind on the same
             // torn record.
             final long recordBase = address + txnOffset;
-            TxnLogRecordVerifier.verify(
-                    txn,
-                    recordBase,
-                    RESERVED_OFFSET,
-                    Unsafe.getLong(recordBase + RESERVED_OFFSET),
-                    checksumFromTxn,
-                    txnOffset
-            );
+            final long storedCrc = Unsafe.getLong(recordBase + RESERVED_OFFSET);
+            if (storedCrc == 0L) {
+                // No checksum for this record. A binary that predates the checksum writes a literal zero
+                // into this slot, so a zero cannot be told from a torn one and must be read unverified --
+                // the alternative suspends a table on records an older QuestDB wrote perfectly well.
+                return;
+            }
+            TxnLogRecordVerifier.verify(txn, recordBase, RESERVED_OFFSET, storedCrc, txnOffset);
         }
 
         @Override
@@ -652,17 +642,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             this.headerFd = openFileRO(ff, path, bypassFdCache);
             this.bypassFdCache = bypassFdCache;
             long newTxnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
-            final long checksumMagic = ff.readNonNegativeLong(headerFd, HEADER_CHECKSUM_MAGIC_OFFSET);
-            checksumFromTxn = checksumMagic == CHECKSUM_CAPABILITY_MAGIC
-                    ? ff.readNonNegativeLong(headerFd, HEADER_CHECKSUM_FROM_TXN_OFFSET)
-                    : Long.MAX_VALUE;
-            if (checksumMagic == CHECKSUM_CAPABILITY_MAGIC
-                    && (checksumFromTxn < 0 || checksumFromTxn > newTxnCount)) {
-                throw CairoException.critical(CairoException.METADATA_VALIDATION)
-                        .put("invalid sequencer checksum capability header [path=").put(path)
-                        .put(", checksumFromTxn=").put(checksumFromTxn)
-                        .put(", maxTxn=").put(newTxnCount).put(']');
-            }
             rootPath.of(path);
 
             if (newTxnCount > -1L) {
