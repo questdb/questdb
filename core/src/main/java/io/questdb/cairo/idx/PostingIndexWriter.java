@@ -129,6 +129,32 @@ public class PostingIndexWriter implements IndexWriter {
     // thread that sets the flag, so there is no cross-thread visibility hazard.
     @TestOnly
     public static boolean COVERING_FASTPATH_DISABLED = false;
+    // @TestOnly override: when true, a pure O3 append into an existing partition
+    // does NOT take the covered append path (index only the appended range at
+    // seal time + incremental covered fragment). O3 indexes the rows as before
+    // and the seal full-reseals. Lets the differential fuzz apply the SAME
+    // stream both ways and assert byte-identical results, and lets a regression
+    // be attributed to the append path. Default false -> never set in
+    // production, so the JIT elides the always-false guard.
+    // Plain (non-volatile) boolean, like the flags above: tests flip it on the
+    // thread that then applies the WAL synchronously.
+    @TestOnly
+    public static boolean COVERING_SEAL_APPEND_DISABLED = false;
+    // @TestOnly: number of times the O3 seal sweep updated a COVERING index by
+    // indexing only the appended range and publishing an incremental covered
+    // fragment, instead of resealing the partition. Lets a test assert the path
+    // FIRED rather than infer it from COVERING_FULL_RESEAL_COUNT staying 0
+    // (which is also true when nothing happened at all). Gated by
+    // COVERING_COUNTERS_ENABLED like the others.
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_SEAL_APPEND_COUNT = new java.util.concurrent.atomic.AtomicLong();
+    // @TestOnly: number of times the seal DECLINED the covered append because the
+    // writer still held unflushed add() calls. Without a counter that branch is
+    // unobservable, so nothing can tell its presence from its absence - and it
+    // guards a silent-row-loss case (close() drops pending entries). Tests assert
+    // it stays 0; if a workload ever trips it, that assertion is how we find out.
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_SEAL_APPEND_PENDING_DECLINE_COUNT = new java.util.concurrent.atomic.AtomicLong();
     // @TestOnly: how many times TableWriter.tryFastAppendInOrderBlock actually
     // committed a block. Distinct from COVERING_FASTLAG_COMMIT_COUNT, which counts
     // the SHARED fast-lag covered publish that the pre-existing single-txn path
@@ -1035,6 +1061,38 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
+     * The table {@code _txn} the live chain head's most recent generation was
+     * tagged with, or {@code -1} when there is no head. A value ABOVE the
+     * committed table txn means the newest publish came from an attempt that
+     * never committed (its writer was distressed before {@code txWriter.commit}
+     * landed). Such a head cannot simply be dropped at seal time - a commit in
+     * flight tags its own publishes the same way, so the two are
+     * indistinguishable there - which means any caller that READS the chain to
+     * decide what is already indexed must instead treat it as untrustworthy and
+     * rebuild.
+     */
+    public long getHeadTxnAtSeal() {
+        if (!keyMem.isOpen() || !chain.hasHead()) {
+            return -1L;
+        }
+        if (genCount <= 0) {
+            // No generation, so no "most recent generation" to report. Returning
+            // the entry-level value here would hand back exactly the stale
+            // slot[0] reading this method exists to avoid.
+            return -1L;
+        }
+        // The NEWEST gen's slot, not the entry-level value: the latter is
+        // slot[0]'s, and extendHead deliberately never rewrites slot[0]
+        // (see its "(newGenCount-1)'s gen-dir slot never overwrites it"
+        // note), so an entry extended in place still reports the txn of its
+        // FIRST gen. That is precisely the shape an in-place append leaves,
+        // which is the shape callers here need to judge. Gen-dir TXN_AT_SEAL
+        // is monotonic (enforced by checkGenDirMonotonic), so the last slot
+        // is the most recent publish.
+        return keyMem.getLong(resolveHeadGenDirOffset(genCount - 1) + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+    }
+
+    /**
      * True when this covering index's HEAD chain entry is the LEGACY (format-0,
      * aliased-footer) layout written by 9.4.x. The fast-lag block-apply gate uses
      * this to fall back to O3 rather than extend a format-0 head in place (which
@@ -1042,6 +1100,18 @@ public class PostingIndexWriter implements IndexWriter {
      * a fresh format-1 entry, migrating the head; subsequent block-applies see a
      * format-1 head and fast-path. Cheap: one mapped int read.
      */
+    /**
+     * True when the writer holds {@code add()} calls that have not been flushed
+     * to a generation yet. {@code close()} deliberately does NOT flush them, so
+     * any caller about to reopen this writer (which the seal does, via
+     * configureFollowerAndWriter) would drop them. A caller that relies on the
+     * persisted chain being the whole truth must therefore refuse to do so while
+     * this is true.
+     */
+    public boolean hasPendingEntries() {
+        return hasPendingData;
+    }
+
     public boolean isHeadCoveringFormatLegacy() {
         // Self-contained property of the on-disk head entry (independent of the
         // writer's live coverCount, which may be unconfigured at gate time): a
