@@ -7741,6 +7741,81 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshJobYieldHandbackFailureDoesNotLoseBaseNotification() throws Exception {
+        // The batch bound dequeues the task it stops at and appends it back to the queue tail. That
+        // append allocates whenever the tail segment is full: the batch's dequeues free slots in the
+        // head segment, not in the frozen tail, so a queue that grew past one segment grows again on
+        // the handback. When the allocation fails on a base table notification, the notification is
+        // gone while its positive deduplication marker stays set, so every later base commit enqueues
+        // nothing. No pending-task recovery covers a base-scoped task, and no timer schedules an
+        // immediate, non-period view, so the view stops refreshing for good while
+        // materialized_views() keeps reporting it valid.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_1h refresh immediate as " +
+                    "select sym, last(price) as price, ts from base_price sample by 1h");
+            // The filler view soaks up the batch, so nothing but the base notification can refresh price_1h.
+            executeWithRewriteTimestamp(
+                    "create table filler_base (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view filler_1h refresh immediate as " +
+                    "select sym, last(price) as price, ts from filler_base sample by 1h");
+            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')");
+            execute("insert into filler_base values('gbpusd', 1.320, '2024-09-10T12:01')");
+            drainQueues();
+            assertQuery("select count() from price_1h").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            final TableToken fillerToken = engine.getTableTokenIfExists("filler_1h");
+            Assert.assertNotNull(fillerToken);
+
+            // A full batch of view-scoped no-op tasks ahead of the base notification, so the
+            // notification is the task the bound dequeues and hands back.
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            for (int i = 0; i < 32; i++) {
+                store.enqueueIncrementalRefresh(fillerToken);
+            }
+            execute("insert into base_price values('gbpusd', 1.323, '2024-09-10T13:01')");
+            drainWalQueue();
+
+            final AtomicInteger dequeued = new AtomicInteger();
+            try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 1)) {
+                // Keep the time budget out of it so only the task count bound can end this pass.
+                refreshJob.setMaxRunDurationForTesting(TimeUnit.DAYS.toNanos(1));
+                refreshJob.setOnRefreshTaskDequeuedForTesting(() -> {
+                    // Arm on the batch's last task: the next queue append is the handback.
+                    if (dequeued.incrementAndGet() == 32) {
+                        store.setOnTaskQueueAppendForTesting(oneShotOom("test handback append failure"));
+                    }
+                });
+                try {
+                    refreshJob.run();
+                    Assert.fail("the handback append failure must escape run()");
+                } catch (OutOfMemoryError expected) {
+                    assertContains(expected.getMessage(), "test handback append failure");
+                } finally {
+                    store.setOnTaskQueueAppendForTesting(null);
+                }
+                Assert.assertEquals(32, dequeued.get());
+
+                // The commit whose notification failed the handback, and every commit after it, must
+                // still reach the view once the job runs again.
+                drainWalAndMatViewQueues(refreshJob, engine);
+                execute("insert into base_price values('gbpusd', 1.325, '2024-09-10T14:01')");
+                drainWalAndMatViewQueues(refreshJob, engine);
+            }
+
+            assertQuery("select count() from base_price").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+            assertQuery("select count() from price_1h").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+        });
+    }
+
+    @Test
     public void testRefreshSkipsUnchangedBuckets() throws Exception {
         // Verify that incremental refresh skips unchanged SAMPLE BY buckets.
         assertMemoryLeak(() -> {
