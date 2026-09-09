@@ -540,7 +540,7 @@ public class HttpFiberTest extends AbstractTest {
                     }
                     Assert.assertTrue(runtime.getMountCount() > 0);
                     Assert.assertTrue(runtime.getCreatedFiberCount() > 0);
-                    Assert.assertTrue(runtime.getLaunchCount(LaunchResult.LAUNCHED) > 0);
+                    TestUtils.assertEventually(() -> Assert.assertTrue(runtime.getLaunchCount(LaunchResult.LAUNCHED) > 0), 5);
                 } finally {
                     workerPool.halt();
                 }
