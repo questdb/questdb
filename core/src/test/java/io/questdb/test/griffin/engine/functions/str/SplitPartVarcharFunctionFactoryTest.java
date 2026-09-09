@@ -49,6 +49,26 @@ public class SplitPartVarcharFunctionFactoryTest extends AbstractFunctionFactory
     }
 
     @Test
+    public void testEmptyDelimiterReturnsWholeString() throws Exception {
+        // An empty delimiter cannot split the string, so the whole string is a single field
+        // (matching PostgreSQL and Snowflake) rather than being dropped. Field 1 (from the
+        // start) and -1 (from the end) both return the whole string; any other position is
+        // out of range and returns an empty string.
+        assertQuery("select split_part('abc,def'::varchar, ''::varchar, 1)")
+                .expectSize()
+                .returns("split_part\nabc,def\n");
+        assertQuery("select split_part('abc,def'::varchar, ''::varchar, -1)")
+                .expectSize()
+                .returns("split_part\nabc,def\n");
+        assertQuery("select split_part('abc,def'::varchar, ''::varchar, 2)")
+                .expectSize()
+                .returns("split_part\n\n");
+        assertQuery("select split_part('abc,def'::varchar, ''::varchar, -2)")
+                .expectSize()
+                .returns("split_part\n\n");
+    }
+
+    @Test
     public void testNaNIndex() throws Exception {
         assertMemoryLeak(() -> {
             callCustomised(true, true, utf8("abc~@~def~@~ghi"), utf8("~@~"), Numbers.INT_NULL).andAssert(null);
