@@ -1,485 +1,317 @@
-# Continuation runtime: design rationale
+# Fiber runtime notes
 
-Background for race-shape and resource decisions that look suspicious in
-review but are intentional. Read this before proposing "defensive" fixes
-to the worker continuation, `TxnWaiter`, `TimerCont`, or `TimerShards`.
+This file records implementation invariants for the classes in this
+package.
 
-For the C2 hoist hazard and the `CarrierLocal` design, see
-`CARRIER_LOCAL.md`. This document covers everything else.
+## Scheduler boundary
 
-## Worker loop control flow: handoff suspend vs deep park
+`Worker.loopBody()` always runs as plain Java. A `FIBER_HOST` pool owns one
+`FiberRuntime`; each worker drains that runtime after running its ordinary
+jobs. A `LEGACY` pool owns no runtime.
 
-`Worker.loopBody` (in `Worker.java`) has two distinct yield sites, and they
-behave differently on resume. Knowing which is which explains why the handoff
-suspend deliberately has no "resumed after a successful yield" branch.
+Only `Fiber` mounts a continuation. Production code must not wrap a
+`Worker`, `Job`, or page-frame reducer in its own continuation.
 
-The load-bearing fact is the return contract of `WorkerContinuation.suspend()`
-(`WorkerContinuation.java:115`, a thin wrapper over `Continuation.yield`):
+`Fiber.current()` identifies the mounted fiber for SQL suspension
+gateways. Code outside a mounted fiber receives no implicit suspension
+permission.
 
-- If the yield is **refused** (carrier pinned by a `synchronized` or native
-  frame above the call), `suspend()` returns `false` immediately, on the same
-  carrier, and the body keeps running.
-- If the yield **succeeds**, the carrier unmounts and the call does NOT return
-  on the current execution. It only returns -- with `true` -- later, if and
-  when some thread calls `run()` on this same cont again and execution thaws at
-  that exact line.
+## Java API migration
 
-The two yield sites:
+Direct Java integrations must rebuild against this scheduler generation.
+`WorkerPoolConfiguration.isLegacy()` remains a deprecated read alias, but
+custom configurations must override `getWorkerPoolMode()` to select a mode.
 
-- **Deep park** -- a Job calls a `TxnWaiter` / `TimerCont` suspend from inside
-  `Job.run()` at `Worker.java:367`. The waiter retains a reference to the cont,
-  so it can be rescheduled and remounted later.
-- **Handoff suspend** -- `loopBody` itself, after dequeuing a parked foreign
-  cont, stashes it in its own handoff slot and yields at `Worker.java:399`.
-  Nothing retains a reference to the cont that yields here.
+The removed `getContinuationSink()`, `ContinuationSink`,
+`WorkerContinuation`, `ContinuationQueue`, `TimerCont`, and `TxnWaiter` API
+family has no binary-compatible adapter. Replace custom continuation work
+with a `FiberTask` launched through `WorkerPool.getFiberRuntime().launch(...)`
+on a `FIBER_HOST` pool, or use a `LEGACY` pool for ordinary jobs.
 
-In both diagrams below, bare `:NNN` line numbers refer to `Worker.java`;
-cross-file references are written with their file name. `cont` is the
-`WorkerContinuation` running `loopBody`; `handOff` is the foreign cont it
-dequeued and stashed.
+`WorkerPool.halt(long)` remains a deprecated relative-duration bridge to
+`haltWithin(long)`. `WorkerPoolManager.halt()` retains its void descriptor;
+callers that need the unbounded attempt's completion result use
+`haltAndReportCompletion()`. `haltWithin(long)` is the only bounded-shutdown
+entry point; it takes a relative nanosecond budget and reports whether the
+pool released its object graph, so a caller that times out retries with a
+fresh budget.
 
-### Sequence 1 -- handoff suspend (cont is spent, never resumed here)
+```mermaid
+flowchart TB
+    subgraph P["FIBER_HOST WorkerPool"]
+        R["FiberRuntime<br/>(one per pool)"]
+        Q["FiberRunQueue"]
+        FP["FiberPool"]
+        F["reusable Fiber"]
+        C["one long-lived Continuation"]
+        T["assigned FiberTask"]
+        O["ordinary Job.run()"]
 
-```
-OuterDriver                       cont                          continuationQueue
-(Worker.run, :243-302)            (loopBody)
-    |                               |                                  |
-    |  build cont (:245)            |                                  |
-    |--- cont.run() (:250) -------->|  mount; run loopBody             |
-    |                               |  run jobs (:367) -- no deep park |
-    |                               |--- tryDequeue() (:396) --------->|
-    |                               |<------------ handOff ------------|
-    |                               |  cont.setHandoff(handOff) (:398) |
-    |                               |  suspend() -> yield (:399)        |
-    |                               |     yield SUCCEEDS: cont unmounts,|
-    |<--- returns to cont.run() ----|     frozen at :399; suspend()     |
-    |     caller (cont unmounted)         does NOT return into cont     |
-    |  handOff = cont.takeHandoff() (:270)  -> non-null                 |
-    |  recycleJobList(cont) (:287)          -> cont is now SPENT        |
-    |  cont = handOff (:288)                -> spent cont is dropped     |
-    |--- mountForeignCont(handOff) (:289) ----> (runs handOff) ...      |
-    |                                                                   |
-    |  Nobody ever calls run() on the spent cont again:                 |
-    |    - the next outer iteration builds a FRESH cont (:245)          |
-    |    - the spent cont was never enqueued: put (:416) enqueues       |
-    |      handOff, and only on the refused branch                      |
-    |    - scheduleResume (WorkerContinuation.java:192) only holds       |
-    |      deep-park conts (see Sequence 2)                             |
-    |  => suspend() at :399 never returns true                          |
-    |  => the handoff suspend has no resumed-after-success branch       |
-```
+        subgraph W["carrier workers - plain Java"]
+            L["Worker.loopBody()<br/>never suspends"]
+            J["runJobs()"]
+            D["call fiberRuntime.drain(mountBudget)"]
+            L --> J
+            L --> D
+        end
 
-### Sequence 2 -- deep park then remount (resumes at the Job call, not the handoff suspend)
-
-```
-OuterDriver      cont           TxnWaiter/TimerCont   continuationQueue   peerWorker
-(:243-302)       (loopBody)                                               (mountForeignCont, :509)
-   |               |                   |                    |                  |
-   |- cont.run()(:250)->| mount loopBody|                    |                  |
-   |               |- Job.run() (:367) ->|                   |                  |
-   |               |   register(cont) + suspend (yield)      |                  |
-   |               |   (waiter retains cont)                 |                  |
-   |<-- returns; cont frozen INSIDE Job.run at :367 ---------|                  |
-   |  handOff = cont.takeHandoff() (:270) -> null            |                  |
-   |  break (:271); mintNextGen (:301); build FRESH cont (:245)                 |
-   |               :   (driver never re-runs this cont)      |                  |
-   :               :                   :                     :                  :
-   |  ... target txn lands / timer fires ...                 |                  |
-   |               |                   |- scheduleResume(cont)|                  |
-   |               |                   |  (WorkerContinuation.java:192) -------->| put
-   |               |                   |                     |<- tryDequeue(:396)-|
-   |               |                   |                     |------- cont ----->|
-   |               |                   |   setHandoff(cont); suspend; then        |
-   |               |                   |   mountForeignCont(cont) -> cont.run() (:289 / :515)
-   |               |<====== cont RESUMES at Job.run (:367), inside the Job =======|
-   |               |  Job.run returns -> loopBody job loop continues             |
-   |               |  (resumes at :367, never at :399)                           |
+        J --> O
+        D --> R
+        R -->|owns| Q
+        R -->|owns| FP
+        Q -->|holds runnable entries| F
+        FP -->|retains and reuses| F
+        R -->|drives mount and unmount| F
+        F -->|owns| C
+        C -->|runs| T
+        C -. yield returns control .-> R
+    end
 ```
 
-The only remount path runs through `scheduleResume`
-(`WorkerContinuation.java:192`) -> `continuationQueue` -> a peer's
-`mountForeignCont` (`Worker.java:509`). A remounted cont always thaws at its
-deep-park site inside `Job.run()` (`Worker.java:367`), never at the handoff
-suspend (`Worker.java:399`). Both diagrams therefore reach the same conclusion:
-no execution makes `suspend()` at `Worker.java:399` return `true`.
+## Task ownership
 
-## Continuation allocation per outer-driver iteration
+`FiberTask.scheduleState` packs an incarnation and state into one CAS word.
+The incarnation changes only when a terminal task reopens. Every delayed
+notification must carry or validate the incarnation that created it.
 
-`Worker.run()` allocates a fresh `WorkerContinuation` (which wraps a
-`jdk.internal.vm.Continuation`) on every iteration of the outer driver
-loop. Each `Continuation` carries a native stack chunk (typically
-16-64KB).
+The stable states are:
 
-This is unavoidable today. `jdk.internal.vm.Continuation` exposes no
-`reset()` / `reuse()` operation; once a body returns or the cont becomes
-`isDone()`, the object is single-use and must be discarded. Worker.run's
-fresh-per-iteration policy is what lets a peer-mounted cont stay parked
-inside a suspending function while the worker that created the outer
-cont proceeds to the next iteration without aliasing.
+- `IDLE`: launch may claim the task;
+- `OWNED`: one fiber owns it;
+- `ARMING*`: the runtime publishes a park while ready, cancel, and disconnect
+  signals may race;
+- `DONE` or `CANCELLED`: callbacks and ownership release have completed.
 
-GC pressure scales with yield frequency. On a workload with many
-concurrent `wait_wal_table` / `sleep` parks, native stack chunks can land
-in the G1 humongous-allocation path. If that ever becomes a measurable
-hot spot, the answer is *not* to pool `WorkerContinuation` instances --
-the JDK rejects reuse. The answer is either:
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "ARMING_SIGNALLED" as SIGNALLED
+    state "ARMING_CANCELLED" as CANCELLING
+    state "ARMING_DISCONNECTED" as DISCONNECTING
 
-1. A future JDK exposing continuation reset (proposed in OpenJDK
-   discussions but not landed), or
-2. Coarser-grained suspending: have one long-lived cont per worker that
-   yields on a multiplexed wakeup instead of a fresh cont per query.
+    [*] --> IDLE
+    IDLE --> OWNED: claim(current incarnation)
+    IDLE --> CANCELLED: cancel before launch
 
-Neither is in scope for this change. Document the cost in release notes
-when relevant; do not work around it.
+    OWNED --> ARMING: beginArming()
+    OWNED --> DONE: complete or fail
+    OWNED --> CANCELLED: abandon
 
-## Peer busy-spin in `Worker.mountForeignCont` is bounded
+    ARMING --> IDLE: resolveArming() / PARK_IDLE
+    ARMING --> SIGNALLED: ready or concurrent launch
+    ARMING --> CANCELLING: cancel
+    ARMING --> DISCONNECTING: disconnect
 
-The spin loop in `mountForeignCont` looks unbounded. It is not. The peer
-only spins when `cont.run()` throws `IllegalStateException`, which means
-the cont is still mounted on its originating carrier. The spin exits on
-any of:
+    SIGNALLED --> OWNED: resolveArming() / PARK_RELAUNCH
+    SIGNALLED --> CANCELLING: cancel
+    SIGNALLED --> DISCONNECTING: disconnect
+    CANCELLING --> CANCELLED: resolveArming() / PARK_CANCEL
+    CANCELLING --> DISCONNECTING: disconnect wins
+    DISCONNECTING --> CANCELLED: resolveArming() / PARK_DISCONNECT
 
-- `cont.consumeParkRefused()` -- a phantom resume was enqueued before
-  the body's `suspend()` returned false; the body marks parkRefused
-  inside `abortContinuation`. The mark happens within a handful of
-  instructions on the body's carrier after `suspend()` returns.
-- `cont.isDone()` -- the originating body has unwound (e.g. on shutdown
-  the breaker tripped or `isShuttingDown()` threw).
-- `lifecycle != RUNNING` -- worker is halting; abandon the cont.
+    ARMING --> OWNED: abortArming()
+    SIGNALLED --> OWNED: abortArming()
+    CANCELLING --> OWNED: abortArming()
+    DISCONNECTING --> OWNED: abortArming()
 
-For a peer to have dequeued the cont in the first place,
-`scheduleResume()` must have been issued. The only producers are
-`tryFire` / `expire` / `shutdown`, all of which sit on a path where the
-matching state transition (CAS to FIRED or CANCELLED) happens on or
-before the body reaches the abort that sets parkRefused. The
-peer-visible window between scheduleResume's enqueue and the body's
-parkRefused write is bounded by program-order writes on the body's
-carrier -- microseconds.
+    DONE --> IDLE: reopen() / incarnation + 1
+    CANCELLED --> IDLE: reopen() / incarnation + 1
 
-The "what if the carrier stays pinned forever" scenario does not
-produce an unbounded spin: if the carrier never reaches
-`abortContinuation`, no `scheduleResume` was issued either (the body is
-still running, never tried to suspend), so the peer never dequeued the
-cont.
-
-## `TxnWaiter.reset()` re-registers without removing the prior entry
-
-`reset()` calls `TimerShards.register(this)` on every wake cycle without
-calling any cancel/remove on the prior heap entry. Two reasons this is
-correct and one reason it is intentionally cheap-and-loose:
-
-1. **SeqTxnTracker queue:** non-issue. `SeqTxnTracker.fireWaiters`
-   dequeues the holder before calling `tryFire`. By the time the body
-   wakes and `reset()` runs, the prior tracker holder is already gone.
-   `registerWaiter` enqueues a fresh one. Queue size stays at 1 per
-   waiter.
-
-2. **Timer shard heap, `expire` wake path:** non-issue. `shard.take()`
-   removed the entry from the heap before calling `expire()`. Next
-   `reset()` registers a fresh entry. Heap size stays at 1.
-
-3. **Timer shard heap, `tryFire` wake path:** the prior entry is still
-   in the heap. `reset()` adds another. Heap can grow by 1 per
-   `tryFire`-wake. In a burst-commit workload where the writer commits
-   faster than `wakeIntervalMillis`, entries accumulate roughly
-   proportionally to burst rate x wake interval.
-
-Why this is fine:
-
-- All entries for a given waiter share `TxnWaiter.registeredAtMillis`,
-  which `reset()` mutates. `getDelay()` reads it live. The heap's
-  notion of "this entry's deadline" therefore shifts forward every time
-  `reset()` runs. **Stale entries do not fire at an old deadline.** They
-  fire at the latest reset's deadline, alongside the freshly-registered
-  entry, and the per-waiter CAS makes multi-fire harmless (first wins,
-  rest are no-ops on the next `expire()`).
-
-- Heap accumulation is self-limiting: as soon as the writer pauses for
-  longer than `wakeIntervalMillis`, the shard thread starts draining
-  entries one at a time, each pop firing the (already-PENDING-again)
-  waiter and burning one no-op CAS until the heap is back to size 1.
-
-The in-code comment in `reset()` says stale entries are "sorted by an
-older deadline." That description is wrong about the mechanism --
-`registeredAtMillis` is shared, so the entry's deadline shifts live --
-but the conclusion (stale entries are harmless) holds.
-
-Do not add a cancel-and-re-register cycle to `reset()` to "clean up"
-the prior heap entry. The `DelayQueue` API has no O(log n) remove (only
-O(n) linear scan), and the accumulation cost is already cheaper than
-that scan in the burst case.
-
-## `cancel()` in `WaitWalFunction.getBool`'s finally instead of `abortContinuation()`
-
-The finally block calls `waiter.cancel()`, which **unconditionally writes
-`CANCELLED`** (it is not a CAS) and does not set `parkRefused`.
-
-### Why an unconditional write rather than a CAS
-
-`cancel()` is the LAST operation on the waiter: it runs once, on the
-finally as the body unwinds, and the body never `reset()`s or
-`suspend()`s the waiter again. So writing `CANCELLED` from whatever the
-current state happens to be is correct:
-
-- **From PENDING** (the body threw during the iteration-1 PENDING window,
-  before any racer fired): the write *is* the cancellation, exactly as a
-  CAS would be. It lets the next `fireWaiters` walk drop the holder
-  (`fireWaiters` re-enqueues only non-CANCELLED waiters) instead of
-  leaving it queued until the timer pops at `waitIntervalMillis`.
-- **From FIRED** (the common iteration-2+ exit: a racer CAS'd the waiter
-  to FIRED, `scheduleResume` already woke the body, the body resumed,
-  finished its loop and reached the finally on a healthy remounted cont):
-  overwriting FIRED with CANCELLED is **unobservable**. A fired waiter was
-  already dequeued by `fireWaiters` and is never re-examined; the only
-  other reader, `expire()`, is a no-op on any terminal state; and no
-  resume is lost because the resume already ran. A CAS here would leave
-  FIRED instead of CANCELLED, but nothing reads the difference -- so the
-  cheaper unconditional store is equivalent.
-
-This is a load-bearing precondition, not an accident: it holds **only**
-because `cancel()` sits on the unwinding tail and nothing re-suspends the
-waiter afterwards. Do not move `cancel()` off that tail, and do not reuse
-it on a path that may re-park the same waiter -- such a path would have to
-preserve a concurrent FIRED and would need the CAS-and-parkRefused
-discipline of `abortContinuation()` instead.
-
-### Why no `parkRefused`
-
-The only path that opens a window where `parkRefused` would be needed is:
-
-1. The body is mid-`reset()`, between `CAS-to-PENDING` and
-   `TimerShards.register`'s post-`shard.offer` `!running` check.
-2. `SeqTxnTracker.fireWaiters` concurrently wins `tryFire` (body is now
-   FIRED, scheduleResume issued).
-3. `TimerShards.shutdown` concurrently flips `running` false.
-4. The body's `register` then throws `CairoException.queryCancelled`
-   on its post-check.
-5. The finally's `cancel()` writes CANCELLED over the racer's FIRED (the
-   FIRED-clobber case above).
-
-Trigger: engine shutdown only. `TimerShards.register` has no other
-throw path in current code. The peer that dequeued the phantom spins on
-`Os.pause` until `cont.isDone()` flips true, which happens after the
-body unwinds the five frames out of register / reset / getBool /
-WorkerContinuation.run. Tens of microseconds, once, while the engine is
-already shutting down. The pool's `lifecycle != RUNNING` transition
-closes the peer from the other side shortly after.
-
-Swapping `cancel` for `abortContinuation` would buy a single volatile
-write of `parkRefused` to short-circuit that microsecond spin. Not worth
-the cognitive load of explaining why a successful-cancel path uses the
-abort vocabulary. Revisit if and only if a non-shutdown throw path
-between `reset()` and `suspend()` is introduced.
-
-## `SleepFunctionFactory` has no try/finally around `TimerCont.scheduleAfter`
-
-Same race shape as the `WaitWalFunction` case above: if
-`TimerShards.register` throws `queryCancelled` between
-`shard.offer(t)` and the post-check, the caller in
-`SleepFunctionFactory` unwinds without calling `t.abortContinuation()`.
-The phantom (already-enqueued resume) gets dequeued by a peer, peer
-spins on `IllegalStateException` until `cont.isDone()` flips.
-
-Same trigger (engine shutdown only), same magnitude (microseconds, once).
-A `try { ... } finally { if (!t.isDone()) t.abortContinuation(); }`
-wrapper would close it, but the only event it defends against is
-shutdown, where the cost is invisible against the pool tear-down.
-
-If the cancel race shape changes -- e.g. `TimerShards.register` grows a
-non-shutdown throw path, or `scheduleAfter` starts being called from
-a non-cont-aware context -- revisit and add the try/finally.
-
-## `WaitWalFunction` legacy polling fallback observes shutdown via the breaker
-
-The pinned-carrier fallback loop in `WaitWalFunction.getBool`:
-
-```
-for (int i = 0; seqTxnTracker.getWriterTxn() < seqTxn; i++) {
-    Os.sleep(1);
-    executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
-    ...
-}
+    note right of IDLE
+        scheduleState packs the state and incarnation.
+        Reopen is the only edge that changes incarnation.
+    end note
+    note right of DISCONNECTING
+        DISCONNECT overrides CANCEL, which overrides READY.
+        A lower-priority signal never downgrades the state.
+    end note
 ```
 
-Does not check `cont.isShutdown()`. It does not need to. On engine
-shutdown, the PG / HTTP server signal-close paths tear down client
-connections; the next `statefulThrowExceptionIfTripped` probe (within
-1ms) observes the broken FD and throws. The body unwinds, the worker
-loopBody resumes, `WorkerPool.halt()` proceeds.
+The diagram shows transitions within one incarnation. A launch, signal, or
+cancellation carrying an older incarnation returns stale or false without
+changing the recycled task.
 
-The breaker probe is the shutdown signal for the legacy loop. Do not
-add a separate shutdown-flag check; it would duplicate the breaker's
-job and create a second path to keep in sync.
+The runtime increments `outstandingTaskCount` before publishing an owned task.
+Exactly one terminal path decrements it. `onError()` or `onAbandoned()` runs
+before `onDone()`.
 
-## `getWaiterRegistrationCount()` atomic on `registerWaiter`
+## Fiber execution
 
-`SeqTxnTracker.registerWaiter()` does an `Unsafe.getAndAddLong` on
-`waiterRegistrationCount`, which exists only for `@TestOnly`
-synchronization in tests (tests poll the counter to detect that a
-parked `wait_wal_table` body has reached the registration point, which
-replaces fixed-duration `Os.sleep` synchronization that flakes on slow
-CI).
+A `Fiber` has two independent state machines.
 
-`registerWaiter` is not on any data path. It runs once on the first
-iteration of a user-issued `wait_wal_table` call and once per wake cycle
-inside that call -- single-digit invocations per user query. The
-uncontended atomic costs ~5-20 cycles on x86; surrounding work
-(continuation alloc, yield syscall, scheduleResume) is several orders of
-magnitude larger.
+Execution state tracks free, runnable, mounted, parking, resume-pending,
+waiting, and done. Notification state tracks idle, queued, processing, and
+resignal. The second machine coalesces repeated wakes without allocating queue
+nodes.
 
-Do not move the increment behind a debug flag. The whole point is for
-tests to observe the counter monotonically without flaky timing.
+An early wake changes `PARKING` to `RESUME_PENDING`. It must not enqueue the
+fiber while its carrier still owns the mounted continuation. After physical
+unmount, `publishWaiting()` either publishes `WAITING` or converts the pending
+wake to `RUNNABLE`.
 
-## `TimerShards.start()` is not currently thread-safe
+The continuation body stays alive across task reuse. It yields when idle,
+runs the assigned task, publishes one outcome, and yields again. Quiesce marks
+the fiber for retirement; the body abandons an assigned task that never began
+and then returns.
 
-`shutdown()` is `synchronized`; `start()` and `halt()` are not. The
-`if (running) return;` check is a plain volatile read that races with
-concurrent state transitions.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Carrier A
+    participant R as FiberRuntime
+    participant F as Reusable Fiber
+    participant C as Long-lived continuation
+    participant T1 as FiberTask A
+    participant B as Carrier B
+    participant T2 as FiberTask B
 
-In current callers `start()` is invoked exactly once from the
-`CairoEngine` constructor, before any other code can call
-`shutdown()` or `halt()`. The race window cannot be reached.
+    Note over A,B: A resume may use the same or another carrier
+    R->>F: stage Task A and enqueue
+    A->>R: drain()
+    R->>F: RUNNABLE to MOUNTED
+    F->>C: continuation.run()
+    C->>T1: runStep()
+    opt Task A suspends inside a deep call
+        T1->>F: suspendWait(token)
+        C-->>R: Continuation.yield() and unmount
+        Note over A,R: Carrier A returns to the plain worker loop
+        Note over R,F: A source makes the same Fiber runnable
+        B->>R: drain()
+        R->>F: mount
+        F->>C: resume the same continuation
+        C-->>T1: continue with the frozen Java stack
+    end
+    T1-->>C: return done
+    C-->>R: publish one outcome and yield between tasks
+    R->>F: finalize the outcome and return the Fiber to FiberPool
+    Note over F,C: When retained, the Fiber and enlarged stack chunk stay allocated
 
-If `TimerShards` is ever reused (e.g. an engine-restart scenario, or a
-second `start()` after `halt()`), make `start()` `synchronized` (or
-introduce a lifecycle CAS) and have it `join` any preceding threads
-before launching new ones. As long as the contract stays "single-use,
-single-threaded init," leave it alone -- the contract is now spelled
-out in the `TimerShards` class Javadoc under "Thread-safety contract."
+    R->>F: stage Task B on the same Fiber and enqueue
+    B->>R: drain()
+    R->>F: mount
+    F->>C: resume the same continuation
+    C->>T2: runStep()
+    T2-->>C: return an outcome
+    C-->>R: yield between tasks
+```
 
-## Cleanup hook contract for closeable-valued `CarrierLocal`
+The mount driver must never leave a failed fiber in `MOUNTED`. If driver code
+cannot recover or retry a mount, it must terminally complete the owned task,
+retire the fiber, unregister it, and balance all runtime counters.
 
-`CarrierLocal.releaseRow(id)` drops the per-carrier map without
-invoking `Misc.freeIfCloseable` on its values. This matches the legacy
-`io.questdb.std.ThreadLocal` behavior on thread exit (which also did
-not auto-close).
+## Page-frame owner execution
 
-For closeable-valued `CarrierLocal`s -- the only current native-backed
-case is `ColumnTypeConverter`'s `dstFixMemTL` / `dstVarMemTL` of
-`MemoryCMARW` -- the worker pool's `assignThreadLocalCleaner` mechanism
-runs an explicit free hook on worker exit. Every new closeable-valued
-`CarrierLocal` MUST register a corresponding cleaner. The
-`releaseRow` path is for the carrier-id row itself, not for the
-values it indexed.
+A Fiber-host PageFrame reducer has two valid execution boundaries:
 
-If you add a `CarrierLocal<T>` where `T` holds native memory or other
-non-GC-managed resources, add an `assignThreadLocalCleaner` call in
-every worker pool that runs code touching that local. There is no
-catch-all; this is enforced by code review.
+- an ordinary query worker claims the ring task and transfers it to a pooled
+  `PageFrameFiberTask`;
+- an already mounted query owner claims local or stolen work and runs the
+  reducer inline on its current Fiber.
 
-## Per-worker Job rotation under continuation migration
+The owner path preserves Legacy work stealing without mounting a nested Fiber.
+It runs CPU work directly and unmounts only when reducer code reaches a deep
+wait. Before stealing or waiting, the owner releases its publication permit.
+An ordered owner keeps the claimed ring cursor on its frozen stack; an
+unordered owner releases the ring slot before invoking the reducer.
 
-The framework lets a worker's `loopBody` suspend mid-Job-iteration on
-one carrier and resume on a peer carrier. Without intervention, the
-peer would unwind through the suspending Job's `run()` and continue
-iterating the worker's job set on the peer thread, while the
-originating worker's outer driver simultaneously launches a fresh cont
-running the same Job instances. Two OS threads then mutate
-single-thread-confined Job instance state -- torn writes to scratch,
-mmap/fd hand-offs mid-load, native-pointer aliasing.
+Foreign work temporarily replaces the owner's cancellation scope with the
+claimed frame sequence's cancellation signal plus the claimed query's signal,
+when available. The Fiber captures both bindings at unmount and installs them
+on any resume carrier. Reducer completion restores the owner's exact signal
+and generation. Sequence cancellation wakes deep waits but does not mutate the
+shared query circuit breaker.
 
-### The rotation model
+## Wait publication
 
-Each `Worker` tracks a current job generation -- gen-0 references the
-Job instances registered to the pool. The outer driver attaches the
-current generation to every `WorkerContinuation` it builds via
-`WorkerContinuation.attachJobs(...)` and passes it into `loopBody` via
-the lambda capture. The captured cont keeps its own generation through
-suspend/resume.
+`FiberWaitCoordinator` owns one tokenized wait at a time. The protocol is:
 
-When the body parks without a handoff (`handoff == null`), the outer
-driver mints a fresh generation by calling `Job.cloneInstance()` on
-each entry of the current generation. The captured cont keeps
-references to its (now-old) generation's stateful instances; the next
-outer-iteration's cont runs on the freshly minted generation.
+1. `beginBuild(sourceCount)`;
+2. acquire and initialize each source registration;
+3. register it with the source, which also completes coordinator acceptance;
+4. `seal(token)`;
+5. suspend if no source fired early;
+6. cancel losing registrations and `consume(token)`.
 
-When a cont becomes done -- either at the primary `cont.run()` site or
-inside `mountForeignCont` after a foreign-cont remount -- the
-framework calls `Job.recycleInstance()` on each entry of its attached
-snapshot so stateful instances can return to per-class pools.
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "UNARMED" as Unarmed
+    state "BUILDING" as Building
+    state "ARMED" as Armed
+    state "FIRING" as Firing
+    state "FIRED" as Fired
+    state "ABORTED" as Aborted
 
-### `Job.cloneInstance()` contract
+    [*] --> Unarmed
+    Unarmed --> Building: beginBuild() / token + 1
+    Building --> Building: accept source registration
+    Building --> Building: early fire() / set pendingReason once
+    Building --> Armed: seal() / no pending reason
+    Building --> Firing: seal() / promote pendingReason
+    Building --> Aborted: abort()
+    Armed --> Firing: first fire() / freeze wakeReason
+    Armed --> Aborted: abort()
+    Firing --> Fired: target.fireWait() succeeds
+    Fired --> Unarmed: consume() / return wakeReason
+    Aborted --> Unarmed: consume() / caller fallback
 
-- MUST allocate a brand-new object (or return one previously released
-  via `recycleInstance()`). MUST NOT alias any mutable field of the
-  receiver. Even an `ObjList` or `StringSink` field must be a fresh
-  instance.
-- MAY reuse references to engine-level shared collaborators --
-  `CairoEngine`, `MessageBus`, `CairoConfiguration`, message-bus
-  queues, log instances. These are concurrency-safe by construction.
-- A pooled instance must be indistinguishable from a freshly
-  constructed one; `recycleInstance()` is responsible for the reset.
-- MAY safely read the receiver's blueprint fields (constructor inputs
-  stored as final fields). The receiver may be mid-iteration in a
-  parked cont; `cloneInstance()` must not touch the receiver's
-  per-iteration scratch.
-- Default: `return this`. Correct only for stateless Jobs whose only
-  state is shared collaborators.
+    note left of Building
+        Timer, WAL, capacity, progress, slot,
+        cancellation, and shutdown use the same token.
+    end note
+    note right of Firing
+        wakeReason cannot change.
+        Other sources may help finish the winning fire.
+        PARKING becomes RESUME_PENDING without enqueueing.
+        WAITING becomes RUNNABLE and is enqueued.
+    end note
+```
 
-### `Job.recycleInstance()` contract
+A source that fires during build records a pending reason. Sealing promotes
+that reason through the same firing path used by a later wake. Timer, WAL,
+capacity, progress, slot, shutdown, and cancellation therefore share one
+arbitration point.
 
-- MUST clear every per-iteration mutable field so the instance is
-  indistinguishable from a freshly constructed one before the next
-  `cloneInstance()` hands it out.
-- MUST NOT close or release engine-level shared collaborators.
-- MUST be safe to call concurrently from any worker's outer driver
-  (the per-class pool is shared across all workers in the
-  `WorkerPool`).
-- MUST NOT throw. The framework drops misbehaving instances silently
-  to keep the release path safe.
-- Default: no-op. Correct for stateless Jobs and for stateful Jobs
-  that prefer construction over pooling.
+The diagram covers one token. A stale callback with another token cannot move
+the coordinator. `teardownWait()` requests cancellation of every losing
+registration before the coordinator returns to `UNARMED`; each registration
+detaches and returns to its pool only after its source releases ownership.
 
-### Pool ownership
+Every acquired registration increments both coordinator-local and
+runtime-visible in-flight counts. Expiry, cancellation, shutdown, rejected
+registration, and registration failure must all release that count exactly
+once. A registration may return to its coordinator pool only after the source
+can no longer call it.
 
-Each stateful Job class owns its own `ConcurrentLinkedQueue` (or
-similar) as a `private static final` field. The pool is encapsulated
-inside `cloneInstance()` / `recycleInstance()` -- the framework never
-touches a pool directly. Steady-state pool size converges to the
-workload's concurrent-suspend count.
+## Admission and quiesce
 
-### Hot path
+Launch and wait arming acquire runtime admission. `beginQuiesce()` closes
+admission, waits for existing admission holders to leave, and then retires the
+fiber pool. New launches and new wait builds fail after that point.
 
-When no suspend ever happens, exactly one `loopBody` invocation runs
-for the lifetime of the worker, iterating the same gen-0 snapshot
-forever. No allocation, no pool access, identical to the
-pre-framework behaviour. The framework cost is paid only on suspend.
+The runtime becomes `CLOSED` only when:
 
-### Override checklist
+- no task is outstanding;
+- no finalizer is running;
+- the run queue is empty;
+- every created fiber is retired and unregistered; and
+- no wait registration remains in flight.
 
-When adding a per-worker stateful Job:
+`WorkerPool.halt()` starts this process while carriers still run. It stops
+workers and releases job instances only after the runtime closes. A timeout
+retains the live object graph.
 
-1. Declare a `private static final ConcurrentLinkedQueue<Self> POOL`.
-2. Override `cloneInstance()`: poll the pool; on miss, construct fresh
-   with the same constructor args used at registration. Only re-use
-   engine-level shared refs from the receiver -- everything mutable
-   must be freshly allocated.
-3. Override `recycleInstance()`: reset every mutable scratch field
-   (lists clear, sinks clear, primitives zero), then `POOL.offer(this)`.
-4. Drop any `assert this.workerId == workerId` -- the invariant is now
-   "one instance per cont snapshot," enforced by the rotation, not by
-   the workerId argument.
-5. Drop any `private final int workerId` field that only served the
-   dropped assertion. The Job-level `run(int workerId, ...)` argument
-   stays.
-6. Verify the Job's `close()` releases everything `cloneInstance()`
-   constructed -- pooled instances eventually become unreachable when
-   the WorkerPool tears down.
+## Pooling and allocation
 
-### Currently overridden
+`FiberPool`, `FiberRunQueue`, `FiberRing`, wait registrations,
+and carrier-local outcome scratch form the warmed zero-allocation scheduler
+path. Capacity growth may allocate before the high-water mark stabilizes.
 
-`PageFrameReduceJob`, `UnorderedPageFrameReduceJob`,
-`MatViewRefreshJob`, `ViewCompilerJob`, `ApplyWal2TableJob`.
+Objects may return to a pool only after all external callbacks lose ownership.
+Clear task, error, execution-context, table, timer, and connection references
+before reuse.
 
-### Deferred
+## Related notes
 
-- `O3PartitionPurgeJob` -- its `doRun` indexes per-worker scratch
-  arrays by the `workerId` argument. Convert by minting clones with
-  `workerCount=1` and indexing into slot 0 always, then enable
-  rotation. Not on the immediate path because `sharedPoolWrite`
-  currently hosts no suspending Job.
-- `LineTcpNetworkIOJob` -- handled by separate plan
-  (`LINETCP_NETWORKIO_ROTATION_PLAN.md`). The chosen approach is
-  pool isolation rather than rotation, because `workerId` is exposed
-  via `getWorkerId()` and is load-bearing in `TableUpdateDetails`'s
-  scratch array layout. Isolating both ILP Jobs in a dedicated
-  continuation-free pool sidesteps the wide refactor.
+- `CARRIER_LOCAL.md` explains carrier-keyed state across fiber migration.
+- `DELAY_HEAP.md` explains the timer heap and its continuation-safety rules.

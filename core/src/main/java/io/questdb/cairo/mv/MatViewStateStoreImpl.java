@@ -294,7 +294,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
 
     @Override
     public boolean isRefreshQueueEmpty() {
-        return taskQueue.isEmpty();
+        return !taskQueue.hasAvailable();
     }
 
     @Override
