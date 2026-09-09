@@ -324,6 +324,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getDebugWalApplyMaxTxnBlockSize() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return EN_LOCALE;
     }
