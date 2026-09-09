@@ -9002,16 +9002,27 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE tb (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            // ta holds the earlier hour and tb the later one, so UNION ALL (ta rows then tb rows) is
-            // already ordered by ts - the order SAMPLE BY requires from its input.
+            // ta holds the earlier hour and tb the later one, so concatenating them happens to come
+            // out ordered by ts. That is a property of this data, not of UNION ALL, and the planner
+            // cannot see it - a concatenating union reports no scan order, so SAMPLE BY refuses the
+            // base. ORDER BY ts states the requirement and costs nothing here: over two branches that
+            // are each already ordered it compiles to a streaming Union All Merge, not a sort.
             execute("INSERT INTO ta VALUES ('a', 1, '2024-01-01T00:00:00.000000Z'), ('a', 2, '2024-01-01T00:30:00.000000Z')");
             execute("INSERT INTO tb VALUES ('a', 4, '2024-01-01T02:00:00.000000Z')");
 
             // SAMPLE BY ... FILL(...) over a union symbol key routes through the fill cursor factory.
             // The empty 01:00 bucket is filled with NULL; the symbol key stays SYMBOL across the fill.
-            assertQuery("SELECT ts, s, sum(v) sm FROM (SELECT s, v, ts FROM ta UNION ALL SELECT s, v, ts FROM tb) timestamp(ts) SAMPLE BY 1h FILL(NULL)")
+            assertQuery("SELECT ts, s, sum(v) sm FROM (SELECT s, v, ts FROM ta UNION ALL SELECT s, v, ts FROM tb ORDER BY ts) timestamp(ts) SAMPLE BY 1h FILL(NULL)")
                     .noLeakCheck().timestamp("ts").noRandomAccess().columnType(1, ColumnType.SYMBOL)
+                    .withPlanContaining("Union All Merge")
                     .returns("ts\ts\tsm\n2024-01-01T00:00:00.000000Z\ta\t3\n2024-01-01T01:00:00.000000Z\ta\tnull\n2024-01-01T02:00:00.000000Z\ta\t4\n");
+
+            // Unordered UNION ALL base is now rejected instead of relying on an accident of the data.
+            assertException(
+                    "SELECT ts, s, sum(v) sm FROM (SELECT s, v, ts FROM ta UNION ALL SELECT s, v, ts FROM tb) timestamp(ts) SAMPLE BY 1h FILL(NULL)",
+                    0,
+                    "base query does not provide ASC order over designated TIMESTAMP column"
+            );
         });
     }
 
