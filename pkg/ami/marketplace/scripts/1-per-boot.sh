@@ -24,11 +24,13 @@
 #
 ################################################################################
 
-if [ ! -f "/var/lib/questdb/conf/server.conf" ]; then
+if grep -q PG_PASSWORD_REPLACE /var/lib/questdb/conf/server.conf 2>/dev/null; then
 # setting variables in subshell for cloudinit script
   { PASS=$(< /dev/urandom tr -dc _A-Z-a-z-0-9 | head -c${1:-32}; echo;); }
   sed -i "s/PG_PASSWORD_REPLACE/$PASS/g" /var/lib/questdb/conf/server.conf
 fi
 
 systemctl enable questdb
-systemctl start questdb
+# --no-block: questdb.service is ordered After=cloud-final.service, and this
+# script runs inside cloud-final. A blocking start would deadlock the two.
+systemctl start --no-block questdb
