@@ -167,6 +167,32 @@ public class LiveViewRegistry implements QuietCloseable {
     }
 
     /**
+     * Publishes {@code instance} under its view name only when the name is currently
+     * unowned - the CAS publication shape {@code TableNameRegistryRW.registerName} gives
+     * table tokens. A late publisher (a recovery that stalled across a drop-and-recreate
+     * of the same name) is refused instead of silently displacing the replacement
+     * generation's entry, which a bare {@link #registerView} put would overwrite. Both
+     * maps are updated under the fan-out write lock, like {@link #registerView}, so
+     * concurrent readers never observe them torn apart.
+     *
+     * @return {@code null} when {@code instance} was published, or the current owner
+     * when the name is taken and nothing was changed
+     */
+    public LiveViewInstance registerViewIfAbsent(LiveViewInstance instance) {
+        DepList list = viewsByBaseTable.computeIfAbsent(instance.getDefinition().getBaseTableName(), createDepList);
+        ObjList<LiveViewInstance> views = list.lockForWrite();
+        try {
+            final LiveViewInstance owner = viewsByName.putIfAbsent(instance.getDefinition().getViewName(), instance);
+            if (owner == null) {
+                views.add(instance);
+            }
+            return owner;
+        } finally {
+            list.unlockAfterWrite();
+        }
+    }
+
+    /**
      * Registers a definition-less stub for a view the load path could not fully
      * load (a too-new format version, or a torn / corrupt state file). Such an
      * instance has no resolvable base table (its {@code _lv} / {@code _lv.s} could
@@ -198,6 +224,42 @@ public class LiveViewRegistry implements QuietCloseable {
             }
         }
         return instance;
+    }
+
+    /**
+     * Removes the name entry only when {@code expected} still owns it, mirroring
+     * {@code TableNameRegistryRW.dropTable}'s expected-value removal
+     * ({@code map.replace(name, token, LOCKED_DROP_TOKEN)}): a rollback or replicated
+     * drop that runs arbitrarily late cannot take out a same-name entry another
+     * generation published in the meantime. When {@code expected} does own the name,
+     * its fan-out entry is removed alongside under the same write lock, exactly as
+     * {@link #removeView(CharSequence)} would.
+     *
+     * @return {@code true} when {@code expected} owned the name and was removed
+     */
+    public boolean removeView(CharSequence name, LiveViewInstance expected) {
+        final LiveViewDefinition definition = expected.getDefinition();
+        if (definition == null) {
+            // A definition-less stub only ever lived in the name map (registerStubView),
+            // so there is no fan-out list to lock or clean.
+            return viewsByName.remove(name, expected);
+        }
+        DepList list = viewsByBaseTable.computeIfAbsent(definition.getBaseTableName(), createDepList);
+        ObjList<LiveViewInstance> views = list.lockForWrite();
+        try {
+            if (!viewsByName.remove(name, expected)) {
+                return false;
+            }
+            for (int i = 0, n = views.size(); i < n; i++) {
+                if (views.getQuick(i) == expected) {
+                    views.remove(i);
+                    break;
+                }
+            }
+            return true;
+        } finally {
+            list.unlockAfterWrite();
+        }
     }
 
     /**

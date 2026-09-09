@@ -80,11 +80,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -104,7 +106,6 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -940,14 +941,12 @@ public final class TestUtils {
         }
     }
 
+    // When the runnable throws, LeakCheck.close() still runs and try-with-resources
+    // attaches any leak assertion to the original exception as suppressed (JLS 14.20.3),
+    // so a failing test surfaces failure-path leaks without masking the original error.
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
-        try (LeakCheck ignore = new LeakCheck()) {
-            try {
-                runnable.run();
-            } catch (Throwable e) {
-                ignore.skipChecks();
-                throw e;
-            }
+        try (LeakCheck check = new LeakCheck()) {
+            runnable.run();
         }
     }
 
@@ -1900,6 +1899,10 @@ public final class TestUtils {
         return rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
     }
 
+    public static WorkerPoolMode getWorkerPoolMode(Rnd rnd) {
+        return rnd.nextBoolean() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY;
+    }
+
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
         return getWriter(engine, engine.verifyTableName(tableName));
     }
@@ -2191,22 +2194,6 @@ public final class TestUtils {
         return sink.toString();
     }
 
-    public static String readStringFromFile(File file) {
-        try {
-            try (FileInputStream fis = new FileInputStream(file)) {
-                byte[] buffer = new byte[(int) fis.getChannel().size()];
-                int totalRead = 0;
-                int read;
-                while (totalRead < buffer.length && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
-                    totalRead += read;
-                }
-                return new String(buffer, Files.UTF_8);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Cannot read from " + file.getAbsolutePath(), e);
-        }
-    }
-
     /**
      * Reads the {@code seqTxn} stamped into the footer of the {@code _pm}
      * snapshot identified by {@code parquetFileSize} (the MVCC version token
@@ -2235,6 +2222,22 @@ public final class TestUtils {
             if (addr != 0) {
                 ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
+        }
+    }
+
+    public static String readStringFromFile(File file) {
+        try {
+            try (FileInputStream fis = new FileInputStream(file)) {
+                byte[] buffer = new byte[(int) fis.getChannel().size()];
+                int totalRead = 0;
+                int read;
+                while (totalRead < buffer.length && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
+                    totalRead += read;
+                }
+                return new String(buffer, Files.UTF_8);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Cannot read from " + file.getAbsolutePath(), e);
         }
     }
 
@@ -2429,7 +2432,7 @@ public final class TestUtils {
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine);
+        WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine, true);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
     }
 
@@ -3246,7 +3249,6 @@ public final class TestUtils {
         private final long mem;
         private final long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         private final int sockAddrCount;
-        private boolean skipChecksOnClose;
 
         public LeakCheck() {
             Files.getMmapCache().asyncMunmap();
@@ -3273,10 +3275,6 @@ public final class TestUtils {
 
         @Override
         public void close() {
-            if (skipChecksOnClose) {
-                return;
-            }
-
             Path.clearThreadLocals();
             Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
             CLOSEABLE.forEach(Misc::free);
@@ -3342,10 +3340,6 @@ public final class TestUtils {
                 Assert.fail("SockAddr allocation count before the test: " + sockAddrCount
                         + ", after the test: " + sockAddrCountAfter);
             }
-        }
-
-        public void skipChecks() {
-            skipChecksOnClose = true;
         }
     }
 

@@ -269,7 +269,7 @@ mvn -Dtest=ClassNameTest#methodName test
 ```bash
 # After building with web console:
 mkdir <root_directory>
-java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
+java --add-exports=java.base/jdk.internal.vm=io.questdb -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
 # Web console at http://localhost:9000
 ```
 

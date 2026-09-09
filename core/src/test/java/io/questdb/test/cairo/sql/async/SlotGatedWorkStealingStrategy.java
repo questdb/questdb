@@ -79,7 +79,17 @@ public class SlotGatedWorkStealingStrategy extends AdaptiveWorkStealingStrategy 
     }
 
     @Override
+    public void onBeforeDirectSteal() {
+        awaitWorkerSlotAcquisition();
+    }
+
+    @Override
     public boolean shouldSteal(int finishedCount) {
+        awaitWorkerSlotAcquisition();
+        return super.shouldSteal(finishedCount);
+    }
+
+    private void awaitWorkerSlotAcquisition() {
         final CountDownLatch acquired = testAcquireLatch();
         if (acquired != null) {
             try {
@@ -91,7 +101,6 @@ public class SlotGatedWorkStealingStrategy extends AdaptiveWorkStealingStrategy 
                 throw new AssertionError("interrupted waiting for a worker slot acquisition", e);
             }
         }
-        return super.shouldSteal(finishedCount);
     }
 
     private CountDownLatch testAcquireLatch() {

@@ -32,6 +32,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assume;
 import org.junit.Test;
@@ -1035,7 +1036,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
         // late materialization engaged on every frame. Only the encoded path declares
         // the used columns; the legacy path runs the same query for a correctness check.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
