@@ -364,7 +364,7 @@ public class Worker extends Thread {
                 try {
                     isRunAsap |= job.run(workerContext);
                 } catch (Throwable e) {
-                    if (metrics.isEnabled()) {
+                    if (!haltOnError && metrics.isEnabled()) {
                         try {
                             metrics.healthMetrics().incrementUnhandledErrors();
                         } catch (Throwable t) {
