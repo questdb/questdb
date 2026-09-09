@@ -1417,6 +1417,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         instance.resetMinSeenTsSinceCheckpoint();
         instance.recordCheckpointTimelineWalPurgeFloor(timelineResult.getWalPurgeFloor());
         instance.recordCheckpointTimelineStats(timelineResult.getStats());
+        // What this seal's freeze walked, split by root kind. Taken here, while this
+        // publication is still the newest the writer performed: the ledger is the writer's
+        // flyweight and its next publication clears it.
+        instance.recordCheckpointCapture(checkpointTimelineStoreWriter.getCaptureLedger());
         if (timelineResult.getLiveSegmentCount() != Numbers.LONG_NULL) {
             instance.recordCheckpointGcSweep(
                     timelineResult.getLiveSegmentCount(),
@@ -10730,6 +10734,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             instance.recordCheckpointTimelineWalPurgeFloor(result.getWalPurgeFloor());
             instance.recordCheckpointTimelineStats(result.getStats());
+            // The repair's OWN ledger, not the writer's. A suspended repair spans refresh
+            // turns and this worker may seal another view between two of its boundaries, so
+            // the writer's cadence ledger would have been cleared out from under it. A repair
+            // that keeps the ladder froze one boundary per logical position its replay
+            // crossed, and the capture's ledger holds all of them together - which is the
+            // reading that matters: the keys the replay touched once, rather than the live
+            // domain once per boundary.
+            instance.recordCheckpointCapture(capture.getCaptureLedger());
             instance.recordCheckpointRepairSplice(
                     result.getRootsVersioned(),
                     result.getDataBytesAdded() + result.getMetadataBytesAdded()

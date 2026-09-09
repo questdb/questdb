@@ -246,6 +246,11 @@ public class LiveViewWindow implements QuietCloseable {
     // chain of them rather than only the one that happened to end it.
     private long checkpointFreezeKeyCountTotal;
     private long checkpointLastFreezeKeyCount;
+    // Rows the last freeze's walk read, which is the dirty map's size for an incremental
+    // freeze and the whole anchor map's for a complete one. Imaged keys alone cannot say
+    // which map was walked: a complete freeze of a domain the batch touched entirely
+    // images exactly what an incremental one would.
+    private long checkpointLastFreezeVisitedKeyCount;
     private long checkpointLogicalStateBytes;
     // The plan this window has adopted, or null when it holds none - because the factory
     // compiled none, because the plan's key layout is not this window's, or because
@@ -1128,7 +1133,9 @@ public class LiveViewWindow implements QuietCloseable {
                 : activeKeyStartIndex;
         final MapRecordCursor cursor = scanMap.getCursor();
         final MapRecord record = scanMap.getRecord();
+        long visitedKeyCount = 0;
         while (cursor.hasNext()) {
+            visitedKeyCount++;
             final MapValue dirtyOrAnchorValue = record.getValue();
             final boolean isNewSinceCheckpoint = isIncremental
                     && dirtyOrAnchorValue.getByte(DIRTY_SLOT_NEW_SINCE_CHECKPOINT) == 1;
@@ -1222,6 +1229,7 @@ public class LiveViewWindow implements QuietCloseable {
             }
         }
         checkpointLastFreezeKeyCount = keysOut.size() + removedKeysOut.size();
+        checkpointLastFreezeVisitedKeyCount = visitedKeyCount;
         checkpointFreezeKeyCountTotal += checkpointLastFreezeKeyCount;
     }
 
@@ -1336,6 +1344,18 @@ public class LiveViewWindow implements QuietCloseable {
     @TestOnly
     public long getCheckpointLastFreezeKeyCount() {
         return checkpointLastFreezeKeyCount;
+    }
+
+    /**
+     * @return rows the last freeze's walk read: the dirty map's for an incremental freeze,
+     * the whole anchor map's for a complete one. The seal charges this into
+     * {@link LiveViewCheckpointCaptureLedger}, which is where the structural claim that a
+     * steady seal costs the keys the batch changed rather than the keys the view holds is
+     * read from - a claim imaged keys alone cannot carry, because a complete freeze of a
+     * fully touched domain images exactly what an incremental one would
+     */
+    public long getCheckpointLastFreezeVisitedKeyCount() {
+        return checkpointLastFreezeVisitedKeyCount;
     }
 
     /**

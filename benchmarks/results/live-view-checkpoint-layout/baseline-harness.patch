@@ -1,0 +1,134 @@
+# Applied to the candidate harness after copying it onto the baseline revision
+# 6a2c656028, which has neither a separate storage plan nor the capture ledger.
+# Benchmarks module only: nothing here is on a measured code path.
+---
+--- a/benchmarks/src/main/java/org/questdb/LiveViewSteadyStateBenchmark.java	2026-09-09 23:42:33.377104498 +0300
++++ b/benchmarks/src/main/java/org/questdb/LiveViewSteadyStateBenchmark.java
+@@ -715,7 +715,8 @@
+                 // incremental capture from a complete one, and neither does the seal's elapsed
+                 // time, so a run that only timed its seals could not tell a steady incremental
+                 // cadence from one silently walking the whole domain every batch.
+-                final CaptureLedgerSample capture = new CaptureLedgerSample(instance);
++                // BASELINE VARIANT: the capture ledger is candidate-only production
++                // instrumentation, so the columns below report -1 here.
+                 final long o3ResumeRowsAtStart = o3ResumeRowsBefore;
+                 final long o3BoundaryRowsAtStart = o3BoundaryRowsBefore;
+                 long o3ScanRowsTotal = 0;
+@@ -893,19 +894,10 @@
+                             lvPhysRows,
+                             lvRows > 0 ? (double) lvPhysRows / lvRows : 0.0,
+                             partitionCount(engine, lvToken),
+-                            capture.windowCaptures(instance),
+-                            capture.windowIncrementalCaptures(instance),
+-                            capture.windowKeysVisited(instance),
+-                            capture.windowKeysImaged(instance),
+-                            capture.windowKeysRemoved(instance),
+-                            capture.functionCaptures(instance),
+-                            capture.functionIncrementalCaptures(instance),
+-                            capture.functionKeysVisited(instance),
+-                            capture.functionKeysImaged(instance),
++                            -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L,
+                             allocBytes < 0 ? -1.0 : allocBytes / (1024.0 * 1024.0),
+                             repair
+                     );
+-                    capture.advance(instance);
+                     firstRow += batchRows;
+                 }
+                 if (o3EveryN > 0) {
+@@ -1354,12 +1346,11 @@
+      * only ever moves for the INT-keyed control.
+      */
+     private static void reportWindowState(LiveViewWindow window) {
+-        // The STORAGE plan, not the adopted runtime one. Every anchored window has a storage
+-        // plan whatever cairo.sql.window.map.fusion.enabled says, and reading the adopted plan
+-        // would report "anchor, zero components" for every fusion-off run - which is exactly
+-        // the reading the acceptance matrix has to compare against the fusion-on one.
+-        final LiveViewWindowStatePlan plan = window.getCheckpointStoragePlan();
+-        final boolean isFused = window.getCheckpointWindowStatePlan() != null;
++        // BASELINE VARIANT: the baseline revision has only the adopted runtime plan, and it is
++        // null whenever fusion is off - which is the layout-follows-runtime behaviour the
++        // candidate removes. A fusion-off baseline run therefore reports state_root=none.
++        final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
++        final boolean isFused = plan != null;
+         // The state-root kind and the root counts are the per-seal fixed cost the fusion is
+         // about: a window root replaces the anchor root and every durable projection's root
+         // at once, so a view whose whole SELECT list fuses publishes two metadata files per
+@@ -2143,78 +2134,6 @@
+         }
+     }
+ 
+-    /**
+-     * One batch's slice of the view's lifetime capture ledger.
+-     * <p>
+-     * Every counter on {@link LiveViewInstance} is cumulative over the view's life, so a
+-     * batch's own reading is a difference between two of them. Holding the previous reading
+-     * here rather than in nine locals in the batch loop keeps the two halves - what was read
+-     * before the refresh and what is subtracted after it - impossible to get out of step.
+-     */
+-    private static final class CaptureLedgerSample {
+-        private long functionCaptures;
+-        private long functionIncrementalCaptures;
+-        private long functionKeysImaged;
+-        private long functionKeysVisited;
+-        private long windowCaptures;
+-        private long windowIncrementalCaptures;
+-        private long windowKeysImaged;
+-        private long windowKeysRemoved;
+-        private long windowKeysVisited;
+-
+-        private CaptureLedgerSample(LiveViewInstance instance) {
+-            advance(instance);
+-        }
+-
+-        void advance(LiveViewInstance instance) {
+-            windowCaptures = instance.getCheckpointCaptureWindowRoots();
+-            windowIncrementalCaptures = instance.getCheckpointCaptureWindowRootsIncremental();
+-            windowKeysVisited = instance.getCheckpointCaptureWindowKeysVisited();
+-            windowKeysImaged = instance.getCheckpointCaptureWindowKeysImaged();
+-            windowKeysRemoved = instance.getCheckpointCaptureWindowKeysRemoved();
+-            functionCaptures = instance.getCheckpointCaptureFunctionRoots();
+-            functionIncrementalCaptures = instance.getCheckpointCaptureFunctionRootsIncremental();
+-            functionKeysVisited = instance.getCheckpointCaptureFunctionKeysVisited();
+-            functionKeysImaged = instance.getCheckpointCaptureFunctionKeysImaged();
+-        }
+-
+-        long functionCaptures(LiveViewInstance instance) {
+-            return instance.getCheckpointCaptureFunctionRoots() - functionCaptures;
+-        }
+-
+-        long functionIncrementalCaptures(LiveViewInstance instance) {
+-            return instance.getCheckpointCaptureFunctionRootsIncremental() - functionIncrementalCaptures;
+-        }
+-
+-        long functionKeysImaged(LiveViewInstance instance) {
+-            return instance.getCheckpointCaptureFunctionKeysImaged() - functionKeysImaged;
+-        }
+-
+-        long functionKeysVisited(LiveViewInstance instance) {
+-            return instance.getCheckpointCaptureFunctionKeysVisited() - functionKeysVisited;
+-        }
+-
+-        long windowCaptures(LiveViewInstance instance) {
+-            return instance.getCheckpointCaptureWindowRoots() - windowCaptures;
+-        }
+-
+-        long windowIncrementalCaptures(LiveViewInstance instance) {
+-            return instance.getCheckpointCaptureWindowRootsIncremental() - windowIncrementalCaptures;
+-        }
+-
+-        long windowKeysImaged(LiveViewInstance instance) {
+-            return instance.getCheckpointCaptureWindowKeysImaged() - windowKeysImaged;
+-        }
+-
+-        long windowKeysRemoved(LiveViewInstance instance) {
+-            return instance.getCheckpointCaptureWindowKeysRemoved() - windowKeysRemoved;
+-        }
+-
+-        long windowKeysVisited(LiveViewInstance instance) {
+-            return instance.getCheckpointCaptureWindowKeysVisited() - windowKeysVisited;
+-        }
+-    }
+-
+     /**
+      * Samples one memory tag's native usage on a side thread and keeps the highest reading
+      * since the last {@link #reset()}. A refresh allocates and frees within {@code job.run()}

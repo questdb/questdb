@@ -438,6 +438,23 @@ public class LiveViewInstance implements QuietCloseable {
     // reset on restart, like the counters above.
     private volatile long checkpointRebuildAttempts;
     private volatile long checkpointTimelineResets;
+    // Lifetime capture ledger: what every publication this instance made walked, split into
+    // the window root's captures and the function roots'. Nothing in the published artifacts
+    // separates an incremental capture from a complete one - both leave a root naming the
+    // whole live domain - so this is where the structural claim that a steady seal costs the
+    // keys the batch changed is read from. Only a difference between two readings means
+    // anything, so a test or a benchmark takes one before the operation and one after.
+    // Written on the refresh worker; volatile for the reader that samples it. In-memory
+    // only, like the counters above.
+    private volatile long checkpointCaptureFunctionRoots;
+    private volatile long checkpointCaptureFunctionRootsIncremental;
+    private volatile long checkpointCaptureFunctionKeysImaged;
+    private volatile long checkpointCaptureFunctionKeysVisited;
+    private volatile long checkpointCaptureWindowRoots;
+    private volatile long checkpointCaptureWindowRootsIncremental;
+    private volatile long checkpointCaptureWindowKeysImaged;
+    private volatile long checkpointCaptureWindowKeysRemoved;
+    private volatile long checkpointCaptureWindowKeysVisited;
     // Wall-clock (micros) of the most recent head-checkpoint seal. Numbers.LONG_NULL
     // until the first cycle that seals a root. The refresh worker compares
     // (nowUs - lastCheckpointWrittenUs) against
@@ -1237,6 +1254,85 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getCheckpointObsoleteSegmentBytes() {
         return checkpointObsoleteSegmentBytes;
+    }
+
+    /**
+     * @return function roots every publication this instance made froze, added up. One
+     * root per residual function and per runtime-only member per boundary, so a repair
+     * that keeps the checkpoint ladder charges one set per boundary it crossed. See
+     * {@link #checkpointCaptureFunctionRoots}
+     */
+    public long getCheckpointCaptureFunctionRoots() {
+        return checkpointCaptureFunctionRoots;
+    }
+
+    /**
+     * @return of those roots, the ones frozen against an established incremental base.
+     * A residual function that requires a full scan - ring-backed RANGE state is the
+     * standing example - never contributes here however warm its predecessor is
+     */
+    public long getCheckpointCaptureFunctionRootsIncremental() {
+        return checkpointCaptureFunctionRootsIncremental;
+    }
+
+    /**
+     * @return keys those function roots published an image for, added up
+     */
+    public long getCheckpointCaptureFunctionKeysImaged() {
+        return checkpointCaptureFunctionKeysImaged;
+    }
+
+    /**
+     * @return rows the walks that produced those function roots read. This counts walks
+     * rather than roots: one seal shares a single walk of a fused group's map across every
+     * runtime-only member that agrees on the incremental disposition, so a wide SELECT list
+     * adds roots and images here without adding visits
+     */
+    public long getCheckpointCaptureFunctionKeysVisited() {
+        return checkpointCaptureFunctionKeysVisited;
+    }
+
+    /**
+     * @return window roots every publication this instance made froze, added up. One per
+     * boundary of an anchored view, and none at all for a view with no anchored window
+     */
+    public long getCheckpointCaptureWindowRoots() {
+        return checkpointCaptureWindowRoots;
+    }
+
+    /**
+     * @return of those window roots, the ones frozen against an established incremental
+     * base. A restore, a rebinding or an incompatible predecessor demotes the next capture
+     * to a complete one, which is why a first reseal after a restart is not a steady sample
+     */
+    public long getCheckpointCaptureWindowRootsIncremental() {
+        return checkpointCaptureWindowRootsIncremental;
+    }
+
+    /**
+     * @return keys those window roots published an entry for, added up
+     */
+    public long getCheckpointCaptureWindowKeysImaged() {
+        return checkpointCaptureWindowKeysImaged;
+    }
+
+    /**
+     * @return keys those window roots named as removals - the ones the frontier sweep
+     * dropped, which an incremental capture has to name because the root it builds on still
+     * holds their entries
+     */
+    public long getCheckpointCaptureWindowKeysRemoved() {
+        return checkpointCaptureWindowKeysRemoved;
+    }
+
+    /**
+     * @return rows the walks that produced those window roots read: the dirty map's for an
+     * incremental capture, the whole anchor map's for a complete one. This is the reading
+     * that separates the two, and imaged keys alone cannot - a complete capture of a domain
+     * the batch touched entirely images exactly what an incremental one would
+     */
+    public long getCheckpointCaptureWindowKeysVisited() {
+        return checkpointCaptureWindowKeysVisited;
     }
 
     /**
@@ -2199,6 +2295,24 @@ public class LiveViewInstance implements QuietCloseable {
      * Mirrors the shape of a timeline generation this view just committed or
      * adopted. See {@link #checkpointTimeline}.
      */
+    /**
+     * Adds one publication's capture ledger to this instance's lifetime totals. Called by
+     * the refresh worker after the publication that produced the ledger is durable, while it
+     * is still the newest one the writer performed - the ledger is the writer's flyweight and
+     * is cleared by its next publication.
+     */
+    public void recordCheckpointCapture(@NotNull LiveViewCheckpointCaptureLedger ledger) {
+        checkpointCaptureWindowRoots += ledger.getWindowCaptures();
+        checkpointCaptureWindowRootsIncremental += ledger.getWindowIncrementalCaptures();
+        checkpointCaptureWindowKeysVisited += ledger.getWindowKeysVisited();
+        checkpointCaptureWindowKeysImaged += ledger.getWindowKeysImaged();
+        checkpointCaptureWindowKeysRemoved += ledger.getWindowKeysRemoved();
+        checkpointCaptureFunctionRoots += ledger.getFunctionCaptures();
+        checkpointCaptureFunctionRootsIncremental += ledger.getFunctionIncrementalCaptures();
+        checkpointCaptureFunctionKeysVisited += ledger.getFunctionKeysVisited();
+        checkpointCaptureFunctionKeysImaged += ledger.getFunctionKeysImaged();
+    }
+
     public void recordCheckpointTimelineStats(@Nullable LiveViewCheckpointTimelineStats stats) {
         checkpointTimeline = stats == null
                 ? EMPTY_CHECKPOINT_TIMELINE

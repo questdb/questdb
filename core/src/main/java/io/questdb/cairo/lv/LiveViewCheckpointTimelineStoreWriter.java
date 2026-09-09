@@ -445,6 +445,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
     }
 
+    /**
+     * @return what the cadence seal this writer performed most recently walked, split into
+     * the window root's capture and the function roots'. Valid until this writer's next
+     * {@link #append}, exactly like {@link Result}: the refresh worker copies it onto the
+     * view's {@link LiveViewInstance} while the seal that produced it is still the newest
+     * one. A repair's own ledger is {@link RepairCapture#getCaptureLedger()}, because a
+     * suspended repair spans refresh turns and this writer may seal another view in between
+     */
+    public LiveViewCheckpointCaptureLedger getCaptureLedger() {
+        return publicationScratch.captureLedger;
+    }
+
     @Override
     public void close() {
         activeScratch = null;
@@ -1514,6 +1526,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 || (seedCursorOffset < 0 && seedCursorOffset != Numbers.LONG_NULL)) {
             throw CairoException.critical(0).put("invalid live view normal checkpoint coordinates");
         }
+        // Cleared per attempt rather than per call: an epoch retry re-freezes from the same
+        // runtime state, and the reading that belongs to the seal is the attempt that
+        // published.
+        activeScratch.captureLedger.clear();
         ensureDirectories(checkpointsDir);
 
         final PublicationScratch shells = acquirePublicationShells(publicationScratch.memoryTracker);
@@ -2479,6 +2495,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LiveViewCheckpointStatePageRef ref =
                     freezeStatePage(dataWriter, function, null, previousBoundary, previousScalarRef);
             frozen.scalarStateRef = ref;
+            // A scalar root holds one image and no key domain at all, so it walks nothing.
+            // It is still a root the seal published, which is what the capture count is.
+            activeScratch.captureLedger.addFunctionCapture(false, 0, 0);
             return ref.getDecodedLength();
         }
 
@@ -2513,7 +2532,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         final MapRecord record = scanMap.getRecord();
         final LiveViewCheckpointPartitionMapEntry ringEntry =
                 isRingShaped ? new LiveViewCheckpointPartitionMapEntry() : null;
+        long visitedKeyCount = 0;
+        long imagedKeyCount = 0;
         while (cursor.hasNext()) {
+            visitedKeyCount++;
             // The dirty map carries keys and nothing else, so an incremental scan has
             // to image the key before it can read the state the key names. A full scan
             // walks the state map itself and gets the value for free, which is what
@@ -2591,6 +2613,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         ringEntry
                 ));
                 frozen.addPartition(ringEntry);
+                imagedKeyCount++;
             } else {
                 final long stateLength;
                 if (hasInlineState) {
@@ -2607,6 +2630,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             && previous.getStatePageCount() == 0
                             && Arrays.equals(previous.getScalarState(), scalarState);
                     frozen.addPartition(key, scalarState, isUnchanged);
+                    imagedKeyCount++;
                     stateLength = scalarState.length;
                 } else {
                     final LiveViewCheckpointStatePageRef previousRef = wholeStatePageRef(previous);
@@ -2623,6 +2647,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             && previousRef.getSegmentId() == stateRef.getSegmentId()
                             && previousRef.getOffset() == stateRef.getOffset();
                     frozen.addPartition(key, stateRef, isUnchanged);
+                    imagedKeyCount++;
                     stateLength = stateRef.getDecodedLength();
                 }
                 // The two shapes charge the same figure: an inlined image and a page
@@ -2641,6 +2666,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
             }
         }
+        activeScratch.captureLedger.addFunctionCapture(isIncremental, visitedKeyCount, imagedKeyCount);
         return logicalBytes;
     }
 
@@ -2708,9 +2734,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     activeScratch.frozenByteArrays
             );
             long logicalStateBytes = 0;
+            // The walk is one, shared by every member of this bucket, so it is charged to the
+            // first member's capture and the rest carry their images alone. Charging it per
+            // member would make a wide SELECT list look like it walked the domain R times.
+            long walkKeyCount = window.getCheckpointLastFreezeVisitedKeyCount();
             for (int m = 0; m < memberCount; m++) {
                 final FrozenFunction frozen = members.getQuick(m);
                 final ObjList<byte[]> images = memberImages.getQuick(m);
+                long imagedKeyCount = 0;
                 for (int i = 0, n = activeScratch.groupedFreezeKeys.size(); i < n; i++) {
                     final byte[] key = activeScratch.groupedFreezeKeys.getQuick(i);
                     if (outputKeys != null && !outputKeys.contains(key)) {
@@ -2729,10 +2760,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             && previous.getStatePageCount() == 0
                             && Arrays.equals(previous.getScalarState(), image);
                     frozen.addPartition(key, image, isUnchanged);
+                    imagedKeyCount++;
                 }
                 for (int i = 0, n = activeScratch.groupedFreezeRemovedKeys.size(); i < n; i++) {
                     frozen.removedPartitions.add(activeScratch.groupedFreezeRemovedKeys.getQuick(i));
                 }
+                activeScratch.captureLedger.addFunctionCapture(isIncremental, walkKeyCount, imagedKeyCount);
+                walkKeyCount = 0;
                 frozen.logicalStateBytes = activeScratch.groupedFreezeLogicalBytes.getQuick(m);
                 logicalStateBytes = checkedAdd(logicalStateBytes, frozen.logicalStateBytes);
             }
@@ -2827,6 +2861,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     && previous.getStatePageCount() == 0
                     && Arrays.equals(previous.getScalarState(), frozen.payloads.getQuick(i)));
         }
+        activeScratch.captureLedger.addWindowCapture(
+                frozen.isIncremental,
+                window.getCheckpointLastFreezeVisitedKeyCount(),
+                frozen.keys.size(),
+                frozen.removedKeys.size()
+        );
         return frozen;
     }
 
@@ -3022,6 +3062,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * another view can bind and use a different owner on the same refresh worker.
      */
     private final class FreezeScratch implements Closeable {
+        // What the operation this scratch is bound to has walked. It lives here rather than
+        // on the writer because a suspended repair holds its own scratch across refresh
+        // turns, and the writer is one worker's: a shared ledger would be cleared out from
+        // under a repair by any cadence seal that ran between two of its boundaries.
+        private final LiveViewCheckpointCaptureLedger captureLedger = new LiveViewCheckpointCaptureLedger();
         private final ObjList<ObjList<byte[]>> completeMemberImages = new ObjList<>();
         private final IntList completeMemberProjections = new IntList();
         private final ObjList<FrozenFunction> completeMembers = new ObjList<>();
@@ -3069,6 +3114,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         private void bind(@Nullable MemoryTracker memoryTracker) {
             release();
+            captureLedger.clear();
             frozenByteArrays.reset();
             frozenBoundaryPoolCursor = 0;
             frozenFunctionPoolCursor = 0;
@@ -4318,6 +4364,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 chain.absorb(boundary);
                 adoptBoundaryBaseline(boundary, LiveViewCheckpointContracts.REPAIR_BASELINE_GENERATION);
             }
+        }
+
+        /**
+         * @return what this repair's freezes have walked so far, split into the window
+         * roots' captures and the function roots'. A chaining repair freezes one boundary
+         * per logical position its replay crosses, and this holds all of them together -
+         * which is the reading that matters: the keys the replay touched once, rather than
+         * the live domain once per boundary
+         */
+        public LiveViewCheckpointCaptureLedger getCaptureLedger() {
+            return scratch.captureLedger;
         }
 
         @Override
