@@ -4270,14 +4270,15 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
 
     /**
      * QuestDB logging is asynchronous: {@code LOG.error()} enqueues and a
-     * single writer job drains. Both grace-expiry diagnostics under test are
-     * ERROR level, so logging an ERROR-level sentinel AFTER the action and
-     * waiting for it guarantees the writer has drained every earlier record
-     * of the same level -- making assertLogged/assertNotLogged race-free
-     * without a blind timeout.
+     * single writer job drains. Every level the console writer subscribes to
+     * shares its one ring, so an ADVISORY sentinel logged AFTER the action
+     * queues behind every earlier ERROR record, and waiting for it guarantees
+     * the writer has drained them -- making assertLogged/assertNotLogged
+     * race-free without a blind timeout. advisory() waits for a ring slot,
+     * so the sentinel itself cannot be dropped the way a plain error() can.
      */
     private static void drainLogQueue(LogCapture capture, String sentinel) {
-        SENTINEL_LOG.error().$(sentinel).$();
+        SENTINEL_LOG.advisory().$(sentinel).$();
         capture.waitFor(sentinel);
     }
 

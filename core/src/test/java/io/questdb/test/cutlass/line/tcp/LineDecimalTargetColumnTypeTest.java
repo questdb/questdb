@@ -28,6 +28,9 @@ import io.questdb.PropertyKey;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.std.Decimal256;
+import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementEvent;
+import io.questdb.log.LogFactory;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.LogCapture;
@@ -50,6 +53,7 @@ public class LineDecimalTargetColumnTypeTest extends AbstractBootstrapTest {
 
     @Before
     public void setUp() {
+        LogFactory.enableGuaranteedLogging(LineTcpConnectionContext.class, LineTcpMeasurementEvent.class);
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
@@ -61,6 +65,7 @@ public class LineDecimalTargetColumnTypeTest extends AbstractBootstrapTest {
     public void tearDown() throws Exception {
         capture.stop();
         super.tearDown();
+        LogFactory.disableGuaranteedLogging(LineTcpConnectionContext.class, LineTcpMeasurementEvent.class);
     }
 
     @Test
