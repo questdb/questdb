@@ -9451,7 +9451,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * MAKE-PLAIN (PARTITION_COMPACTION.md Sec.5).
      *
      * @return true if the partition was made plain this call; false if a reader still resolves the geometry record this
-     * shape came from, leaving it to the caller's decline/backoff bookkeeping
+     * shape came from, or a checkpoint is running, leaving it to the caller's decline/backoff bookkeeping
      */
     private boolean makePartitionPlain(int partitionIndex) {
         final PartitionGeometry geometry = getGeometry();
@@ -9461,6 +9461,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long fromTxn = Math.max(0, txWriter.getPartitionNameTxn(partitionIndex));
         final long toTxn = geometry.getWriterTxn(partitionIndex);
         if (toTxn <= fromTxn || !txnScoreboard.isRangeAvailable(fromTxn, toTxn)) {
+            return false;
+        }
+        // A running checkpoint is the one thing left that TRIM-FILES has to wait for, and it is not a reader:
+        // backup sizes this partition's column files by the physical row extent E its manifest copied out of
+        // the checkpoint, then reads them from the LIVE db root, so shortening them would leave the upload
+        // asking for more rows than the file holds. Decline the whole of MAKE-PLAIN rather than commit a plain
+        // partition whose files TRIM-FILES could not touch - the dead bytes would then be reported by nothing
+        // (deadRows reads 0) and picked up by nothing (selectMakePlainCandidate skips a plain partition).
+        if (isCheckpointInProgress()) {
             return false;
         }
         final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
@@ -9475,14 +9484,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", deadRows=").$(deadRows)
                 .I$();
         commitTxWriterAndPublishPendingPostingSealPurges();
-        // TRIM-FILES needs to be sure all the readers switched to the newest committed transactions
-        if (!txnScoreboard.isRangeAvailable(fromTxn, txWriter.getTxn())) {
-            LOG.info().$("TRIM-FILES deferred, a reader still resolves the partition as composite [table=").$(tableToken)
-                    .$(", dir=").$(formatPartitionForTimestamp(partitionTs, partitionNameTxn))
-                    .$(", deadRows=").$(deadRows)
-                    .I$();
-            return true;
-        }
+        // TRIM-FILES needs no reader wait of its own. A reader maps a partition's column files only as far as
+        // its highest live piece reaches (TableReader#mappedRowCount), and the check at the top of this method
+        // has already cleared every reader that could still resolve a shape with a piece above the single one
+        // at row 0 - so the bytes cut below are bytes no live or arriving reader can ask for.
         // Best-effort and strictly after the commit above: a failure leaves dead bytes in place, wasted
         // disk and nothing more. POSTING index files are left alone - their size tracks seal history, and
         // PostingSealPurgeJob already reclaims old generations.

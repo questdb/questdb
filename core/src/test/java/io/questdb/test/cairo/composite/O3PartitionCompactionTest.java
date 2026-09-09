@@ -59,9 +59,13 @@ import org.junit.Test;
  * scheme. MAKE-PLAIN reclaims a MOVE-TAIL'd front's leftover dead space in place, gated on the same
  * {@link io.questdb.cairo.TxnScoreboard} reader check REWRITE never needs (it only ever appends).
  * TRIM-FILES (also step 4, the file-shortening half of the reference's in-place reclaim) folds into that
- * same MAKE-PLAIN commit rather than needing a reader wait of its own - a reader only ever maps a column
- * up to the row count its own resolved view reports, never up to the file's raw byte length, so nothing
- * live can still depend on the file's old, larger size once MAKE-PLAIN's own check has cleared. REWRITE
+ * same MAKE-PLAIN commit and needs no reader wait of its own - a reader maps a folder's column files only
+ * as far as its highest live piece reaches ({@code TableReader#mappedRowCount}), never up to the folder's
+ * physical extent {@code E}, so the dead space above the single piece at row 0 is bytes no reader can
+ * resolve a row in. MAKE-PLAIN's own check is what clears the readers that could still resolve an EARLIER
+ * shape, with pieces higher up the files. A running CHECKPOINT is the one thing left that blocks the trim,
+ * and it blocks the whole of MAKE-PLAIN: a folder that cannot be trimmed must not be recorded as plain, or
+ * its dead bytes are left with nothing to report or reclaim them. REWRITE
  * itself needs no reader gate at all: it copies into a brand-new directory and leaves the old one for the
  * ordinary purge to remove once no reader still needs it, so a pinned reader's data stays correct with
  * nothing to wait for - see {@link #testRewriteLeavesAPinnedReadersDataIntact}.
@@ -97,13 +101,15 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      * too, on the TRUNCATE and cancelRow paths.
      * <p>
      * Nothing names the checkpoint here: {@link io.questdb.cairo.DatabaseCheckpointAgent} pins the transaction it
-     * captured on the {@link io.questdb.cairo.TxnScoreboard} for the whole checkpoint, and MAKE-PLAIN's SECOND
-     * scoreboard check - the one over {@code [partitionNameTxn, txWriter.getTxn())}, taken after its own commit -
-     * sees that pin like any other reader's and defers. Its FIRST check does not: the checkpoint captured the
-     * geometry record MAKE-PLAIN is retiring, so its pin sits at or above that record's writer txn, outside the
-     * range that check asks about. The bookkeeping half of MAKE-PLAIN therefore still commits here, and only the
-     * file shortening waits - which is exactly what backup needs, and why this asserts the disk size rather than
-     * the composite flag alone.
+     * captured on the {@link io.questdb.cairo.TxnScoreboard} for the whole checkpoint, and MAKE-PLAIN's PRE-COMMIT
+     * check - the closed range {@code [partitionNameTxn, txWriter.getTxn()]} - sees that pin like any other
+     * reader's and declines. Its FIRST check does not: the checkpoint captured the geometry record MAKE-PLAIN is
+     * retiring, so its pin sits at or above that record's writer txn, outside the range that check asks about.
+     * <p>
+     * So MAKE-PLAIN does not commit at all here. That is the point: the check that guards TRIM-FILES can only be
+     * taken after the commit, so a MAKE-PLAIN that committed anyway would leave a plain partition with its dead
+     * bytes still on disk, reported by nothing and reclaimed by nothing. The second half of the test releases the
+     * checkpoint and asserts the same partition then goes all the way, plain and trimmed.
      * <p>
      * Same fixture as {@link #testMakePlainWaitsForAPinnedReaderThenReclaimsOnceItGoes}, run past the point where
      * the reader goes away; without the checkpoint it trims (see
@@ -143,6 +149,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
             final String before = fingerprintOfDay("x", "2024-01-01");
             final long diskBefore = diskSizeOfDay("x", "2024-01-01");
+            final long deadBefore = deadRowsOfDay("x", "2024-01-01");
 
             execute("checkpoint create");
             try {
@@ -150,13 +157,14 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                 setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
                 runCompactionPasses("x");
 
-                Assert.assertFalse(
-                        "MAKE-PLAIN's bookkeeping half must still commit under a checkpoint - only TRIM-FILES waits",
+                Assert.assertTrue(
+                        "MAKE-PLAIN recorded the partition as plain while the checkpoint kept TRIM-FILES from" +
+                                " running - its dead bytes are now reported by nothing and reclaimed by nothing",
                         isComposite("x", "2024-01-01")
                 );
                 Assert.assertEquals(
-                        "MAKE-PLAIN did not reclaim the dead space, so the unchanged disk size below proves nothing",
-                        0,
+                        "the dead space must stay on the books while the trim that would reclaim it cannot run",
+                        deadBefore,
                         deadRowsOfDay("x", "2024-01-01")
                 );
                 Assert.assertEquals(
@@ -169,6 +177,20 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                 execute("checkpoint release");
             }
 
+            // Checkpoint gone: the same partition must now go all the way - plain AND trimmed.
+            setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+            runCompactionPasses("x");
+            Assert.assertFalse(
+                    "the partition is still composite after the checkpoint was released;" +
+                            " dead rows: " + deadRowsOfDay("x", "2024-01-01"),
+                    isComposite("x", "2024-01-01")
+            );
+            Assert.assertEquals(0, deadRowsOfDay("x", "2024-01-01"));
+            Assert.assertTrue(
+                    "the dead bytes the checkpoint deferred were never reclaimed [before=" + diskBefore
+                            + ", after=" + diskSizeOfDay("x", "2024-01-01") + "]",
+                    diskSizeOfDay("x", "2024-01-01") < diskBefore
+            );
             Assert.assertEquals("the deferred trim changed the data", before, fingerprintOfDay("x", "2024-01-01"));
         });
     }
@@ -255,13 +277,120 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * TRIM-FILES runs while a reader that resolves the partition's CURRENT, one-piece composite shape is
+     * open - and that reader still reads correct rows out of the shortened files.
+     * <p>
+     * This is what {@link io.questdb.cairo.TableReader#mappedRowCount} buys: a reader maps a composite
+     * partition's column files only as far as its highest live piece reaches, not up to {@code E}. The dead
+     * space above the single piece at row 0 is bytes no reader can resolve a row in, so cutting them off
+     * needs no wait for the readers of that shape - only MAKE-PLAIN's own check, which clears the readers
+     * that could still resolve an EARLIER shape with pieces higher up the files.
+     * <p>
+     * The column is VAR-SIZE on purpose. Sizing the mapping by {@code E} does not merely map past the end
+     * of the aux file - it reads the aux entry for the last mapped row to size the DATA mapping, and that
+     * entry now sits in the region TRIM-FILES cut, so it reads 0 and the data vector is mapped empty.
+     * <p>
+     * The reader here opens AFTER MOVE-TAIL, so it pins a transaction at or past the geometry record
+     * MAKE-PLAIN reuses - outside the range MAKE-PLAIN checks, which is the point:
+     * {@link #testMakePlainWaitsForAPinnedReaderThenReclaimsOnceItGoes} covers the reader that IS inside it.
+     */
+    @Test
+    public void testMakePlainTrimsUnderAReaderPinnedAfterMoveTail() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            letPreSplitCut();
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+            execute("create table y as (select cast(x as int) i, ('v' || x) s," +
+                    " timestamp_sequence('2024-01-01', 1000000L) ts from long_sequence(20000))" +
+                    " timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            for (int i = 0; i < 3; i++) {
+                execute("insert into y select cast(x as int) + 500000 i, ('b' || x) s," +
+                        " timestamp_sequence('2024-01-01T05:00:00', 1000000L) ts from long_sequence(200)");
+                drainWalQueue();
+            }
+            pinPieceCap(2);
+
+            // A first pinned reader gets the day to MAKE-PLAIN's eligible shape - MOVE-TAIL runs, MAKE-PLAIN
+            // declines - and then goes.
+            try (TableReader warmup = engine.getReader(engine.verifyTableName("y"))) {
+                Assert.assertNotNull(warmup);
+                runCompactionPassesVarSize("y");
+                Assert.assertTrue("fixture did not reach MOVE-TAIL", isComposite("y", "2024-01-01"));
+                Assert.assertEquals(1, pieceCountOfDay("y", "2024-01-01"));
+                Assert.assertTrue("MOVE-TAIL left no dead space to protect", deadRowsOfDay("y", "2024-01-01") > 0);
+            }
+            engine.releaseInactive();
+
+            final String before = fingerprintOfDayVarSize("y", "2024-01-01");
+            final long diskBefore = diskSizeOfDay("y", "2024-01-01");
+
+            // Clear the backoff the decline above started, so what happens next is not suppressed.
+            setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+
+            long count = 0;
+            long intSum = 0;
+            long strLenSum = 0;
+            final long dayHi = parseMicros("2024-01-02T00:00:00.000000Z");
+            engine.releaseInactive();
+            try (TableReader pinned = engine.getReader(engine.verifyTableName("y"))) {
+                // Pinned but with nothing mapped yet: this reader maps the day only AFTER the trim below,
+                // while still resolving the one-piece composite record.
+                runCompactionPassesVarSize("y");
+                // Still composite in this reader's view, with E above the live row count and the files now
+                // cut to the live row count: mapping to E here faults on the bytes past the end of the file.
+                Assert.assertTrue(pinned.getTxFile().isPartitionComposite(0));
+                Assert.assertTrue(pinned.getPartitionPhysicalRowCount(0) > pinned.getTxFile().getPartitionSize(0));
+                pinned.openPartition(0);
+            }
+            try (RecordCursorFactory f = select("select i, s, ts from y order by ts desc")) {
+                try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(c.hasNext());
+                    Assert.assertFalse(
+                            "a reader pinned past the geometry record MAKE-PLAIN reuses must not hold it up;" +
+                                    " dead rows: " + deadRowsOfDay("y", "2024-01-01"),
+                            isComposite("y", "2024-01-01")
+                    );
+                    Assert.assertTrue(
+                            "TRIM-FILES did not reclaim the dead bytes [before=" + diskBefore
+                                    + ", after=" + diskSizeOfDay("y", "2024-01-01") + ']',
+                            diskSizeOfDay("y", "2024-01-01") < diskBefore
+                    );
+
+                    do {
+                        if (c.getRecord().getTimestamp(2) >= dayHi) {
+                            continue;
+                        }
+                        count++;
+                        intSum += c.getRecord().getInt(0);
+                        final CharSequence str = c.getRecord().getStrA(1);
+                        strLenSum += str == null ? 0 : str.length();
+                    } while (c.hasNext());
+                }
+            }
+            Assert.assertEquals(
+                    "the cursor read different rows across the trim",
+                    before,
+                    count + "/" + intSum + "/" + strLenSum
+            );
+            Assert.assertEquals("MAKE-PLAIN changed the data", before, fingerprintOfDayVarSize("y", "2024-01-01"));
+        });
+    }
+
+    /**
      * MAKE-PLAIN's own success path: a successful MOVE-TAIL is immediately followed, in the same
      * housekeeping pass, by an attempt at MAKE-PLAIN on the front it just left behind - the front is
      * exactly MAKE-PLAIN's own eligible shape (one piece, row 0, dead space above it), and with no reader
      * in the way there is nothing to wait for. {@code nameTxn} unchanged is proof this is bookkeeping and
      * not a REWRITE in disguise; TRIM-FILES then physically shortens the front's files down to the live
-     * row count in that same commit (see {@code TableWriter#makePartitionPlain}'s javadoc for why no
-     * second reader wait is needed for that).
+     * row count, behind its own reader wait one transaction later - which clears immediately here, as
+     * nothing is pinned.
      */
     @Test
     public void testMakePlainReclaimsAMoveTailedFrontsDeadSpace() throws Exception {
@@ -1070,6 +1199,18 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         }
         engine.releaseInactive();
         return 12; // 6 commits x 2 rows, all into partitions of their own
+    }
+
+    /**
+     * {@link #runCompactionPasses} for a table that also has the var-size {@code s} column.
+     */
+    private static void runCompactionPassesVarSize(String table) throws Exception {
+        for (int i = 0; i < 6; i++) {
+            execute("insert into " + table + " (i, s, ts) select cast(x as int) + 800000 + " + (passDay * 10)
+                    + ", null, timestamp_sequence('" + nextPassDay() + "', 60*1000000L) from long_sequence(2)");
+            drainWalQueue();
+        }
+        engine.releaseInactive();
     }
 
     private static long scalar(String sql) throws Exception {

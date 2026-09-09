@@ -1554,8 +1554,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
-                        // MAP the whole file extent, not the live row count.
-                        openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), getPartitionPhysicalRowCount(partitionIndex));
+                        // MAP as far as the highest live piece reaches, not the live row count - see mappedRowCount.
+                        openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), mappedRowCount(partitionIndex, partitionSize));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
                         openPartitionCount++;
@@ -1975,13 +1975,16 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * How many file rows a mapping of {@code partitionIndex} must cover.
+     * How many file rows a mapping of {@code partitionIndex} must cover: as far as the partition's highest live piece
+     * reaches, NOT {@code E}. Nothing here resolves a row outside a piece, so the dead space above the last one is
+     * bytes this reader can never ask for - and mapping them would make TRIM-FILES, which cuts exactly those bytes,
+     * wait for every reader of the partition's current shape to go.
      */
     private long mappedRowCount(int partitionIndex, long liveRowCount) {
         if (partitionIndex < 0 || !txFile.isPartitionComposite(partitionIndex)) {
             return liveRowCount;
         }
-        return getGeometry().getE(partitionIndex);
+        return getGeometry().getLiveFileExtent(partitionIndex);
     }
 
     /**
