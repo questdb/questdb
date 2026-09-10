@@ -5779,6 +5779,9 @@ public class SqlOptimiser implements Mutable {
     private boolean isLatestKeySelector(
             ExpressionNode node, IQueryModel model, IQueryModel table, QueryColumn key, SqlExecutionContext executionContext
     ) throws SqlException {
+        if (node.token == null) {
+            return false;
+        }
         if (isInKeyword(node.token)) {
             if (node.paramCount < 2) {
                 return false;
@@ -5805,6 +5808,9 @@ public class SqlOptimiser implements Mutable {
         try {
             while (!sqlNodeStack.isEmpty()) {
                 ExpressionNode leaf = sqlNodeStack.pop();
+                if (leaf.token == null) {
+                    return false;
+                }
                 if (isOrKeyword(leaf.token) && leaf.paramCount == 2) {
                     sqlNodeStack.push(leaf.rhs);
                     sqlNodeStack.push(leaf.lhs);
