@@ -70,6 +70,12 @@ import java.io.Closeable;
 public class LiveViewCheckpointSuperblock implements Closeable {
 
     /**
+     * Result of {@link #foreignFormatVersion} for a {@code _timeline} whose
+     * declared format version this build implements, or which declares none this
+     * build can read at all.
+     */
+    public static final int NO_FOREIGN_FORMAT = -1;
+    /**
      * Result of {@link #getSelectedSlot()} when neither slot is valid (a fresh or
      * doubly-corrupt timeline).
      */
@@ -234,6 +240,56 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         this.ff = configuration.getFilesFacade();
         this.commitMode = configuration.getCommitMode();
         this.mem = Vm.getCMARWInstance();
+    }
+
+    /**
+     * Reads the format version a slot declares, when that version is one this
+     * build does not implement. This is the timeline-wide format boundary: a
+     * directory reporting a version names a generation some other build wrote in
+     * a layout this one has no decoder for, and the only thing this build knows
+     * about it is the number.
+     * <p>
+     * Narrower than {@link #isForeignFormat} on purpose, and the two are not
+     * interchangeable. This answers only for a slot in this magic family whose
+     * version field is well formed and names a version this build does not
+     * implement. A version field a truncated file cannot supply, a magic outside
+     * the family, and a magic whose trailing nibble disagrees with a version field
+     * that reads native all report {@link #NO_FOREIGN_FORMAT} here while
+     * {@code isForeignFormat} still classifies them. The two dispositions differ:
+     * a declared version is evidence another build owns the directory and must be
+     * preserved, while the rest is damage a rebuild of derived state clears.
+     * <p>
+     * The version field alone decides, in both directions: a build one version
+     * back stamps a lower version, a build one version on a higher one, and
+     * neither is a layout this one can read.
+     *
+     * @return the foreign format version the first such slot declares, or
+     * {@link #NO_FOREIGN_FORMAT} when neither slot declares one
+     */
+    public static int foreignFormatVersion(@NotNull FilesFacade ff, @NotNull LPSZ timelinePath) {
+        final long fd = ff.openRO(timelinePath);
+        if (fd < 0) {
+            return NO_FOREIGN_FORMAT;
+        }
+        try {
+            for (int slot = 0; slot < 2; slot++) {
+                final long base = (long) slot * SLOT_SIZE;
+                final long magic = ff.readNonNegativeLong(fd, base + SLOT_MAGIC_OFFSET);
+                if ((magic & SLOT_MAGIC_FAMILY_MASK) != SLOT_MAGIC_FAMILY) {
+                    continue;
+                }
+                // A short or failed read returns -1, which is a file this build
+                // cannot read a version out of rather than a version it does not
+                // implement.
+                final int formatVersion = ff.readNonNegativeInt(fd, base + SLOT_FORMAT_VERSION_OFFSET);
+                if (formatVersion >= 0 && formatVersion != SLOT_FORMAT_VERSION) {
+                    return formatVersion;
+                }
+            }
+            return NO_FOREIGN_FORMAT;
+        } finally {
+            ff.close(fd);
+        }
     }
 
     /**

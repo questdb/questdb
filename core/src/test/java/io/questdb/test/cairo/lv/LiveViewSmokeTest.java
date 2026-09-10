@@ -15563,7 +15563,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "o3_open_segment_cold_keyed_replay_count\t"
                         + "checkpoint_effective_duration_micros\t"
                         + "checkpoint_last_correction_depth_micros\t"
-                        + "checkpoint_correction_depth_sample_count\n");
+                        + "checkpoint_correction_depth_sample_count\t"
+                        + "checkpoint_recovery_phase\tcheckpoint_recovery_reason\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }

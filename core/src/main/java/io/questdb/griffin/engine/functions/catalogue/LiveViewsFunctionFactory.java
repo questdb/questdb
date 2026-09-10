@@ -31,6 +31,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
@@ -192,6 +193,13 @@ import io.questdb.std.ObjList;
  *     than writing a ladder no reader could detect, and that the timeline was retired -
  *     so the view keeps serving while a restart or an out-of-order correction rebuilds
  *     the recovery state from the base.</li>
+ *     <li>Where the view stands against the checkpoint format boundary -
+ *     {@code checkpoint_recovery_phase} and {@code checkpoint_recovery_reason}. Both are
+ *     NULL for a view whose timeline is on this build's own format, which is every view
+ *     until a directory another build wrote turns up. A {@code blocked} phase means this
+ *     build read a layout version it does not implement and stopped the view's refresh
+ *     with its checkpoints, rows, watermarks and base WAL all intact; the reason carries
+ *     the version it read. See {@link io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase}.</li>
  * </ul>
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
@@ -265,6 +273,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_CHECKPOINT_LAST_WRITE_NEW_BYTES = 39;
         private static final int COLUMN_CHECKPOINT_OBSOLETE_SEGMENT_BYTES = 34;
         private static final int COLUMN_CHECKPOINT_OLDEST_PINNED_GENERATION = 35;
+        private static final int COLUMN_CHECKPOINT_RECOVERY_PHASE = 61;
+        private static final int COLUMN_CHECKPOINT_RECOVERY_REASON = 62;
         private static final int COLUMN_CHECKPOINT_REPAIR_CORRECTION_TIMESTAMP = 42;
         private static final int COLUMN_CHECKPOINT_REPAIR_FAILURES = 48;
         private static final int COLUMN_CHECKPOINT_REPAIR_HIGH_TIMESTAMP = 44;
@@ -728,6 +738,13 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_IN_MEMORY_INTERVAL_UNIT -> getIntervalUnit(definition.getInMemoryIntervalUnit());
                         case COLUMN_VIEW_SQL -> definition.getViewSql();
                         case COLUMN_INVALIDATION_REASON -> instance.getInvalidationReason();
+                        // Where the view stands against the checkpoint format
+                        // boundary. Both NULL for a view on this build's own
+                        // format, which is every view until a timeline written by
+                        // a build with another layout turns up.
+                        case COLUMN_CHECKPOINT_RECOVERY_PHASE ->
+                                LiveViewCheckpointRecoveryPhase.name(instance.getCheckpointRecoveryPhase());
+                        case COLUMN_CHECKPOINT_RECOVERY_REASON -> instance.getCheckpointRecoveryReason();
                         // The dependency plans a localized repair would union, read off
                         // the compiled SELECT. NULL until the view compiles one.
                         case COLUMN_CHECKPOINT_REPAIR_PLAN ->
@@ -874,6 +891,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("checkpoint_effective_duration_micros", ColumnType.LONG)); // 58
             metadata.add(new TableColumnMetadata("checkpoint_last_correction_depth_micros", ColumnType.LONG)); // 59
             metadata.add(new TableColumnMetadata("checkpoint_correction_depth_sample_count", ColumnType.LONG)); // 60
+            metadata.add(new TableColumnMetadata("checkpoint_recovery_phase", ColumnType.STRING));         // 61
+            metadata.add(new TableColumnMetadata("checkpoint_recovery_reason", ColumnType.STRING));        // 62
             METADATA = metadata;
         }
     }

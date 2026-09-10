@@ -428,6 +428,16 @@ public class LiveViewInstance implements QuietCloseable {
     private volatile int checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.NONE;
     private volatile long checkpointRestoreCheckpointId = Numbers.LONG_NULL;
     private volatile long checkpointRestoreGeneration = Numbers.LONG_NULL;
+    // Where this view stands against the checkpoint format boundary, as a
+    // LiveViewCheckpointRecoveryPhase constant, and the operator text that goes
+    // with it. Derived rather than persisted: the catalogue load re-reads the
+    // superblock on every restart and reaches the same disposition, so a blocked
+    // view stays blocked without a marker of its own. Written on the catalogue
+    // thread, before the refresh worker has seen the instance and before any
+    // repair could be parked on it; volatile because every later reader - the
+    // refresh worker, the WAL purge job, live_views() - is another thread.
+    private volatile int checkpointRecoveryPhase = LiveViewCheckpointRecoveryPhase.NONE;
+    private volatile String checkpointRecoveryReason;
     // Lifetime counts of the two destructive events a restart witness has to rule
     // out: applied-base rebuilds this instance started (one per restart at most
     // today, since the restore attempt is single-shot) and whole-timeline
@@ -1443,6 +1453,24 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return the {@code LiveViewCheckpointRecoveryPhase} constant naming where
+     * this view stands against the checkpoint format boundary, which is
+     * {@link LiveViewCheckpointRecoveryPhase#NONE} for a view on this build's own
+     * format. See {@link #checkpointRecoveryPhase}
+     */
+    public int getCheckpointRecoveryPhase() {
+        return checkpointRecoveryPhase;
+    }
+
+    /**
+     * @return why this view's checkpoint recovery stands where it does, in
+     * operator terms, or null while there is nothing to recover
+     */
+    public String getCheckpointRecoveryReason() {
+        return checkpointRecoveryReason;
+    }
+
+    /**
      * @return the {@code LiveViewCheckpointRestoreRoute} constant naming the route
      * this view's single restart recovery attempt took, or
      * {@link LiveViewCheckpointRestoreRoute#NONE} while no attempt has completed
@@ -1936,6 +1964,18 @@ public class LiveViewInstance implements QuietCloseable {
                 || route == LiveViewCheckpointRestoreRoute.FALLBACK_REBUILD;
     }
 
+    /**
+     * @return true when this view's checkpoint timeline declares a format version
+     * this build does not implement. Such a view neither refreshes nor publishes,
+     * and its checkpoint directory, materialized rows, watermarks and base WAL are
+     * all held as they are; it stays queryable over the rows it already has.
+     * Distinct from {@link #isInvalid()}, which is terminal and releases the base
+     * WAL: a blocked view is waiting for a build that reads its format
+     */
+    public boolean isCheckpointRecoveryBlocked() {
+        return checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.BLOCKED;
+    }
+
     public boolean isInvalid() {
         return stateReader.isInvalid();
     }
@@ -2042,6 +2082,29 @@ public class LiveViewInstance implements QuietCloseable {
         stateReader.setInvalid(true);
         // An invalid view never refreshes again, so a cycle still running over it is
         // producing output nothing will keep. Cut it short rather than let it finish.
+        cancelRefresh();
+    }
+
+    /**
+     * Stops this view against the checkpoint format boundary. The caller has read
+     * a format version this build does not implement and has removed, rewritten
+     * and decoded nothing; this makes the refresh worker decline the view and the
+     * WAL purge job hold its base, so the evidence an eventual recovery needs
+     * stays where it is.
+     * <p>
+     * Not an invalidation. An invalid view is terminal and releases its base WAL,
+     * because its own re-CREATE is the way back; a blocked view is intact and its
+     * way back is a build that reads its format, so nothing about it may be
+     * released or advanced. There is no unblock: the phase is re-derived from the
+     * superblock on every restart.
+     */
+    public void markCheckpointRecoveryBlocked(@Nullable CharSequence reason) {
+        // Reason first: the phase is what every reader tests, so publishing it
+        // last is what makes the reason visible to anyone who sees the phase.
+        checkpointRecoveryReason = reason == null ? null : reason.toString();
+        checkpointRecoveryPhase = LiveViewCheckpointRecoveryPhase.BLOCKED;
+        // A cycle already in flight is producing output over a timeline this
+        // build must not publish to. Cut it short, as an invalidation does.
         cancelRefresh();
     }
 
@@ -2249,6 +2312,22 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void recordCheckpointRestoreBlocked() {
         checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.BLOCKED;
+    }
+
+    /**
+     * Records that the refresh worker declined this view's restart recovery
+     * because its timeline declares a format version this build does not
+     * implement. Emitted from the turn that declined, so the route names a
+     * decision that was actually taken rather than one derived from a flag.
+     * <p>
+     * Every turn over a blocked view declines it, and the idle scan takes many.
+     * The store is therefore conditional: repeating it would write the same value
+     * to a field several workers read on every pass, for nothing.
+     */
+    public void recordCheckpointUpgradeBlocked() {
+        if (checkpointRestoreRoute != LiveViewCheckpointRestoreRoute.UPGRADE_BLOCKED) {
+            checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.UPGRADE_BLOCKED;
+        }
     }
 
     /**

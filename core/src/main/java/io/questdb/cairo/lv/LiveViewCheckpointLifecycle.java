@@ -64,13 +64,22 @@ import org.jetbrains.annotations.Nullable;
  * valid generation at all. There every final name is an orphan by definition, and
  * no publication is there to have moved the ceiling off it.</p>
  *
- * <p>Ahead of all of that, reconciliation classifies the directory as a whole.
- * A {@code _timeline} carrying a foreign layout version, or a top-level entry
- * outside the current layout, means a build with a different on-disk format
- * owned this directory. Since live views are unreleased, such a directory is
- * removed rather than migrated or partially recovered: the primary rebuilds the
- * timeline from the base table on its next refresh, and no reconciliation rule
- * ever meets a mix of two formats.</p>
+ * <p>Ahead of all of that, reconciliation classifies the directory as a whole. A
+ * top-level entry outside the current layout, or a {@code _timeline} whose magic
+ * this build does not recognize, means a build with a different on-disk format
+ * owned this directory and left nothing behind that says what it holds. Such a
+ * directory is removed rather than migrated or partially recovered: the primary
+ * rebuilds the timeline from the base table on its next refresh, and no
+ * reconciliation rule ever meets a mix of two formats.</p>
+ *
+ * <p>A {@code _timeline} that does declare a format version, and declares one
+ * this build does not implement, is the exception. That is the format boundary
+ * rather than damage: another build's generation, announcing itself. Removing it
+ * would rebuild the view's whole output from whatever source rows survive today,
+ * which TTL, DROP/DETACH PARTITION and TRUNCATE can have moved on from, so the
+ * reconciliation touches nothing and reports
+ * {@link ReconcileResult#isFormatBlocked()} instead. The caller stops the view's
+ * refresh and holds its base WAL; see {@link LiveViewCheckpointRecoveryPhase}.</p>
  *
  * <p>Callers serialize reconciliation, epoch replacement, and retirement with
  * timeline publication, repair descriptor writes, and pin acquisition. The
@@ -94,8 +103,13 @@ public final class LiveViewCheckpointLifecycle {
      * {@code true} regardless of role and the flag survives only as the
      * ownership assertion this class refuses to write without.
      * <p>
-     * A directory written under a foreign layout short-circuits every other
-     * rule: it is removed whole and the result reports
+     * A directory whose {@code _timeline} declares a format version this build
+     * does not implement short-circuits every other rule and is left exactly as
+     * it is: the result reports {@link ReconcileResult#isFormatBlocked()} and the
+     * version it read, and nothing on disk is opened, removed or rewritten.
+     * <p>
+     * A directory written under a foreign layout that declares no such version
+     * short-circuits the same way but is removed whole, and the result reports
      * {@link ReconcileResult#isFormatReset()}, leaving the caller with the same
      * disposition a live view that never checkpointed has.
      * <p>
@@ -122,6 +136,20 @@ public final class LiveViewCheckpointLifecycle {
                     .put("invalid live view checkpoint history identity")
                     .put(" [definitionTxn=").put(expectedDefinitionTxn)
                     .put(", historyEpoch=").put(expectedHistoryEpoch).put(']');
+        }
+
+        // A timeline that names its own format goes first: a version this build
+        // does not implement is another build's generation, and the whole
+        // disposition is to leave it alone. Nothing below may open, remove or
+        // rewrite any part of it, the repair sweep included.
+        final int foreignFormatVersion = foreignTimelineFormatVersion(configuration, checkpointsDir);
+        if (foreignFormatVersion != LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT) {
+            LOG.error().$("live view checkpoint timeline declares an unsupported format version, blocking [path=")
+                    .$(checkpointsDir)
+                    .$(", version=").$(foreignFormatVersion)
+                    .$(", supported=").$(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION)
+                    .I$();
+            return ReconcileResult.formatBlocked(foreignFormatVersion);
         }
 
         // A directory this build cannot read as a whole goes before anything
@@ -211,6 +239,7 @@ public final class LiveViewCheckpointLifecycle {
             return new ReconcileResult(
                     true,
                     false,
+                    LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
                     -1,
                     Numbers.LONG_NULL,
                     0,
@@ -594,6 +623,30 @@ public final class LiveViewCheckpointLifecycle {
         }
     }
 
+    /**
+     * Reads the format version {@code _timeline} declares, when this build does
+     * not implement it. Superblock only: it opens the two fixed slot fields and
+     * never descends into a root page, so the classification costs the same on a
+     * layout this build has no decoder for.
+     *
+     * @return the declared foreign version, or
+     * {@link LiveViewCheckpointSuperblock#NO_FOREIGN_FORMAT} when the timeline is
+     * missing, is this build's own format, or declares no readable version
+     */
+    private static int foreignTimelineFormatVersion(
+            @NotNull CairoConfiguration configuration,
+            @NotNull Path checkpointsDir
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            LiveViewCheckpointLayout.timelinePath(path, checkpointsDir);
+            if (!ff.exists(path.$())) {
+                return LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT;
+            }
+            return LiveViewCheckpointSuperblock.foreignFormatVersion(ff, path.$());
+        }
+    }
+
     private static boolean isForeignFormat(
             @NotNull CairoConfiguration configuration,
             @NotNull Path checkpointsDir
@@ -804,6 +857,7 @@ public final class LiveViewCheckpointLifecycle {
         return new ReconcileResult(
                 epochReplaced,
                 false,
+                LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
                 walPurgeFloor,
                 normalizedBaseSeqTxn,
                 cleanup.removed,
@@ -839,16 +893,21 @@ public final class LiveViewCheckpointLifecycle {
 
     public static final class ReconcileResult {
         private static final LongList EMPTY_SEGMENT_IDS = new LongList();
-        private static final ReconcileResult FORMAT_RESET =
-                new ReconcileResult(false, true, -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0);
-        private static final ReconcileResult NOT_OWNER =
-                new ReconcileResult(false, false, -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0);
+        private static final ReconcileResult FORMAT_RESET = new ReconcileResult(
+                false, true, LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0
+        );
+        private static final ReconcileResult NOT_OWNER = new ReconcileResult(
+                false, false, LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0
+        );
         private final int discardedRepairCount;
         private final boolean epochReplaced;
         private final int failedOrphanCount;
         private final int failedPurgeCount;
         private final int failedRepairCount;
         private final long finalOrphanUpperBound;
+        private final int foreignFormatVersion;
         private final boolean formatReset;
         private final int liveSegmentCount;
         private final long normalizedBaseSeqTxn;
@@ -862,6 +921,7 @@ public final class LiveViewCheckpointLifecycle {
         private ReconcileResult(
                 boolean epochReplaced,
                 boolean formatReset,
+                int foreignFormatVersion,
                 long walPurgeFloor,
                 long normalizedBaseSeqTxn,
                 int removedOrphanCount,
@@ -874,6 +934,7 @@ public final class LiveViewCheckpointLifecycle {
         ) {
             this.epochReplaced = epochReplaced;
             this.formatReset = formatReset;
+            this.foreignFormatVersion = foreignFormatVersion;
             this.walPurgeFloor = walPurgeFloor;
             this.normalizedBaseSeqTxn = normalizedBaseSeqTxn;
             this.removedOrphanCount = removedOrphanCount;
@@ -887,6 +948,19 @@ public final class LiveViewCheckpointLifecycle {
             this.stats = stats;
             this.discardedRepairCount = discardedRepairCount;
             this.failedRepairCount = failedRepairCount;
+        }
+
+        /**
+         * A reconciliation that read a format version this build does not
+         * implement and therefore did nothing at all. Every count is zero and
+         * every coordinate is absent because nothing was opened, not because
+         * nothing was found.
+         */
+        private static ReconcileResult formatBlocked(int foreignFormatVersion) {
+            return new ReconcileResult(
+                    false, false, foreignFormatVersion,
+                    -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0
+            );
         }
 
         /**
@@ -922,6 +996,16 @@ public final class LiveViewCheckpointLifecycle {
          */
         public long getFinalOrphanUpperBound() {
             return finalOrphanUpperBound;
+        }
+
+        /**
+         * @return the format version the checkpoint timeline declares when
+         * {@link #isFormatBlocked()}, or
+         * {@link LiveViewCheckpointSuperblock#NO_FOREIGN_FORMAT} otherwise. The
+         * number is the whole of what this build knows about that directory
+         */
+        public int getForeignFormatVersion() {
+            return foreignFormatVersion;
         }
 
         /**
@@ -984,6 +1068,16 @@ public final class LiveViewCheckpointLifecycle {
 
         public boolean isEpochReplaced() {
             return epochReplaced;
+        }
+
+        /**
+         * @return true when the checkpoint timeline declares a format version this
+         * build does not implement. The reconciliation left the directory
+         * untouched; the caller must stop the view's refresh and hold its base WAL
+         * rather than treat this as a view with no timeline
+         */
+        public boolean isFormatBlocked() {
+            return foreignFormatVersion != LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT;
         }
 
         /**

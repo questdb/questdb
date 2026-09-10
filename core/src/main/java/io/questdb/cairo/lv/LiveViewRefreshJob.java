@@ -13774,6 +13774,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // tilt (Worker.runAsap, no nap) while one worker refreshes, an O(workers x views)
         // busy-spin. The notification-driven caller ignores the result.
         boolean attempted = false;
+        // Checkpoint format boundary: the view's timeline declares a layout version
+        // this build does not implement, so this build may neither read it nor
+        // publish over it, and it cannot prove that rebuilding the view from the
+        // base rows that survive today would reproduce the output the view already
+        // serves. Decline the whole turn - restore, seed sweep, drain, flush and
+        // seal alike - ahead of every other guard, so no watermark advances and no
+        // generic missing-timeline recovery below reaches the directory. The view
+        // keeps serving the rows it has; see LiveViewCheckpointRecoveryPhase.
+        if (instance.isCheckpointRecoveryBlocked()) {
+            instance.recordCheckpointUpgradeBlocked();
+            return false;
+        }
         // Apply-lag back-off: a prior cycle deferred this view (raw-WAL O3 or coupled dedup
         // drain) because ApplyWal2TableJob had not applied the base to the seqTxn the replay
         // reads. Skip re-entering the full window recompute until the floor elapses so the

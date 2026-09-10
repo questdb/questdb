@@ -305,6 +305,25 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                                     historyEpoch,
                                     true
                             );
+                    if (reconciliation.isFormatBlocked()) {
+                        // The directory belongs to a build with another layout, and
+                        // the reconciliation left it whole rather than resetting it.
+                        // Publishing here would write this build's pages beside pages
+                        // it cannot read - the mixed-format directory the boundary
+                        // exists to prevent. The refresh worker declines a blocked
+                        // view before it ever reaches a seal, so this is the case
+                        // that gate cannot see: a directory that turned foreign
+                        // under a running view. Refusing the seal is the whole of
+                        // the response - the view is not blocked from here, because
+                        // the phase is a catalogue-load disposition taken before any
+                        // repair can be parked on the instance, and the next restart
+                        // reaches it in the ordinary way.
+                        throw CairoException.critical(CairoException.LV_CHECKPOINT_FORMAT_BLOCKED)
+                                .put("live view checkpoint timeline declares an unsupported format version")
+                                .put(" [version=").put(reconciliation.getForeignFormatVersion())
+                                .put(", supported=").put(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION)
+                                .put(']');
+                    }
                     orphanUpperBound = reconciliation.getFinalOrphanUpperBound();
                     if (reconciliation.getStats() != null) {
                         liveSegmentCount = reconciliation.getLiveSegmentCount();

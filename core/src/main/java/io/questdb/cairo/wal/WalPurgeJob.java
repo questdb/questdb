@@ -601,6 +601,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             if (instance.isDropped() || instance.isInvalid()) {
                 continue;
             }
+            if (instance.isCheckpointRecoveryBlocked()) {
+                // The view's checkpoint timeline is on a format version this build
+                // does not implement, so nothing here can say which base
+                // transactions its eventual recovery needs: the coordinates that
+                // would answer live in roots this build cannot read. Retain the
+                // base WAL whole rather than turn that unknown into a floor. The
+                // view neither refreshes nor publishes meanwhile, so the hold does
+                // not move until a build that reads the format releases it.
+                return 0;
+            }
             final long lvConsumed = instance.getStateReader().getLvConsumedSeqTxn();
             if (lvConsumed > -1) {
                 safeToPurgeTxn = Math.min(safeToPurgeTxn, lvConsumed);

@@ -46,9 +46,11 @@ package io.questdb.cairo.lv;
  * that a restart restored from an expected root and that nothing reset or rebuilt on
  * the way there.
  * <p>
- * The upgrade rebuild an old-format timeline would take has no code here yet: this
- * branch keeps the anchor-root decoder rather than establishing a format boundary, so
- * no timeline needs one. It joins this list with that boundary.
+ * {@link #UPGRADE_BLOCKED} is the one route no restore ran for: the timeline declares
+ * a format version this build does not implement, so the refresh worker declined the
+ * attempt instead of making one. The upgrade rebuild that would follow a successful
+ * source-history preflight has no code here yet - nothing can authorize a reset until
+ * that preflight exists - and joins this list with it.
  */
 public final class LiveViewCheckpointRestoreRoute {
     /**
@@ -58,6 +60,15 @@ public final class LiveViewCheckpointRestoreRoute {
      * {@code fallback_rebuild} completed.
      */
     public static final int BLOCKED = 3;
+    /**
+     * No attempt was made: the view's checkpoint timeline declares a format version this
+     * build does not implement, and {@link LiveViewCheckpointRecoveryPhase#BLOCKED} holds
+     * its refresh. Distinct from {@link #BLOCKED}, which is an attempt that ran and left
+     * the view without derived state; here the derived state on disk is intact and this
+     * build simply may not touch it. The refresh worker emits it from the turn it
+     * declined, so the route still names what actually happened.
+     */
+    public static final int UPGRADE_BLOCKED = 4;
     /**
      * The timeline was absent, unusable, or fenced off by a repair marker, and the view
      * recomputed its whole window from the applied base instead. Correct rows, but the
@@ -91,6 +102,7 @@ public final class LiveViewCheckpointRestoreRoute {
             case TIMELINE_RESTORE -> "timeline_restore";
             case FALLBACK_REBUILD -> "fallback_rebuild";
             case BLOCKED -> "blocked";
+            case UPGRADE_BLOCKED -> "upgrade_blocked";
             default -> null;
         };
     }

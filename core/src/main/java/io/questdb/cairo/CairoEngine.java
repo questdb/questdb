@@ -36,6 +36,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycleState;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness;
+import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -1071,6 +1072,31 @@ public class CairoEngine implements Closeable, WriterSource {
                                                 0,
                                                 true
                                         );
+                                if (reconciliation.isFormatBlocked()) {
+                                    // The timeline declares a layout version this
+                                    // build does not implement. Reconciliation read
+                                    // the superblock and stopped there, so the
+                                    // directory, the view's rows and its watermarks
+                                    // are all as the other build left them. Block the
+                                    // view: it stays queryable and droppable, its base
+                                    // WAL is held whole by the purge job, and nothing
+                                    // rebuilds its output from source rows that may no
+                                    // longer be the ones it was built from.
+                                    LOG.error().$("live view checkpoint timeline declares an unsupported format version, blocking refresh [view=")
+                                            .$(tableToken)
+                                            .$(", version=").$(reconciliation.getForeignFormatVersion())
+                                            .$(", supported=").$(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION)
+                                            .I$();
+                                    final StringSink blockedReason = Misc.getThreadLocalSink();
+                                    blockedReason
+                                            .put("checkpoint timeline format version ")
+                                            .put(reconciliation.getForeignFormatVersion())
+                                            .put(" is not supported by this build (supported version ")
+                                            .put(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION)
+                                            .put("); refresh is stopped and the view's checkpoints, rows and base WAL are retained");
+                                    instance.markCheckpointRecoveryBlocked(blockedReason);
+                                    continue;
+                                }
                                 if (reconciliation.isFormatReset()) {
                                     // A development build with a different
                                     // on-disk layout owned this directory.

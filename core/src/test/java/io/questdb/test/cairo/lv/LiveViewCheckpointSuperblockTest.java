@@ -393,6 +393,89 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForeignFormatVersionReadsOnlyADeclaredVersion() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                Assert.assertEquals(
+                        "a _timeline no build has written yet declares nothing",
+                        LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                        LiveViewCheckpointSuperblock.foreignFormatVersion(ff, timelinePath(path).$())
+                );
+            }
+
+            publish(1); // slot 0
+            publish(2); // slot 1
+            try (Path path = new Path()) {
+                Assert.assertEquals(
+                        LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                        LiveViewCheckpointSuperblock.foreignFormatVersion(ff, timelinePath(path).$())
+                );
+            }
+
+            // The format boundary: a slot declaring a version this build does not
+            // implement. The version itself is the answer - it is the whole of what
+            // this build knows about the directory.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(ff, timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                final long base = LiveViewCheckpointSuperblock.SLOT_SIZE;
+                mem.putInt(
+                        base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET,
+                        LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 3
+                );
+                fixSlotCrc(mem, 1);
+            }
+            try (Path path = new Path()) {
+                Assert.assertEquals(
+                        "one declaring slot answers for the file, even beside a native one",
+                        LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 3,
+                        LiveViewCheckpointSuperblock.foreignFormatVersion(ff, timelinePath(path).$())
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testForeignFormatVersionSeparatesADeclaredVersionFromEveryOtherForeignShape() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            publish(1); // slot 0
+
+            // A magic whose trailing nibble this build does not write, over a
+            // version field that still reads native. isForeignFormat condemns it,
+            // because the two disagree about which format wrote the slot; the
+            // version probe declines it, because the field that declares the
+            // format names this build's own. The two answers are the difference
+            // between resetting derived state and blocking a view over another
+            // build's generation.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(ff, timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                mem.putLong(LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET, LiveViewCheckpointSuperblock.SLOT_MAGIC + 1);
+                fixSlotCrc(mem, 0);
+            }
+            try (Path path = new Path()) {
+                Assert.assertTrue(LiveViewCheckpointSuperblock.isForeignFormat(ff, timelinePath(path).$()));
+                Assert.assertEquals(
+                        LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                        LiveViewCheckpointSuperblock.foreignFormatVersion(ff, timelinePath(path).$())
+                );
+            }
+
+            // A zeroed pair is outside the family altogether, and declares nothing.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(ff, timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                mem.zero();
+            }
+            try (Path path = new Path()) {
+                Assert.assertEquals(
+                        LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                        LiveViewCheckpointSuperblock.foreignFormatVersion(ff, timelinePath(path).$())
+                );
+            }
+        });
+    }
+
+    @Test
     public void testForeignFormatProbeDetectsMagicVersionSkew() throws Exception {
         assertMemoryLeak(() -> {
             publish(1); // slot 0
