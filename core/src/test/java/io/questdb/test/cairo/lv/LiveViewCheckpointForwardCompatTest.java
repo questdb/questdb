@@ -200,6 +200,66 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
     }
 
     @Test
+    public void testABlockedViewReleasesItsBaseWalFloor() throws Exception {
+        // One WAL segment per commit, so countWalSegments reads the purge floor rather than the
+        // rollover threshold - the same knob LiveViewRefreshDisabledTest uses for the same reading.
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        // WalPurgeJob.runSerially is interval-gated off the millisecond clock, which this class
+        // freezes. Without both of these the sweep below silently does nothing.
+        setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 0);
+        assertMemoryLeak(() -> {
+            seedFiveBoundaries();
+            final File checkpointsRoot = checkpointsRoot();
+            final String baseDirName = engine.getTableTokenIfExists("tx").getDirName();
+            shutdown();
+
+            setSuperblockFormatVersion(checkpointsRoot, LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1);
+            restart();
+            Assert.assertTrue(instance("lv").isCheckpointRecoveryBlocked());
+
+            // A base commit the blocked view will not consume. It is what gives the purge job
+            // something above the view's frozen watermark to reclaim.
+            execute("INSERT INTO tx VALUES ('" + timestamp(50) + "', 'acct-1', 100.0)");
+            drainWalQueue();
+
+            // The floor a blocked view does NOT hold. Its own watermark never advances, so any
+            // floor it publishes is frozen, and a frozen floor grows the base WAL without bound -
+            // on a base table every other writer and view shares. Releasing is the same rule an
+            // invalid view follows, for the same reason.
+            final long walSegmentsBefore = countWalSegments(baseDirName);
+            engine.releaseInactive();
+            setCurrentMicros(60_000_000L);
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                purgeJob.drain(0);
+            }
+            Assert.assertTrue(
+                    "a blocked view must release its base WAL floor, not pin it",
+                    countWalSegments(baseDirName) < walSegmentsBefore
+            );
+
+            // What that release costs, stated rather than hidden, because it is the reason to reach
+            // for the exit rather than to sit on a block. The restore replays the base WAL between
+            // the head checkpoint's boundary and the applied watermark; the sweep above took it, so
+            // a build that DOES read the format cannot resume off the roots the block preserved. It
+            // spends the flush-retry budget on the missing segment and lands in the base-WAL-loss
+            // re-derive, which recomputes the view from the base rows available today.
+            shutdown();
+            setSuperblockFormatVersion(checkpointsRoot, LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION);
+            restart();
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            capture.drain();
+            capture.assertLogged("live view re-derived from the applied base after base WAL loss");
+
+            // The rows are right here only because this base still holds every row the view was
+            // built from. A base that had since lost history to TTL, DROP/DETACH PARTITION or
+            // TRUNCATE would be recomputed from whatever survives - silently, and differently -
+            // which is the outcome the block exists to avoid and the reason the way out is the
+            // operator's re-CREATE rather than an indefinite wait.
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
     public void testAFutureStateRootPageKindRebuildsFromTheBase() throws Exception {
         assertMemoryLeak(() -> {
             seedFiveBoundaries();
@@ -235,9 +295,7 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
         assertMemoryLeak(() -> {
             seedFiveBoundaries();
             final File checkpointsRoot = checkpointsRoot();
-            final String walDirName = engine.getTableTokenIfExists("tx").getDirName();
             final long checkpointFilesBefore = countFiles(checkpointsRoot);
-            final long walSegmentsBefore = countWalSegments(walDirName);
             final long processedBefore = instance("lv").getLastProcessedSeqTxn();
             shutdown();
 
@@ -260,7 +318,10 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
 
             final LiveViewInstance instance = instance("lv");
             Assert.assertTrue(instance.isCheckpointRecoveryBlocked());
-            Assert.assertFalse("blocking is not an invalidation: the view keeps its base WAL", instance.isInvalid());
+            // Not a durable invalidation - _lv.s.invalid stays clear, which is what lets a build
+            // that reads the format resume the view with no operator action - even though the view
+            // reports itself invalid and releases its base WAL floor like any other stopped view.
+            Assert.assertFalse("blocking must not write _lv.s.invalid", instance.isInvalid());
             TestUtils.assertContains(
                     instance.getCheckpointRecoveryReason(),
                     "checkpoint timeline format version " + (LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1)
@@ -300,23 +361,18 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
             );
             assertNoRefreshFaults("lv");
 
-            // The evidence an eventual recovery would need stays available: the base WAL is
-            // held whole rather than released to the floor the view's own watermark implies.
-            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
-                purgeJob.drain(0);
-            }
-            Assert.assertTrue(
-                    "a blocked view must hold its base WAL, not release it",
-                    countWalSegments(walDirName) >= walSegmentsBefore
-            );
-
             // live_views() carries the phase and the reason, so an operator can see why the
-            // view stopped without reading the log.
-            assertQuery("SELECT view_status, checkpoint_recovery_phase FROM live_views() WHERE view_name = 'lv'")
+            // view stopped without reading the log - and it reports the status those operators
+            // already search for, with invalidation_reason mirroring the recovery reason so a
+            // query written for durable invalidations needs no new column to explain this one.
+            // The phase is what says this is a format block rather than a terminal invalidation.
+            assertQuery("SELECT view_status, checkpoint_recovery_phase, " +
+                    "invalidation_reason = checkpoint_recovery_reason AS reason_mirrored " +
+                    "FROM live_views() WHERE view_name = 'lv'")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("view_status\tcheckpoint_recovery_phase\n" +
-                            "active\tblocked\n");
+                    .returns("view_status\tcheckpoint_recovery_phase\treason_mirrored\n" +
+                            "invalid\tblocked\ttrue\n");
 
             // The disposition is derived from the superblock, so it survives a restart with no
             // marker of its own - and the second restart is as harmless as the first.
@@ -338,9 +394,11 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
                     countSealedBoundaries("lv") >= BOUNDARIES
             );
             assertNoRefreshFaults("lv");
-            // The commit that landed while the view was blocked is not lost either: the base WAL
-            // held it, and the resumed view materializes it on top of the restored roots rather
-            // than recomputing the window that carries it.
+            // The commit that landed while the view was blocked is not lost either: no purge sweep
+            // ran over this block, so the base WAL still held it, and the resumed view materializes
+            // it on top of the restored roots rather than recomputing the window that carries it.
+            // A block that outlives a purge sweep does not get this - see
+            // testABlockedViewReleasesItsBaseWalFloor.
             assertQuery("SELECT created_at, account_id, cumulative_sum, cumulative_count FROM lv")
                     .noLeakCheck()
                     .timestamp("created_at")

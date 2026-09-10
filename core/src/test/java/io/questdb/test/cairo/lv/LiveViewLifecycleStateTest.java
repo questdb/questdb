@@ -71,26 +71,39 @@ public class LiveViewLifecycleStateTest {
 
     @Test
     public void testDeriveActiveAndSeeding() {
-        // Registry-visible, valid: the seed signal alone chooses SEEDING vs ACTIVE.
-        Assert.assertEquals(LiveViewLifecycleState.ACTIVE, LiveViewLifecycleState.derive(true, false, false));
-        Assert.assertEquals(LiveViewLifecycleState.SEEDING, LiveViewLifecycleState.derive(true, false, true));
+        // Registry-visible, valid, not blocked: the seed signal alone chooses SEEDING vs ACTIVE.
+        Assert.assertEquals(LiveViewLifecycleState.ACTIVE, LiveViewLifecycleState.derive(true, false, false, false));
+        Assert.assertEquals(LiveViewLifecycleState.SEEDING, LiveViewLifecycleState.derive(true, false, false, true));
     }
 
     @Test
     public void testDeriveDroppingWhenNotRegistryVisible() {
         // A not-registry-visible (marked-dropped) instance is DROPPING regardless of the other signals.
         // This is the sole producer of DROPPING, hence the authoritative check for the dropping label.
-        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, false, false));
-        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, true, false));
-        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, false, true));
-        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, true, true));
+        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, false, false, false));
+        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, true, false, false));
+        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, false, false, true));
+        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, true, false, true));
+        // A blocked view is stopped, not gone: DROPPING still wins over it.
+        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, false, true, false));
+        Assert.assertEquals(LiveViewLifecycleState.DROPPING, LiveViewLifecycleState.derive(false, true, true, true));
     }
 
     @Test
     public void testDeriveInvalidTakesPrecedenceOverSeeding() {
         // A registry-visible, invalid instance is INVALID even if the seed signal is still set.
-        Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, true, false));
-        Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, true, true));
+        Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, true, false, false));
+        Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, true, false, true));
+    }
+
+    @Test
+    public void testDeriveReportsACheckpointFormatBlockAsInvalid() {
+        // The block is not _lv.s.invalid - it is re-derived from the superblock every start - but it
+        // stops refresh just the same, so it reports under the status an operator already searches
+        // for. checkpoint_recovery_phase is what tells the two apart.
+        Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, false, true, false));
+        // And it outranks the seed signal, exactly as a durable invalidation does.
+        Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, false, true, true));
     }
 
     @Test

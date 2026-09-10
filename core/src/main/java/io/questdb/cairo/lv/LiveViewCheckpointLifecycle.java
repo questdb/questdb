@@ -79,7 +79,9 @@ import org.jetbrains.annotations.Nullable;
  * which TTL, DROP/DETACH PARTITION and TRUNCATE can have moved on from, so the
  * reconciliation touches nothing and reports
  * {@link ReconcileResult#isFormatBlocked()} instead. The caller stops the view's
- * refresh and holds its base WAL; see {@link LiveViewCheckpointRecoveryPhase}.</p>
+ * refresh, which leaves the operator to decide whether re-creating it from the
+ * base rows available today is what they want; see
+ * {@link LiveViewCheckpointRecoveryPhase}.</p>
  *
  * <p>Callers serialize reconciliation, epoch replacement, and retirement with
  * timeline publication, repair descriptor writes, and pin acquisition. The

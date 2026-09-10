@@ -1666,6 +1666,7 @@ public class LiveViewInstance implements QuietCloseable {
         return LiveViewLifecycleState.derive(
                 !dropped && !isClosed,
                 stateReader.isInvalid(),
+                isCheckpointRecoveryBlocked(),
                 stateReader.getSeedState() == LiveViewState.SEED_STATE_SEEDING
         );
     }
@@ -1980,10 +1981,13 @@ public class LiveViewInstance implements QuietCloseable {
     /**
      * @return true when this view's checkpoint timeline declares a format version
      * this build does not implement. Such a view neither refreshes nor publishes,
-     * and its checkpoint directory, materialized rows, watermarks and base WAL are
-     * all held as they are; it stays queryable over the rows it already has.
-     * Distinct from {@link #isInvalid()}, which is terminal and releases the base
-     * WAL: a blocked view is waiting for a build that reads its format
+     * and its checkpoint directory, materialized rows and watermarks are all held
+     * as they are; it stays queryable over the rows it already has, and reports as
+     * {@code invalid} through {@code live_views().view_status}. It releases its
+     * base WAL floor, as an invalid view does. Distinct from {@link #isInvalid()}
+     * in one way that matters: the block is derived from the superblock on every
+     * start rather than written to {@code _lv.s}, so a build that does implement
+     * the format never reaches it and resumes the view without operator action
      */
     public boolean isCheckpointRecoveryBlocked() {
         return checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.BLOCKED;
@@ -2101,15 +2105,29 @@ public class LiveViewInstance implements QuietCloseable {
     /**
      * Stops this view against the checkpoint format boundary. The caller has read
      * a format version this build does not implement and has removed, rewritten
-     * and decoded nothing; this makes the refresh worker decline the view and the
-     * WAL purge job hold its base, so the evidence an eventual recovery needs
-     * stays where it is.
+     * and decoded nothing; this makes the refresh worker decline the view, so
+     * nothing rebuilds its output from base rows that may no longer be the ones it
+     * was built from.
      * <p>
-     * Not an invalidation. An invalid view is terminal and releases its base WAL,
-     * because its own re-CREATE is the way back; a blocked view is intact and its
-     * way back is a build that reads its format, so nothing about it may be
-     * released or advanced. There is no unblock: the phase is re-derived from the
-     * superblock on every restart.
+     * Not a durable invalidation - {@code _lv.s.invalid} stays clear, so a build
+     * that does implement the format resumes the view with no operator action -
+     * but it carries an invalid view's operational properties, because those are
+     * the ones an indefinitely stopped view needs. It reports as {@code invalid}
+     * through {@code live_views().view_status}, and it releases its base WAL
+     * floor: a blocked view's floor never advances, so any hold it takes grows
+     * without bound on a base table other writers and views share.
+     * <p>
+     * That release has a price, and it is the reason to reach for the exit rather
+     * than to sit on a block. A blocked view resumes off its own roots only while
+     * the base WAL its restore replays is still there; once a purge sweep has
+     * moved past it, a later readable build takes the applied-base rebuild
+     * instead, which recomputes the view from whatever source rows survive today.
+     * The exit is the operator's, not the database's: {@code SHOW CREATE LIVE
+     * VIEW}, then {@code DROP LIVE VIEW} and re-CREATE.
+     * <p>
+     * There is no unblock command, by design: the phase is re-derived from the
+     * superblock on every restart, so it clears when - and only when - the format
+     * becomes readable.
      */
     public void markCheckpointRecoveryBlocked(@Nullable CharSequence reason) {
         // Reason first: the phase is what every reader tests, so publishing it

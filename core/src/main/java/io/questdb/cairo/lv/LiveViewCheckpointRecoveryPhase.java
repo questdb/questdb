@@ -44,21 +44,46 @@ package io.questdb.cairo.lv;
  * <p>
  * {@link LiveViewInstance#getCheckpointRecoveryReason()} carries the operator
  * text that goes with the phase, and {@code live_views()} publishes both as
- * {@code checkpoint_recovery_phase} and {@code checkpoint_recovery_reason}.
- * <p>
- * The remaining phases the recovery policy names - a pending classification, a
- * rebuild in flight, and a completed one - arrive with the source-history
- * preflight and the recovery bundle that authorize a reset. Until then the only
- * outcome a foreign version can take is the blocking one, and there is nothing
- * for an operator to advance it through.
+ * {@code checkpoint_recovery_phase} and {@code checkpoint_recovery_reason}. A
+ * blocked view also reports {@code view_status} as {@code invalid} and repeats
+ * the reason through {@code invalidation_reason}: it is a stopped view, and the
+ * queries operators already run to find stopped views must find it.
+ *
+ * <h3>Why the block is where this ends, rather than a recovery</h3>
+ * A recovery would have to prove that replaying the source history still
+ * available reproduces the output the view is already serving. QuestDB retains
+ * no evidence that can prove it: WAL segments are purged once applied, dropped
+ * and detached partitions are not archived, and TTL eviction keeps no journal of
+ * what it removed. So the database does not decide. It stops, says why, and
+ * leaves the decision to the operator, whose re-CREATE is an explicit act with
+ * explicitly different historical results rather than a silent restatement.
+ *
+ * <h3>The exit</h3>
+ * {@code SHOW CREATE LIVE VIEW} reproduces the definition, {@code DROP LIVE
+ * VIEW} clears the blocked timeline with the view, and re-CREATE rebuilds from
+ * the base rows that survive today. There is no unblock command: the phase is
+ * re-derived from the superblock on every start, so it clears when - and only
+ * when - the format becomes readable, which is what makes an accidental
+ * downgrade recoverable by going back rather than by re-creating anything.
+ *
+ * <h3>What the released WAL floor costs</h3>
+ * A blocked view releases its base WAL floor, as an invalid view does. It has to:
+ * a blocked view's floor never advances, so any hold it takes grows without
+ * bound, on a base table every other writer and view shares. The price is paid on
+ * the way back. A restore replays the base WAL between its head checkpoint's
+ * boundary and the applied watermark, so a view whose block outlives a purge
+ * sweep no longer has that WAL, and a later readable build takes the applied-base
+ * rebuild instead - recomputing the view from whatever source rows survive today,
+ * which is the outcome the block existed to avoid. Blocking buys time to go back
+ * to a build that reads the format; it is not a state to rest in.
  */
 public final class LiveViewCheckpointRecoveryPhase {
     /**
      * The view's checkpoint timeline declares a format version this build does
      * not implement. Refresh and checkpoint publication are stopped for the view,
-     * its checkpoint directory, materialized rows and watermarks are left exactly
-     * as they are, and its base table's WAL is retained whole. The view stays
-     * queryable over the rows it had.
+     * and its checkpoint directory, materialized rows and watermarks are left
+     * exactly as they are. The view stays queryable over the rows it had, reports
+     * {@code invalid} as its status, and releases its base WAL floor.
      */
     public static final int BLOCKED = 1;
     /**

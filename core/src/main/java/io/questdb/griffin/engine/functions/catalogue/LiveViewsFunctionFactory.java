@@ -198,8 +198,13 @@ import io.questdb.std.ObjList;
  *     NULL for a view whose timeline is on this build's own format, which is every view
  *     until a directory another build wrote turns up. A {@code blocked} phase means this
  *     build read a layout version it does not implement and stopped the view's refresh
- *     with its checkpoints, rows, watermarks and base WAL all intact; the reason carries
- *     the version it read. See {@link io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase}.</li>
+ *     with its checkpoints, rows and watermarks all intact; the reason carries the
+ *     version it read and the way out. Such a view reports {@code view_status} as
+ *     {@code invalid} and repeats the reason through {@code invalidation_reason}, so the
+ *     queries operators already run to find stopped views find it; the phase is what
+ *     says it is a format block rather than a durable invalidation, and so may clear on
+ *     its own under a build that reads the format. See
+ *     {@link io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase}.</li>
  * </ul>
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
@@ -737,11 +742,23 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                 getIntervalUnit(definition.getFlushEveryIntervalUnit());
                         case COLUMN_IN_MEMORY_INTERVAL_UNIT -> getIntervalUnit(definition.getInMemoryIntervalUnit());
                         case COLUMN_VIEW_SQL -> definition.getViewSql();
-                        case COLUMN_INVALIDATION_REASON -> instance.getInvalidationReason();
+                        // A format-blocked view reports its block here as well as
+                        // through the two recovery columns below, because it reports
+                        // view_status invalid and an operator reading that status
+                        // reads this column next. Read off the instance rather than
+                        // written into _lv.s: LiveViewInstance.getInvalidationReason
+                        // stays the durable field, so a state copy cannot persist a
+                        // derived block as a terminal invalidation.
+                        case COLUMN_INVALIDATION_REASON -> {
+                            final CharSequence reason = instance.getInvalidationReason();
+                            yield reason != null ? reason : instance.getCheckpointRecoveryReason();
+                        }
                         // Where the view stands against the checkpoint format
-                        // boundary. Both NULL for a view on this build's own
-                        // format, which is every view until a timeline written by
-                        // a build with another layout turns up.
+                        // boundary, and what tells a blocked view apart from a
+                        // durably invalidated one under the same view_status. Both
+                        // NULL for a view on this build's own format, which is every
+                        // view until a timeline written by a build with another
+                        // layout turns up.
                         case COLUMN_CHECKPOINT_RECOVERY_PHASE ->
                                 LiveViewCheckpointRecoveryPhase.name(instance.getCheckpointRecoveryPhase());
                         case COLUMN_CHECKPOINT_RECOVERY_REASON -> instance.getCheckpointRecoveryReason();
