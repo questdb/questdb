@@ -46,11 +46,6 @@ public abstract class MemoryTracker implements Closeable {
 
     private static final AtomicInteger RESOURCE_MEMORY_ACTIVE_TRACKER_COUNT = new AtomicInteger();
     private static final long RESOURCE_MEMORY_CONTEXT_COUNT_OFFSET = 48;
-    protected static final long RESOURCE_MEMORY_FLAG_ENFORCE = 1;
-    private static final long RESOURCE_MEMORY_FLAG_MODE_MASK = 3;
-    protected static final long RESOURCE_MEMORY_FLAG_SHADOW = 2;
-    private static final int RESOURCE_MEMORY_FLAG_THRESHOLD_SHIFT = 2;
-    private static final long RESOURCE_MEMORY_FLAGS_OFFSET = 24;
     private static final long RESOURCE_MEMORY_GENERATION_OFFSET = 56;
     private static final long RESOURCE_MEMORY_GROUP_OFFSET = 32;
     private static final long RESOURCE_MEMORY_MAGIC = 0x51444252474D454DL;
@@ -59,6 +54,7 @@ public abstract class MemoryTracker implements Closeable {
     private static final long RESOURCE_MEMORY_PROCESS_OFFSET = 40;
     private static final CarrierLocal<ResourceMemoryThreadState> RESOURCE_MEMORY_THREAD_STATE =
             new CarrierLocal<>(ResourceMemoryThreadState::new);
+    private static final long RESOURCE_MEMORY_THRESHOLD_OFFSET = 24;
 
     // Covered-index buffers are released by a reusable reduce-task pool after
     // the owning query has ended. Their outstanding charge is reconciled at
@@ -144,7 +140,7 @@ public abstract class MemoryTracker implements Closeable {
         }
         Unsafe.putLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET, 0);
         Unsafe.putLongVolatile(base + RESOURCE_MEMORY_CONTEXT_COUNT_OFFSET, 0);
-        Unsafe.putLongVolatile(base + RESOURCE_MEMORY_FLAGS_OFFSET, 0);
+        Unsafe.putLongVolatile(base + RESOURCE_MEMORY_THRESHOLD_OFFSET, 0);
         Unsafe.putLongVolatile(base + RESOURCE_MEMORY_GROUP_OFFSET, 0);
         Unsafe.putLongVolatile(base + RESOURCE_MEMORY_PROCESS_OFFSET, 0);
         final int activeTrackerCount = RESOURCE_MEMORY_ACTIVE_TRACKER_COUNT.decrementAndGet();
@@ -154,7 +150,7 @@ public abstract class MemoryTracker implements Closeable {
         }
     }
 
-    protected final void configureResourceMemory(long groupAddress, long processAddress, boolean enforce) {
+    protected final void configureResourceMemory(long groupAddress, long processAddress) {
         if (groupAddress == 0 || processAddress == 0) {
             throw new IllegalArgumentException("Resource Group memory node addresses must be non-zero");
         }
@@ -166,8 +162,8 @@ public abstract class MemoryTracker implements Closeable {
         Unsafe.putLongVolatile(base + RESOURCE_MEMORY_GROUP_OFFSET, groupAddress);
         Unsafe.putLongVolatile(base + RESOURCE_MEMORY_PROCESS_OFFSET, processAddress);
         Unsafe.putLongVolatile(
-                base + RESOURCE_MEMORY_FLAGS_OFFSET,
-                resourceMemoryFlags(base, groupAddress, processAddress, enforce)
+                base + RESOURCE_MEMORY_THRESHOLD_OFFSET,
+                calculateUnpublishedThreshold(base, groupAddress, processAddress)
         );
         Unsafe.putLongVolatile(base + RESOURCE_MEMORY_GENERATION_OFFSET, resourceMemoryGeneration);
         Unsafe.putLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET, RESOURCE_MEMORY_MAGIC);
@@ -223,20 +219,10 @@ public abstract class MemoryTracker implements Closeable {
         if (processAddress == 0) {
             throw new IllegalStateException("Resource Group memory tracker has incomplete hierarchy");
         }
-        final long flags = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_FLAGS_OFFSET);
-        final long mode = flags & RESOURCE_MEMORY_FLAG_MODE_MASK;
-        if (mode != RESOURCE_MEMORY_FLAG_ENFORCE && mode != RESOURCE_MEMORY_FLAG_SHADOW) {
-            throw new IllegalStateException("Resource Group memory tracker has invalid flags: " + flags);
-        }
         Unsafe.putLongVolatile(base + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limit);
         Unsafe.putLongVolatile(
-                base + RESOURCE_MEMORY_FLAGS_OFFSET,
-                resourceMemoryFlags(
-                        base,
-                        expectedGroupAddress,
-                        processAddress,
-                        mode == RESOURCE_MEMORY_FLAG_ENFORCE
-                )
+                base + RESOURCE_MEMORY_THRESHOLD_OFFSET,
+                calculateUnpublishedThreshold(base, expectedGroupAddress, processAddress)
         );
     }
 
@@ -271,7 +257,7 @@ public abstract class MemoryTracker implements Closeable {
                     groupAddress,
                     processAddress,
                     bytes,
-                    resourceMemoryThreshold(Unsafe.getLongVolatile(base + RESOURCE_MEMORY_FLAGS_OFFSET))
+                    unpublishedThreshold(base)
             );
         } else {
             creditExact(base, bytes);
@@ -302,11 +288,11 @@ public abstract class MemoryTracker implements Closeable {
                 processAddress,
                 bytes,
                 memoryTag,
-                resourceMemoryThreshold(Unsafe.getLongVolatile(base + RESOURCE_MEMORY_FLAGS_OFFSET))
+                unpublishedThreshold(base)
         );
     }
 
-    private static long addPublished(long address, long delta) {
+    private static void addPublished(long address, long delta) {
         final long usedAddress = address + Unsafe.MEMORY_TRACKER_USED_OFFSET;
         while (true) {
             final long used = Unsafe.getLongVolatile(usedAddress);
@@ -315,7 +301,7 @@ public abstract class MemoryTracker implements Closeable {
                 throw new IllegalStateException("Resource Group memory counter overflow");
             }
             if (Unsafe.getUnsafe().compareAndSwapLong(null, usedAddress, used, next)) {
-                return used;
+                return;
             }
         }
     }
@@ -337,20 +323,16 @@ public abstract class MemoryTracker implements Closeable {
         if (narrowestLimit == Long.MAX_VALUE) {
             return RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES;
         }
-        final long scaled = Math.min(RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES, narrowestLimit / 1024);
-        return scaled > 0 ? Long.highestOneBit(scaled) : 1;
+        return Math.max(1, Math.min(RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES, narrowestLimit / 1024));
     }
 
-    private static long creditExact(long address, long bytes) {
+    private static void creditExact(long address, long bytes) {
         final long usedAddress = address + Unsafe.MEMORY_TRACKER_USED_OFFSET;
         final long previous = Unsafe.getUnsafe().getAndAddLong(null, usedAddress, -bytes);
-        final long used = previous - bytes;
-        assert previous >= bytes : "memory tracker underflow [used=" + used + ", size=" + bytes + ']';
         if (previous < bytes) {
+            assert false : "memory tracker underflow [used=" + (previous - bytes) + ", size=" + bytes + ']';
             Unsafe.getUnsafe().getAndAddLong(null, usedAddress, bytes - previous);
-            return Math.max(previous, 0);
         }
-        return previous;
     }
 
     private static void decrementContextCount(long base) {
@@ -444,23 +426,14 @@ public abstract class MemoryTracker implements Closeable {
         if (!isResourceBindingValid(base, generation, groupAddress, processAddress)) {
             throw new IllegalStateException("Resource Group memory tracker binding changed during allocation");
         }
-        final long flags = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_FLAGS_OFFSET);
-        final long mode = flags & RESOURCE_MEMORY_FLAG_MODE_MASK;
-        if (mode == RESOURCE_MEMORY_FLAG_SHADOW) {
-            publishBoundaryDelta(base, generation, groupAddress, processAddress, delta);
-            return;
-        }
-        if (mode != RESOURCE_MEMORY_FLAG_ENFORCE) {
-            throw new IllegalStateException("Resource Group memory tracker has invalid flags: " + flags);
-        }
-        if (!tryAddPublished(base, delta, true)) {
+        if (!tryAddPublished(base, delta)) {
             throwLimitExceeded(memoryTag, "query", base, requestedBytes);
         }
-        if (!tryAddPublished(processAddress, delta, true)) {
+        if (!tryAddPublished(processAddress, delta)) {
             addPublished(base, -delta);
             throwLimitExceeded(memoryTag, "process", processAddress, requestedBytes);
         }
-        if (!tryAddPublished(groupAddress, delta, true)) {
+        if (!tryAddPublished(groupAddress, delta)) {
             addPublished(processAddress, -delta);
             addPublished(base, -delta);
             throwLimitExceeded(memoryTag, "group", groupAddress, requestedBytes);
@@ -485,28 +458,6 @@ public abstract class MemoryTracker implements Closeable {
                 .put(']');
     }
 
-    private static long resourceMemoryFlags(
-            long base,
-            long groupAddress,
-            long processAddress,
-            boolean enforce
-    ) {
-        final long mode = enforce ? RESOURCE_MEMORY_FLAG_ENFORCE : RESOURCE_MEMORY_FLAG_SHADOW;
-        return mode
-                | (calculateUnpublishedThreshold(base, groupAddress, processAddress)
-                << RESOURCE_MEMORY_FLAG_THRESHOLD_SHIFT);
-    }
-
-    private static long resourceMemoryThreshold(long flags) {
-        final long threshold = flags >>> RESOURCE_MEMORY_FLAG_THRESHOLD_SHIFT;
-        if (threshold < 1
-                || threshold > RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES
-                || (threshold & (threshold - 1)) != 0) {
-            throw new IllegalStateException("Resource Group memory tracker has invalid unpublished threshold: " + threshold);
-        }
-        return threshold;
-    }
-
     private void throwLimitExceeded(int memoryTag, CharSequence scope, long address, long bytes) {
         final long limit = Unsafe.getLongVolatile(address + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET);
         final long used = publishedUsed(address);
@@ -522,19 +473,27 @@ public abstract class MemoryTracker implements Closeable {
                 .put(']');
     }
 
-    private static boolean tryAddPublished(long address, long delta, boolean enforce) {
+    private static boolean tryAddPublished(long address, long delta) {
         final long usedAddress = address + Unsafe.MEMORY_TRACKER_USED_OFFSET;
         final long limit = Unsafe.getLongVolatile(address + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET);
         while (true) {
             final long used = Unsafe.getLongVolatile(usedAddress);
             final long next = used + delta;
-            if (((used ^ next) & (delta ^ next)) < 0 || (enforce && limit > 0 && next > limit)) {
+            if (((used ^ next) & (delta ^ next)) < 0 || (limit > 0 && next > limit)) {
                 return false;
             }
             if (Unsafe.getUnsafe().compareAndSwapLong(null, usedAddress, used, next)) {
                 return true;
             }
         }
+    }
+
+    private static long unpublishedThreshold(long base) {
+        final long threshold = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_THRESHOLD_OFFSET);
+        if (threshold < 1 || threshold > RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES) {
+            throw new IllegalStateException("Resource Group memory tracker has invalid unpublished threshold: " + threshold);
+        }
+        return threshold;
     }
 
     private static void validateResourceBinding(

@@ -31,10 +31,6 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
 const GATE_ORDERING: Ordering = Ordering::SeqCst;
-const RESOURCE_MEMORY_FLAG_ENFORCE: usize = 1;
-const RESOURCE_MEMORY_FLAG_MODE_MASK: usize = 3;
-const RESOURCE_MEMORY_FLAG_SHADOW: usize = 2;
-const RESOURCE_MEMORY_FLAG_THRESHOLD_SHIFT: usize = 2;
 const RESOURCE_MEMORY_MAGIC: usize = 0x5144_4252_474D_454D;
 const RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES: usize = 64 * 1024;
 const RMW_ORDERING: Ordering = Ordering::AcqRel;
@@ -69,7 +65,7 @@ pub struct MemoryTracker {
     used: AtomicIsize,
     limit: AtomicUsize,
     resource_magic: AtomicUsize,
-    resource_flags: AtomicUsize,
+    resource_threshold: AtomicUsize,
     resource_group: AtomicUsize,
     resource_process: AtomicUsize,
     resource_context_count: AtomicIsize,
@@ -81,7 +77,7 @@ const _: () = assert!(
         && std::mem::offset_of!(MemoryTracker, used) == 0
         && std::mem::offset_of!(MemoryTracker, limit) == 8
         && std::mem::offset_of!(MemoryTracker, resource_magic) == 16
-        && std::mem::offset_of!(MemoryTracker, resource_flags) == 24
+        && std::mem::offset_of!(MemoryTracker, resource_threshold) == 24
         && std::mem::offset_of!(MemoryTracker, resource_group) == 32
         && std::mem::offset_of!(MemoryTracker, resource_process) == 40
         && std::mem::offset_of!(MemoryTracker, resource_context_count) == 48
@@ -277,7 +273,7 @@ impl MemoryTracker {
             used: AtomicIsize::new(0),
             limit: AtomicUsize::new(0),
             resource_magic: AtomicUsize::new(0),
-            resource_flags: AtomicUsize::new(0),
+            resource_threshold: AtomicUsize::new(0),
             resource_group: AtomicUsize::new(0),
             resource_process: AtomicUsize::new(0),
             resource_context_count: AtomicIsize::new(0),
@@ -487,19 +483,13 @@ impl MemoryTracker {
                 &*(process_address as *const MemoryNode),
             )
         };
-        let flags = self.resource_flags.load(GATE_ORDERING);
-        let enforce = match flags & RESOURCE_MEMORY_FLAG_MODE_MASK {
-            RESOURCE_MEMORY_FLAG_SHADOW => false,
-            RESOURCE_MEMORY_FLAG_ENFORCE => true,
-            _ => return Err(self.configuration_breach()),
-        };
         let bytes = delta as usize;
-        Self::reserve_node(self.query_node(), bytes, MemoryScope::Query, enforce)?;
-        if let Err(breach) = Self::reserve_node(process, bytes, MemoryScope::Process, enforce) {
+        Self::reserve_node(self.query_node(), bytes, MemoryScope::Query)?;
+        if let Err(breach) = Self::reserve_node(process, bytes, MemoryScope::Process) {
             let _ = Self::add_published(self.query_node(), -delta);
             return Err(breach);
         }
-        if let Err(breach) = Self::reserve_node(group, bytes, MemoryScope::Group, enforce) {
+        if let Err(breach) = Self::reserve_node(group, bytes, MemoryScope::Group) {
             let _ = Self::add_published(process, -delta);
             let _ = Self::add_published(self.query_node(), -delta);
             return Err(breach);
@@ -511,12 +501,7 @@ impl MemoryTracker {
         unsafe { &*(self as *const MemoryTracker as *const MemoryNode) }
     }
 
-    fn reserve_node(
-        node: &MemoryNode,
-        bytes: usize,
-        scope: MemoryScope,
-        enforce: bool,
-    ) -> Result<(), Breach> {
+    fn reserve_node(node: &MemoryNode, bytes: usize, scope: MemoryScope) -> Result<(), Breach> {
         let bytes = isize::try_from(bytes).map_err(|_| Breach {
             limit: node.limit.load(GATE_ORDERING),
             scope,
@@ -532,7 +517,7 @@ impl MemoryTracker {
                     used: Self::non_negative(used),
                 });
             };
-            if enforce && limit > 0 && next > limit as isize {
+            if limit > 0 && next > limit as isize {
                 return Err(Breach {
                     limit,
                     scope,
@@ -553,14 +538,12 @@ impl MemoryTracker {
         let generation = self.resource_generation.load(GATE_ORDERING);
         let group_address = self.resource_group.load(GATE_ORDERING);
         let process_address = self.resource_process.load(GATE_ORDERING);
-        let flags = self.resource_flags.load(GATE_ORDERING);
-        let threshold = flags >> RESOURCE_MEMORY_FLAG_THRESHOLD_SHIFT;
+        let threshold = self.resource_threshold.load(GATE_ORDERING);
         if generation == 0
             || group_address == 0
             || process_address == 0
             || threshold == 0
             || threshold > RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES
-            || !threshold.is_power_of_two()
             || !self.binding_valid(generation, group_address, process_address)
         {
             return Err(self.configuration_breach());
@@ -593,12 +576,7 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Barrier};
 
-    fn bind_resource_nodes(
-        tracker: &MemoryTracker,
-        group: &MemoryNode,
-        process: &MemoryNode,
-        mode: usize,
-    ) {
+    fn bind_resource_nodes(tracker: &MemoryTracker, group: &MemoryNode, process: &MemoryNode) {
         let threshold = unpublished_threshold(tracker, group, process);
         tracker
             .resource_group
@@ -608,10 +586,7 @@ mod tests {
             .store(process as *const MemoryNode as usize, GATE_ORDERING);
         tracker.resource_context_count.store(0, GATE_ORDERING);
         tracker.resource_generation.store(1, GATE_ORDERING);
-        tracker.resource_flags.store(
-            mode | (threshold << RESOURCE_MEMORY_FLAG_THRESHOLD_SHIFT),
-            GATE_ORDERING,
-        );
+        tracker.resource_threshold.store(threshold, GATE_ORDERING);
         tracker
             .resource_magic
             .store(RESOURCE_MEMORY_MAGIC, GATE_ORDERING);
@@ -641,12 +616,7 @@ mod tests {
         if narrowest == usize::MAX {
             return RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES;
         }
-        let scaled = (narrowest / 1024).min(RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES);
-        if scaled > 0 {
-            1 << (usize::BITS - 1 - scaled.leading_zeros())
-        } else {
-            1
-        }
+        (narrowest / 1024).clamp(1, RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES)
     }
 
     #[test]
@@ -655,13 +625,10 @@ mod tests {
         let group = Arc::new(node(100));
         let process = Arc::new(node(100));
         tracker.set_limit(100);
-        bind_resource_nodes(&tracker, &group, &process, RESOURCE_MEMORY_FLAG_ENFORCE);
+        bind_resource_nodes(&tracker, &group, &process);
         // limit/1024 yields a one-byte threshold for tiny limits, so install a
         // test-only 64-byte threshold to exercise the documented N*T bound.
-        tracker.resource_flags.store(
-            RESOURCE_MEMORY_FLAG_ENFORCE | (64 << RESOURCE_MEMORY_FLAG_THRESHOLD_SHIFT),
-            GATE_ORDERING,
-        );
+        tracker.resource_threshold.store(64, GATE_ORDERING);
         let charged = Arc::new(Barrier::new(5));
         let publish = Arc::new(Barrier::new(5));
         std::thread::scope(|scope| {
@@ -691,7 +658,7 @@ mod tests {
         let group = Arc::new(node(128 * 1024 * 1024));
         let process = Arc::new(node(128 * 1024 * 1024));
         tracker.set_limit(128 * 1024 * 1024);
-        bind_resource_nodes(&tracker, &group, &process, RESOURCE_MEMORY_FLAG_ENFORCE);
+        bind_resource_nodes(&tracker, &group, &process);
         let charged = Arc::new(Barrier::new(2));
         let credited = Arc::new(Barrier::new(2));
         std::thread::scope(|scope| {
@@ -724,7 +691,7 @@ mod tests {
         let group = node(128 * 1024 * 1024);
         let process = node(128 * 1024 * 1024);
         tracker.set_limit(128 * 1024 * 1024);
-        bind_resource_nodes(&tracker, &group, &process, RESOURCE_MEMORY_FLAG_ENFORCE);
+        bind_resource_nodes(&tracker, &group, &process);
         tracker.try_charge(32 * 1024).unwrap();
         assert_eq!(tracker.used(), 0);
         tracker.try_charge(32 * 1024).unwrap();
@@ -741,7 +708,7 @@ mod tests {
         let group = node(10);
         let process = node(100);
         tracker.set_limit(100);
-        bind_resource_nodes(&tracker, &group, &process, RESOURCE_MEMORY_FLAG_ENFORCE);
+        bind_resource_nodes(&tracker, &group, &process);
         tracker.try_charge_immediate(8).unwrap();
         assert_eq!(tracker.used(), 8);
         assert_eq!(
@@ -761,10 +728,7 @@ mod tests {
     #[test]
     fn invalid_resource_binding_fails_without_publishing() {
         let tracker = MemoryTracker::new();
-        tracker.resource_flags.store(
-            RESOURCE_MEMORY_FLAG_ENFORCE | (64 << RESOURCE_MEMORY_FLAG_THRESHOLD_SHIFT),
-            GATE_ORDERING,
-        );
+        tracker.resource_threshold.store(64, GATE_ORDERING);
         tracker.resource_generation.store(1, GATE_ORDERING);
         tracker
             .resource_magic
@@ -807,20 +771,6 @@ mod tests {
         );
         assert_eq!(tracker.credit(1024), 1024);
         assert_eq!(tracker.used(), 0);
-    }
-
-    #[test]
-    fn resource_shadow_publishes_without_enforcement() {
-        let tracker = MemoryTracker::new();
-        let group = node(1);
-        let process = node(1);
-        tracker.set_limit(1);
-        bind_resource_nodes(&tracker, &group, &process, RESOURCE_MEMORY_FLAG_SHADOW);
-        tracker.try_charge(8).unwrap();
-        assert_eq!(tracker.used(), 8);
-        tracker.credit(8);
-        assert_eq!(tracker.used(), 0);
-        detach_thread_local();
     }
 
     #[test]
