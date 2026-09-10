@@ -34,9 +34,11 @@ import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.FiberWaitCoordinator;
 import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -58,6 +60,7 @@ public class FiberLifecycleFuzzTest {
     private static final int MAX_CARRIER_COUNT = 4;
     private static final int MAX_DRIVER_COUNT = 8;
     private static final int MAX_LIVE_FIBER_LIMIT = 4;
+    private static final int MAX_MOUNT_BUDGET = 64;
     private static final int MAX_TASK_COUNT = 16;
     private static final int MIN_DRIVER_COUNT = 2;
     private static final int OPS_PER_DRIVER = 10_000;
@@ -112,6 +115,7 @@ public class FiberLifecycleFuzzTest {
 
     private static Throwable cleanupRound(
             FiberRuntime runtime,
+            TimerShards timerShards,
             ObjList<Thread> threads,
             AtomicBoolean isCarriersDone,
             AtomicBoolean isDriversDone,
@@ -173,6 +177,11 @@ public class FiberLifecycleFuzzTest {
             } catch (Throwable th) {
                 failure = addFailure(failure, th);
             }
+        }
+        try {
+            timerShards.shutdown();
+        } catch (Throwable th) {
+            failure = addFailure(failure, th);
         }
         return failure;
     }
@@ -260,12 +269,15 @@ public class FiberLifecycleFuzzTest {
         final AtomicLong opCount = new AtomicLong();
         final CountDownLatch firstTaskStep = new CountDownLatch(1);
         final ProgressWakeProbe progressWakeProbe = new ProgressWakeProbe();
+        final TimerShards timerShards = new TimerShards(1, "fiber-fuzz-r" + round + "-timer", LOG);
+        timerShards.start();
 
         final ObjList<FuzzTask> tasks = new ObjList<>(taskCount);
         for (int i = 0; i < taskCount; i++) {
             tasks.add(new FuzzTask(
                     new Rnd(masterRnd.nextLong(), masterRnd.nextLong()),
                     waitQueue,
+                    timerShards,
                     new FiberCancellationSignal(),
                     firstError,
                     firstTaskStep,
@@ -274,10 +286,10 @@ public class FiberLifecycleFuzzTest {
             ));
         }
 
-        final CountDownLatch started = new CountDownLatch(driverCount + carrierCount + 1);
+        final CountDownLatch started = new CountDownLatch(driverCount + carrierCount + 2);
         final CountDownLatch quiesceReady = new CountDownLatch(isQuiesceUnderLoad ? driverCount : 0);
         final CountDownLatch quiesceComplete = new CountDownLatch(isQuiesceUnderLoad ? 1 : 0);
-        final ObjList<Thread> threads = new ObjList<>(driverCount + carrierCount + 1);
+        final ObjList<Thread> threads = new ObjList<>(driverCount + carrierCount + 2);
 
         for (int i = 0; i < driverCount; i++) {
             final Rnd rnd = new Rnd(masterRnd.nextLong(), masterRnd.nextLong());
@@ -295,8 +307,14 @@ public class FiberLifecycleFuzzTest {
                     final int taskIndex = rnd.nextInt(taskCount);
                     final FuzzTask task = tasks.getQuick(taskIndex);
                     switch (rnd.nextInt(13)) {
-                        case 0, 1, 2, 3 -> runtime.launch(task);
-                        case 4 -> runtime.launch(task, staleIncarnations[taskIndex]);
+                        case 0, 1, 2, 3 -> {
+                            if (task.recordLaunch(runtime.launch(task)) == LaunchResult.SATURATED) {
+                                for (int pause = rnd.nextInt(64); pause > 0; pause--) {
+                                    Os.pause();
+                                }
+                            }
+                        }
+                        case 4 -> task.recordLaunch(runtime.launch(task, staleIncarnations[taskIndex]));
                         case 5 -> task.tryCancel();
                         case 6 -> task.signalAxisA(FiberTask.SIGNAL_READY);
                         case 7 -> task.signalAxisA(
@@ -319,7 +337,7 @@ public class FiberLifecycleFuzzTest {
         for (int i = 0; i < carrierCount; i++) {
             threads.add(thread("fiber-fuzz-r" + round + "-carrier-" + i, firstError, started, () -> {
                 while (!isCarriersDone.get()) {
-                    if (runtime.drain(16) == 0) {
+                    if (runtime.drain(runtime.getMountBudget()) == 0) {
                         Os.pause();
                     }
                 }
@@ -327,9 +345,26 @@ public class FiberLifecycleFuzzTest {
         }
 
         threads.add(thread("fiber-fuzz-r" + round + "-event", firstError, started, () -> {
+            long fireCount = 0;
             while (!isDriversDone.get()) {
                 waitQueue.fire();
-                Os.pause();
+                // an occasional gap lets armed timers and cancellations win the wake race
+                if ((++fireCount & 63) == 0) {
+                    Os.sleep(1);
+                } else {
+                    Os.pause();
+                }
+            }
+        }));
+        final Rnd configRnd = new Rnd(masterRnd.nextLong(), masterRnd.nextLong());
+        threads.add(thread("fiber-fuzz-r" + round + "-config", firstError, started, () -> {
+            while (!isDriversDone.get()) {
+                runtime.updateConfiguration(
+                        1 + configRnd.nextInt(MAX_LIVE_FIBER_LIMIT),
+                        1 + configRnd.nextInt(MAX_LIVE_FIBER_LIMIT),
+                        1 + configRnd.nextInt(MAX_MOUNT_BUDGET)
+                );
+                Os.sleep(1);
             }
         }));
 
@@ -337,7 +372,7 @@ public class FiberLifecycleFuzzTest {
         try {
             Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new QuiesceProbeTask()));
             Assert.assertEquals(1, runtime.drain(1));
-            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(tasks.getQuick(0)));
+            Assert.assertEquals(LaunchResult.LAUNCHED, tasks.getQuick(0).recordLaunch(runtime.launch(tasks.getQuick(0))));
             if (!isQuiesceUnderLoad) {
                 Assert.assertEquals(1, runtime.drain(1));
                 awaitLatch(progressWakeProbe.firstWaitArmed, firstError, "fuzz event wait failed to arm");
@@ -368,12 +403,32 @@ public class FiberLifecycleFuzzTest {
             joinThreads(threads, driverCount, threads.size(), THREAD_JOIN_TIMEOUT_MILLIS, firstError);
             throwIfThreadFailed(firstError);
 
+            long progressWakes = 0;
+            long timerWakes = 0;
+            long cancelWakes = 0;
+            for (int i = 0; i < taskCount; i++) {
+                final FuzzTask task = tasks.getQuick(i);
+                progressWakes += task.progressWakeCount.get();
+                timerWakes += task.timerWakeCount.get();
+                cancelWakes += task.cancelWakeCount.get();
+            }
+            LOG.info().$("fuzz round done [round=").$(round)
+                    .$(", launched=").$(runtime.getLaunchCount(LaunchResult.LAUNCHED))
+                    .$(", saturated=").$(runtime.getLaunchCount(LaunchResult.SATURATED))
+                    .$(", mounts=").$(runtime.getMountCount())
+                    .$(", progressWakes=").$(progressWakes)
+                    .$(", timerWakes=").$(timerWakes)
+                    .$(", cancelWakes=").$(cancelWakes)
+                    .$(", maxLive=").$(runtime.getMaxLiveFiberCount())
+                    .$(", mountBudget=").$(runtime.getMountBudget())
+                    .I$();
             Assert.assertEquals(totalOps, opCount.get());
             Assert.assertEquals(FiberRuntimeState.CLOSED, runtime.state());
             Assert.assertEquals(0, runtime.getOutstandingTaskCount());
             Assert.assertEquals(0, runtime.getQueuedCount());
             Assert.assertEquals(0, runtime.getMountedCount());
             Assert.assertEquals(runtime.getCreatedFiberCount(), runtime.getRetiredFiberCount());
+            Assert.assertTrue(runtime.getRetainedFiberCount() <= runtime.getMaxRetainedFiberCount());
             Assert.assertEquals(0, runtime.getInlineSuspendViolationCount());
             Assert.assertEquals(0, runtime.getLaunchCount(LaunchResult.RESOURCE_FAILURE));
             Assert.assertTrue(runtime.getLaunchCount(LaunchResult.LAUNCHED) > 0);
@@ -393,6 +448,9 @@ public class FiberLifecycleFuzzTest {
                 Assert.assertEquals(0, task.exclusionViolationCount.get());
                 Assert.assertEquals(0, task.reasonViolationCount.get());
                 Assert.assertEquals(0, task.unmountedStepViolationCount.get());
+                // a claim ends in onDone() or parks back to IDLE without a callback; abandonment precedes onDone()
+                Assert.assertTrue("more terminal callbacks than claims", task.doneCount.get() <= task.launchedCount.get());
+                Assert.assertTrue(task.abandonedCount.get() <= task.doneCount.get());
                 stepCount += task.stepCount.get();
             }
             Assert.assertTrue("fuzz did not exercise the runtime", stepCount > 0);
@@ -401,6 +459,7 @@ public class FiberLifecycleFuzzTest {
         } finally {
             failure = cleanupRound(
                     runtime,
+                    timerShards,
                     threads,
                     isCarriersDone,
                     isDriversDone,
@@ -460,10 +519,16 @@ public class FiberLifecycleFuzzTest {
     }
 
     private static class FuzzTask extends FiberTask {
+        final AtomicLong abandonedCount = new AtomicLong();
+        final AtomicLong cancelWakeCount = new AtomicLong();
         final FiberCancellationSignal cancellationSignal;
+        final AtomicLong doneCount = new AtomicLong();
         final AtomicInteger exclusionViolationCount = new AtomicInteger();
+        final AtomicLong launchedCount = new AtomicLong();
+        final AtomicLong progressWakeCount = new AtomicLong();
         final AtomicInteger reasonViolationCount = new AtomicInteger();
         final AtomicLong stepCount = new AtomicLong();
+        final AtomicLong timerWakeCount = new AtomicLong();
         final AtomicInteger unmountedStepViolationCount = new AtomicInteger();
         private final AtomicReference<Throwable> firstError;
         private final CountDownLatch firstTaskStep;
@@ -471,11 +536,13 @@ public class FiberLifecycleFuzzTest {
         private final AtomicBoolean isRunning = new AtomicBoolean();
         private final ProgressWakeProbe progressWakeProbe;
         private final Rnd rnd;
+        private final TimerShards timerShards;
         private final FiberEventWaitQueue waitQueue;
 
         FuzzTask(
                 Rnd rnd,
                 FiberEventWaitQueue waitQueue,
+                TimerShards timerShards,
                 FiberCancellationSignal cancellationSignal,
                 AtomicReference<Throwable> firstError,
                 CountDownLatch firstTaskStep,
@@ -488,7 +555,15 @@ public class FiberLifecycleFuzzTest {
             this.isDeterministicFirstWait = isDeterministicFirstWait;
             this.progressWakeProbe = progressWakeProbe;
             this.rnd = rnd;
+            this.timerShards = timerShards;
             this.waitQueue = waitQueue;
+        }
+
+        LaunchResult recordLaunch(LaunchResult result) {
+            if (result == LaunchResult.LAUNCHED) {
+                launchedCount.incrementAndGet();
+            }
+            return result;
         }
 
         private boolean suspendOnEvent(boolean isDeterministicWait) {
@@ -501,8 +576,11 @@ public class FiberLifecycleFuzzTest {
                 return true;
             }
             final boolean isCancellationRequested = !isDeterministicWait && rnd.nextBoolean();
+            final boolean isTimerRequested = !isDeterministicWait && rnd.nextBoolean();
             final long generation = cancellationSignal.getGeneration();
-            final long token = fiber.tryBeginWaitBuild(isCancellationRequested ? 2 : 1);
+            final long token = fiber.tryBeginWaitBuild(
+                    1 + (isCancellationRequested ? 1 : 0) + (isTimerRequested ? 1 : 0)
+            );
             if (token == Fiber.TOKEN_REFUSED) {
                 if (isDeterministicWait) {
                     throw new AssertionError("deterministic event wait was refused");
@@ -529,8 +607,17 @@ public class FiberLifecycleFuzzTest {
                         return true;
                     }
                 }
+                boolean isTimerArmed = false;
+                if (isTimerRequested) {
+                    // an earlier-armed source may already have fired; that refusal is legal too
+                    isTimerArmed = coordinator.armTimer(token, timerShards, MillisecondClockImpl.INSTANCE, rnd.nextInt(3));
+                    if (!isTimerArmed) {
+                        return true;
+                    }
+                }
                 final int reason = fiber.suspendWait(token);
                 if (reason == FiberWaitCoordinator.REASON_PROGRESS) {
+                    progressWakeCount.incrementAndGet();
                     progressWakeProbe.progressWakeCount.incrementAndGet();
                     if (isDeterministicWait) {
                         progressWakeProbe.firstProgressResume.countDown();
@@ -541,8 +628,15 @@ public class FiberLifecycleFuzzTest {
                 if (isDeterministicWait) {
                     throw new AssertionError("unexpected deterministic wake reason [reason=" + reason + ']');
                 }
-                if (reason == FiberWaitCoordinator.REASON_SHUTDOWN
-                        || (reason == FiberWaitCoordinator.REASON_CANCEL && isCancellationArmed)) {
+                if (reason == FiberWaitCoordinator.REASON_TIMER && isTimerArmed) {
+                    timerWakeCount.incrementAndGet();
+                    return rnd.nextBoolean();
+                }
+                if (reason == FiberWaitCoordinator.REASON_CANCEL && isCancellationArmed) {
+                    cancelWakeCount.incrementAndGet();
+                    return true;
+                }
+                if (reason == FiberWaitCoordinator.REASON_SHUTDOWN) {
                     return true;
                 }
                 reasonViolationCount.incrementAndGet();
@@ -550,6 +644,16 @@ public class FiberLifecycleFuzzTest {
             } finally {
                 coordinator.teardownWait(token);
             }
+        }
+
+        @Override
+        protected void onAbandoned() {
+            abandonedCount.incrementAndGet();
+        }
+
+        @Override
+        protected void onDone() {
+            doneCount.incrementAndGet();
         }
 
         @Override
