@@ -623,6 +623,19 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
     }
 
+    private static void freeCompiledQueryAfterOwnerStartFailure(CompiledQuery cq, Throwable ownerStartFailure) {
+        Throwable cleanupFailure = null;
+        try {
+            cq.closeAllButSelect();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cq.getOperation());
+        if (cleanupFailure != null && cleanupFailure != ownerStartFailure) {
+            ownerStartFailure.addSuppressed(cleanupFailure);
+        }
+    }
+
     /**
      * Returns {@code true} when a compiled query should stream result rows back
      * to the client. {@code SELECT} and {@code EXPLAIN} always do; {@code
@@ -837,6 +850,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
     }
 
+    // Egress message dispatch and query execution
+
     /**
      * Step 2 of the cache-reset emission. Writes the CACHE_RESET frame using
      * the bitmask staged by {@link #applyCacheResetForUpcomingQuery} and
@@ -873,8 +888,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         state.setPendingCacheResetMask((byte) 0);
         sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
     }
-
-    // Egress message dispatch and query execution
 
     /**
      * Runs a non-SELECT {@link CompiledQuery} synchronously and replies with an
@@ -948,19 +961,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
         }
         sendExecDone(context, state, requestId, type, rowsAffected);
-    }
-
-    private static void freeCompiledQueryAfterOwnerStartFailure(CompiledQuery cq, Throwable ownerStartFailure) {
-        Throwable cleanupFailure = null;
-        try {
-            cq.closeAllButSelect();
-        } catch (Throwable th) {
-            cleanupFailure = th;
-        }
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cq.getOperation());
-        if (cleanupFailure != null && cleanupFailure != ownerStartFailure) {
-            ownerStartFailure.addSuppressed(cleanupFailure);
-        }
     }
 
     private void finalizeHandshake(HttpConnectionContext context, QwpEgressProcessorState state) {
@@ -1224,14 +1224,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // so reset to the default, matching JsonQueryProcessor.
             circuitBreaker.resetMaxTimeToDefault();
 
-            // Bounded retry loop: a factory returned by the compile cache may have a
-            // stale TableReader reference if the table was dropped+recreated after
-            // the factory was compiled (matching by SQL text alone; tableId and
-            // metadataVersion don't survive). Detected by
-            // {@link TableReferenceOutOfDateException} on cursor open. We drop the
-            // stale factory and recompile, matching HTTP/PGWire's bounded
-            // maxSqlRecompileAttempts behavior. The retry stays before beginStreaming*,
-            // so no query bytes have reached the client yet.
+            // Bounded retry loop: a cached SELECT factory or compiled INSERT can
+            // become stale after a concurrent schema change. Cursor acquisition or
+            // insert writer validation throws TableReferenceOutOfDateException before
+            // producing query results. Recompile with HTTP/PGWire's bounded
+            // maxSqlRecompileAttempts behavior.
             //
             // Compose the select-cache key: SQL text on its own for bindless
             // queries (existing shape), or [type0,type1,...]sql when binds are
@@ -1260,7 +1257,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                             // cached: they mutate state and can't be reused as plans.
                             if (!isStreamingType(type, cq)) {
                                 try {
-                                    state.beginSqlExecutionOwner(decoder.sql, sqlCtx, type);
+                                    // Keep the request's owner across stale-plan retries, as on the streaming path.
+                                    if (!state.isSqlExecutionOwnerStarted()) {
+                                        state.beginSqlExecutionOwner(decoder.sql, sqlCtx, type);
+                                    }
                                 } catch (RuntimeException | Error e) {
                                     freeCompiledQueryAfterOwnerStartFailure(cq, e);
                                     throw e;
@@ -1280,9 +1280,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     if (!state.isSqlExecutionOwnerStarted()) {
                         state.beginSqlExecutionOwner(decoder.sql, sqlCtx, compiledQueryType);
                     }
-                    // Acquire the cursor inside the retry loop --
-                    // TableReferenceOutOfDateException can fire only here, never from
-                    // factory or metadata access. Prefer the PageFrameCursor fast path
+                    // Acquire the cursor inside the retry loop so a stale SELECT factory
+                    // can be recompiled. Prefer the PageFrameCursor fast path
                     // when the factory supports it: it hands us flat column addresses
                     // per frame and lets the SYMBOL fast path resolve dict keys via
                     // PageFrameMemoryRecord.getInt. Factories that don't support it
@@ -1306,8 +1305,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 } catch (TableReferenceOutOfDateException e) {
                     // Free any partially-acquired resources from this attempt. After
                     // beginStreaming{,PageFrame} they'd be owned by state, but the
-                    // exception fires BEFORE that (on getCursor / getPageFrameCursor),
-                    // so we still own them here.
+                    // exception fires before that, so we still own them here.
+                    // executeNonSelect closes the failed INSERT operation's resources.
                     cursor = Misc.free(cursor);
                     pageFrameCursor = Misc.free(pageFrameCursor);
                     factory = Misc.free(factory);
