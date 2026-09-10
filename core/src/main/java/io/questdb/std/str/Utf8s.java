@@ -52,6 +52,7 @@ public final class Utf8s {
     private static final long DOT_WORD = SwarUtils.broadcast((byte) '.');
     private static final char[] HEX_CHARS = "0123456789ABCDEF".toCharArray();
     private static final FiberLocal<StringSink> tlSink = new FiberLocal<>(StringSink::new);
+
     private Utf8s() {
     }
 
@@ -837,32 +838,6 @@ public final class Utf8s {
         return utf8 == null || utf8.isAscii() || isAsciiBytes0(utf8);
     }
 
-    private static boolean isAsciiBytes0(@NotNull Utf8Sequence utf8) {
-        final int size = utf8.size();
-        if (utf8 instanceof DirectUtf8Sequence direct) {
-            final boolean ascii = isAscii(direct.ptr(), size);
-            Reference.reachabilityFence(direct);
-            return ascii;
-        }
-        if (size >= Long.BYTES) {
-            int i = 0;
-            for (int longLimit = size - Long.BYTES; i <= longLimit; i += Long.BYTES) {
-                if (!isAscii(utf8.longAt(i))) {
-                    return false;
-                }
-            }
-            // Check a trailing partial word with one overlapping load instead
-            // of up to seven individual byteAt() calls.
-            return i >= size || isAscii(utf8.longAt(size - Long.BYTES));
-        }
-        for (int i = 0; i < size; i++) {
-            if (utf8.byteAt(i) < 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     // checks 8 consecutive bytes at once for non-ASCII chars
     public static boolean isAscii(long w) {
         return (w & ASCII_MASK) == 0;
@@ -1444,14 +1419,6 @@ public final class Utf8s {
         return true;
     }
 
-    private static boolean utf8ToUtf16(@NotNull DirectUtf8Sequence seq, @NotNull Utf16Sink sink) {
-        try {
-            return utf8ToUtf16(seq.lo(), seq.hi(), sink);
-        } finally {
-            Reference.reachabilityFence(seq);
-        }
-    }
-
     /**
      * Decodes bytes from the given UTF-8 sink into char sink.
      * Note: operation might fail in the middle and leave sink in inconsistent state.
@@ -1489,53 +1456,6 @@ public final class Utf8s {
      */
     public static boolean utf8ToUtf16(@NotNull Utf8Sequence seq, @NotNull Utf16Sink sink) {
         return utf8ToUtf16(seq, 0, seq.size(), sink);
-    }
-
-    /**
-     * Same as {@link #utf8ToUtf16OrView(Utf8Sequence, MutableUtf16Sink)}, except that malformed
-     * UTF-8 raises an error instead of reading as null. Write paths call this one: a reader can
-     * only choose between null and garbage, but a writer would be discarding a value it was given.
-     *
-     * @param seq        source UTF-8 sequence; must be non-null
-     * @param decodeSink scratch UTF-16 sink used only on the non-ASCII path
-     * @return a CharSequence exposing {@code seq} as UTF-16 code points
-     * @throws CairoException if {@code seq} contains malformed UTF-8
-     */
-    public static @NotNull CharSequence utf8ToUtf16OrThrow(@NotNull Utf8Sequence seq, @NotNull MutableUtf16Sink decodeSink) {
-        final CharSequence utf16 = utf8ToUtf16OrView(seq, decodeSink);
-        if (utf16 == null) {
-            throw CairoException.malformedUtf8(seq);
-        }
-        return utf16;
-    }
-
-    /**
-     * Returns a CharSequence view of {@code seq} whose chars are real UTF-16 code
-     * points. If {@link #isAscii(Utf8Sequence)} reports true, the raw bytes are
-     * already valid code points one-to-one and the zero-allocation
-     * {@link Utf8Sequence#asAsciiCharSequence()} view is returned. Otherwise the
-     * sequence is decoded into {@code decodeSink}, which is cleared first.
-     * <p>
-     * Callers must not mutate {@code decodeSink} until they finish reading the
-     * returned CharSequence, since the returned reference may alias it.
-     * <p>
-     * Read-path conversion: malformed UTF-8 reads as null. Write paths call
-     * {@link #utf8ToUtf16OrThrow(Utf8Sequence, MutableUtf16Sink)} instead.
-     *
-     * @param seq        source UTF-8 sequence; must be non-null
-     * @param decodeSink scratch UTF-16 sink used only on the non-ASCII path
-     * @return a CharSequence exposing {@code seq} as UTF-16 code points, or null
-     * if {@code seq} contains malformed UTF-8
-     */
-    public static @Nullable CharSequence utf8ToUtf16OrView(@NotNull Utf8Sequence seq, @NotNull MutableUtf16Sink decodeSink) {
-        if (isAscii(seq)) {
-            return seq.asAsciiCharSequence();
-        }
-        decodeSink.clear();
-        final boolean valid = seq instanceof DirectUtf8Sequence direct
-                ? utf8ToUtf16(direct, decodeSink)
-                : utf8ToUtf16(seq, decodeSink);
-        return valid ? decodeSink : null;
     }
 
     /**
@@ -1617,6 +1537,53 @@ public final class Utf8s {
             }
         }
         return true;
+    }
+
+    /**
+     * Same as {@link #utf8ToUtf16OrView(Utf8Sequence, MutableUtf16Sink)}, except that malformed
+     * UTF-8 raises an error instead of reading as null. Write paths call this one: a reader can
+     * only choose between null and garbage, but a writer would be discarding a value it was given.
+     *
+     * @param seq        source UTF-8 sequence; must be non-null
+     * @param decodeSink scratch UTF-16 sink used only on the non-ASCII path
+     * @return a CharSequence exposing {@code seq} as UTF-16 code points
+     * @throws CairoException if {@code seq} contains malformed UTF-8
+     */
+    public static @NotNull CharSequence utf8ToUtf16OrThrow(@NotNull Utf8Sequence seq, @NotNull MutableUtf16Sink decodeSink) {
+        final CharSequence utf16 = utf8ToUtf16OrView(seq, decodeSink);
+        if (utf16 == null) {
+            throw CairoException.malformedUtf8(seq);
+        }
+        return utf16;
+    }
+
+    /**
+     * Returns a CharSequence view of {@code seq} whose chars are real UTF-16 code
+     * points. If {@link #isAscii(Utf8Sequence)} reports true, the raw bytes are
+     * already valid code points one-to-one and the zero-allocation
+     * {@link Utf8Sequence#asAsciiCharSequence()} view is returned. Otherwise the
+     * sequence is decoded into {@code decodeSink}, which is cleared first.
+     * <p>
+     * Callers must not mutate {@code decodeSink} until they finish reading the
+     * returned CharSequence, since the returned reference may alias it.
+     * <p>
+     * Read-path conversion: malformed UTF-8 reads as null. Write paths call
+     * {@link #utf8ToUtf16OrThrow(Utf8Sequence, MutableUtf16Sink)} instead.
+     *
+     * @param seq        source UTF-8 sequence; must be non-null
+     * @param decodeSink scratch UTF-16 sink used only on the non-ASCII path
+     * @return a CharSequence exposing {@code seq} as UTF-16 code points, or null
+     * if {@code seq} contains malformed UTF-8
+     */
+    public static @Nullable CharSequence utf8ToUtf16OrView(@NotNull Utf8Sequence seq, @NotNull MutableUtf16Sink decodeSink) {
+        if (isAscii(seq)) {
+            return seq.asAsciiCharSequence();
+        }
+        decodeSink.clear();
+        final boolean valid = seq instanceof DirectUtf8Sequence direct
+                ? utf8ToUtf16(direct, decodeSink)
+                : utf8ToUtf16(seq, decodeSink);
+        return valid ? decodeSink : null;
     }
 
     /**
@@ -1839,6 +1806,32 @@ public final class Utf8s {
         StringSink b = tlSink.get();
         b.clear();
         return b;
+    }
+
+    private static boolean isAsciiBytes0(@NotNull Utf8Sequence utf8) {
+        final int size = utf8.size();
+        if (utf8 instanceof DirectUtf8Sequence direct) {
+            final boolean ascii = isAscii(direct.ptr(), size);
+            Reference.reachabilityFence(direct);
+            return ascii;
+        }
+        if (size >= Long.BYTES) {
+            int i = 0;
+            for (int longLimit = size - Long.BYTES; i <= longLimit; i += Long.BYTES) {
+                if (!isAscii(utf8.longAt(i))) {
+                    return false;
+                }
+            }
+            // Check a trailing partial word with one overlapping load instead
+            // of up to seven individual byteAt() calls.
+            return i >= size || isAscii(utf8.longAt(size - Long.BYTES));
+        }
+        for (int i = 0; i < size; i++) {
+            if (utf8.byteAt(i) < 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isMalformed3(int b1, int b2, int b3) {
@@ -2280,6 +2273,14 @@ public final class Utf8s {
             return utf8Decode3BytesZ(lo, b, sink);
         }
         return utf8Decode4BytesZ(lo, b, sink);
+    }
+
+    private static boolean utf8ToUtf16(@NotNull DirectUtf8Sequence seq, @NotNull Utf16Sink sink) {
+        try {
+            return utf8ToUtf16(seq.lo(), seq.hi(), sink);
+        } finally {
+            Reference.reachabilityFence(seq);
+        }
     }
 
     private static int validateUtf8Decode2Bytes(@NotNull Utf8Sequence seq, int index) {

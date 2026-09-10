@@ -48,6 +48,7 @@ import org.jetbrains.annotations.Nullable;
 public class ToStrDateFunctionFactory implements FunctionFactory {
 
     private static final FiberLocal<StringSink> tlSink = new FiberLocal<>(StringSink::new);
+
     @Override
     public String getSignature() {
         return "to_str(Ms)";

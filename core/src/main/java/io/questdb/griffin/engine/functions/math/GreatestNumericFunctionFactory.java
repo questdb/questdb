@@ -67,6 +67,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class GreatestNumericFunctionFactory implements FunctionFactory {
     private static final FiberLocal<IntHashSet> tlSet = new FiberLocal<>(IntHashSet::new);
+
     @Override
     public String getSignature() {
         return "greatest(V)";

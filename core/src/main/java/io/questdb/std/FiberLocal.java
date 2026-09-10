@@ -82,8 +82,7 @@ public final class FiberLocal<T> {
     public T get() {
         final ObjList<Object> slots = holder(CarrierIdentity.current()).current;
         if (index < slots.size()) {
-            @SuppressWarnings("unchecked")
-            final T value = (T) slots.getQuick(index);
+            @SuppressWarnings("unchecked") final T value = (T) slots.getQuick(index);
             if (value != null) {
                 return value;
             }

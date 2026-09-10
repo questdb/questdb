@@ -16,6 +16,7 @@ import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 public class HttpCookieHandlerImpl implements HttpCookieHandler {
     protected static final FiberLocal<StringSink> tlSink1 = new FiberLocal<>(StringSink::new);
     protected static final FiberLocal<StringSink> tlSink2 = new FiberLocal<>(StringSink::new);
+
     @Override
     public boolean parseCookies(HttpConnectionContext context) {
         final CharSequenceObjHashMap<CharSequence> parsedCookies = context.getParsedCookiesMap();

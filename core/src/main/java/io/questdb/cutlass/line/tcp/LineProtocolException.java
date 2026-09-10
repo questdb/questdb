@@ -36,6 +36,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class LineProtocolException extends CairoException {
     private static final FiberLocal<LineProtocolException> tlException = new FiberLocal<>(LineProtocolException::new);
+
     public static LineProtocolException boundsError(long entityValue, int colType, CharSequence tableNameUtf16, CharSequence columnName) {
         return instance()
                 .put("table: ").put(tableNameUtf16)

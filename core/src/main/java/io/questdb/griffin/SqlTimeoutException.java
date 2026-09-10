@@ -28,6 +28,7 @@ import io.questdb.std.FiberLocal;
 
 public class SqlTimeoutException extends SqlException {
     private static final FiberLocal<SqlTimeoutException> tlException = new FiberLocal<>(SqlTimeoutException::new);
+
     public static SqlTimeoutException timeout(CharSequence message) {
         SqlTimeoutException ex = tlException.get();
         ex.put(message);

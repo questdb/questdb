@@ -29,6 +29,7 @@ import io.questdb.std.FiberLocal;
 
 public class LimitOverflowException extends CairoException {
     private static final FiberLocal<LimitOverflowException> tlException = new FiberLocal<>(LimitOverflowException::new);
+
     public static LimitOverflowException instance() {
         LimitOverflowException ex = tlException.get();
         ex.message.clear();

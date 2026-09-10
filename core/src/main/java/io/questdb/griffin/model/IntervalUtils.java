@@ -91,6 +91,7 @@ public final class IntervalUtils {
     //   3. tlDateVarSink is used for date variable formatting (isolated from other sinks)
     private static final FiberLocal<StringSink> tlSink1 = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<StringSink> tlSink2 = new FiberLocal<>(StringSink::new);
+
     /**
      * Formats a timestamp as "YYYY-MM-DD" into the given sink.
      *
@@ -1273,6 +1274,44 @@ public final class IntervalUtils {
         }
     }
 
+    /**
+     * Sorts the intervals at {@code [startIndex, size)} chronologically and unions them with
+     * each other in place, leaving {@code [0, startIndex)} untouched. Coalescing follows the
+     * same rule as {@link #unionInPlace(LongList, int)} - intervals merge only when they overlap
+     * or touch ({@code lo <= prevHi}) - so unioning a batch through this method produces exactly
+     * the same list as feeding the batch one interval at a time through
+     * {@link #unionInPlace(LongList, int)}, at O(D log D) cost instead of O(D^2) for D
+     * intervals. The batch may arrive in any order.
+     *
+     * @param intervals  list holding an already-merged prefix followed by an unordered batch
+     * @param startIndex first index of the batch; must be even
+     */
+    public static void sortAndUnionInPlace(LongList intervals, int startIndex) {
+        final int size = intervals.size();
+        if (size - startIndex <= 2) {
+            // empty batch or a single interval is already a merged union
+            return;
+        }
+        LongGroupSort.quickSort(2, intervals, startIndex >> 1, size >> 1);
+        int writePoint = startIndex + 2;
+        for (int readPoint = startIndex + 2; readPoint < size; readPoint += 2) {
+            final long lo = intervals.getQuick(readPoint);
+            final long hi = intervals.getQuick(readPoint + 1);
+            final long prevHi = intervals.getQuick(writePoint - 1);
+            if (lo <= prevHi) {
+                // overlaps or touches the previously written interval - extend it
+                if (hi > prevHi) {
+                    intervals.setQuick(writePoint - 1, hi);
+                }
+            } else {
+                intervals.setQuick(writePoint, lo);
+                intervals.setQuick(writePoint + 1, hi);
+                writePoint += 2;
+            }
+        }
+        intervals.setPos(writePoint);
+    }
+
     public static void subtract(LongList intervals, int divider) {
         IntervalUtils.invert(intervals, divider);
         IntervalUtils.intersectInPlace(intervals, divider);
@@ -1392,44 +1431,6 @@ public final class IntervalUtils {
     }
 
     /**
-     * Sorts the intervals at {@code [startIndex, size)} chronologically and unions them with
-     * each other in place, leaving {@code [0, startIndex)} untouched. Coalescing follows the
-     * same rule as {@link #unionInPlace(LongList, int)} - intervals merge only when they overlap
-     * or touch ({@code lo <= prevHi}) - so unioning a batch through this method produces exactly
-     * the same list as feeding the batch one interval at a time through
-     * {@link #unionInPlace(LongList, int)}, at O(D log D) cost instead of O(D^2) for D
-     * intervals. The batch may arrive in any order.
-     *
-     * @param intervals  list holding an already-merged prefix followed by an unordered batch
-     * @param startIndex first index of the batch; must be even
-     */
-    public static void sortAndUnionInPlace(LongList intervals, int startIndex) {
-        final int size = intervals.size();
-        if (size - startIndex <= 2) {
-            // empty batch or a single interval is already a merged union
-            return;
-        }
-        LongGroupSort.quickSort(2, intervals, startIndex >> 1, size >> 1);
-        int writePoint = startIndex + 2;
-        for (int readPoint = startIndex + 2; readPoint < size; readPoint += 2) {
-            final long lo = intervals.getQuick(readPoint);
-            final long hi = intervals.getQuick(readPoint + 1);
-            final long prevHi = intervals.getQuick(writePoint - 1);
-            if (lo <= prevHi) {
-                // overlaps or touches the previously written interval - extend it
-                if (hi > prevHi) {
-                    intervals.setQuick(writePoint - 1, hi);
-                }
-            } else {
-                intervals.setQuick(writePoint, lo);
-                intervals.setQuick(writePoint + 1, hi);
-                writePoint += 2;
-            }
-        }
-        intervals.setPos(writePoint);
-    }
-
-    /**
      * Adds a duration string to a timestamp. Supports multi-unit format like "5h3m31s".
      * Supported units: y (years), M (months), w (weeks), d (days), h (hours),
      * m (minutes), s (seconds), T (millis), u (micros), n (nanos).
@@ -1479,17 +1480,6 @@ public final class IntervalUtils {
             throw SqlException.$(position, "Missing unit at end of duration");
         }
         return timestamp;
-    }
-
-    static long resolveDurationLo(long anchor, long endExclusive) {
-        return endExclusive >= anchor ? anchor : endExclusive;
-    }
-
-    static long resolveDurationHi(long anchor, long endExclusive) {
-        if (endExclusive >= anchor) {
-            return endExclusive - 1;
-        }
-        return anchor - 1;
     }
 
     private static void addLinearInterval(long period, int count, LongList out) {
@@ -4729,6 +4719,17 @@ public final class IntervalUtils {
 
     static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
         replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
+    }
+
+    static long resolveDurationHi(long anchor, long endExclusive) {
+        if (endExclusive >= anchor) {
+            return endExclusive - 1;
+        }
+        return anchor - 1;
+    }
+
+    static long resolveDurationLo(long anchor, long endExclusive) {
+        return endExclusive >= anchor ? anchor : endExclusive;
     }
 
     /**

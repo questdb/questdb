@@ -29,6 +29,7 @@ import io.questdb.std.FiberLocal;
 
 public class EntryLockedException extends CairoException {
     private static final FiberLocal<EntryLockedException> tlException = new FiberLocal<>(EntryLockedException::new);
+
     public static EntryLockedException instance(CharSequence reason) {
         EntryLockedException ex = tlException.get();
         ex.message.clear();

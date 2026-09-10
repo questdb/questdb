@@ -67,6 +67,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class LeastNumericFunctionFactory implements FunctionFactory {
     private static final FiberLocal<IntHashSet> tlSet = new FiberLocal<>(IntHashSet::new);
+
     @Override
     public String getSignature() {
         return "least(V)";
