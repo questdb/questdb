@@ -51,9 +51,9 @@ public class LineTcpDecimalCreateTest extends AbstractLineTcpReceiverTest {
     @After
     @Override
     public void tearDown() throws Exception {
+        LogFactory.disableGuaranteedLogging(LineTcpConnectionContext.class);
         capture.stop();
         super.tearDown();
-        LogFactory.disableGuaranteedLogging(LineTcpConnectionContext.class);
     }
 
     @Test

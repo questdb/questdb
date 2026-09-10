@@ -63,9 +63,9 @@ public class LineDecimalTargetColumnTypeTest extends AbstractBootstrapTest {
     @After
     @Override
     public void tearDown() throws Exception {
+        LogFactory.disableGuaranteedLogging(LineTcpConnectionContext.class, LineTcpMeasurementEvent.class);
         capture.stop();
         super.tearDown();
-        LogFactory.disableGuaranteedLogging(LineTcpConnectionContext.class, LineTcpMeasurementEvent.class);
     }
 
     @Test

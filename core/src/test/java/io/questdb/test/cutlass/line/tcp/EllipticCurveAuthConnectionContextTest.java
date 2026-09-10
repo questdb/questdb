@@ -104,8 +104,8 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
     @After
     @Override
     public void tearDown() throws Exception {
-        super.tearDown();
         LogFactory.disableGuaranteedLogging(EllipticCurveAuthenticator.class, LineTcpConnectionContext.class);
+        super.tearDown();
     }
 
     @Test

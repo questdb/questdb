@@ -223,10 +223,10 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     @After
     @Override
     public void tearDown() throws Exception {
+        LogFactory.disableGuaranteedLogging(LineTcpConnectionContext.class);
         capture.stop();
         stopQuestDB();
         super.tearDown();
-        LogFactory.disableGuaranteedLogging(LineTcpConnectionContext.class);
     }
 
     @Test
