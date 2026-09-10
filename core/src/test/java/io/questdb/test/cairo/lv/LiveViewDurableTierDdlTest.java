@@ -1350,6 +1350,235 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testTtlEvictionInsideAnO3RepairSplicesRetentionIntoOneGeneration() throws Exception {
+        // The removal that lands inside an out-of-order repair's own replacement apply. The
+        // repair holds a capture frozen before the replay, and the batch it meets is a TTL
+        // eviction the replacement's commit made durable. Both dispositions belong to one
+        // generation: the roots inside the evicted hour retire, the repaired boundaries take
+        // the replay's positions, and one range-add per removed interval lowers every
+        // position above it - including the repaired ones, each of which is itself a
+        // surviving root above the interval.
+        //
+        // The branch used to refuse: the capture froze a generation counting rows the
+        // eviction took, and the splice's row-count proof assumed the replacement was the
+        // only thing that changed the table, so the whole ladder was retired and the view
+        // rebuilt its history from the frontier. Without the change this test fails on the
+        // generation, which comes back as the retired timeline's LONG_NULL.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY HOUR START FROM NOW AS " +
+                    "(SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                    "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW) AS s FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Armed while the view is empty and the clock sits below the data, so the
+                // ALTER's own apply evicts nothing: TTL judges age by the smaller of the
+                // table frontier and the wall clock.
+                execute("ALTER LIVE VIEW lv SET TTL 1 HOUR");
+                driveLiveViewWalApply(job);
+
+                // One commit - and so one logical root - per row. 02:00:20 and 02:00:30 are
+                // the pair the repair below re-versions; 01:00:10 is the root the eviction
+                // retires, 02:00:10 the reused prefix and 03:00:10 the converged suffix.
+                flushOneRow(job, "2026-01-01T01:00:10.000000Z", 1, 1);
+                flushOneRow(job, "2026-01-01T02:00:10.000000Z", 2, 2);
+                flushOneRow(job, "2026-01-01T02:00:20.000000Z", 3, 3);
+                flushOneRow(job, "2026-01-01T02:00:30.000000Z", 4, 4);
+                flushOneRow(job, "2026-01-01T03:00:10.000000Z", 5, 5);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                assertLadder(
+                        instance,
+                        ts("2026-01-01T01:00:10.000000Z"), 1,
+                        ts("2026-01-01T02:00:10.000000Z"), 2,
+                        ts("2026-01-01T02:00:20.000000Z"), 3,
+                        ts("2026-01-01T02:00:30.000000Z"), 4,
+                        ts("2026-01-01T03:00:10.000000Z"), 5
+                );
+                final long generationBefore = readGeneration(lvToken);
+
+                // Hour 01 ends at 02:00, so an hour past that is 03:00 - which the frontier
+                // has reached. Nothing has committed since, so the eviction is owed and the
+                // next commit to the view's table is the repair's own replacement.
+                setCurrentMicros(ts("2026-01-01T03:00:10.000000Z"));
+                execute("INSERT INTO base VALUES ('2026-01-01T02:00:15.000000Z', 'a', 100)");
+                driveUntil(
+                        job,
+                        () -> {
+                            try (TableReader reader = engine.getReader(lvToken)) {
+                                return reader.size() == 5
+                                        && reader.getPartitionCount() == 2
+                                        && reader.getMinTimestamp() == ts("2026-01-01T02:00:10.000000Z");
+                            }
+                        },
+                        "the repair's replacement never evicted hour 01"
+                );
+
+                // The repair's own output, with the out-of-order row folded into the frame of
+                // every row within 30 seconds above it, and hour 01 gone from the table.
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\ts
+                                2026-01-01T02:00:10.000000Z\ta\t2.0
+                                2026-01-01T02:00:15.000000Z\ta\t102.0
+                                2026-01-01T02:00:20.000000Z\ta\t105.0
+                                2026-01-01T02:00:30.000000Z\ta\t109.0
+                                2026-01-01T03:00:10.000000Z\ta\t5.0
+                                """);
+
+                // One publication, not a retire plus a fresh seal: every root the view had
+                // above the evicted hour is still addressable under its own key, and the
+                // splice and the retention advanced the generation once between them.
+                Assert.assertEquals(
+                        "the repair and its retention must publish exactly one generation",
+                        generationBefore + 1,
+                        readGeneration(lvToken)
+                );
+                assertTimelineExists(lvToken, true);
+                Assert.assertEquals("the evicted hour's root, and only it", 1, readRetiredCheckpointCount(lvToken));
+                assertLadder(
+                        instance,
+                        ts("2026-01-01T02:00:10.000000Z"), 1,
+                        ts("2026-01-01T02:00:20.000000Z"), 3,
+                        ts("2026-01-01T02:00:30.000000Z"), 4,
+                        ts("2026-01-01T03:00:10.000000Z"), 5
+                );
+                Assert.assertEquals("the evicted row must leave the lifetime counter", 5, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            // The ladder the splice published is the one a restart reads back, and the
+            // evicted hour stays evicted: recovery does not re-derive it.
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT ts, s FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\ts
+                            2026-01-01T02:00:10.000000Z\t2.0
+                            2026-01-01T02:00:15.000000Z\t102.0
+                            2026-01-01T02:00:20.000000Z\t105.0
+                            2026-01-01T02:00:30.000000Z\t109.0
+                            2026-01-01T03:00:10.000000Z\t5.0
+                            """);
+            Assert.assertEquals(5, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
+    public void testTtlEvictionInsideAnO3ResumeSplicesRetentionIntoOneGeneration() throws Exception {
+        // The same removal, on the repair's other executor. A correction two rows below the
+        // frontier leaves the anchor at 03:00:50 a short tail, while localizing would warm
+        // the frame up from 03:00:25 and - the frame reaching past the frontier - read to the
+        // end of the base anyway, so the plan resumes from the anchor and the capture covers
+        // the roots above it alone.
+        //
+        // That path keeps its lifetime counter rather than re-seating it from the table, so a
+        // published retention has to take the evicted rows off the counter itself before the
+        // post-replay seal stamps a head position on it - which is what the row count and the
+        // head's own position below prove.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY HOUR START FROM NOW AS " +
+                    "(SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                    "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW) AS s FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("ALTER LIVE VIEW lv SET TTL 1 HOUR");
+                driveLiveViewWalApply(job);
+
+                flushOneRow(job, "2026-01-01T01:00:10.000000Z", 1, 1);
+                flushOneRow(job, "2026-01-01T02:00:10.000000Z", 2, 2);
+                flushOneRow(job, "2026-01-01T03:00:10.000000Z", 3, 3);
+                flushOneRow(job, "2026-01-01T03:00:20.000000Z", 4, 4);
+                flushOneRow(job, "2026-01-01T03:00:30.000000Z", 5, 5);
+                flushOneRow(job, "2026-01-01T03:00:40.000000Z", 6, 6);
+                flushOneRow(job, "2026-01-01T03:00:50.000000Z", 7, 7);
+                flushOneRow(job, "2026-01-01T03:01:00.000000Z", 8, 8);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final long generationBefore = readGeneration(lvToken);
+
+                // Hour 01 ends at 02:00, so an hour past that is 03:00 - which the frontier
+                // has passed. Nothing has committed since, so the eviction is owed and the
+                // next commit to the view's table is the resume's own replacement.
+                setCurrentMicros(ts("2026-01-01T03:01:00.000000Z"));
+                execute("INSERT INTO base VALUES ('2026-01-01T03:00:55.000000Z', 'a', 100)");
+                driveUntil(
+                        job,
+                        () -> {
+                            try (TableReader reader = engine.getReader(lvToken)) {
+                                return reader.size() == 8
+                                        && reader.getPartitionCount() == 2
+                                        && reader.getMinTimestamp() == ts("2026-01-01T02:00:10.000000Z");
+                            }
+                        },
+                        "the resume's replacement never evicted hour 01"
+                );
+
+                Assert.assertEquals(
+                        "the resume must re-evaluate 03:00:55 and 03:01:00 and nothing else",
+                        2,
+                        instance.getO3ResumeReplayRows()
+                );
+                // The oracle: the same window over the base, minus the hour the eviction took.
+                // The frame is 30 seconds wide and the hours are an hour apart, so no surviving
+                // row's frame ever reached into hour 01 and filtering the input is equivalent
+                // to removing the output.
+                assertSqlCursors(
+                        "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                                "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW) AS s " +
+                                "FROM base WHERE ts >= '2026-01-01T02:00:00.000000Z'",
+                        "SELECT ts, sym, s FROM lv"
+                );
+
+                Assert.assertEquals(
+                        "the resume and its retention must publish exactly one generation",
+                        generationBefore + 1,
+                        readGeneration(lvToken)
+                );
+                assertTimelineExists(lvToken, true);
+                Assert.assertEquals("the evicted hour's root, and only it", 1, readRetiredCheckpointCount(lvToken));
+                assertLadder(
+                        instance,
+                        ts("2026-01-01T02:00:10.000000Z"), 1,
+                        ts("2026-01-01T03:00:10.000000Z"), 2,
+                        ts("2026-01-01T03:00:20.000000Z"), 3,
+                        ts("2026-01-01T03:00:30.000000Z"), 4,
+                        ts("2026-01-01T03:00:40.000000Z"), 5,
+                        ts("2026-01-01T03:00:50.000000Z"), 6,
+                        ts("2026-01-01T03:01:00.000000Z"), 8
+                );
+                Assert.assertEquals("the evicted row must leave the lifetime counter", 8, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            // The ladder the splice published is the one a restart reads back, and the
+            // evicted hour stays evicted: recovery does not re-derive it.
+            restartAndAssertRestoredFromTimeline();
+            assertSqlCursors(
+                    "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                            "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW) AS s " +
+                            "FROM base WHERE ts >= '2026-01-01T02:00:00.000000Z'",
+                    "SELECT ts, sym, s FROM lv"
+            );
+            Assert.assertEquals(8, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
     public void testTtlEvictionInsideDedupCleanCycleRebuildsTier() throws Exception {
         // A view over a DEDUP base is coupled: it has no un-flushed lead, applies inline every
         // cycle, and its disk-subset publish is the tier's only feed. When the range is provably
@@ -2182,6 +2411,16 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
      */
     private void flushRow(LiveViewRefreshJob job, String day, int x, long expectedDurableRows) throws Exception {
         execute("INSERT INTO base VALUES ('" + day + "T00:00:00.000000Z', " + x + ")");
+        driveUntilDurableRowCount(job, expectedDurableRows);
+        driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * The same one-commit-per-row drive for the three-column {@code (ts, sym, x)} base the
+     * out-of-order repair cases build their cadence history over.
+     */
+    private void flushOneRow(LiveViewRefreshJob job, String timestamp, long x, long expectedDurableRows) throws Exception {
+        execute("INSERT INTO base VALUES ('" + timestamp + "', 'a', " + x + ")");
         driveUntilDurableRowCount(job, expectedDurableRows);
         driveRefreshToQuiescence(job);
     }

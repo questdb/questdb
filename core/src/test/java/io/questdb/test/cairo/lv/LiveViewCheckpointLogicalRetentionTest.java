@@ -60,7 +60,10 @@ import org.junit.Test;
  * durable-tier retention (TTL eviction or {@code DROP PARTITION}), which drops
  * exactly the boundaries inside the removed partitions and lowers the survivors
  * above them by the rows that went; the last case here pins that the retention
- * loses those boundaries and nothing else.
+ * loses those boundaries and nothing else. A removal that lands inside a repair's
+ * own replacement apply is the same retention, published in the generation the
+ * repair's splice commits - see
+ * {@code LiveViewCheckpointTimelineRepairTest.testRangeSpliceCarriesARetentionBatchInTheSameGeneration}.
  * <p>
  * The oracle throughout is the epoch's complete logical entry set rather than
  * its size alone. Every case reads the published generation's checkpoint ids and

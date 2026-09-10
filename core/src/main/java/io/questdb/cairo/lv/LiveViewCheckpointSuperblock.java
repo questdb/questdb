@@ -197,18 +197,22 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public long pendingDirectorySegmentPages;
     /**
      * Logical boundaries this history epoch has retired: the suffix a high-side
-     * truncate dropped, plus every boundary a retention publication dropped because
-     * its output fell inside a removed partition. Checkpoint ids are allocated from
-     * zero and monotonically, so {@link #nextCheckpointId} minus this is the number
-     * of boundaries the generation actually holds; a retention can leave that set
-     * with gaps in the id space, unlike a truncate, which only ever shortens it.
+     * truncate dropped, plus every boundary a publication that accounts for a removal
+     * dropped because its output fell inside a removed partition - the ordinary
+     * retention, or the repair splice that carries a batch of its own. Checkpoint ids
+     * are allocated from zero and monotonically, so {@link #nextCheckpointId} minus
+     * this is the number of boundaries the generation actually holds; a removal can
+     * leave that set with gaps in the id space, unlike a truncate, which only ever
+     * shortens it.
      */
     public long retiredCheckpointCount;
     /**
      * The share of {@link #metadataBytes} the persistent row-position difference
-     * index wrote. Only a repair with a non-zero suffix delta adds to it, so it
-     * prices what keeping an unchanged suffix's cumulative recovery coordinate
-     * exact costs against the rest of the metadata.
+     * index wrote. Only a publication that shifts a cumulative position without
+     * rewriting the root that carries it adds to it - a repair with a non-zero suffix
+     * delta, and a removal's correction of the roots above it - so it prices what
+     * keeping an unchanged root's recovery coordinate exact costs against the rest of
+     * the metadata.
      */
     public long rowPositionDeltaBytes;
     public final LiveViewCheckpointPageRef rowPositionDeltaRootRef = new LiveViewCheckpointPageRef();

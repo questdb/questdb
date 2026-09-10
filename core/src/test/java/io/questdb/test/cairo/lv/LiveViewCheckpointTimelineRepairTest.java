@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionRemovalEvents;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
@@ -84,6 +85,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * interval receives new root versions, and the suffix's cumulative recovery
  * position is corrected through the persistent delta index without the splice
  * walking it.
+ * <p>
+ * Two cases cover the splice that also carries a batch of partition removals - the
+ * disposition a replay reaches when its replacement's own apply evicted a TTL
+ * partition or drained a queued {@code DROP PARTITION}: one generation retires the
+ * roots inside the removed intervals and corrects every position above them, and a
+ * batch the publication cannot account for is declined whole.
  */
 public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
 
@@ -1922,6 +1929,164 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRangeSpliceCarriesARetentionBatchInTheSameGeneration() throws Exception {
+        // A repair whose replacement apply also removed a partition. Both dispositions
+        // land in ONE generation: the roots inside the removed interval retire, every
+        // position above it drops by the rows that went, and the repaired boundaries are
+        // corrected by the same range-add rather than by an adjustment of their own -
+        // each is itself a surviving root above the interval, so the breakpoint the
+        // removal places below them already reaches them.
+        //
+        // The fixture removes [10s, 15s), which holds the 10s root alone. A real
+        // eviction's interval is a whole partition; what the publication reads of it is
+        // the interval and the row count, so the shape here is the one that names the
+        // roots the case is about.
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final LongList before = snapshotTimeline(instance);
+                final long generationBefore = generation(instance);
+
+                final LiveViewCheckpointTimelineStoreWriter.RepairResult result = repairWithRetention(
+                        instance,
+                        ts(timestamp(30)),
+                        ts(timestamp(50)),
+                        new long[]{4, 6},
+                        2,
+                        removal(coveredLvSeqTxn(instance), ts(timestamp(10)), ts(timestamp(15)), 1)
+                );
+                Assert.assertTrue(result.isPublished());
+                Assert.assertEquals(
+                        "the splice and the retention are one publication, not two",
+                        generationBefore + 1,
+                        result.getGeneration()
+                );
+                Assert.assertEquals(generationBefore + 1, generation(instance));
+                Assert.assertEquals(2, result.getRootsVersioned());
+                Assert.assertEquals(1, result.getRetiredRootCount());
+                Assert.assertEquals(1, result.getCorrectedRows());
+                Assert.assertEquals(
+                        "one breakpoint for the removal at 20s, one for the replacement at 50s",
+                        2,
+                        result.getCorrectionCount()
+                );
+
+                final LongList after = snapshotTimeline(instance);
+                Assert.assertEquals(
+                        "the 10s root is the only entry the batch retires",
+                        before.size() - ENTRY_SIZE,
+                        after.size()
+                );
+                // Prefix below the repair and above the removal: the payload root is reused
+                // by page identity and only its position moves, by the row that went.
+                assertSameRoot(before, 1, after, 0);
+                Assert.assertEquals(2 - 1, after.getQuick(ENTRY_EFFECTIVE_POSITION));
+                // Repaired interval: the replay's positions, lowered by the removal's own
+                // range-add. Nothing adjusted what the capture recorded.
+                assertNewRoot(before, 2, after, 1);
+                assertNewRoot(before, 3, after, 2);
+                Assert.assertEquals(4 - 1, after.getQuick(1 * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
+                Assert.assertEquals(6 - 1, after.getQuick(2 * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
+                // Converged suffix: reused roots, positions moved by the replacement's two
+                // rows and the removal's one, in opposite directions.
+                for (int i = 4; i < HISTORY_COMMITS; i++) {
+                    assertSameRoot(before, i, after, i - 1);
+                    Assert.assertEquals(
+                            "suffix position at index " + i,
+                            before.getQuick(i * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION) + 2 - 1,
+                            after.getQuick((i - 1) * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION)
+                    );
+                }
+                Assert.assertEquals(1, retiredCheckpointCount(instance));
+            }
+        });
+    }
+
+    @Test
+    public void testRangeSpliceDeclinesARetentionBatchItCannotAccountFor() throws Exception {
+        // Four batches the splice must refuse outright rather than publish in part. Each
+        // leaves the previous generation, and every root in it, exactly as it was; the
+        // caller retires the timeline and seals a fresh history over the table as it now
+        // stands, which is what an unlocalized repair does anyway.
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final LongList before = snapshotTimeline(instance);
+                final long generationBefore = generation(instance);
+
+                // The removal covers 40s, a boundary this repair captured: the replay froze
+                // a new root version for it and the rows it stands on are gone.
+                assertDeclined(
+                        repairWithRetention(
+                                instance,
+                                ts(timestamp(30)),
+                                ts(timestamp(50)),
+                                new long[]{4, 6},
+                                2,
+                                removal(coveredLvSeqTxn(instance), ts(timestamp(35)), ts(timestamp(45)), 1)
+                        ),
+                        LiveViewCheckpointTimelineStoreWriter.RepairResult.NOT_PUBLISHED_CAPTURED_ROOT_RETIRED
+                );
+
+                // Above the head: a restart replays from the base, re-emits the removed
+                // rows and fails its row-count proof against the shrunken table.
+                assertDeclined(
+                        repairWithRetention(
+                                instance,
+                                ts(timestamp(30)),
+                                ts(timestamp(50)),
+                                new long[]{4, 6},
+                                2,
+                                removal(coveredLvSeqTxn(instance), ts(timestamp(125)), ts(timestamp(135)), 1)
+                        ),
+                        LiveViewCheckpointTimelineStoreWriter.RepairResult.NOT_PUBLISHED_REMOVAL_ABOVE_HEAD
+                );
+
+                // The head itself: its output is gone and no older root can stand in for it.
+                assertDeclined(
+                        repairWithRetention(
+                                instance,
+                                ts(timestamp(30)),
+                                ts(timestamp(50)),
+                                new long[]{4, 6},
+                                2,
+                                removal(coveredLvSeqTxn(instance), ts(timestamp(115)), ts(timestamp(125)), 1)
+                        ),
+                        LiveViewCheckpointTimelineStoreWriter.RepairResult.NOT_PUBLISHED_HEAD_RETIRED
+                );
+
+                // Overlapping events: a partition removed, re-materialized and removed
+                // again inside one batch. Only a repair can have put the rows back, and
+                // reconstructing what it did to the timeline is not this publication's job.
+                final PartitionRemovalEvents overlapping = new PartitionRemovalEvents();
+                overlapping.add(coveredLvSeqTxn(instance), ts(timestamp(10)), ts(timestamp(25)), 2, PartitionRemovalEvents.SOURCE_TTL);
+                overlapping.add(coveredLvSeqTxn(instance), ts(timestamp(20)), ts(timestamp(35)), 1, PartitionRemovalEvents.SOURCE_DROP_PARTITION);
+                assertDeclined(
+                        repairWithRetention(
+                                instance,
+                                ts(timestamp(30)),
+                                ts(timestamp(50)),
+                                new long[]{4, 6},
+                                2,
+                                overlapping
+                        ),
+                        LiveViewCheckpointTimelineStoreWriter.RepairResult.NOT_PUBLISHED_OVERLAPPING_EVENTS
+                );
+
+                Assert.assertEquals(
+                        "a declined batch must publish nothing at all",
+                        generationBefore,
+                        generation(instance)
+                );
+                TestUtils.assertEquals(before.toString(), snapshotTimeline(instance).toString());
+                Assert.assertEquals(0, retiredCheckpointCount(instance));
+            }
+        });
+    }
+
+    @Test
     public void testRangeSpliceRestoresTheCapturedStateAndLeavesThePrefixIntact() throws Exception {
         assertMemoryLeak(() -> {
             createView();
@@ -2039,7 +2204,8 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                                     instance.getLifecycleIdentity(),
                                     true,
                                     ts(timestamp(50)),
-                                    0
+                                    0,
+                                    null
                             );
                             Assert.fail("expected a backward generation watermark rejection");
                         } catch (CairoException e) {
@@ -2135,7 +2301,8 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                                     lifecycleIdentity,
                                     true,
                                     Long.MAX_VALUE,
-                                    0
+                                    0,
+                                    null
                             );
                             Assert.fail("expected repair definition identity mismatch");
                         } catch (CairoException e) {
@@ -2613,14 +2780,35 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     private static void assertNewRoot(LongList before, LongList after, int index) {
-        final int base = index * ENTRY_SIZE;
-        Assert.assertEquals(before.getQuick(base + ENTRY_MAX_TIMESTAMP), after.getQuick(base + ENTRY_MAX_TIMESTAMP));
-        Assert.assertEquals(before.getQuick(base + ENTRY_CHECKPOINT_ID), after.getQuick(base + ENTRY_CHECKPOINT_ID));
-        Assert.assertTrue(
-                "the repaired root at index " + index + " must be a new physical version",
-                before.getQuick(base + ENTRY_ROOT_SEGMENT) != after.getQuick(base + ENTRY_ROOT_SEGMENT)
-                        || before.getQuick(base + ENTRY_ROOT_OFFSET) != after.getQuick(base + ENTRY_ROOT_OFFSET)
+        assertNewRoot(before, index, after, index);
+    }
+
+    /**
+     * The entry at {@code afterIndex} keeps the key the entry at {@code beforeIndex} had
+     * and carries a new physical root version. The two indexes differ whenever the
+     * publication retired a root below them.
+     */
+    private static void assertNewRoot(LongList before, int beforeIndex, LongList after, int afterIndex) {
+        final int beforeBase = beforeIndex * ENTRY_SIZE;
+        final int afterBase = afterIndex * ENTRY_SIZE;
+        Assert.assertEquals(
+                before.getQuick(beforeBase + ENTRY_MAX_TIMESTAMP),
+                after.getQuick(afterBase + ENTRY_MAX_TIMESTAMP)
         );
+        Assert.assertEquals(
+                before.getQuick(beforeBase + ENTRY_CHECKPOINT_ID),
+                after.getQuick(afterBase + ENTRY_CHECKPOINT_ID)
+        );
+        Assert.assertTrue(
+                "the repaired root at index " + afterIndex + " must be a new physical version",
+                before.getQuick(beforeBase + ENTRY_ROOT_SEGMENT) != after.getQuick(afterBase + ENTRY_ROOT_SEGMENT)
+                        || before.getQuick(beforeBase + ENTRY_ROOT_OFFSET) != after.getQuick(afterBase + ENTRY_ROOT_OFFSET)
+        );
+    }
+
+    private static void assertDeclined(LiveViewCheckpointTimelineStoreWriter.RepairResult result, int expectedOutcome) {
+        Assert.assertFalse("the publication must decline this batch", result.isPublished());
+        Assert.assertEquals(expectedOutcome, result.getOutcome());
     }
 
     private static void assertRuntimeState(byte[][] expected, byte[][] actual) {
@@ -2631,12 +2819,20 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     private static void assertSameRoot(LongList before, LongList after, int index) {
-        final int base = index * ENTRY_SIZE;
+        assertSameRoot(before, index, after, index);
+    }
+
+    /**
+     * The entry at {@code afterIndex} carries the same key and the same payload root page
+     * as the entry at {@code beforeIndex} did. The two indexes differ whenever the
+     * publication retired a root below them, which shifts every survivor down.
+     */
+    private static void assertSameRoot(LongList before, int beforeIndex, LongList after, int afterIndex) {
         for (int field = ENTRY_MAX_TIMESTAMP; field <= ENTRY_ROOT_LENGTH; field++) {
             Assert.assertEquals(
-                    "reused root field " + field + " at index " + index,
-                    before.getQuick(base + field),
-                    after.getQuick(base + field)
+                    "reused root field " + field + " at index " + afterIndex,
+                    before.getQuick(beforeIndex * ENTRY_SIZE + field),
+                    after.getQuick(afterIndex * ENTRY_SIZE + field)
             );
         }
     }
@@ -3207,6 +3403,12 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         }
     }
 
+    private long retiredCheckpointCount(LiveViewInstance instance) {
+        try (LiveViewCheckpointMetaStore store = openStore(instance)) {
+            return store.getSuperblock().retiredCheckpointCount;
+        }
+    }
+
     /**
      * Effective lifetime row position of the newest logical root, i.e. the row
      * count a restart selecting it would credit the view with.
@@ -3285,7 +3487,8 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 instance.getLifecycleIdentity(),
                 true,
                 highTsExclusive,
-                suffixRowDelta
+                suffixRowDelta,
+                null
         );
     }
 
@@ -3305,6 +3508,55 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 normalizedBaseSeqTxn(instance),
                 coveredLvSeqTxn(instance)
         );
+    }
+
+    /**
+     * The same synthetic splice, publishing retention for {@code removals} in the
+     * generation it commits - the disposition a replay reaches when its replacement's own
+     * apply evicted a TTL partition or drained a queued {@code DROP PARTITION}.
+     */
+    private LiveViewCheckpointTimelineStoreWriter.RepairResult repairWithRetention(
+            LiveViewInstance instance,
+            long lowTimestampInclusive,
+            long highTsExclusive,
+            long[] effectivePositions,
+            long suffixRowDelta,
+            PartitionRemovalEvents removals
+    ) {
+        try (
+                LiveViewCheckpointTimelineStoreWriter writer =
+                        new LiveViewCheckpointTimelineStoreWriter(configuration);
+                Path checkpointsDir = checkpointsDir(instance)
+        ) {
+            try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = writer.beginRepair(checkpointsDir, null, null, false)) {
+                captureRange(
+                        instance,
+                        capture,
+                        unwrapWindowFunctions(instance),
+                        lowTimestampInclusive,
+                        highTsExclusive,
+                        effectivePositions
+                );
+                return writer.publishRepair(
+                        capture,
+                        instance.getLiveViewToken().getTableId(),
+                        normalizedBaseSeqTxn(instance),
+                        coveredLvSeqTxn(instance),
+                        0,
+                        instance.getLifecycleIdentity(),
+                        true,
+                        highTsExclusive,
+                        suffixRowDelta,
+                        removals
+                );
+            }
+        }
+    }
+
+    private static PartitionRemovalEvents removal(long seqTxn, long lo, long hiExclusive, long removedRows) {
+        final PartitionRemovalEvents removals = new PartitionRemovalEvents();
+        removals.add(seqTxn, lo, hiExclusive, removedRows, PartitionRemovalEvents.SOURCE_TTL);
+        return removals;
     }
 
     private LiveViewCheckpointTimelineStoreWriter.RepairResult repair(

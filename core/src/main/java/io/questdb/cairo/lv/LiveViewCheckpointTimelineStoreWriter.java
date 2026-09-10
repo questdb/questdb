@@ -798,6 +798,35 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * A repair that crossed no logical boundary and moved no row still publishes:
      * the new generation watermark is what declares the whole reused timeline
      * valid against the repair's pinned base snapshot.
+     * <p>
+     * A {@code removals} batch makes this the atomic repair-plus-retention splice: one
+     * generation that carries both dispositions. On top of the splice above, and in
+     * the same generation:
+     * <ol>
+     *     <li>every root inside a removed interval retires, exactly as
+     *     {@link #publishRetention} retires one, so the timeline keeps no anchor
+     *     inside a dropped period;</li>
+     *     <li>each interval's removed row count lands as one difference-array
+     *     range-add at the first <i>surviving</i> root at or above its {@code hi},
+     *     which is what corrects the repaired boundaries too: a captured boundary
+     *     above an interval is itself a surviving root at or above that {@code hi},
+     *     so the same range-add lowers its cumulative position by exactly the rows
+     *     that went, and its replay-derived position needs no separate
+     *     adjustment.</li>
+     * </ol>
+     * The repair's own {@code suffixRowDelta} therefore has to describe the
+     * replacement alone: the removals are accounted for by their own corrections,
+     * and feeding the combined table-size delta here would subtract them twice.
+     * <p>
+     * The publication declines - {@link RepairResult#isPublished()} false, nothing
+     * written, the previous generation and both markers exactly as they were - when
+     * the batch's events overlap, when the timeline's head lies inside a removed
+     * interval or below one, or when a removed interval covers a boundary this
+     * repair captured. The last is the one rule a plain retention does not have: the
+     * replay froze a new root version for that boundary and the rows it stands on
+     * are gone, and a capture is published whole or not at all. The caller retires
+     * the timeline in every declining case, which is what an unlocalized repair does
+     * anyway.
      *
      * @param capture              boundaries frozen by the replay, ascending by key
      * @param definitionTxn        live-view definition identity
@@ -813,7 +842,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * @param highTsExclusive      {@code H}, the exclusive convergence boundary the
      *                             suffix starts at
      * @param suffixRowDelta       output rows the replacement added (negative when it
-     *                             removed rows)
+     *                             removed rows), counting the replacement alone - a
+     *                             removal the same apply committed belongs in
+     *                             {@code removals}, not here
+     * @param removals             the removals the replacement's own apply committed,
+     *                             in commit order; null or empty publishes an
+     *                             ordinary splice
      */
     public RepairResult publishRepair(
             @NotNull RepairCapture capture,
@@ -824,7 +858,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             long lifecycleIdentity,
             boolean primaryOwner,
             long highTsExclusive,
-            long suffixRowDelta
+            long suffixRowDelta,
+            @Nullable PartitionRemovalEvents removals
     ) {
         if (!primaryOwner) {
             throw CairoException.critical(0).put("replica must not publish a live view checkpoint timeline");
@@ -880,13 +915,85 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         .put(", nextLv=").put(coveredLvSeqTxn).put(']');
             }
 
-            final long generation = checkedIncrement(superblock.generation, "generation");
             final LiveViewCheckpointPageRef oldTimelineRoot = copyInto(superblock.timelineRootRef, shells.oldTimelineRoot);
+            // Retention disposition, before anything is written: sort the batch by
+            // interval start, refuse overlap, and locate both the head and the
+            // captured boundaries against it. A decline here leaves the whole
+            // publication unattempted, exactly as an overlapping plain retention does.
+            final LongList intervals = shells.retentionIntervals;
+            final LongList events = shells.retentionEvents;
+            intervals.clear();
+            events.clear();
+            if (removals != null && removals.size() > 0) {
+                sortRetentionEvents(removals, events);
+                for (int i = 0, n = events.size(); i < n; i += 3) {
+                    final long lo = events.getQuick(i);
+                    if (i > 0 && lo < events.getQuick(i - 2)) {
+                        return shells.repairResult.notPublished(RepairResult.NOT_PUBLISHED_OVERLAPPING_EVENTS);
+                    }
+                    intervals.add(lo);
+                    intervals.add(events.getQuick(i + 1));
+                }
+                final LiveViewCheckpointTimelineEntry probeEntry = shells.headEntry;
+                if (!timelineReader.last(oldTimelineRoot, probeEntry)) {
+                    return shells.repairResult.notPublished(RepairResult.NOT_PUBLISHED_HEAD_RETIRED);
+                }
+                for (int i = 0, n = intervals.size(); i < n; i += 2) {
+                    final long lo = intervals.getQuick(i);
+                    if (probeEntry.maxTimestamp < lo) {
+                        // A restart's replay from the base re-emits the rows above the head,
+                        // and its row-count proof against the shrunken table then fails; a
+                        // count that happened to agree would be no proof either.
+                        return shells.repairResult.notPublished(RepairResult.NOT_PUBLISHED_REMOVAL_ABOVE_HEAD);
+                    }
+                    if (probeEntry.maxTimestamp < intervals.getQuick(i + 1)) {
+                        return shells.repairResult.notPublished(RepairResult.NOT_PUBLISHED_HEAD_RETIRED);
+                    }
+                }
+                for (int i = 0; i < boundaryCount; i++) {
+                    final long maxTimestamp = capture.boundaries.getQuick(i).oldEntry.maxTimestamp;
+                    if (removedIntervalHi(intervals, maxTimestamp) != Numbers.LONG_NULL) {
+                        // The replay froze a new version of this boundary and the removal took
+                        // the rows it stands on. Retiring it would leave the capture published
+                        // in part, so the whole splice steps aside for the retire.
+                        return shells.repairResult.notPublished(RepairResult.NOT_PUBLISHED_CAPTURED_ROOT_RETIRED);
+                    }
+                }
+            }
+
+            final long generation = checkedIncrement(superblock.generation, "generation");
             final LiveViewCheckpointPageRef oldDeltaRoot = copyInto(superblock.rowPositionDeltaRootRef, shells.oldDeltaRoot);
             final LiveViewCheckpointPageRef oldDirectoryRoot =
                     copyInto(superblock.segmentDirectoryRootRef, shells.oldDirectoryRoot);
             directoryWriter.begin(oldDirectoryRoot);
             registerPendingDirectorySegment(directoryWriter, superblock);
+
+            // Every root inside a removed interval retires here, dropping the data
+            // segments it referenced so a segment no surviving root names retires at
+            // this generation for the purge job to reclaim. The disposition above
+            // proved no captured boundary is among them, so the loop below re-versions
+            // a disjoint set of roots and no root is visited twice.
+            long droppedLogicalStateBytes = 0;
+            long droppedBoundaryCount = 0;
+            if (intervals.size() > 0) {
+                truncateVisitor.of(
+                        checkpointsDir,
+                        oldCheckpointRoot,
+                        directoryWriter,
+                        shells.removedSegmentIds,
+                        definitionTxn,
+                        generation
+                );
+                try {
+                    for (int i = 0, n = intervals.size(); i < n; i += 2) {
+                        timelineReader.range(oldTimelineRoot, intervals.getQuick(i), intervals.getQuick(i + 1), truncateVisitor);
+                    }
+                    droppedLogicalStateBytes = truncateVisitor.droppedLogicalStateBytes;
+                    droppedBoundaryCount = truncateVisitor.droppedBoundaryCount;
+                } finally {
+                    truncateVisitor.clearBindings();
+                }
+            }
 
             // The data segment reaches its final name before any metadata can
             // reference it, exactly as the cadence seal orders it. An empty
@@ -1073,11 +1180,37 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 directoryWriter.addSegment(capture.dataSegmentId, dataSegmentBytes, captureSegmentRootRefs);
             }
 
+            // Two tree passes, one generation. The removal goes first so the splice
+            // runs over the tree the survivors actually form; both are disjoint in the
+            // keys they touch, so the order only decides which pass rewrites a shared
+            // spine page. A batch that removed no root writes nothing and hands the old
+            // tree straight to the splice, which is every repair that carries no
+            // removals at all.
             final LiveViewCheckpointPageRef newTimelineRoot = shells.newTimelineRoot;
+            final LiveViewCheckpointPageRef retainedTimelineRoot = shells.retentionTimelineRoot;
+            copy(oldTimelineRoot, retainedTimelineRoot);
+            if (droppedBoundaryCount > 0) {
+                nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+                final long retentionSegmentId = nextSegmentId++;
+                final boolean survived =
+                        timelineWriter.removeRanges(oldTimelineRoot, intervals, retentionSegmentId, retainedTimelineRoot);
+                // The head survives above every interval, so the tree cannot empty; and
+                // the visitor found roots inside the intervals, so the tree cannot be
+                // reused unchanged.
+                assert survived && timelineWriter.getLastSegmentBytes() > 0;
+                metadataBytesAdded = checkedAdd(metadataBytesAdded, timelineWriter.getLastSegmentBytes());
+                registerMetadataSegment(
+                        directoryWriter,
+                        retentionSegmentId,
+                        timelineWriter.getLastSegmentBytes(),
+                        timelineWriter.getLastSegmentPageCount()
+                );
+                directoryWriter.releaseMetadataPages(timelineWriter.getLastReleasedSegmentIds(), generation);
+            }
             if (boundaryCount > 0) {
                 nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
                 final long timelineSegmentId = nextSegmentId++;
-                timelineWriter.splice(oldTimelineRoot, newEntries, boundaryCount, timelineSegmentId, newTimelineRoot);
+                timelineWriter.splice(retainedTimelineRoot, newEntries, boundaryCount, timelineSegmentId, newTimelineRoot);
                 metadataBytesAdded = checkedAdd(metadataBytesAdded, timelineWriter.getLastSegmentBytes());
                 registerMetadataSegment(
                         directoryWriter,
@@ -1087,50 +1220,87 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 );
                 directoryWriter.releaseMetadataPages(timelineWriter.getLastReleasedSegmentIds(), generation);
             } else {
-                copy(oldTimelineRoot, newTimelineRoot);
+                copy(retainedTimelineRoot, newTimelineRoot);
             }
 
             // The newest logical key the published timeline holds, resolved against
-            // the OLD tree for the reason the breakpoint below states. The caller
-            // needs it because a splice appends no root: it seals a fresh boundary
-            // of its own only when its runtime frontier has run past this one.
+            // the OLD tree for the reason the breakpoints below state. The disposition
+            // proved the head survives every removed interval, so the old tree names it
+            // too. The caller needs it because a splice appends no root: it seals a
+            // fresh boundary of its own only when its runtime frontier has run past
+            // this one.
             final LiveViewCheckpointTimelineEntry headEntry = shells.headEntry;
             final long headRootMaxTimestamp = timelineReader.last(oldTimelineRoot, headEntry)
                     ? headEntry.maxTimestamp
                     : Numbers.LONG_NULL;
 
-            // The breakpoint is resolved against the OLD tree on purpose: a splice
+            // The breakpoints are resolved against the OLD tree on purpose: a splice
             // preserves every key, so the first suffix key is the same in both, and
-            // reading it here needs no page from the segment just written.
-            final LiveViewCheckpointPageRef newDeltaRoot = shells.newDeltaRoot;
-            copy(oldDeltaRoot, newDeltaRoot);
+            // reading them here needs no page from the segments just written. A key a
+            // removal retired is stepped over, which is why the probe takes the
+            // intervals.
+            //
+            // One correction per removed interval, at the first surviving root at or
+            // above its hi, plus the replacement's own at the first surviving root at
+            // or above H. Corrections that land on the same root fold into one
+            // breakpoint, so several partitions evicted under one root cost one entry.
+            final LongList corrections = shells.retentionCorrections;
+            final LiveViewCheckpointTimelineEntry suffixEntry = shells.suffixEntry;
+            corrections.clear();
             long suffixBreakpointTimestamp = Numbers.LONG_NULL;
-            long rowPositionDeltaBytesAdded = 0;
-            if (suffixRowDelta != 0) {
-                final LiveViewCheckpointTimelineEntry suffixEntry = shells.suffixEntry;
-                if (timelineReader.successor(oldTimelineRoot, highTsExclusive, suffixEntry)) {
-                    nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
-                    final long deltaSegmentId = nextSegmentId++;
-                    deltaWriter.suffixAdd(
-                            oldDeltaRoot,
-                            suffixEntry.maxTimestamp,
-                            suffixEntry.checkpointId,
-                            suffixRowDelta,
-                            deltaSegmentId,
-                            newDeltaRoot
-                    );
-                    rowPositionDeltaBytesAdded = deltaWriter.getLastSegmentBytes();
-                    metadataBytesAdded = checkedAdd(metadataBytesAdded, rowPositionDeltaBytesAdded);
-                    suffixBreakpointTimestamp = suffixEntry.maxTimestamp;
-                    registerMetadataSegment(
-                            directoryWriter,
-                            deltaSegmentId,
-                            deltaWriter.getLastSegmentBytes(),
-                            deltaWriter.getLastSegmentPageCount()
-                    );
-                    directoryWriter.releaseMetadataPages(deltaWriter.getLastReleasedSegmentIds(), generation);
-                }
+            if (suffixRowDelta != 0
+                    && survivingSuccessor(timelineReader, oldTimelineRoot, highTsExclusive, intervals, suffixEntry)) {
+                suffixBreakpointTimestamp = suffixEntry.maxTimestamp;
+                addCorrection(corrections, suffixEntry.maxTimestamp, suffixEntry.checkpointId, suffixRowDelta);
             }
+            long correctedRows = 0;
+            for (int i = 0, n = events.size(); i < n; i += 3) {
+                final long removedRows = events.getQuick(i + 2);
+                if (removedRows == 0) {
+                    continue;
+                }
+                if (!survivingSuccessor(timelineReader, oldTimelineRoot, events.getQuick(i + 1), intervals, suffixEntry)) {
+                    throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                            .put("live view checkpoint repair found no surviving root above a removed interval [hiExclusive=")
+                            .put(events.getQuick(i + 1)).put(']');
+                }
+                addCorrection(corrections, suffixEntry.maxTimestamp, suffixEntry.checkpointId, -removedRows);
+                correctedRows = checkedAdd(correctedRows, removedRows);
+            }
+            final LiveViewCheckpointPageRef newDeltaRoot = shells.newDeltaRoot;
+            final LiveViewCheckpointPageRef stagedDeltaRoot = shells.retentionDeltaRoot;
+            copy(oldDeltaRoot, newDeltaRoot);
+            long rowPositionDeltaBytesAdded = 0;
+            int correctionCount = 0;
+            for (int i = 0, n = corrections.size(); i < n; i += 3) {
+                final long delta = corrections.getQuick(i + 2);
+                if (delta == 0) {
+                    // The replacement's own delta and the removals under the same root
+                    // cancelled each other out exactly. Nothing to record.
+                    continue;
+                }
+                nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+                final long deltaSegmentId = nextSegmentId++;
+                deltaWriter.suffixAdd(
+                        newDeltaRoot,
+                        corrections.getQuick(i),
+                        corrections.getQuick(i + 1),
+                        delta,
+                        deltaSegmentId,
+                        stagedDeltaRoot
+                );
+                copy(stagedDeltaRoot, newDeltaRoot);
+                rowPositionDeltaBytesAdded = checkedAdd(rowPositionDeltaBytesAdded, deltaWriter.getLastSegmentBytes());
+                registerMetadataSegment(
+                        directoryWriter,
+                        deltaSegmentId,
+                        deltaWriter.getLastSegmentBytes(),
+                        deltaWriter.getLastSegmentPageCount()
+                );
+                directoryWriter.releaseMetadataPages(deltaWriter.getLastReleasedSegmentIds(), generation);
+                correctionCount++;
+            }
+            metadataBytesAdded = checkedAdd(metadataBytesAdded, rowPositionDeltaBytesAdded);
 
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
             final long directorySegmentId = nextSegmentId++;
@@ -1157,8 +1327,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             superblock.nextSegmentId = nextSegmentId;
             superblock.metadataBytes = checkedAdd(superblock.metadataBytes, metadataBytesAdded);
             superblock.dataBytes = checkedAdd(superblock.dataBytes, dataSegmentBytes);
-            superblock.logicalStateBytes = checkedAdd(superblock.logicalStateBytes, logicalStateBytesDelta);
+            superblock.logicalStateBytes = checkedAdd(
+                    superblock.logicalStateBytes,
+                    checkedAdd(logicalStateBytesDelta, -droppedLogicalStateBytes)
+            );
             superblock.rowPositionDeltaBytes = checkedAdd(superblock.rowPositionDeltaBytes, rowPositionDeltaBytesAdded);
+            superblock.retiredCheckpointCount = checkedAdd(superblock.retiredCheckpointCount, droppedBoundaryCount);
             // A repair only ever runs on an ACTIVE view, so the generation it
             // publishes is never a mid-sweep resume point. Clear the cursor
             // explicitly rather than letting the selected slot's value ride
@@ -1177,6 +1351,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     headRootMaxTimestamp,
                     suffixRowDelta,
                     suffixBreakpointTimestamp,
+                    droppedBoundaryCount,
+                    correctionCount,
+                    correctedRows,
                     dataSegmentBytes,
                     metadataBytesAdded,
                     metaStore.getWalPurgeFloor(),
@@ -1541,17 +1718,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 if (removedRows == 0) {
                     continue;
                 }
-                long probeTs = events.getQuick(i + 1);
-                boolean found = timelineReader.successor(oldTimelineRoot, probeTs, suffixEntry);
-                int j = i + 3;
-                while (found && j < n && suffixEntry.maxTimestamp >= events.getQuick(j)) {
-                    if (suffixEntry.maxTimestamp < events.getQuick(j + 1)) {
-                        probeTs = events.getQuick(j + 1);
-                        found = timelineReader.successor(oldTimelineRoot, probeTs, suffixEntry);
-                    }
-                    j += 3;
-                }
-                if (!found) {
+                if (!survivingSuccessor(timelineReader, oldTimelineRoot, events.getQuick(i + 1), intervals, suffixEntry)) {
                     throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
                             .put("live view checkpoint retention found no surviving root above a removed interval [hiExclusive=")
                             .put(events.getQuick(i + 1)).put(']');
@@ -3258,6 +3425,45 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
+     * Accumulates one row-position correction of {@code delta} rows at the logical key
+     * {@code (maxTimestamp, checkpointId)} into {@code corrections}, a list of
+     * {@code (maxTimestamp, checkpointId, delta)} triples. Corrections that land on the
+     * same key fold into one, so the publication writes one difference-array
+     * breakpoint per distinct root however many events chose it. Linear scan: a batch
+     * carries a handful of removals plus the replacement's own delta.
+     */
+    private static void addCorrection(LongList corrections, long maxTimestamp, long checkpointId, long delta) {
+        for (int i = 0, n = corrections.size(); i < n; i += 3) {
+            if (corrections.getQuick(i) == maxTimestamp && corrections.getQuick(i + 1) == checkpointId) {
+                corrections.setQuick(i + 2, checkedAdd(corrections.getQuick(i + 2), delta));
+                return;
+            }
+        }
+        corrections.add(maxTimestamp);
+        corrections.add(checkpointId);
+        corrections.add(delta);
+    }
+
+    /**
+     * @return the exclusive top of the interval in {@code intervals} - sorted by start
+     * and pairwise disjoint - that covers {@code timestamp}, or {@link Numbers#LONG_NULL}
+     * when no interval does. A null or empty list covers nothing.
+     */
+    private static long removedIntervalHi(@Nullable LongList intervals, long timestamp) {
+        if (intervals != null) {
+            for (int i = 0, n = intervals.size(); i < n; i += 2) {
+                if (timestamp < intervals.getQuick(i)) {
+                    break;
+                }
+                if (timestamp < intervals.getQuick(i + 1)) {
+                    return intervals.getQuick(i + 1);
+                }
+            }
+        }
+        return Numbers.LONG_NULL;
+    }
+
+    /**
      * Copies {@code removals} into {@code out} as {@code (lo, hiExclusive, removedRows)}
      * triples sorted by {@code lo}. Insertion sort: a batch is a handful of partitions,
      * and the events arrive in commit order, which for a TTL eviction already is
@@ -3285,6 +3491,33 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             out.setQuick(pos + 1, hi);
             out.setQuick(pos + 2, rows);
         }
+    }
+
+    /**
+     * Positions {@code out} on the first timeline entry at or above {@code fromTimestamp}
+     * that no interval in {@code intervals} removes, stepping past each interval an entry
+     * it finds falls inside. A publication that retires roots has to resolve its
+     * breakpoints this way: a difference-array add on a root the same generation drops
+     * corrects nothing.
+     *
+     * @return false when the tree holds no such entry
+     */
+    private static boolean survivingSuccessor(
+            LiveViewCheckpointTimelineReader reader,
+            LiveViewCheckpointPageRef timelineRoot,
+            long fromTimestamp,
+            @Nullable LongList intervals,
+            LiveViewCheckpointTimelineEntry out
+    ) {
+        long probeTimestamp = fromTimestamp;
+        while (reader.successor(timelineRoot, probeTimestamp, out)) {
+            final long hiExclusive = removedIntervalHi(intervals, out.maxTimestamp);
+            if (hiExclusive == Numbers.LONG_NULL) {
+                return true;
+            }
+            probeTimestamp = hiExclusive;
+        }
+        return false;
     }
 
     private long skipPublishedSegmentIds(Path checkpointsDir, long candidate) {
@@ -4051,15 +4284,59 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * again. Do not retain it across publications or hand it to another thread.
      */
     public static final class RepairResult {
+        /**
+         * A removed interval covers a boundary this repair's replay captured. The
+         * capture publishes whole or not at all, so the caller retires.
+         */
+        public static final int NOT_PUBLISHED_CAPTURED_ROOT_RETIRED = 4;
+        /**
+         * The timeline's head lies inside a removed interval: its output is gone,
+         * and no older root can stand in for it. The caller retires.
+         */
+        public static final int NOT_PUBLISHED_HEAD_RETIRED = 1;
+        /**
+         * The batch's events overlap: a partition was removed, re-materialized and
+         * removed again inside one batch. The caller retires.
+         */
+        public static final int NOT_PUBLISHED_OVERLAPPING_EVENTS = 3;
+        /**
+         * Some removed interval lies above the newest boundary. A restart's replay
+         * from the base re-emits the removed rows and its row-count proof against
+         * the shrunken table fails, so the caller retires and seals afresh.
+         */
+        public static final int NOT_PUBLISHED_REMOVAL_ABOVE_HEAD = 2;
+        public static final int PUBLISHED = 0;
+        private int correctionCount;
+        private long correctedRows;
         private long dataBytesAdded;
         private long generation;
         private long headRootMaxTimestamp;
         private long metadataBytesAdded;
+        private int outcome;
+        private long retiredRootCount;
         private int rootsVersioned;
         private LiveViewCheckpointTimelineStats stats;
         private long suffixBreakpointTimestamp;
         private long suffixRowDelta;
         private long walPurgeFloor;
+
+        private RepairResult notPublished(int outcome) {
+            assert outcome != PUBLISHED;
+            this.outcome = outcome;
+            this.generation = Numbers.LONG_NULL;
+            this.rootsVersioned = 0;
+            this.headRootMaxTimestamp = Numbers.LONG_NULL;
+            this.suffixRowDelta = 0;
+            this.suffixBreakpointTimestamp = Numbers.LONG_NULL;
+            this.retiredRootCount = 0;
+            this.correctionCount = 0;
+            this.correctedRows = 0;
+            this.dataBytesAdded = 0;
+            this.metadataBytesAdded = 0;
+            this.walPurgeFloor = -1;
+            this.stats = null;
+            return this;
+        }
 
         private RepairResult of(
                 long generation,
@@ -4067,21 +4344,44 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 long headRootMaxTimestamp,
                 long suffixRowDelta,
                 long suffixBreakpointTimestamp,
+                long retiredRootCount,
+                int correctionCount,
+                long correctedRows,
                 long dataBytesAdded,
                 long metadataBytesAdded,
                 long walPurgeFloor,
                 LiveViewCheckpointTimelineStats stats
         ) {
+            this.outcome = PUBLISHED;
             this.generation = generation;
             this.rootsVersioned = rootsVersioned;
             this.headRootMaxTimestamp = headRootMaxTimestamp;
             this.suffixRowDelta = suffixRowDelta;
             this.suffixBreakpointTimestamp = suffixBreakpointTimestamp;
+            this.retiredRootCount = retiredRootCount;
+            this.correctionCount = correctionCount;
+            this.correctedRows = correctedRows;
             this.dataBytesAdded = dataBytesAdded;
             this.metadataBytesAdded = metadataBytesAdded;
             this.walPurgeFloor = walPurgeFloor;
             this.stats = stats;
             return this;
+        }
+
+        /**
+         * @return the number of difference-array breakpoints the publication placed:
+         * the replacement's own suffix correction and one per distinct first
+         * surviving root above a removed interval, folded where they coincide
+         */
+        public int getCorrectionCount() {
+            return correctionCount;
+        }
+
+        /**
+         * @return the rows the removals' corrections subtracted in total
+         */
+        public long getCorrectedRows() {
+            return correctedRows;
         }
 
         public long getDataBytesAdded() {
@@ -4090,6 +4390,31 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         public long getGeneration() {
             return generation;
+        }
+
+        /**
+         * @return {@link #PUBLISHED}, or the {@code NOT_PUBLISHED_*} reason the
+         * caller should log before it retires the timeline
+         */
+        public int getOutcome() {
+            return outcome;
+        }
+
+        /**
+         * @return the logical roots this publication retired, all of them boundaries
+         * inside a removed interval
+         */
+        public long getRetiredRootCount() {
+            return retiredRootCount;
+        }
+
+        /**
+         * @return whether a new generation was committed. False leaves the previous
+         * generation, the repair marker and the retention marker exactly as they
+         * were, for the caller to retire the timeline instead.
+         */
+        public boolean isPublished() {
+            return outcome == PUBLISHED;
         }
 
         /**
@@ -5850,6 +6175,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final LongList removedSegmentIds = new LongList();
         private final RepairResult repairResult = new RepairResult();
         private final LiveViewCheckpointTimelineStats repairStats = new LiveViewCheckpointTimelineStats();
+        /**
+         * Row-position corrections a repair-with-retention publication owes, three
+         * longs each: the breakpoint root's {@code maxTimestamp}, its
+         * {@code checkpointId} and the signed row delta, folded per distinct root.
+         */
+        private final LongList retentionCorrections = new LongList();
         private final LiveViewCheckpointPageRef retentionDeltaRoot = new LiveViewCheckpointPageRef();
         /**
          * Retention events sorted by interval start, three longs per event: the
@@ -5861,6 +6192,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * timeline writer's range removal takes.
          */
         private final LongList retentionIntervals = new LongList();
+        /**
+         * The tree left standing by a publication's range removal, which its splice
+         * then re-versions into the tree it publishes.
+         */
+        private final LiveViewCheckpointPageRef retentionTimelineRoot = new LiveViewCheckpointPageRef();
         private final RetentionResult retentionResult = new RetentionResult();
         private final LiveViewCheckpointTimelineStats retentionStats = new LiveViewCheckpointTimelineStats();
         private final LongList retirementExisting = new LongList();
