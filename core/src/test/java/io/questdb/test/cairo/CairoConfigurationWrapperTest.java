@@ -32,13 +32,6 @@ import org.junit.Test;
 
 public class CairoConfigurationWrapperTest extends AbstractTest {
 
-    /**
-     * {@code getBypassWalFdCache()} carries a default that derives an answer from the descriptor
-     * cache size, so a wrapper that does not forward it answers from its own state and drops the
-     * delegate's decision without a trace. Enterprise turns the WAL descriptor caches off on
-     * replication nodes through exactly this method, and the engine reads its configuration through
-     * a wrapper.
-     */
     @Test
     public void testBypassWalFdCacheIsForwarded() {
         final CairoConfiguration delegate = new DefaultTestCairoConfiguration(root) {
@@ -49,8 +42,7 @@ public class CairoConfigurationWrapperTest extends AbstractTest {
 
             @Override
             public int getWalMaxSegmentFileDescriptorsCache() {
-                // Left at a caching value on purpose: the wrapper must report what the delegate
-                // decided, not re-derive it from this.
+                // a caching value on purpose: the wrapper must not re-derive the flag from it
                 return 30;
             }
         };

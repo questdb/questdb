@@ -129,10 +129,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
         return getDelegate().getBuildInformation();
     }
 
-    // The interface supplies a default for this one, so a wrapper that does not forward it answers
-    // from its own state and silently drops whatever the delegate decided. Enterprise turns the WAL
-    // descriptor caches off on replication nodes, and that decision reached no one until this
-    // forwarded.
     @Override
     public boolean getBypassWalFdCache() {
         return getDelegate().getBypassWalFdCache();

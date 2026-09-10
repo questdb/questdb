@@ -207,21 +207,12 @@ public class TableWriterSegmentFileCache {
         LongList fds = null;
         if (fdCacheKey < 0) {
             if (configuration.getBypassWalFdCache()) {
-                // Caching was switched off while these descriptors were already in hand - a
-                // primary demoted in place is the case that matters. From here on the segment
-                // files can be replaced underneath us by a rename, which leaves a cached
-                // descriptor reading a file that has left the table, so drop them and re-open
-                // by path. closeWalFiles() does not close descriptors the cache still owns, so
-                // this closes them itself.
-                LOG.info().$("dropping cached wal segment file descriptors [table=").$(tableToken)
-                        .$(", walSegmentId=").$(walSegmentId)
-                        .I$();
+                // Caching turned off while these descriptors were in hand: the segment files can
+                // now be replaced by a rename, which leaves them reading an unlinked file.
                 final LongList staleFds = walFdCache.valueAt(fdCacheKey);
                 discardCachedFds(staleFds);
                 staleFds.clear();
                 walFdCacheListPool.push(staleFds);
-                // fds stays null so the finally block does not push the list a second time; it
-                // still removes the cache entry, which is what a hit is expected to leave behind.
             } else {
                 fds = walFdCache.valueAt(fdCacheKey);
             }
