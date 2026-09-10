@@ -4518,18 +4518,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * and lowering that ordinal would make later turns skip rows they never wrote.
      * {@link #reconcileSeedPartitionRemovals} disposes of the events the sweep collected,
      * at the completion boundary where the counter has no second role left.
+     * <p>
+     * The one caller that holds a repair marker rather than a capture is the head-miss
+     * replay's truncate route, which calls this over the prefix its truncate kept, before
+     * its post-replay seal and after re-basing the marker on the truncate's generation;
+     * it reads the return to learn whether that prefix is still there to seal above.
+     *
+     * @return false when this retired the timeline; true when it published the retention,
+     * had nothing to reconcile, or deferred - in every one of which the timeline the caller
+     * held is still the timeline on disk
      */
-    private void reconcilePendingPartitionRemovals(LiveViewInstance instance) {
+    private boolean reconcilePendingPartitionRemovals(LiveViewInstance instance) {
         final PartitionRemovalEvents removals = instance.getPendingPartitionRemovals();
         if (removals.isEmpty()) {
-            return;
+            return true;
         }
         if (instance.getStateReader().getSeedState() != LiveViewState.SEED_STATE_ACTIVE) {
-            return;
+            return true;
         }
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
         if (!tracker.isInitialised() || tracker.getWriterTxn() < tracker.getSeqTxn()) {
-            return;
+            return true;
         }
         final int n = removals.size();
         final long removedRows = removals.getTotalRemovedRows();
@@ -4543,11 +4552,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", lastSeqTxn=").$(removals.getSeqTxn(n - 1))
                 .I$();
         instance.setLvRowsTotal(emittedRows - removedRows);
-        if (!publishCheckpointTimelineRetention(instance, removals, tracker.getWriterTxn())) {
+        final boolean published = publishCheckpointTimelineRetention(instance, removals, tracker.getWriterTxn());
+        if (!published) {
             instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
             retireCheckpointTimeline(instance);
         }
         removals.clear();
+        return published;
     }
 
     /**
@@ -4771,6 +4782,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * caller clears the marker once the post-replay seal re-anchors the head.
      * When no prefix survives (or there is no valid timeline) it retires outright,
      * exactly as before.
+     * <p>
+     * A removal the replay's own apply then commits - a TTL eviction or a queued DROP -
+     * finds the kept prefix already published with positions that count the removed
+     * rows. The head-miss replay reconciles it through
+     * {@link #reconcilePendingPartitionRemovals} before its post-replay seal, after
+     * re-writing the marker over the truncate's generation so the retention's own
+     * generation does not read as the seal that completes the repair.
      *
      * @return true when the prefix was preserved and a marker is now live; false
      * when the timeline was retired
@@ -10062,32 +10080,101 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // from-scratch rebuild. Sourcing the lifetime counter from the table
                     // keeps the head checkpoint's lvRowPosition (written below)
                     // consistent in both the intact-base and base-data-removed cases.
+                    final long durableRowsAfterApply;
                     try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-                        instance.setLvRowsTotal(lvReader.size());
+                        durableRowsAfterApply = lvReader.size();
                     }
+                    instance.setLvRowsTotal(durableRowsAfterApply);
                     // The replacement's own commit can evict TTL partitions, and the drain
                     // that applied it can carry a queued DROP. A splice publishes their
                     // retention in its own generation - retiring the roots inside a removed
                     // partition and lowering every position above one - so the batch is
-                    // carried to it rather than dropped here. A truncate cannot: the prefix
-                    // it kept is already published and its positions still count the removed
-                    // rows, so retentionDuringRepair still sends that route to the retire.
+                    // carried to it rather than dropped here.
+                    //
+                    // A truncate that kept a prefix is the other timeline-keeping route, and
+                    // it owes the same correction from the other side: the prefix is already
+                    // published, its positions still count the removed rows, and nothing here
+                    // re-versions its roots. The ordinary retention publication is exactly
+                    // that correction - it retires the roots inside a removed partition and
+                    // lowers every survivor above one - so the batch stays pending for
+                    // reconcilePendingPartitionRemovals to publish below, before the seal
+                    // appends the fresh head. Ordered that way because the retention's
+                    // range-add reaches every root at or above the removed interval, and the
+                    // fresh head - stamped off a counter this apply re-seats from the table,
+                    // which the removal has already shrunk - is the one root that must not be
+                    // lowered. The counter takes the removed rows back for the same reason:
+                    // the reconcile subtracts them once, and the seal then stamps the
+                    // table's size.
+                    //
+                    // A truncate that retired instead kept nothing to correct: the events go
+                    // with the counter's re-seat, and the retention marker the removal's
+                    // commit wrote after the retire guards nothing, so it goes too.
+                    final boolean truncatedPrefixKept = timelineCapture == null && prefixMarkerLive;
                     if (instance.hasPendingPartitionRemovals()) {
-                        retentionDuringRepair = true;
-                        // Not this apply's alone, so the splice must not subtract them.
-                        unspliceableRemovals = unreconciledRemovalsBeforeApply;
-                        repairPartitionRemovals.clear();
-                        repairPartitionRemovals.addAll(instance.getPendingPartitionRemovals());
-                        LOG.info().$("live view durable rows removed during an O3 repair [view=")
-                                .$(viewName)
-                                .$(", removedRows=").$(repairPartitionRemovals.getTotalRemovedRows())
-                                .$(", spliceable=").$(timelineCapture != null && !unspliceableRemovals)
-                                .I$();
+                        if (truncatedPrefixKept) {
+                            final long removedRows = instance.getPendingPartitionRemovals().getTotalRemovedRows();
+                            LOG.info().$("live view durable rows removed during an O3 repair, reconciling the truncated prefix [view=")
+                                    .$(viewName)
+                                    .$(", removedRows=").$(removedRows)
+                                    .$(", outputLowTs=").$ts(emitLowTs)
+                                    .I$();
+                            instance.setLvRowsTotal(durableRowsAfterApply + removedRows);
+                            // The truncate's marker records the generation it started from,
+                            // and a restart reads the marker as stale - the repair completed,
+                            // the timeline is safe to restore - once the superblock is two
+                            // generations past it: the truncate's own and the seal's. The
+                            // retention is a generation of its own in between, so a crash
+                            // between it and the seal would find a "completed" repair whose
+                            // fresh head was never sealed, and restore the truncated head
+                            // under a watermark that still names the discarded one. Re-base
+                            // the marker on the truncate's generation first - the one on
+                            // disk now - so the retention reads as the truncate did and only
+                            // the seal past it completes the repair.
+                            if (!writeCheckpointRepairMarker(instance, emitLowTs)) {
+                                // Without a re-based marker the retention would publish
+                                // unprotected. Take the retire the route took before: the
+                                // timeline goes with both markers, and the seal below opens
+                                // a fresh history at the count the table already holds.
+                                instance.setLvRowsTotal(durableRowsAfterApply);
+                                instance.getPendingPartitionRemovals().clear();
+                                retireCheckpointStateOnO3(instance, true);
+                                prefixMarkerLive = false;
+                            } else if (!reconcilePendingPartitionRemovals(instance)) {
+                                // The retention declined - the removal reached the truncated
+                                // head, or lay above it - or failed, and the reconcile retired
+                                // the timeline in its place, markers and all, after lowering
+                                // the counter. Nothing is left for the seal to preserve.
+                                prefixMarkerLive = false;
+                            }
+                            if (!prefixMarkerLive && session != null) {
+                                session.setRepairMarkerLive(false);
+                            }
+                        } else {
+                            retentionDuringRepair = true;
+                            // Not this apply's alone, so the splice must not subtract them.
+                            unspliceableRemovals = unreconciledRemovalsBeforeApply;
+                            repairPartitionRemovals.clear();
+                            repairPartitionRemovals.addAll(instance.getPendingPartitionRemovals());
+                            LOG.info().$("live view durable rows removed during an O3 repair [view=")
+                                    .$(viewName)
+                                    .$(", removedRows=").$(repairPartitionRemovals.getTotalRemovedRows())
+                                    .$(", spliceable=").$(timelineCapture != null && !unspliceableRemovals)
+                                    .I$();
+                        }
                     }
-                    // Sourced from the table, so every removal is in the count already. The
-                    // splice reads the copy above, and a route that does not splice leaves
-                    // the fresh seal to stamp the corrected count on a fresh history.
-                    instance.getPendingPartitionRemovals().clear();
+                    if (!truncatedPrefixKept) {
+                        // Sourced from the table, so every removal is in the count already. The
+                        // splice reads the copy above, and a route that does not splice leaves
+                        // the fresh seal to stamp the corrected count on a fresh history.
+                        instance.getPendingPartitionRemovals().clear();
+                        if (retentionDuringRepair && timelineCapture == null) {
+                            // The timeline was retired before the removal's commit wrote the
+                            // marker, so no retire follows to take it, and a restart that
+                            // found it would rebuild a history the seal below opens at the
+                            // corrected count anyway.
+                            clearRetentionMarker(instance);
+                        }
+                    }
                 }
                 final boolean replacementReconciled = repairPublication.isReplacementReconciled();
                 if (timelineCapture != null && replacementReconciled && !unspliceableRemovals) {
@@ -10310,17 +10397,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // retires the timeline for it, and that takes the marker with it, so
                         // this must not clear one on the strength of a seal alone.
                         //
-                        // A truncate whose replacement apply also removed partitions kept a
-                        // prefix whose positions still count the removed rows, and the seal
-                        // above appended the fresh head to it. Retire the lot: the retire
-                        // takes both markers with it, and the next cadence seal opens a fresh
-                        // history at the corrected position.
-                        if (retentionDuringRepair && timelineCapture == null) {
-                            retireCheckpointStateOnO3(instance, true);
-                            if (session != null) {
-                                session.setRepairMarkerLive(false);
-                            }
-                        } else if (timelineSplice != null || (timelineCapture == null && headSealed)) {
+                        // A truncate whose replacement apply also removed partitions
+                        // reconciled the kept prefix with the removal above, before the
+                        // seal, under a marker re-based on the truncate's generation; a
+                        // reconcile that retired instead dropped the flag, so it does not
+                        // reach here. Either way the seal is what resolves the marker.
+                        if (timelineSplice != null || (timelineCapture == null && headSealed)) {
                             clearCheckpointRepairMarker(instance);
                             if (session != null) {
                                 session.setRepairMarkerLive(false);

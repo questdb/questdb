@@ -34,6 +34,7 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -1579,6 +1580,208 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testTtlEvictionInsideAnO3TruncateReconcilesTheKeptPrefix() throws Exception {
+        // The same removal on the repair route that holds no capture. The boundary bound of 1
+        // declines the splice (the correction re-versions two roots), so the repair truncates
+        // the timeline at R instead: it keeps the roots below 02:00:15 - 01:00:10 and 02:00:10
+        // - under a repair marker, and the replacement's commit then evicts hour 01. The kept
+        // prefix was published before the eviction and its positions still count the evicted
+        // row, so the repair reconciles it with the ordinary retention before its post-replay
+        // seal: 01:00:10 retires, 02:00:10 drops to position 1, and the fresh head at the
+        // frontier is stamped off the table's size, which the eviction has already shrunk.
+        //
+        // Three generations - truncate, retention, seal - and the repair marker re-based on
+        // the truncate's own between the first two, so a crash between the retention and the
+        // seal reads as a live repair rather than a completed one. The branch used to retire
+        // the whole ladder here; without the change this test fails on the generation, which
+        // comes back as the retired timeline's LONG_NULL.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY HOUR START FROM NOW AS " +
+                    "(SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                    "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW) AS s FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("ALTER LIVE VIEW lv SET TTL 1 HOUR");
+                driveLiveViewWalApply(job);
+
+                flushOneRow(job, "2026-01-01T01:00:10.000000Z", 1, 1);
+                flushOneRow(job, "2026-01-01T02:00:10.000000Z", 2, 2);
+                flushOneRow(job, "2026-01-01T02:00:20.000000Z", 3, 3);
+                flushOneRow(job, "2026-01-01T02:00:30.000000Z", 4, 4);
+                flushOneRow(job, "2026-01-01T03:00:10.000000Z", 5, 5);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                assertLadder(
+                        instance,
+                        ts("2026-01-01T01:00:10.000000Z"), 1,
+                        ts("2026-01-01T02:00:10.000000Z"), 2,
+                        ts("2026-01-01T02:00:20.000000Z"), 3,
+                        ts("2026-01-01T02:00:30.000000Z"), 4,
+                        ts("2026-01-01T03:00:10.000000Z"), 5
+                );
+                final long generationBefore = readGeneration(lvToken);
+                final long retiredBefore = readRetiredCheckpointCount(lvToken);
+
+                setCurrentMicros(ts("2026-01-01T03:00:10.000000Z"));
+                execute("INSERT INTO base VALUES ('2026-01-01T02:00:15.000000Z', 'a', 100)");
+                driveUntil(
+                        job,
+                        () -> {
+                            try (TableReader reader = engine.getReader(lvToken)) {
+                                return reader.size() == 5
+                                        && reader.getPartitionCount() == 2
+                                        && reader.getMinTimestamp() == ts("2026-01-01T02:00:10.000000Z");
+                            }
+                        },
+                        "the repair's replacement never evicted hour 01"
+                );
+
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\ts
+                                2026-01-01T02:00:10.000000Z\ta\t2.0
+                                2026-01-01T02:00:15.000000Z\ta\t102.0
+                                2026-01-01T02:00:20.000000Z\ta\t105.0
+                                2026-01-01T02:00:30.000000Z\ta\t109.0
+                                2026-01-01T03:00:10.000000Z\ta\t5.0
+                                """);
+
+                // The truncate route, not the splice: no root was re-versioned.
+                Assert.assertEquals("the bound must decline the splice", 0, instance.getCheckpointRepairRootsVersioned());
+                Assert.assertEquals(
+                        "truncate, retention and seal must publish one generation each",
+                        generationBefore + 3,
+                        readGeneration(lvToken)
+                );
+                assertTimelineExists(lvToken, true);
+                // The truncate retired the three roots at or above R, the retention the one
+                // inside the evicted hour.
+                Assert.assertEquals(retiredBefore + 4, readRetiredCheckpointCount(lvToken));
+                assertLadder(
+                        instance,
+                        ts("2026-01-01T02:00:10.000000Z"), 1,
+                        ts("2026-01-01T03:00:10.000000Z"), 5
+                );
+                Assert.assertEquals("the evicted row must leave the lifetime counter", 5, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertRepairMarker(lvToken, false);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            // The kept prefix and the fresh head are what a restart reads back, and the
+            // evicted hour stays evicted.
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT ts, s FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\ts
+                            2026-01-01T02:00:10.000000Z\t2.0
+                            2026-01-01T02:00:15.000000Z\t102.0
+                            2026-01-01T02:00:20.000000Z\t105.0
+                            2026-01-01T02:00:30.000000Z\t109.0
+                            2026-01-01T03:00:10.000000Z\t5.0
+                            """);
+            Assert.assertEquals(5, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
+    public void testTtlEvictionInsideAnO3TruncateThatRetiredLeavesNoRetentionMarker() throws Exception {
+        // The truncate route's other outcome: a correction below every root finds no prefix
+        // to keep, so the truncate retires the timeline before the replay, and the
+        // replacement's commit then evicts hour 01 - writing the retention marker after the
+        // retire that would otherwise have removed it. There is no timeline for the marker
+        // to guard and the post-replay seal opens a fresh history at the table's own size,
+        // so the repair clears it. Without the change the marker outlives the repair and
+        // the restart below rebuilds from the applied base instead of restoring the fresh
+        // history.
+        //
+        // Two roots sit inside the correction's 30-second reach, so the bound of 1 declines
+        // the capture; a correction reaching one root or none would keep it and take the
+        // splice's own decline instead.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY HOUR START FROM NOW AS " +
+                    "(SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                    "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW) AS s FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("ALTER LIVE VIEW lv SET TTL 1 HOUR");
+                driveLiveViewWalApply(job);
+
+                flushOneRow(job, "2026-01-01T01:00:10.000000Z", 1, 1);
+                flushOneRow(job, "2026-01-01T01:00:20.000000Z", 2, 2);
+                flushOneRow(job, "2026-01-01T02:00:10.000000Z", 3, 3);
+                flushOneRow(job, "2026-01-01T03:00:10.000000Z", 4, 4);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+
+                // Below every root, inside the hour the commit is about to evict: the
+                // replacement writes the row and its own commit takes the partition.
+                setCurrentMicros(ts("2026-01-01T03:00:10.000000Z"));
+                execute("INSERT INTO base VALUES ('2026-01-01T01:00:05.000000Z', 'a', 100)");
+                driveUntil(
+                        job,
+                        () -> {
+                            try (TableReader reader = engine.getReader(lvToken)) {
+                                return reader.size() == 2
+                                        && reader.getPartitionCount() == 2
+                                        && reader.getMinTimestamp() == ts("2026-01-01T02:00:10.000000Z");
+                            }
+                        },
+                        "the repair's replacement never evicted hour 01"
+                );
+
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\ts
+                                2026-01-01T02:00:10.000000Z\ta\t3.0
+                                2026-01-01T03:00:10.000000Z\ta\t4.0
+                                """);
+
+                Assert.assertEquals("the bound must decline the splice", 0, instance.getCheckpointRepairRootsVersioned());
+                // A fresh history: the retire took the ladder, the seal opened a new one at
+                // the frontier.
+                assertTimelineExists(lvToken, true);
+                assertLadder(instance, ts("2026-01-01T03:00:10.000000Z"), 2);
+                Assert.assertEquals(2, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertRepairMarker(lvToken, false);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT ts, s FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\ts
+                            2026-01-01T02:00:10.000000Z\t3.0
+                            2026-01-01T03:00:10.000000Z\t4.0
+                            """);
+            Assert.assertEquals(2, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
     public void testTtlEvictionInsideDedupCleanCycleRebuildsTier() throws Exception {
         // A view over a DEDUP base is coupled: it has no un-flushed lead, applies inline every
         // cycle, and its disk-subset publish is the tier's only feed. When the range is provably
@@ -2255,6 +2458,16 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         }
         final LongList actual = snapshotCheckpointLadder(instance);
         Assert.assertEquals("checkpoint ladder (maxTimestamp, effective position)", expected.toString(), actual.toString());
+    }
+
+    private void assertRepairMarker(TableToken lvToken, boolean expected) {
+        try (Path path = new Path()) {
+            Assert.assertEquals(
+                    "repair marker presence at " + checkpointsDir(path, lvToken),
+                    expected,
+                    LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), path)
+            );
+        }
     }
 
     private void assertRetentionMarker(TableToken lvToken, boolean expected) {
