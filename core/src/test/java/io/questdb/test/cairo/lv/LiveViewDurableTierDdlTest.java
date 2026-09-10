@@ -1081,6 +1081,277 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRemovalCommittedBeforeAFailureInTheSameTransactionCountsOnce() throws Exception {
+        // One DROP statement over two partitions, with the second partition's retention marker
+        // refusing to publish. removePartition() commits once per logical partition, so the
+        // transaction takes 1970-01-01 durably and only then fails on 1970-01-02: a transaction
+        // that removed rows and afterwards threw. Nothing un-applies the commit that went
+        // through, so the event it published has to reach the refresh worker even though the
+        // apply ends in a suspension - which is why the apply job accumulates the writer's
+        // committed log in a finally rather than after a clean return. Dropping the event there
+        // would leave the lifetime counter one row above a table that already shrank, with no
+        // pending evidence to explain it, and the next seal would report the drift and retire
+        // the history instead of restoring from it.
+        final AtomicInteger markerPublishes = new AtomicInteger();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                // The second partition of the statement, and only it: the replay after RESUME
+                // WAL publishes no marker at all, and a later removal must be able to.
+                if (Utf8s.endsWithAscii(to, LiveViewCheckpointLayout.RETENTION_MARKER_FILE_NAME)
+                        && markerPublishes.incrementAndGet() == 2) {
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                return super.rename(from, to);
+            }
+        }, () -> {
+            createBaseAndView("PARTITION BY DAY");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int day = 1; day <= 5; day++) {
+                    flushRow(job, "1970-01-0" + day, day, day);
+                }
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-01', '1970-01-02'");
+                driveUntil(job, () -> engine.getTableSequencerAPI().isSuspended(lvToken), "the live view was not suspended");
+
+                // Half the statement is durable, and the half that is not leaves the transaction
+                // unapplied - the writer rolled its seqTxn back so the replay redelivers it.
+                Assert.assertEquals(
+                        "the failed transaction must stay unapplied",
+                        1,
+                        tracker.getSeqTxn() - tracker.getWriterTxn()
+                );
+                assertQuery("SELECT name FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name
+                                1970-01-02
+                                1970-01-03
+                                1970-01-04
+                                1970-01-05
+                                """);
+                // The removal that did commit was reported, once.
+                Assert.assertEquals(1, instance.getPendingPartitionRemovals().size());
+                Assert.assertEquals(1, instance.getPendingPartitionRemovals().getTotalRemovedRows());
+                // Reconciling it is deferred while the transaction is outstanding: the counter
+                // may legitimately lead the table there, so nothing may be subtracted yet, and
+                // the marker the removal wrote is still the live evidence of that gap.
+                Assert.assertEquals(5, instance.getLvRowsTotal());
+                assertRetentionMarker(lvToken, true);
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\nsuspended\n");
+
+                // Driving on while the reconcile is deferred redelivers nothing: the apply
+                // clears the writer's log as it takes each event, so a second apply cannot hand
+                // the same removal over again and inflate what the reconcile will subtract.
+                for (int i = 0; i < 4; i++) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                Assert.assertEquals(1, instance.getPendingPartitionRemovals().size());
+                Assert.assertEquals(5, instance.getLvRowsTotal());
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveLiveViewWalApply(job);
+                driveRefreshToQuiescence(job);
+
+                // The replay re-runs the whole statement, and its first partition is already
+                // gone: removePartition() answers false for it, which is a WAL-tolerable failure,
+                // so the transaction is marked applied and the rest of the LIST is abandoned.
+                // 1970-01-02 therefore stays attached - the statement is not resumed where it
+                // stopped - and this is what a partly-applied multi-partition DROP leaves behind.
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\nactive\n");
+                assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n2\n3\n4\n5\n");
+
+                // Exactly the one row that actually went is off the counter and off the ladder.
+                Assert.assertEquals(4, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertTimelineExists(lvToken, true);
+                Assert.assertEquals("one retired root, for the partition that went", 1, readRetiredCheckpointCount(lvToken));
+                assertLadder(instance, ts("1970-01-02"), 1, ts("1970-01-03"), 2, ts("1970-01-04"), 3, ts("1970-01-05"), 4);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n2\n3\n4\n5\n");
+            Assert.assertEquals(4, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
+    public void testRemovalHeldAcrossAPartialApplyCountsOnceAfterTheResume() throws Exception {
+        // Two DROP statements sequenced back to back, with the second one's retention marker
+        // refusing to publish. One drain takes both, applies the first and stops on the second:
+        // a partial apply, which leaves the worker holding an event for a removal that is
+        // already durable while a transaction the view committed is still outstanding. That is
+        // the state the reconcile defers in, so the event has to survive the wait and every
+        // apply that happens during it. What the resume then has to produce is each removal
+        // subtracted exactly once, across the two applies that delivered them - a batch counted
+        // per delivery would take the first partition's row twice and leave the counter short.
+        final AtomicInteger markerPublishes = new AtomicInteger();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                // The second statement's first attempt, and only it: its replay after RESUME WAL
+                // is the third publish and must go through.
+                if (Utf8s.endsWithAscii(to, LiveViewCheckpointLayout.RETENTION_MARKER_FILE_NAME)
+                        && markerPublishes.incrementAndGet() == 2) {
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                return super.rename(from, to);
+            }
+        }, () -> {
+            createBaseAndView("PARTITION BY DAY");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int day = 1; day <= 5; day++) {
+                    flushRow(job, "1970-01-0" + day, day, day);
+                }
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-01'");
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-02'");
+                Assert.assertEquals(
+                        "both removals must still be unapplied, so one drain takes them together",
+                        2,
+                        tracker.getSeqTxn() - tracker.getWriterTxn()
+                );
+                driveUntil(job, () -> engine.getTableSequencerAPI().isSuspended(lvToken), "the live view was not suspended");
+
+                Assert.assertEquals(
+                        "the drain must have applied the first removal and stopped on the second",
+                        1,
+                        tracker.getSeqTxn() - tracker.getWriterTxn()
+                );
+                assertQuery("SELECT name FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name
+                                1970-01-02
+                                1970-01-03
+                                1970-01-04
+                                1970-01-05
+                                """);
+                Assert.assertEquals(1, instance.getPendingPartitionRemovals().size());
+                Assert.assertEquals(1, instance.getPendingPartitionRemovals().getTotalRemovedRows());
+                Assert.assertEquals(5, instance.getLvRowsTotal());
+                assertRetentionMarker(lvToken, true);
+
+                // The deferral holds across further applies, and nothing is delivered twice.
+                for (int i = 0; i < 4; i++) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                Assert.assertEquals(1, instance.getPendingPartitionRemovals().size());
+                Assert.assertEquals(5, instance.getLvRowsTotal());
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveLiveViewWalApply(job);
+                driveRefreshToQuiescence(job);
+
+                // The rest of the drain lands, and the two events - one held over the wait, one
+                // from this apply - reconcile together.
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
+                assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n3\n4\n5\n");
+                Assert.assertEquals(3, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertTimelineExists(lvToken, true);
+                Assert.assertEquals("one retired root per removed partition", 2, readRetiredCheckpointCount(lvToken));
+                assertLadder(instance, ts("1970-01-03"), 1, ts("1970-01-04"), 2, ts("1970-01-05"), 3);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n3\n4\n5\n");
+            Assert.assertEquals(3, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
+    public void testRemovalCommittedBeforeAToleratedRejectionCountsOnce() throws Exception {
+        // The other end of the same drain: a removal that commits, and then a second transaction
+        // the writer refuses recoverably. The active-partition guard is that refusal - a WAL
+        // command failure the apply tolerates, which marks the transaction applied and leaves the
+        // view running rather than suspending it. The drain therefore ends clean, at a fully
+        // applied boundary, and the reconcile runs on the spot: the removal that did happen has
+        // to be subtracted exactly once, and the one the guard refused not at all. A drain that
+        // discarded its committed events on the way past a failed transaction would leave the
+        // counter one row high; one that counted the refusal as a removal would leave it short.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createBaseAndView("PARTITION BY DAY");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int day = 1; day <= 4; day++) {
+                    flushRow(job, "1970-01-0" + day, day, day);
+                }
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+
+                final LogCapture capture = new LogCapture();
+                capture.start();
+                try {
+                    execute("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-01'");
+                    // 1970-01-04 is the durable frontier, so only a statement that never met the
+                    // compiler can name it. This is the shape a replicated command takes.
+                    sequenceRawDropPartition(lvToken, "1970-01-04");
+                    Assert.assertEquals(
+                            "both transactions must still be unapplied, so one drain takes them together",
+                            2,
+                            tracker.getSeqTxn() - tracker.getWriterTxn()
+                    );
+                    driveLiveViewWalApply(job);
+                    capture.drain();
+                    capture.assertLoggedRE("tolerated WAL command failure \\[table=" + lvToken.getDirName()
+                            + ", seqTxn=\\d+, command=ALTER TABLE, "
+                            + "error=cannot drop the active partition of a live view "
+                            + "\\[partition=1970-01-04T00:00:00\\.000000Z]");
+                } finally {
+                    capture.stop();
+                }
+                driveRefreshToQuiescence(job);
+
+                Assert.assertFalse(
+                        "a recoverable rejection must not suspend the live view",
+                        engine.getTableSequencerAPI().isSuspended(lvToken)
+                );
+                assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n2\n3\n4\n");
+                Assert.assertEquals(3, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertTimelineExists(lvToken, true);
+                Assert.assertEquals("only the removal that happened retires a root", 1, readRetiredCheckpointCount(lvToken));
+                assertLadder(instance, ts("1970-01-02"), 1, ts("1970-01-03"), 2, ts("1970-01-04"), 3);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n2\n3\n4\n");
+            Assert.assertEquals(3, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
     public void testRepairResurrectsOnlyTheDroppedPartitionItsIntervalCovers() throws Exception {
         // The documented DROP PARTITION semantics: the removal takes durable rows now, and only
         // now. A later out-of-order base commit whose repair interval overlaps a dropped period
