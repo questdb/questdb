@@ -61,6 +61,7 @@ import java.util.Collection;
 public class LiveViewCheckpointCaptureLedgerTest extends AbstractLiveViewTest {
 
     private static final String DAY = "2026-01-01T11:00:";
+    private static final String NEXT_DAY = "2026-01-02T11:00:";
     // Enough accounts that a batch touching one is unmistakably narrower than the domain.
     // Eight is also small enough to seed as a literal row list, so the case reads as the
     // rows it inserts rather than as a generator.
@@ -113,6 +114,11 @@ public class LiveViewCheckpointCaptureLedgerTest extends AbstractLiveViewTest {
                         "a complete capture removes by omission rather than by naming removals",
                         0,
                         first.windowKeysRemoved
+                );
+                Assert.assertEquals(
+                        "a seal with no predecessor root has nothing to compare against",
+                        0,
+                        first.windowElisionProbes
                 );
                 assertViewMatchesRecompute();
             }
@@ -216,6 +222,14 @@ public class LiveViewCheckpointCaptureLedgerTest extends AbstractLiveViewTest {
                 Assert.assertEquals(4, delta.windowKeysVisited);
                 Assert.assertEquals(4, delta.windowKeysImaged);
                 Assert.assertEquals(0, delta.windowKeysRemoved);
+                // Every one of the four rows lands in the bucket its key's anchor already
+                // names, so the predecessor could be holding the entry each seal is about to
+                // write and the only way to find out is to look.
+                Assert.assertEquals(
+                        "a key whose anchor held has to be compared against the predecessor",
+                        4,
+                        delta.windowElisionProbes
+                );
                 Assert.assertEquals(
                         "every projection is durable, so nothing may keep a root of its own",
                         0,
@@ -224,6 +238,76 @@ public class LiveViewCheckpointCaptureLedgerTest extends AbstractLiveViewTest {
                 // The domain the two seals did not walk. Without this the counts above would
                 // also be satisfied by a view that had lost six of its keys.
                 Assert.assertEquals(SEEDED_ACCOUNTS, anchorMapSize());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAKeyTheCheckpointDoesNotHoldYetIsNotProbedFor() throws Exception {
+        assertMemoryLeak(() -> {
+            createFusedView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final Ledger ledger = new Ledger();
+
+                // A ninth account, inside the bucket the other eight are in. Its anchor has
+                // not moved - it has no anchor yet - and the head root has no entry to
+                // compare its payload against, which the freeze knows from the marker the
+                // row that created the key wrote.
+                commit("('" + DAY + "20.000000Z', 'acct-9', 9.0)", job);
+
+                final Ledger.Delta delta = ledger.delta();
+                Assert.assertEquals(1, delta.windowCaptures);
+                Assert.assertEquals(1, delta.windowIncrementalCaptures);
+                Assert.assertEquals(1, delta.windowKeysVisited);
+                Assert.assertEquals(1, delta.windowKeysImaged);
+                Assert.assertEquals(
+                        "a key absent from the predecessor root cannot be elided against it",
+                        0,
+                        delta.windowElisionProbes
+                );
+                Assert.assertEquals(SEEDED_ACCOUNTS + 1, anchorMapSize());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testASealOverKeysThatCrossedAnAnchorBoundaryProbesNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            createFusedView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final Ledger ledger = new Ledger();
+
+                // The next day's bucket for two keys the seed already sealed. Each row resets
+                // its key's accumulators and writes a new anchor value, and the anchor value
+                // leads the payload, so neither entry can be the one the head root holds.
+                commit("('" + NEXT_DAY + "00.000000Z', 'acct-1', 1.0)", job);
+                commit("('" + NEXT_DAY + "01.000000Z', 'acct-2', 2.0)", job);
+
+                final Ledger.Delta delta = ledger.delta();
+                Assert.assertEquals(2, delta.windowCaptures);
+                Assert.assertEquals(2, delta.windowIncrementalCaptures);
+                Assert.assertEquals(2, delta.windowKeysVisited);
+                Assert.assertEquals(2, delta.windowKeysImaged);
+                Assert.assertEquals(
+                        "an imaged key whose anchor moved is owed no predecessor lookup",
+                        0,
+                        delta.windowElisionProbes
+                );
+                // The two seals still published what they imaged, which is what says the
+                // skipped lookup cost the roots nothing: the recompute below reads the
+                // restarted view off those roots rather than off the live runtime.
+                Assert.assertEquals(SEEDED_ACCOUNTS, anchorMapSize());
+                assertViewMatchesRecompute();
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                assertRestoredFromTimeline("lv");
                 assertViewMatchesRecompute();
             }
         });
@@ -255,6 +339,11 @@ public class LiveViewCheckpointCaptureLedgerTest extends AbstractLiveViewTest {
                 Assert.assertEquals(1, delta.windowIncrementalCaptures);
                 Assert.assertEquals(1, delta.windowKeysVisited);
                 Assert.assertEquals(1, delta.windowKeysImaged);
+                Assert.assertEquals(
+                        "the restored root is a predecessor the first reseal can elide against",
+                        1,
+                        delta.windowElisionProbes
+                );
                 Assert.assertEquals(SEEDED_ACCOUNTS, anchorMapSize());
                 assertViewMatchesRecompute();
             }
@@ -367,7 +456,7 @@ public class LiveViewCheckpointCaptureLedgerTest extends AbstractLiveViewTest {
     /**
      * The view's lifetime capture counters, and the difference between two readings of them.
      * Every counter on the instance is cumulative, so a case's own reading is always a
-     * delta; holding the previous reading in one object keeps the nine of them from drifting
+     * delta; holding the previous reading in one object keeps the ten of them from drifting
      * out of step with each other.
      */
     private final class Ledger {
@@ -376,6 +465,7 @@ public class LiveViewCheckpointCaptureLedgerTest extends AbstractLiveViewTest {
         private long functionKeysImaged;
         private long functionKeysVisited;
         private long windowCaptures;
+        private long windowElisionProbes;
         private long windowIncrementalCaptures;
         private long windowKeysImaged;
         private long windowKeysRemoved;
@@ -383,6 +473,7 @@ public class LiveViewCheckpointCaptureLedgerTest extends AbstractLiveViewTest {
 
         private Ledger() {
             final LiveViewInstance instance = viewInstance();
+            windowElisionProbes = instance.getCheckpointCaptureWindowElisionProbes();
             windowCaptures = instance.getCheckpointCaptureWindowRoots();
             windowIncrementalCaptures = instance.getCheckpointCaptureWindowRootsIncremental();
             windowKeysVisited = instance.getCheckpointCaptureWindowKeysVisited();
@@ -397,6 +488,8 @@ public class LiveViewCheckpointCaptureLedgerTest extends AbstractLiveViewTest {
         Delta delta() {
             final LiveViewInstance instance = viewInstance();
             final Delta delta = new Delta();
+            delta.windowElisionProbes =
+                    instance.getCheckpointCaptureWindowElisionProbes() - windowElisionProbes;
             delta.windowCaptures = instance.getCheckpointCaptureWindowRoots() - windowCaptures;
             delta.windowIncrementalCaptures =
                     instance.getCheckpointCaptureWindowRootsIncremental() - windowIncrementalCaptures;
@@ -417,6 +510,7 @@ public class LiveViewCheckpointCaptureLedgerTest extends AbstractLiveViewTest {
             private long functionKeysImaged;
             private long functionKeysVisited;
             private long windowCaptures;
+            private long windowElisionProbes;
             private long windowIncrementalCaptures;
             private long windowKeysImaged;
             private long windowKeysRemoved;

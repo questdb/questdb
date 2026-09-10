@@ -93,11 +93,15 @@ import org.jetbrains.annotations.TestOnly;
  * </ul>
  */
 public class LiveViewWindow implements QuietCloseable {
-    // The dirty anchor map's two slots. Nothing reads an anchor value or a live
+    // The dirty anchor map's three slots. Nothing reads an anchor value or a live
     // tombstone off that map - freezeCheckpointEntries goes to the live anchor map for
     // both - so carrying the four slots below would be padding on every key the
     // cadence touches.
     //
+    // DIRTY_SLOT_ANCHOR_MOVED: 1 means this key entered the dirty set on a row that
+    // moved its anchor value, which the seal reads as "the predecessor root cannot hold
+    // this key's payload". See freezeCheckpointEntries: it is a hint that may read 0 for
+    // a key whose anchor did move, and never the other way round.
     // DIRTY_SLOT_EVICTED: 1 means the frontier sweep dropped this key from the anchor
     // map, so the seal freezes a removal for it instead of raising on the missing live
     // value. Per-key rather than per-sweep on purpose: a dirty key that lost its anchor
@@ -105,6 +109,7 @@ public class LiveViewWindow implements QuietCloseable {
     // DIRTY_SLOT_NEW_SINCE_CHECKPOINT: 1 means the key is absent from the durable
     // predecessor, which is what keeps the logical-size accounting exact without a probe
     // into the anchor root.
+    private static final int DIRTY_SLOT_ANCHOR_MOVED = 2;
     private static final int DIRTY_SLOT_EVICTED = 1;
     private static final int DIRTY_SLOT_NEW_SINCE_CHECKPOINT = 0;
     // The cadence value no key is ever marked with, so a value slot that was never
@@ -898,6 +903,7 @@ public class LiveViewWindow implements QuietCloseable {
                 isIncremental,
                 entryStateBytes,
                 payloadsOut,
+                null,
                 null
         );
     }
@@ -910,6 +916,7 @@ public class LiveViewWindow implements QuietCloseable {
             boolean isIncremental,
             int entryStateBytes,
             @Nullable ObjList<byte[]> payloadsOut,
+            @Nullable BoolList isElisionRuledOutOut,
             @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
     ) {
         // One member, allocated locally: this runs once per seal, where the batched member
@@ -935,6 +942,7 @@ public class LiveViewWindow implements QuietCloseable {
                 payloads,
                 projectionIndexes,
                 logicalBytes,
+                isElisionRuledOutOut,
                 byteArrayPool
         );
         return logicalBytes.getQuick(0);
@@ -1040,6 +1048,7 @@ public class LiveViewWindow implements QuietCloseable {
                 imagesOut,
                 projectionIndexes,
                 logicalBytesInOut,
+                null,
                 byteArrayPool
         );
     }
@@ -1064,14 +1073,25 @@ public class LiveViewWindow implements QuietCloseable {
      * safe because a frozen partition never mutates its key: {@code FrozenPartition.key} is
      * final and the directory and partition-map writers only read it.
      *
-     * @param entryStateBytes   the state bytes one published entry carries, per member
-     * @param valuesOut         the per-key anchor values, index-aligned with
-     *                          {@code keysOut}, or null for a member walk, whose keys are
-     *                          the window root's to publish an anchor value for
-     * @param payloadsOut       the per-key images, per member, or null for the legacy
-     *                          anchor-only shape that publishes no payload
-     * @param logicalBytesInOut each member's running logical total: seeded by the caller
-     *                          with the root the freeze builds on, charged in place here
+     * @param entryStateBytes       the state bytes one published entry carries, per member
+     * @param valuesOut             the per-key anchor values, index-aligned with
+     *                              {@code keysOut}, or null for a member walk, whose keys
+     *                              are the window root's to publish an anchor value for
+     * @param payloadsOut           the per-key images, per member, or null for the legacy
+     *                              anchor-only shape that publishes no payload
+     * @param logicalBytesInOut     each member's running logical total: seeded by the caller
+     *                              with the root the freeze builds on, charged in place here
+     * @param isElisionRuledOutOut  per key, index-aligned with {@code keysOut}: true where
+     *                              this walk already knows the key's entry cannot be the one
+     *                              the durable predecessor holds, so the seal owes it no
+     *                              predecessor probe. A complete walk answers false
+     *                              throughout - it holds no dirty entry to read the fact off
+     *                              - and so does an incremental walk over a key whose anchor
+     *                              moved on a row other than its first of the cadence. The
+     *                              seal treats it as a hint and probes for every key it
+     *                              reads false for, so under-reporting costs a probe and
+     *                              nothing else. Null for a member walk, whose images the
+     *                              window root does not publish
      */
     private void freezeCheckpointEntries(
             @NotNull MemoryCARW keyBuffer,
@@ -1083,6 +1103,7 @@ public class LiveViewWindow implements QuietCloseable {
             @Nullable ObjList<ObjList<byte[]>> payloadsOut,
             @NotNull IntList memberProjectionIndexes,
             @NotNull LongList logicalBytesInOut,
+            @Nullable BoolList isElisionRuledOutOut,
             @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
     ) {
         checkpointFreezeScanCount++;
@@ -1093,6 +1114,9 @@ public class LiveViewWindow implements QuietCloseable {
         keysOut.clear();
         if (isAnchorValueEmitted) {
             valuesOut.clear();
+        }
+        if (isElisionRuledOutOut != null) {
+            isElisionRuledOutOut.clear();
         }
         removedKeysOut.clear();
         // Which side of the group's state this walk reads from. Fused, every component sits
@@ -1141,6 +1165,11 @@ public class LiveViewWindow implements QuietCloseable {
                     && dirtyOrAnchorValue.getByte(DIRTY_SLOT_NEW_SINCE_CHECKPOINT) == 1;
             final boolean isRecordedEviction = isIncremental
                     && dirtyOrAnchorValue.getByte(DIRTY_SLOT_EVICTED) == 1;
+            // Only the dirty map carries the marker, and only an incremental walk reads
+            // it: a complete walk is over the anchor map, whose entries say nothing about
+            // what has happened since the predecessor root.
+            final boolean isAnchorMoved = isIncremental
+                    && dirtyOrAnchorValue.getByte(DIRTY_SLOT_ANCHOR_MOVED) == 1;
             keyBuffer.jumpTo(0);
             LiveViewSnapshotKeyCodec.writeKey(keyBuffer, record, partitionKeyTypes, keyStartIndex);
             final long length = keyBuffer.getAppendOffset();
@@ -1191,6 +1220,13 @@ public class LiveViewWindow implements QuietCloseable {
             keysOut.add(key);
             if (isAnchorValueEmitted) {
                 valuesOut.add(anchorValue.getLong(SLOT_ANCHOR_VALUE));
+            }
+            if (isElisionRuledOutOut != null) {
+                // A key the predecessor root does not hold, and a key whose anchor value
+                // moved since it published, both put a payload the predecessor's entry
+                // cannot equal - the anchor value leads that payload. Neither owes the
+                // seal the probe that would establish it.
+                isElisionRuledOutOut.add(isNewSinceCheckpoint || isAnchorMoved);
             }
             final boolean isCharged = !isIncremental || isNewSinceCheckpoint;
             for (int m = 0; m < memberCount; m++) {
@@ -1720,14 +1756,25 @@ public class LiveViewWindow implements QuietCloseable {
         // is one the seal never reads.
         final boolean isFirstCadenceTouch = isNewPartition
                 || value.getShort(SLOT_DIRTY_EPOCH) != checkpointDirtyEpoch;
-        if (isFirstCadenceTouch) {
-            markCheckpointPartitionDirty(record, isNewPartition);
-        }
         final byte initialized = isNewPartition ? 0 : value.getByte(SLOT_INITIALIZED);
         final long lastAnchor = initialized == 0 ? 0 : value.getLong(SLOT_ANCHOR_VALUE);
         final long currentAnchor = readAnchorValue(record);
-        trackFrontier(currentAnchor);
         final boolean shouldReset = initialized == 0 || lastAnchor != currentAnchor;
+        // The anchor comparison is read before the mark rather than after it so the mark
+        // can carry it. On a first cadence touch the anchor value still standing in the
+        // entry is the one the seal that cleared the dirty set published, so shouldReset
+        // says whether this key's payload can still match that root's - which is what
+        // saves the seal a predecessor probe per key.
+        //
+        // A key whose anchor moves on a LATER row of the same cadence keeps the 0 this
+        // row wrote: the marker deliberately stays a once-per-key-per-cadence write, and
+        // the seal answers such a key from the probe as it always did. The regime the
+        // marker is for - a bucket short enough that most keys cross it between seals -
+        // is one where a key's crossing row is its first of the cadence.
+        if (isFirstCadenceTouch) {
+            markCheckpointPartitionDirty(record, isNewPartition, shouldReset);
+        }
+        trackFrontier(currentAnchor);
 
         // The branch takes a row that crossed to a new anchor value, and - through
         // initialized == 0 - every new partition. Resetting a new partition is deliberate:
@@ -2219,7 +2266,10 @@ public class LiveViewWindow implements QuietCloseable {
         } else if (lastAnchor != anchorValue) {
             movePartitionToCurrentBucket(false, lastAnchor);
         }
-        markCheckpointPartitionDirtyByKey(keySource, isNewPartition);
+        // The anchor fact rather than "the replay rewrote everything": a transplanted key
+        // whose anchor held may still carry the payload the predecessor root holds, and
+        // that is exactly the key a repair over a partial domain wants to elide.
+        markCheckpointPartitionDirtyByKey(keySource, isNewPartition, !wasInitialized || lastAnchor != anchorValue);
     }
 
     /**
@@ -2858,14 +2908,16 @@ public class LiveViewWindow implements QuietCloseable {
 
     /**
      * Adds one partition key to the checkpoint dirty set and records whether it was new
-     * relative to the last durable checkpoint. The marker keeps logical-size accounting
-     * exact without probing the persistent anchor root.
+     * relative to the last durable checkpoint, and whether the row that named it moved
+     * its anchor value. The first marker keeps logical-size accounting exact without
+     * probing the persistent anchor root; the second saves the seal a predecessor probe
+     * per key it can never elide.
      * <p>
      * Reached once per key per cadence rather than once per row - see the epoch test in
      * {@link #processRow} - so what it costs scales with the key domain the cadence
      * touches rather than with the rows it processes.
      */
-    private void markCheckpointPartitionDirty(Record record, boolean isNewPartition) {
+    private void markCheckpointPartitionDirty(Record record, boolean isNewPartition, boolean isAnchorMoved) {
         checkpointDirtyMarkCount++;
         if (checkpointDirtyAnchorMap == null) {
             checkpointDirtyAnchorMap = createTrackedDirtyAnchorMap(
@@ -2885,6 +2937,11 @@ public class LiveViewWindow implements QuietCloseable {
         // Writing it on a fresh entry also keeps the marker off whatever bytes the map's
         // backing happened to hold - createValue() zero-fills on no implementation.
         value.putByte(DIRTY_SLOT_EVICTED, (byte) 0);
+        // Unconditional for the same reason, and it can only raise the marker rather than
+        // clear one: this method runs once per key per cadence, and the one entry it can
+        // meet standing is an eviction's, whose key this row re-creates - which is a new
+        // partition, so isAnchorMoved is true.
+        value.putByte(DIRTY_SLOT_ANCHOR_MOVED, isAnchorMoved ? (byte) 1 : (byte) 0);
     }
 
     /**
@@ -2899,7 +2956,8 @@ public class LiveViewWindow implements QuietCloseable {
      */
     private void markCheckpointPartitionDirtyByKey(
             @NotNull LiveViewStatePageReader keySource,
-            boolean isNewPartition
+            boolean isNewPartition,
+            boolean isAnchorMoved
     ) {
         checkpointDirtyMarkCount++;
         if (checkpointDirtyAnchorMap == null) {
@@ -2916,6 +2974,7 @@ public class LiveViewWindow implements QuietCloseable {
             value.putByte(DIRTY_SLOT_NEW_SINCE_CHECKPOINT, isNewPartition ? (byte) 1 : (byte) 0);
         }
         value.putByte(DIRTY_SLOT_EVICTED, (byte) 0);
+        value.putByte(DIRTY_SLOT_ANCHOR_MOVED, isAnchorMoved ? (byte) 1 : (byte) 0);
     }
 
     /**
@@ -2947,6 +3006,11 @@ public class LiveViewWindow implements QuietCloseable {
             // reaches here without a dirty entry was last written before the predecessor
             // root was published and that root holds it.
             value.putByte(DIRTY_SLOT_NEW_SINCE_CHECKPOINT, (byte) 0);
+            // An eviction publishes a removal rather than a payload, so nothing reads this
+            // marker on the entry as it stands. It is written all the same because
+            // createValue() zero-fills on no implementation, and because the row that
+            // re-creates an evicted key inside the same cadence marks it again anyway.
+            value.putByte(DIRTY_SLOT_ANCHOR_MOVED, (byte) 1);
         }
         value.putByte(DIRTY_SLOT_EVICTED, (byte) 1);
     }
@@ -3346,23 +3410,30 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
-     * Value layout of the checkpoint dirty-key map: two bytes, the
-     * {@link #DIRTY_SLOT_NEW_SINCE_CHECKPOINT} and {@link #DIRTY_SLOT_EVICTED}
-     * markers. The map's whole job is to name keys and say how each one got there,
-     * and {@link #freezeCheckpointEntries} reads every anchor value it publishes out
-     * of the live anchor map, so nothing else belongs here.
+     * Value layout of the checkpoint dirty-key map: three bytes, the
+     * {@link #DIRTY_SLOT_NEW_SINCE_CHECKPOINT}, {@link #DIRTY_SLOT_EVICTED} and
+     * {@link #DIRTY_SLOT_ANCHOR_MOVED} markers. The map's whole job is to name keys and
+     * say how each one got there, and {@link #freezeCheckpointEntries} reads every anchor
+     * value it publishes out of the live anchor map, so nothing else belongs here.
+     * <p>
+     * Three bytes rather than two costs the map implementation nothing:
+     * {@code MapFactory.createUnorderedMap} picks on the raw key+value byte sum against
+     * {@code cairo.sql.unordered.map.max.entry.size}, whose default of 32 leaves this
+     * map's widest admitted key - a VARCHAR at 16 bytes - 13 bytes of headroom.
      */
     private static final class DirtyAnchorMapValueTypes implements ColumnTypes {
         static final DirtyAnchorMapValueTypes INSTANCE = new DirtyAnchorMapValueTypes();
 
         @Override
         public int getColumnCount() {
-            return 2;
+            return 3;
         }
 
         @Override
         public int getColumnType(int columnIndex) {
-            if (columnIndex == DIRTY_SLOT_NEW_SINCE_CHECKPOINT || columnIndex == DIRTY_SLOT_EVICTED) {
+            if (columnIndex == DIRTY_SLOT_NEW_SINCE_CHECKPOINT
+                    || columnIndex == DIRTY_SLOT_EVICTED
+                    || columnIndex == DIRTY_SLOT_ANCHOR_MOVED) {
                 return ColumnType.BYTE;
             }
             throw new IndexOutOfBoundsException();

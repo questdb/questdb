@@ -741,7 +741,7 @@ public class LiveViewSteadyStateBenchmark {
                         (System.nanoTime() - seedStart) / 1e6, instance.getHeadCheckpointWriteMicros() / 1e3);
 
                 segments.sample();
-                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\trefresh_max_pass_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb\tmeta_segs\tdata_segs\tmeta_bytes\tdata_bytes\to3_scan_rows\to3_resume_rows\to3_boundary_rows\ttl_gen\ttl_entries\thead_root\thead_lag_rows\tlv_apply_ms\tlv_rows\tlv_phys_rows\tlv_write_amp\tlv_parts\twin_caps\twin_inc\twin_visited\twin_imaged\twin_removed\tfn_roots\tfn_inc\tfn_visited\tfn_imaged\talloc_mb\trepair");
+                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\trefresh_max_pass_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb\tmeta_segs\tdata_segs\tmeta_bytes\tdata_bytes\to3_scan_rows\to3_resume_rows\to3_boundary_rows\ttl_gen\ttl_entries\thead_root\thead_lag_rows\tlv_apply_ms\tlv_rows\tlv_phys_rows\tlv_write_amp\tlv_parts\twin_caps\twin_inc\twin_visited\twin_imaged\twin_removed\twin_probes\tfn_roots\tfn_inc\tfn_visited\tfn_imaged\talloc_mb\trepair");
                 long firstRow = seedRows + 1;
                 // A seal after a sweep is the one this measurement is about: compact()
                 // demotes the next seal to a full scan of the whole live state, while a
@@ -910,7 +910,7 @@ public class LiveViewSteadyStateBenchmark {
                     System.out.printf(
                             Locale.ROOT,
                             "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.1f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%d\t%d\t%.1f\t%d"
-                                    + "\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.2f\t%s%n",
+                                    + "\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.2f\t%s%n",
                             b,
                             expected,
                             baseNanos / 1e6,
@@ -948,6 +948,7 @@ public class LiveViewSteadyStateBenchmark {
                             capture.windowKeysVisited(instance),
                             capture.windowKeysImaged(instance),
                             capture.windowKeysRemoved(instance),
+                            capture.windowElisionProbes(instance),
                             capture.functionCaptures(instance),
                             capture.functionIncrementalCaptures(instance),
                             capture.functionKeysVisited(instance),
@@ -2342,7 +2343,7 @@ public class LiveViewSteadyStateBenchmark {
      * <p>
      * Every counter on {@link LiveViewInstance} is cumulative over the view's life, so a
      * batch's own reading is a difference between two of them. Holding the previous reading
-     * here rather than in nine locals in the batch loop keeps the two halves - what was read
+     * here rather than in ten locals in the batch loop keeps the two halves - what was read
      * before the refresh and what is subtracted after it - impossible to get out of step.
      */
     private static final class CaptureLedgerSample {
@@ -2351,6 +2352,7 @@ public class LiveViewSteadyStateBenchmark {
         private long functionKeysImaged;
         private long functionKeysVisited;
         private long windowCaptures;
+        private long windowElisionProbes;
         private long windowIncrementalCaptures;
         private long windowKeysImaged;
         private long windowKeysRemoved;
@@ -2366,6 +2368,7 @@ public class LiveViewSteadyStateBenchmark {
             windowKeysVisited = instance.getCheckpointCaptureWindowKeysVisited();
             windowKeysImaged = instance.getCheckpointCaptureWindowKeysImaged();
             windowKeysRemoved = instance.getCheckpointCaptureWindowKeysRemoved();
+            windowElisionProbes = instance.getCheckpointCaptureWindowElisionProbes();
             functionCaptures = instance.getCheckpointCaptureFunctionRoots();
             functionIncrementalCaptures = instance.getCheckpointCaptureFunctionRootsIncremental();
             functionKeysVisited = instance.getCheckpointCaptureFunctionKeysVisited();
@@ -2390,6 +2393,10 @@ public class LiveViewSteadyStateBenchmark {
 
         long windowCaptures(LiveViewInstance instance) {
             return instance.getCheckpointCaptureWindowRoots() - windowCaptures;
+        }
+
+        long windowElisionProbes(LiveViewInstance instance) {
+            return instance.getCheckpointCaptureWindowElisionProbes() - windowElisionProbes;
         }
 
         long windowIncrementalCaptures(LiveViewInstance instance) {

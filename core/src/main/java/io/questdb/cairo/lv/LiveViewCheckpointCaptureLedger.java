@@ -48,6 +48,14 @@ import org.jetbrains.annotations.NotNull;
  * the incremental disposition, so a wide SELECT list adds roots and images without adding
  * walks. {@code captures} counts roots either way.
  * <p>
+ * {@code elisionProbes} is the window half's second structural reading. Imaging a key and
+ * publishing it are not the same act: a seal leaves the predecessor's entry standing for a
+ * key whose payload has not moved, and what it pays to find that out is one lookup into the
+ * predecessor root per key it probes. The probe is worth its cost only where an elision can
+ * follow, so the count standing apart from {@code keysImaged} is what says the freeze
+ * skipped the keys it already knew were changed rather than probing the whole imaged
+ * domain.
+ * <p>
  * A mutable accumulator, owned by the freeze scratch the operation is bound to rather than
  * by {@link LiveViewCheckpointTimelineStoreWriter} itself: a suspended repair holds its own
  * scratch across refresh turns, and a writer-level ledger would be cleared out from under it
@@ -63,6 +71,7 @@ public final class LiveViewCheckpointCaptureLedger {
     private long functionKeysImaged;
     private long functionKeysVisited;
     private long windowCaptures;
+    private long windowElisionProbes;
     private long windowIncrementalCaptures;
     private long windowKeysImaged;
     private long windowKeysRemoved;
@@ -88,13 +97,25 @@ public final class LiveViewCheckpointCaptureLedger {
     /**
      * Charges one window root's capture.
      *
-     * @param keysVisited rows the walk read - the dirty map's for an incremental capture,
-     *                    the whole anchor map's for a complete one
-     * @param keysImaged  keys this root published an entry for
-     * @param keysRemoved keys the frontier sweep dropped, which an incremental capture has
-     *                    to name because the root it builds on still holds their entries
+     * @param keysVisited   rows the walk read - the dirty map's for an incremental capture,
+     *                      the whole anchor map's for a complete one
+     * @param keysImaged    keys this root published an entry for
+     * @param keysRemoved   keys the frontier sweep dropped, which an incremental capture has
+     *                      to name because the root it builds on still holds their entries
+     * @param elisionProbes predecessor entries this capture looked up to decide whether it
+     *                      could leave the predecessor's entry standing. It is the reading
+     *                      the unchanged-entry elision is paid for in: keys the freeze
+     *                      already knew it could not elide are skipped, so this sits at
+     *                      zero for a capture whose every imaged key crossed an anchor
+     *                      boundary and at the imaged count for one whose anchors held
      */
-    public void addWindowCapture(boolean isIncremental, long keysVisited, long keysImaged, long keysRemoved) {
+    public void addWindowCapture(
+            boolean isIncremental,
+            long keysVisited,
+            long keysImaged,
+            long keysRemoved,
+            long elisionProbes
+    ) {
         windowCaptures++;
         if (isIncremental) {
             windowIncrementalCaptures++;
@@ -102,6 +123,7 @@ public final class LiveViewCheckpointCaptureLedger {
         windowKeysVisited += keysVisited;
         windowKeysImaged += keysImaged;
         windowKeysRemoved += keysRemoved;
+        windowElisionProbes += elisionProbes;
     }
 
     public void clear() {
@@ -110,6 +132,7 @@ public final class LiveViewCheckpointCaptureLedger {
         windowKeysVisited = 0;
         windowKeysImaged = 0;
         windowKeysRemoved = 0;
+        windowElisionProbes = 0;
         functionCaptures = 0;
         functionIncrementalCaptures = 0;
         functionKeysVisited = 0;
@@ -134,6 +157,10 @@ public final class LiveViewCheckpointCaptureLedger {
 
     public long getWindowCaptures() {
         return windowCaptures;
+    }
+
+    public long getWindowElisionProbes() {
+        return windowElisionProbes;
     }
 
     public long getWindowIncrementalCaptures() {

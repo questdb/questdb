@@ -465,6 +465,7 @@ public class LiveViewInstance implements QuietCloseable {
     private volatile long checkpointCaptureWindowKeysImaged;
     private volatile long checkpointCaptureWindowKeysRemoved;
     private volatile long checkpointCaptureWindowKeysVisited;
+    private volatile long checkpointCaptureWindowElisionProbes;
     // Wall-clock (micros) of the most recent head-checkpoint seal. Numbers.LONG_NULL
     // until the first cycle that seals a root. The refresh worker compares
     // (nowUs - lastCheckpointWrittenUs) against
@@ -1317,6 +1318,18 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long getCheckpointCaptureWindowRootsIncremental() {
         return checkpointCaptureWindowRootsIncremental;
+    }
+
+    /**
+     * @return predecessor entries those window captures looked up to decide whether they
+     * could leave the predecessor's entry standing, added up. A capture skips the lookup
+     * for every key it already knows it cannot elide - one the predecessor does not hold,
+     * or one whose anchor value has moved since it did - so this reading sits at zero for a
+     * seal whose imaged keys all crossed an anchor boundary and at the imaged count for one
+     * whose anchors held
+     */
+    public long getCheckpointCaptureWindowElisionProbes() {
+        return checkpointCaptureWindowElisionProbes;
     }
 
     /**
@@ -2386,6 +2399,7 @@ public class LiveViewInstance implements QuietCloseable {
         checkpointCaptureWindowKeysVisited += ledger.getWindowKeysVisited();
         checkpointCaptureWindowKeysImaged += ledger.getWindowKeysImaged();
         checkpointCaptureWindowKeysRemoved += ledger.getWindowKeysRemoved();
+        checkpointCaptureWindowElisionProbes += ledger.getWindowElisionProbes();
         checkpointCaptureFunctionRoots += ledger.getFunctionCaptures();
         checkpointCaptureFunctionRootsIncremental += ledger.getFunctionIncrementalCaptures();
         checkpointCaptureFunctionKeysVisited += ledger.getFunctionKeysVisited();

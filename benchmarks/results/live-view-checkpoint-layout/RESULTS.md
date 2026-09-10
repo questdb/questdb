@@ -890,6 +890,113 @@ in the limits table moves.
    first reseal under baseline - is read in the held-anchor regime it was stated
    for; measured 1.060 in one cell here, 0.96 to 1.04 in the other seven.
 
+## Fourth measurement: skipping the elision lookup where nothing can be elided
+
+The third measurement's fourth revised requirement covers a steady incremental
+seal that costs more on an anchored window with no inline component when every
+imaged key's anchor moved: the freeze looks the predecessor's entry up for every
+key it images, and in that regime the lookup never finds an entry it can leave
+standing. `LiveViewWindow` now records in the checkpoint dirty set whether the
+row that named a key moved its anchor value, and `freezeWindowState` skips the
+lookup for those keys and for the keys the predecessor root does not hold at all.
+Nothing else moves: the elision itself, the bytes published and the
+`isUnchanged` verdict per key are what they were, since a key whose anchor moved
+never compared equal anyway.
+
+### Protocol
+
+`before` is the branch head `40bdedc5ce`, `after` is that head plus the change,
+built into two jars from the same tree and run on the same machine, interleaved
+run by run: one full sweep of the cells per jar, five sweeps in all, and three
+more sweeps for the 10,000-key cells. Five runs per cell at 100,000 keys, twenty
+at 10,000, `WARMUP=10` batches dropped as everywhere else.
+
+Ratios against `6a2c656028` reuse the third measurement's baseline runs rather
+than re-running them. What licenses that is the `before` column: it reproduces
+the third measurement's candidate figure to within 0.5% in all four 100,000-key
+cells (4.315 against 4.332, 4.350 against 4.329, 4.246 against 4.267, 4.245
+against 4.237), so the machine has not moved under the pairing. It is still a
+cross-session comparison and is marked as such.
+
+### 100,000 live keys, five runs per side
+
+Seal median in milliseconds, 1,000 keys imaged per seal.
+
+| Shape | Fusion | Baseline | Before | After | Before/base | After/base |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| anchor-only-decimal | off | 3.883 | 4.315 | 4.171 | 1.111 | 1.074 |
+| anchor-only-decimal | on | 3.939 | 4.350 | 4.146 | 1.104 | 1.053 |
+| anchor-only-unfused-control | off | 3.846 | 4.246 | 4.011 | 1.104 | 1.043 |
+| anchor-only-unfused-control | on | 3.853 | 4.245 | 4.037 | 1.102 | 1.048 |
+
+The excess over baseline per 1,000 keys imaged falls from +0.39 to +0.43 ms to
++0.17 to +0.29 ms. Two of the four cells come under the flat 105% limit, one sits
+at 1.053 and one at 1.074, so the lookup was between 40% and 60% of what the
+regime cost - not all of it. What remains is unattributed here.
+
+### 10,000 live keys, twenty runs per side
+
+Every run of these cells is bimodal on all three revisions, at about 3.7 ms and
+about 4.9 ms, and which mode a run lands in varies run to run (the low mode holds
+3 of 15 baseline runs in one cell and 17 of 20 in another). A median across that
+mixture reads the mode split rather than the seal, so the cells are compared mode
+against mode, as the third measurement compared them.
+
+| Shape | Fusion | Mode | Baseline | Before | After | Before/base | After/base |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| anchor-only-decimal | off | low | 3.665 | 3.916 | 3.675 | 1.068 | 1.003 |
+| anchor-only-decimal | off | high | 4.760 | 5.054 | 4.836 | 1.062 | 1.016 |
+| anchor-only-decimal | on | high | 4.719 | 5.081 | 4.891 | 1.077 | 1.037 |
+| anchor-only-unfused-control | off | low | 3.533 | 3.774 | 3.626 | 1.068 | 1.026 |
+| anchor-only-unfused-control | off | high | 4.675 | 4.968 | 4.730 | 1.063 | 1.012 |
+| anchor-only-unfused-control | on | low | 3.532 | 3.749 | 3.673 | 1.062 | 1.040 |
+| anchor-only-unfused-control | on | high | 4.672 | 4.982 | 4.755 | 1.066 | 1.018 |
+
+The `anchor-only-decimal` fusion-on low mode is left out: one baseline run landed
+in it. Every reading that is here passes 105% after the change and none did
+before it. The medians of the whole mixture move the same way - 0.960, 0.957,
+0.942 and 0.754 of `before` - but that last figure is a mode split moving, not a
+25% seal, which is why the mixture medians are not the reading.
+
+### The held-anchor regime is untouched
+
+The steady `anchor-only-decimal` cell at 10,000 keys, where a key's anchor holds
+across the seal and the elision is what makes that seal 0.31 to 0.34 of baseline:
+
+| Fusion | Metric | Before | After | Ratio |
+| --- | --- | ---: | ---: | ---: |
+| off | seal median | 3.083 | 3.075 | 0.997 |
+| off | refresh median | 5.996 | 5.984 | 0.998 |
+| on | seal median | 3.074 | 3.087 | 1.004 |
+| on | refresh median | 5.986 | 6.011 | 1.004 |
+
+### Structural evidence
+
+`win_probes` is the new capture-ledger column: predecessor entries the window
+capture looked up. Across the `after` runs it reads a median of 0 per seal
+against 1,000 keys imaged in every churn cell, and 1,000 against 1,000 in every
+steady cell. That is the claim the timings above are attributed to, read directly
+rather than inferred from a run with the lookup disabled - which is what the
+third measurement listed as not measured.
+
+Memory, allocation, published state bytes, metadata bytes and segment counts are
+identical between `before` and `after` in every cell. The independent result
+oracle matched in all 200 churn runs and no run recorded a refresh fault.
+
+### Revised requirement, restated
+
+Requirement 4 of the third measurement narrows to:
+
+4. **The steady incremental seal of an anchored window with no inline
+   component, in a batch where every imaged key's anchor value moved.** It may
+   cost up to 0.3 ms more per 1,000 keys imaged, provided the same shape's seal
+   under a held anchor stays under 50% of baseline. Measured: +0.17 to +0.29 ms
+   per seal at 100,000 keys (1.043 to 1.074) in four cells; 1.003 to 1.040 mode
+   against mode at 10,000 keys over 20 runs. The 0.5 ms and the 10,000-key
+   readings of the third measurement's requirement 4 are superseded. The seal
+   after a sweep, memory, allocation and storage remain unchanged, and every
+   shape with an inline component remains under the 105% limit.
+
 ## Not measured
 
 - The residual-heavy churn cell at 100,000 keys was run with two anchor buckets
@@ -897,6 +1004,13 @@ in the limits table moves.
   runs, and its two one-shot readings just over the limit were not re-measured.
 - Cross-mode comparisons are reported by the aggregator but are not substitutes
   for the paired ones and are not claimed as such.
+- The fourth measurement covers the two anchor-only churn shapes and one steady
+  cell. The other seven shapes were not re-run against the change: their seals
+  hold a predecessor entry the lookup can elide, `win_probes` reads the imaged
+  count for them, and the code the change adds is a branch they do not take.
+  That is an argument from the mechanism and the ledger, not a measurement.
+- What remains of the 100,000-key excess after the change - 1.043 to 1.074 of
+  baseline - is not attributed to a mechanism.
 
 Nothing here extrapolates to unmeasured supported queries.
 

@@ -132,6 +132,7 @@ The candidate's per-batch output carries the capture ledger:
 | `win_caps`, `win_inc` | window roots the batch's seal froze, and how many of them were incremental |
 | `win_visited` | rows the window walk read - the dirty map's for an incremental capture, the whole anchor map's for a complete one |
 | `win_imaged`, `win_removed` | keys the window root published an entry for, and keys it named as removals |
+| `win_probes` | predecessor entries the window capture looked up to decide whether it could leave the predecessor's entry standing |
 | `fn_roots`, `fn_inc` | function roots the seal froze, and how many were incremental |
 | `fn_visited`, `fn_imaged` | rows those roots' walks read, and keys they imaged |
 | `alloc_mb` | Java allocation of the batch's refresh, on the thread that ran it |
@@ -141,6 +142,12 @@ read the 1000 keys the batch changed rather than the `K` the view holds. Neither
 published artifacts nor the elapsed time can carry that claim - an incremental root and a
 complete one both name the whole live domain, and a complete walk of a small domain beats
 an incremental walk that had to map an older segment to compare against.
+
+`win_probes` against `win_imaged` is the second window-side reading, and it is what the
+anchored-window seal requirement is argued from. The unchanged-entry elision is worth its
+lookup only where an elision can follow, so a seal whose imaged keys all crossed an anchor
+boundary must report zero probes while a seal whose anchors held reports one per imaged
+key. The aggregator prints it per cell as a diagnostic.
 
 These columns are candidate-only production instrumentation. The baseline reports -1 for
 all of them; see `baseline-harness.patch`.

@@ -2860,8 +2860,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 frozen.isIncremental,
                 frozen.totalInlineStateBytes,
                 frozen.payloads,
+                frozen.isElisionRuledOut,
                 activeScratch.frozenByteArrays
         );
+        long elisionProbes = 0;
         for (int i = 0, n = frozen.keys.size(); i < n; i++) {
             final byte[] key = frozen.keys.getQuick(i);
             if (outputKeys != null && !outputKeys.contains(key)) {
@@ -2873,9 +2875,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // elision is a byte compare against bytes this seal holds. The zero-reference
             // test keeps it honest: skipping the put leaves the predecessor's whole entry
             // standing, and an entry naming a page beside these bytes is not that entry.
-            final LiveViewCheckpointPartitionMapEntry previous = hasCompatiblePredecessor
-                    ? previousBoundary.findWindowState(key)
-                    : null;
+            //
+            // The freeze walk already rules the elision out for every key whose payload the
+            // predecessor cannot be holding: the ones it holds no entry for, and the ones
+            // whose anchor value has moved since it published. A probe there finds nothing
+            // to elide and costs a descent of the predecessor's tree, which on an anchored
+            // window carrying no inline component is most of what a seal pays.
+            if (!hasCompatiblePredecessor || frozen.isElisionRuledOut.get(i)) {
+                frozen.isUnchanged.add(false);
+                continue;
+            }
+            elisionProbes++;
+            final LiveViewCheckpointPartitionMapEntry previous = previousBoundary.findWindowState(key);
             frozen.isUnchanged.add(previous != null
                     && previous.getStatePageCount() == 0
                     && Arrays.equals(previous.getScalarState(), frozen.payloads.getQuick(i)));
@@ -2884,7 +2895,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 frozen.isIncremental,
                 window.getCheckpointLastFreezeVisitedKeyCount(),
                 frozen.keys.size(),
-                frozen.removedKeys.size()
+                frozen.removedKeys.size(),
+                elisionProbes
         );
         return frozen;
     }
@@ -3182,6 +3194,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      */
     private static final class FrozenWindowState {
         private final LongList anchorValues = new LongList();
+        // Per key, index-aligned with keys: the freeze walk's verdict that this key's
+        // entry cannot be the one the predecessor root holds, so it is owed no elision
+        // probe.
+        private final BoolList isElisionRuledOut = new BoolList();
         private final BoolList isUnchanged = new BoolList();
         private final ObjList<byte[]> keys = new ObjList<>();
         private final ObjList<byte[]> payloads = new ObjList<>();
@@ -3213,6 +3229,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             this.manifest = manifest;
             this.totalInlineStateBytes = totalInlineStateBytes;
             anchorValues.clear();
+            isElisionRuledOut.clear();
             isUnchanged.clear();
             keys.clear();
             payloads.clear();

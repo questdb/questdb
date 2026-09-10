@@ -195,9 +195,14 @@ def parse_run(path, shape):
             continue
         values = [float(row[index[column]]) for row in measured]
         out[metric] = aggregate(values, how)
-    # Structural evidence, candidate-only: the baseline reports -1 for these.
+    # Structural evidence, candidate-only: the baseline reports -1 for these. win_probes
+    # arrived after the first three measurement rounds, so a run file written before it is
+    # skipped rather than failing the whole aggregation.
     for column in ("win_caps", "win_inc", "win_visited", "win_imaged", "win_removed",
-                   "fn_roots", "fn_inc", "fn_visited", "fn_imaged", "map_rows", "faults"):
+                   "win_probes", "fn_roots", "fn_inc", "fn_visited", "fn_imaged",
+                   "map_rows", "faults"):
+        if column not in index:
+            continue
         values = [float(row[index[column]]) for row in measured]
         out[column] = statistics.median(values)
     if is_churn_shape(shape):
@@ -325,6 +330,14 @@ def main():
             diagnostics.append(f"{label} fusion={fusion} keys={keys} evicted_mb: "
                                f"baseline={cell_value(base_runs, 'evicted_mb')} "
                                f"candidate={cell_value(cand_runs, 'evicted_mb')}")
+        probes = cell_value(cand_runs, "win_probes")
+        if probes is not None:
+            # What the unchanged-entry elision cost this cell: one predecessor lookup per
+            # key it could still be holding. A seal whose imaged keys all crossed an anchor
+            # boundary owes none, which is the reading behind the anchored-window seal
+            # requirement rather than a run with the lookup turned off.
+            diagnostics.append(f"{label} fusion={fusion} keys={keys} win_probes: "
+                               f"candidate={probes:.4g} of {cell_value(cand_runs, 'win_imaged')} imaged")
         if is_repair_shape(shape):
             for metric in DIAGNOSTICS:
                 base = cell_value(base_runs, metric)

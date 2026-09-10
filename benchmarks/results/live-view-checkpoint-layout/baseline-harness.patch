@@ -4,7 +4,7 @@
 ---
 --- a/benchmarks/src/main/java/org/questdb/LiveViewSteadyStateBenchmark.java
 +++ b/benchmarks/src/main/java/org/questdb/LiveViewSteadyStateBenchmark.java
-@@ -765,7 +765,8 @@ public class LiveViewSteadyStateBenchmark {
+@@ -765,7 +765,8 @@
                  // incremental capture from a complete one, and neither does the seal's elapsed
                  // time, so a run that only timed its seals could not tell a steady incremental
                  // cadence from one silently walking the whole domain every batch.
@@ -14,7 +14,7 @@
                  final long o3ResumeRowsAtStart = o3ResumeRowsBefore;
                  final long o3BoundaryRowsAtStart = o3BoundaryRowsBefore;
                  long o3ScanRowsTotal = 0;
-@@ -943,19 +944,10 @@ public class LiveViewSteadyStateBenchmark {
+@@ -943,20 +944,10 @@
                              lvPhysRows,
                              lvRows > 0 ? (double) lvPhysRows / lvRows : 0.0,
                              partitionCount(engine, lvToken),
@@ -23,11 +23,12 @@
 -                            capture.windowKeysVisited(instance),
 -                            capture.windowKeysImaged(instance),
 -                            capture.windowKeysRemoved(instance),
+-                            capture.windowElisionProbes(instance),
 -                            capture.functionCaptures(instance),
 -                            capture.functionIncrementalCaptures(instance),
 -                            capture.functionKeysVisited(instance),
 -                            capture.functionKeysImaged(instance),
-+                            -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L,
++                            -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L,
                              allocBytes < 0 ? -1.0 : allocBytes / (1024.0 * 1024.0),
                              repair
                      );
@@ -35,7 +36,7 @@
                      firstRow += batchRows;
                  }
                  if (o3EveryN > 0) {
-@@ -1426,12 +1418,11 @@ public class LiveViewSteadyStateBenchmark {
+@@ -1427,12 +1418,11 @@
       * only ever moves for the INT-keyed control.
       */
      private static void reportWindowState(LiveViewWindow window) {
@@ -53,7 +54,7 @@
          // The state-root kind and the root counts are the per-seal fixed cost the fusion is
          // about: a window root replaces the anchor root and every durable projection's root
          // at once, so a view whose whole SELECT list fuses publishes two metadata files per
-@@ -2337,78 +2328,6 @@ public class LiveViewSteadyStateBenchmark {
+@@ -2338,84 +2328,6 @@
          }
      }
  
@@ -62,7 +63,7 @@
 -     * <p>
 -     * Every counter on {@link LiveViewInstance} is cumulative over the view's life, so a
 -     * batch's own reading is a difference between two of them. Holding the previous reading
--     * here rather than in nine locals in the batch loop keeps the two halves - what was read
+-     * here rather than in ten locals in the batch loop keeps the two halves - what was read
 -     * before the refresh and what is subtracted after it - impossible to get out of step.
 -     */
 -    private static final class CaptureLedgerSample {
@@ -71,6 +72,7 @@
 -        private long functionKeysImaged;
 -        private long functionKeysVisited;
 -        private long windowCaptures;
+-        private long windowElisionProbes;
 -        private long windowIncrementalCaptures;
 -        private long windowKeysImaged;
 -        private long windowKeysRemoved;
@@ -86,6 +88,7 @@
 -            windowKeysVisited = instance.getCheckpointCaptureWindowKeysVisited();
 -            windowKeysImaged = instance.getCheckpointCaptureWindowKeysImaged();
 -            windowKeysRemoved = instance.getCheckpointCaptureWindowKeysRemoved();
+-            windowElisionProbes = instance.getCheckpointCaptureWindowElisionProbes();
 -            functionCaptures = instance.getCheckpointCaptureFunctionRoots();
 -            functionIncrementalCaptures = instance.getCheckpointCaptureFunctionRootsIncremental();
 -            functionKeysVisited = instance.getCheckpointCaptureFunctionKeysVisited();
@@ -110,6 +113,10 @@
 -
 -        long windowCaptures(LiveViewInstance instance) {
 -            return instance.getCheckpointCaptureWindowRoots() - windowCaptures;
+-        }
+-
+-        long windowElisionProbes(LiveViewInstance instance) {
+-            return instance.getCheckpointCaptureWindowElisionProbes() - windowElisionProbes;
 -        }
 -
 -        long windowIncrementalCaptures(LiveViewInstance instance) {
