@@ -82,7 +82,8 @@ import java.util.function.BooleanSupplier;
  * the removal events the writer records, the in-memory tier's consistency, the lifetime row
  * counter, the checkpoint-timeline retention it publishes, the durable retention marker, and the
  * in-memory tier rebuild over a Parquet partition the conversion left inside the view's
- * {@code IN MEMORY} window, and what a removal taken while the view is still SEEDING does to the
+ * {@code IN MEMORY} window, the row positions an out-of-order repair reads back through a
+ * converted partition, and what a removal taken while the view is still SEEDING does to the
  * sweep's resume. Replica propagation belongs to a later stage.
  */
 public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
@@ -2750,6 +2751,207 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                                 1970-01-01T03\t1\tfalse
                                 """);
             }
+        });
+    }
+
+    @Test
+    public void testResumeAnchorReadsItsTimestampGroupThroughAParquetBoundary() throws Exception {
+        // Section 3.4's counterexample with the boundary partition in Parquet, which is where
+        // the row-position search used to give up: countDurableRowsBelow returned -1 for a
+        // non-native boundary partition and coversOwnTimestampGroup read that absence as no
+        // evidence either way, so the under-covering root stood. The resume then restored
+        // state that had seen one row of a three-row timestamp group and replayed above it,
+        // and every value it computed from then on was short by the two rows it never read -
+        // durably, and with nothing left to detect it but the row-count drift guard, which
+        // retires the ladder and leaves the wrong rows on disk.
+        //
+        // The search now reads a Parquet boundary through the _pm sidecar - the row groups
+        // below it contribute their recorded size, the one the boundary falls inside is
+        // decoded and binary-searched - so the root is refused here exactly as its native
+        // twin is in testRetentionLowersARootByItsExactDeltaNotAFreshCount.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY HOUR START FROM NOW AS " +
+                    "(SELECT ts, sym, count(*) OVER (PARTITION BY sym ORDER BY ts " +
+                    "ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushOneRow(job, "2026-01-01T01:00:10.000000Z", 1, 1);
+                flushOneRow(job, "2026-01-01T02:00:10.000000Z", 2, 2);
+                flushOneRow(job, "2026-01-01T03:00:10.000000Z", 3, 3);
+                // The tie, as in the native case: a row on the frontier's own timestamp is an
+                // ordinary forward append and the seal that follows it has no boundary above
+                // the head to open, so the 03:00:10 root keeps covering one row of three.
+                flushOneRow(job, "2026-01-01T03:00:10.000000Z", 4, 4);
+                flushOneRow(job, "2026-01-01T03:00:10.000000Z", 5, 5);
+                flushOneRow(job, "2026-01-01T03:01:00.000000Z", 6, 6);
+                // One hour above, so the tie's own partition is no longer the active one and
+                // can be converted.
+                flushOneRow(job, "2026-01-01T04:00:00.000000Z", 7, 7);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                assertLadder(
+                        instance,
+                        ts("2026-01-01T01:00:10.000000Z"), 1,
+                        ts("2026-01-01T02:00:10.000000Z"), 2,
+                        ts("2026-01-01T03:00:10.000000Z"), 3,
+                        ts("2026-01-01T03:01:00.000000Z"), 6,
+                        ts("2026-01-01T04:00:00.000000Z"), 7
+                );
+
+                execute("ALTER LIVE VIEW lv CONVERT PARTITION TO PARQUET LIST '2026-01-01T03'");
+                driveLiveViewWalApply(job);
+                driveRefreshToQuiescence(job);
+                assertParquetPartitionCount(1);
+
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-01T01'");
+                driveLiveViewWalApply(job);
+                assertLadder(
+                        instance,
+                        ts("2026-01-01T02:00:10.000000Z"), 1,
+                        ts("2026-01-01T03:00:10.000000Z"), 2,
+                        ts("2026-01-01T03:01:00.000000Z"), 5,
+                        ts("2026-01-01T04:00:00.000000Z"), 6
+                );
+                assertRetentionMarker(lvToken, false);
+                assertNoRefreshFaults("lv");
+
+                // The out-of-order row, 30 seconds above the tie and inside the Parquet
+                // partition. The plan finds the 03:00:10 root below it, the search reads the
+                // partition's four rows at or below 03:00:10 against the 2 the root claims,
+                // and re-anchors on 02:00:10.
+                capture.start();
+                try {
+                    execute("INSERT INTO base VALUES ('2026-01-01T03:00:40.000000Z', 'a', 100)");
+                    driveUntilDurableRowCount(job, 7);
+                    driveRefreshToQuiescence(job);
+                    capture.waitFor("live view resume anchor no longer covers its timestamp group, re-anchoring below it "
+                            + "[view=lv, anchorMaxTs=2026-01-01T03:00:10.000000Z");
+                    capture.assertLoggedRE(", lvRowPosition=2]");
+                } finally {
+                    capture.stop();
+                }
+
+                // Every re-emitted row counts the whole tie. An anchor left standing at the
+                // tie root would have restored state that had seen one row at 03:00:10 and
+                // numbered 03:00:40, 03:01:00 and 04:00:00 4, 5 and 6.
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\trn
+                                2026-01-01T02:00:10.000000Z\ta\t2
+                                2026-01-01T03:00:10.000000Z\ta\t3
+                                2026-01-01T03:00:10.000000Z\ta\t4
+                                2026-01-01T03:00:10.000000Z\ta\t5
+                                2026-01-01T03:00:40.000000Z\ta\t6
+                                2026-01-01T03:01:00.000000Z\ta\t7
+                                2026-01-01T04:00:00.000000Z\ta\t8
+                                """);
+                // The replacement decoded the partition, applied over native storage and
+                // re-encoded it, so the compacted hour is Parquet again.
+                assertParquetPartitionCount(1);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testLocalizedRepairOverAParquetFloorKeepsItsCheckpointLadder() throws Exception {
+        // The other half of the same search. A localized repair measures the durable prefix
+        // below its emit floor R and below its convergence bound H before it stages anything -
+        // those two counts are what anchor every root the capture re-versions - and a floor
+        // inside a Parquet partition used to report no searchable prefix. That threw, the
+        // catch freed the capture, and the view came out of an ordinary out-of-order commit
+        // with no checkpoint ladder at all. Compacting cold partitions is what a long-lived
+        // view does, so it was one retired timeline per out-of-order base commit from the
+        // first conversion onwards.
+        //
+        // The narrow RANGE frame is what puts the repair on this path rather than on the
+        // resume: a correction here converges below the frontier, so the plan names a finite
+        // H and rebuilds the interval instead of replaying from an anchor.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY HOUR START FROM NOW AS " +
+                    "(SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                    "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW) AS s FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushOneRow(job, "2026-01-01T02:00:10.000000Z", 1, 1);
+                flushOneRow(job, "2026-01-01T02:01:00.000000Z", 2, 2);
+                flushOneRow(job, "2026-01-01T02:02:00.000000Z", 3, 3);
+                flushOneRow(job, "2026-01-01T02:03:00.000000Z", 4, 4);
+                // An hour above, so the hour the repair lands in is no longer the active
+                // partition and can be converted.
+                flushOneRow(job, "2026-01-01T03:00:00.000000Z", 5, 5);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+
+                execute("ALTER LIVE VIEW lv CONVERT PARTITION TO PARQUET LIST '2026-01-01T02'");
+                driveLiveViewWalApply(job);
+                driveRefreshToQuiescence(job);
+                assertParquetPartitionCount(1);
+                final long generationBeforeRepair = readGeneration(lvToken);
+
+                // Out of order, inside the converted hour. Both bounds the capture measures -
+                // the emit floor 02:02:30 and the convergence bound just above 02:03:00 - fall
+                // inside the Parquet partition, so both counts go through its row groups.
+                capture.start();
+                try {
+                    execute("INSERT INTO base VALUES ('2026-01-01T02:02:30.000000Z', 'a', 100)");
+                    driveUntilDurableRowCount(job, 6);
+                    driveRefreshToQuiescence(job);
+                    capture.waitFor("live view O3 head-miss replay completed [view=lv");
+                    capture.assertLoggedRE("localized=true, scanLowTs=\\d+, coldKeyed=false, emitLowTs="
+                            + ts("2026-01-01T02:02:30.000000Z"));
+                    capture.assertNotLogged("could not measure live view durable prefix for a checkpoint timeline repair");
+                } finally {
+                    capture.stop();
+                }
+
+                // The ladder survived the repair rather than going with the capture, and it
+                // carries the roots above the correction at their re-derived positions: the
+                // 02:03:00 root moved up by the row that landed under it, and so did the head.
+                assertTimelineExists(lvToken, true);
+                Assert.assertTrue(
+                        "the repair must publish a new generation rather than retire the timeline",
+                        readGeneration(lvToken) > generationBeforeRepair
+                );
+                assertLadder(
+                        instance,
+                        ts("2026-01-01T02:00:10.000000Z"), 1,
+                        ts("2026-01-01T02:01:00.000000Z"), 2,
+                        ts("2026-01-01T02:02:00.000000Z"), 3,
+                        ts("2026-01-01T02:03:00.000000Z"), 5,
+                        ts("2026-01-01T03:00:00.000000Z"), 6
+                );
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\ts
+                                2026-01-01T02:00:10.000000Z\ta\t1.0
+                                2026-01-01T02:01:00.000000Z\ta\t2.0
+                                2026-01-01T02:02:00.000000Z\ta\t3.0
+                                2026-01-01T02:02:30.000000Z\ta\t103.0
+                                2026-01-01T02:03:00.000000Z\ta\t104.0
+                                2026-01-01T03:00:00.000000Z\ta\t5.0
+                                """);
+                // The replacement decoded the partition, applied over native storage and
+                // re-encoded it, so the compacted hour is Parquet again.
+                assertParquetPartitionCount(1);
+                assertNoRefreshFaults("lv");
+            }
+
+            // The ladder is not merely present, it is trusted: a restart restores off it
+            // rather than rebuilding from the applied base.
+            restartAndAssertRestoredFromTimeline();
         });
     }
 

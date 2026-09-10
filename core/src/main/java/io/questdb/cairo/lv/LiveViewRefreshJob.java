@@ -9140,10 +9140,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     durableRowsBeforeRepair = lvReader.size();
                     durableRowsBelowFloor = countDurableRowsBelow(lvReader, emitLowTs);
                     final long rowsBelowHighBound = countDurableRowsBelow(lvReader, timelineHighTsExclusive);
-                    if (durableRowsBelowFloor < 0 || rowsBelowHighBound < 0) {
-                        throw CairoException.critical(0)
-                                .put("live view table has no searchable prefix for a checkpoint timeline repair");
-                    }
                     durableRowsReplaced = rowsBelowHighBound - durableRowsBelowFloor;
                     session.setDurableRowCounts(durableRowsBeforeRepair, durableRowsBelowFloor, durableRowsReplaced);
                 } catch (Throwable t) {
@@ -12011,21 +12007,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
             // The durable live-view table is authoritative for each repaired root's
-            // position - its rows at or below the boundary's timestamp. A non-native
-            // boundary partition has no searchable prefix, so the heal cannot position
-            // its root and defers to the full rebuild.
+            // position - its rows at or below the boundary's timestamp - whatever
+            // format the boundary partition is stored in. A partition the search
+            // cannot read raises, and the caller takes the full rebuild.
             final LongList positions = new LongList();
             try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
                 for (int i = 0, n = boundaries.size(); i < n; i++) {
                     final long boundaryMaxTs = boundaries.getQuick(i).maxTimestamp;
-                    final long position = countDurableRowsBelow(
+                    positions.add(countDurableRowsBelow(
                             lvReader,
                             boundaryMaxTs == Long.MAX_VALUE ? Long.MAX_VALUE : boundaryMaxTs + 1
-                    );
-                    if (position < 0) {
-                        return false;
-                    }
-                    positions.add(position);
+                    ));
                 }
             }
             baseReader = waitForApply(baseToken, durableBaseSeqTxn);
@@ -14031,13 +14023,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Costed like the bound it serves rather than like the view's age. Partitions
      * whose metadata upper bound is already below {@code ts} contribute their
      * recorded size with no file opened at all; only the one partition the boundary
-     * falls inside is opened and binary-searched, and the walk stops there.
+     * falls inside is opened and searched, and the walk stops there. A Parquet
+     * boundary partition is searched by {@link #countParquetRowsBelow}, which pays
+     * the same shape of cost one row group down.
      *
-     * @return the row count, or {@code -1} when the boundary partition is not
-     * native and cannot be searched through the reader's mapped columns - the
-     * caller then has no exact prefix and must not splice
+     * @return the row count. A partition the reader cannot open or search raises,
+     * as an unreadable native column file already does; there is no "unknown"
+     * answer, because a caller has no safe way to read one
      */
-    private static long countDurableRowsBelow(TableReader reader, long ts) {
+    private long countDurableRowsBelow(TableReader reader, long ts) {
         final int partitionCount = reader.getPartitionCount();
         final int timestampIndex = reader.getMetadata().getTimestampIndex();
         long count = 0;
@@ -14047,18 +14041,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 continue;
             }
             if (reader.getPartitionMaxTimestampFromMetadata(p) < ts) {
-                // Every row this partition can hold is below the boundary.
+                // Every row this partition can hold is below the boundary. True whatever
+                // the format: this reads the partition's recorded bound, not its files.
                 count += partitionRows;
                 continue;
             }
-            if (reader.getPartitionFormatFromMetadata(p) != PartitionFormat.NATIVE) {
-                return -1;
-            }
             final long size = reader.openPartition(p);
-            final MemoryCR tsCol = reader.getColumn(
-                    TableReader.getPrimaryColumnIndex(reader.getColumnBase(p), timestampIndex)
-            );
-            final long below = firstRowAtOrAbove(tsCol, size, ts);
+            final long below;
+            if (reader.getPartitionFormatFromMetadata(p) != PartitionFormat.NATIVE) {
+                below = countParquetRowsBelow(reader, p, size, timestampIndex, ts);
+            } else {
+                final MemoryCR tsCol = reader.getColumn(
+                        TableReader.getPrimaryColumnIndex(reader.getColumnBase(p), timestampIndex)
+                );
+                below = firstRowAtOrAbove(tsCol, size, ts);
+            }
             count += below;
             if (below < size) {
                 // The first row at or above the boundary is in this partition, so
@@ -14067,6 +14064,90 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
         }
         return count;
+    }
+
+    /**
+     * The {@link #countDurableRowsBelow} boundary search over a Parquet partition:
+     * how many of the partition's {@code partitionSize} rows sit strictly below
+     * {@code ts}.
+     * <p>
+     * A Parquet partition publishes no per-column native files, so
+     * {@link #firstRowAtOrAbove} has no timestamp column to search. Reading it through
+     * the {@code _pm} sidecar instead keeps the cost the same shape one level down:
+     * a row group whose recorded maximum timestamp is below {@code ts} contributes
+     * its whole size with nothing decoded, and only the one row group the boundary
+     * falls inside is decoded and binary-searched. A file that records no designated
+     * timestamp declines the skip rather than the search, and decodes the row groups
+     * up to the boundary.
+     * <p>
+     * This is what keeps a converted partition from costing the view its checkpoint
+     * ladder - every repair that measured a prefix over one used to abort its capture -
+     * and, more importantly, what gives
+     * {@link TimelineAnchorSource#coversOwnTimestampGroup} the same evidence over
+     * Parquet that it reads off a native column file. Reading no evidence there is not
+     * neutral: it lets an under-covering root anchor a resume, which restores partial
+     * state and computes every later value short by the rows it never read.
+     *
+     * @return the row count. The decode raises rather than reporting an unknown, the
+     * way the native branch does when a column file cannot be read
+     */
+    private long countParquetRowsBelow(TableReader reader, int partitionIndex, long partitionSize, int tsIdx, long ts) {
+        final ParquetPartitionDecoder decoder = reader.getAndInitParquetPartitionDecoder(partitionIndex);
+        final ParquetMetaFileReader parquetMeta = decoder.metadata();
+        final int rowGroupCount = parquetMeta.getRowGroupCount();
+        if (rowGroupCount == 0) {
+            return 0;
+        }
+        final int tsParquetIdx = parquetMeta.getDesignatedTimestampColumnIndex();
+        // A count never runs inside a staging pass - it is planning work and the window
+        // rebuild is not - so the bind it takes here is its own, and the release below is
+        // not pulling one out from under a caller.
+        assert !parquetStageBound;
+        ensureParquetStageResources(reader);
+        try {
+            long below = 0;
+            long rowGroupStart = 0;
+            for (int rg = 0; rg < rowGroupCount && rowGroupStart < partitionSize; rg++) {
+                // The partition's row count is the authority on how far the frames may
+                // reach, exactly as it is for the staging pass.
+                final long rowGroupSize = Math.min(parquetMeta.getRowGroupSize(rg), partitionSize - rowGroupStart);
+                if (rowGroupSize <= 0) {
+                    continue;
+                }
+                if (tsParquetIdx >= 0 && parquetMeta.getRowGroupMaxTimestamp(rg, tsParquetIdx) < ts) {
+                    // Wholly below the boundary. Row groups are ts-ascending, so this only
+                    // ever skips a prefix.
+                    below += rowGroupSize;
+                    rowGroupStart += rowGroupSize;
+                    continue;
+                }
+                final int frameIndex = parquetStageFrameCount++;
+                parquetStageAddressCache.add(
+                        frameIndex,
+                        parquetStageFrame.of(
+                                partitionIndex,
+                                rowGroupStart,
+                                rowGroupStart + rowGroupSize,
+                                decoder,
+                                rg,
+                                0,
+                                (int) rowGroupSize
+                        )
+                );
+                parquetStageMemoryPool.navigateTo(frameIndex, parquetStageRecord);
+                final long inFrame = firstFrameRowAtOrAbove(parquetStageRecord, rowGroupSize, tsIdx, ts);
+                below += inFrame;
+                if (inFrame < rowGroupSize) {
+                    // The first row at or above the boundary is in this row group, so
+                    // every later one is above it too.
+                    return below;
+                }
+                rowGroupStart += rowGroupSize;
+            }
+            return below;
+        } finally {
+            releaseParquetStageResources();
+        }
     }
 
     /**
@@ -15830,9 +15911,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
          *     sealed. The head's in-memory answer does not survive the head moving
          *     on, and this one does, including across a restart.</li>
          * </ul>
-         * A boundary partition the live-view table does not hold natively has no
-         * searchable prefix, so it yields no evidence either way and the anchor
-         * stands.
+         * The durable answer is read the same way whatever format the boundary
+         * partition holds: {@link LiveViewRefreshJob#countParquetRowsBelow} searches a converted one
+         * through its row-group metadata. That matters more here than anywhere else
+         * the count is used. A search that reported no answer over Parquet, and a
+         * caller that read the silence as coverage, would leave the under-covering
+         * root anchoring a resume - which restores partial state, replays above a
+         * group it half covers, and is short by those rows in every value it computes
+         * from then on. A partition it cannot read at all raises instead, and
+         * {@link #findAnchorBelow} reports no anchor.
          */
         private boolean coversOwnTimestampGroup(LiveViewCheckpointTimelineEntry entry, long lvRowPosition) {
             if (entry.maxTimestamp == instance.getHeadCheckpointMaxTs()
@@ -15844,7 +15931,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         lvReader,
                         entry.maxTimestamp == Long.MAX_VALUE ? Long.MAX_VALUE : entry.maxTimestamp + 1
                 );
-                return durableRowsBelow < 0 || durableRowsBelow <= lvRowPosition;
+                return durableRowsBelow <= lvRowPosition;
             }
         }
 
