@@ -574,6 +574,147 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testDropPartitionRejectsAnActiveSplitPartition() throws Exception {
+        // The guard reads the frontier as the logical floor of the table's max timestamp, and a
+        // live view whose newest ATTACHED partition is a physical split is the only shape that
+        // tells that apart from the newest attached partition's own timestamp. The split here
+        // carries 03:03:50.000001, a timestamp no partition name spells: a guard that compared
+        // against it would pass every other case in this class and let 'DROP PARTITION LIST
+        // 2026-01-01T03' through - taking the frontier the refresh pipeline writes into, since
+        // the removal drops every physical part of the logical partition it names.
+        //
+        // A localized out-of-order repair is what produces the split. Its replacement carries a
+        // finite high bound - the boundary the recomputation converged at - so hour 03 keeps a
+        // data prefix below the correction AND a data suffix above it, which is the shape the
+        // writer splits along rather than rewriting the partition whole. A replacement that runs
+        // to positive infinity - an anchored resume, or a head-miss replay that found no
+        // convergence boundary - leaves no data suffix in the tail partition and never splits it.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY HOUR START FROM NOW AS " +
+                    "(SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                    "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW) AS s FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Hour 02 is the partition that stays droppable throughout. Hour 03 is the one
+                // that splits, and it needs a prefix long enough to be worth splitting: the
+                // writer splits only when the prefix outweighs twice the rows the merge and the
+                // suffix carry. One commit per row, so the ladder holds a root per row and the
+                // repair below can localize to a boundary just under the correction.
+                flushOneRow(job, "2026-01-01T02:00:00.000000Z", 1, 1);
+                flushOneRow(job, "2026-01-01T02:00:10.000000Z", 2, 2);
+                for (int i = 0; i < 30; i++) {
+                    final String timestamp = String.format("2026-01-01T03:%02d:%02d.000000Z", i / 6, (i % 6) * 10);
+                    flushOneRow(job, timestamp, i + 3, i + 3);
+                }
+
+                // The correction sits 55 seconds under the frontier, so the 30-second frame
+                // converges at 03:04:25 and the replay leaves 03:04:30 onwards alone.
+                setCurrentMicros(ts("2026-01-01T03:04:50.000000Z"));
+                execute("INSERT INTO base VALUES ('2026-01-01T03:03:55.000000Z', 'a', 100)");
+                driveRefreshToQuiescence(job);
+
+                // The shape everything below stands on: hour 03 is two physical partitions and
+                // the newest attached one is the split, whose name carries a time of day the
+                // hourly partition name never does.
+                assertQuery("SELECT name, numRows FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name\tnumRows
+                                2026-01-01T02\t2
+                                2026-01-01T03\t24
+                                2026-01-01T030350-000001\t7
+                                """);
+                assertSqlCursors(
+                        "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                                "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW) AS s FROM base",
+                        "SELECT ts, sym, s FROM lv"
+                );
+
+                final long seqTxn = engine.getTableSequencerAPI().getTxnTracker(lvToken).getSeqTxn();
+                final String expected = "cannot drop the active partition of a live view [partition=2026-01-01T03:00:00.000000Z]";
+
+                // The hour itself, which is what a user reads off table_partitions() for the
+                // lower half of the split pair. Dropping it would take both halves.
+                assertRejected(
+                        "ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-01T03'",
+                        "ALTER LIVE VIEW lv DROP PARTITION LIST ".length(),
+                        expected
+                );
+                // The split's own directory name. A non-FORCE DROP parses the hour out of it and
+                // ignores the split suffix, so it names the same logical partition.
+                assertRejected("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-01T030350-000001'", expected);
+                // FORCE is the one selector that would address the split half on its own, and a
+                // live view rejects it outright - so there is no spelling that reaches it.
+                assertRejected(
+                        "ALTER LIVE VIEW lv FORCE DROP PARTITION LIST '2026-01-01T030350-000001'",
+                        "FORCE DROP PARTITION is not supported on live views"
+                );
+                // WHERE selects logical partitions, so one that reaches the hour is rejected...
+                assertRejected("ALTER LIVE VIEW lv DROP PARTITION WHERE ts >= '2026-01-01T03'", expected);
+                // ...and one that falls entirely inside the split matches nothing at all.
+                assertRejected(
+                        "ALTER LIVE VIEW lv DROP PARTITION WHERE ts >= '2026-01-01T03:04:00.000000Z'",
+                        "no partitions matched WHERE clause"
+                );
+                Assert.assertEquals(
+                        "a rejected DROP PARTITION must not reach the live view's WAL",
+                        seqTxn,
+                        engine.getTableSequencerAPI().getTxnTracker(lvToken).getSeqTxn()
+                );
+
+                // The authoritative check, reached the way a replicated command or an older
+                // binary's statement reaches it: sequenced straight into the view's WAL, past the
+                // compiler. The replay recompiles the statement's text with the compile-time
+                // check switched off, and a non-FORCE parse floors the split suffix away, so both
+                // spellings of the frontier - the hour, and the split's own physical timestamp -
+                // reach the writer as hour 03. The writer refuses each against a partition set
+                // whose newest member is the split, and the failure is tolerated rather than
+                // suspending the view.
+                assertRawDropPartitionTolerated(job, lvToken, "2026-01-01T03");
+                assertRawDropPartitionTolerated(job, lvToken, "2026-01-01T03:03:50.000001Z");
+
+                Assert.assertFalse(
+                        "an active-partition DROP must be tolerated, not suspend the live view",
+                        engine.getTableSequencerAPI().isSuspended(lvToken)
+                );
+                assertQuery("SELECT name, numRows FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name\tnumRows
+                                2026-01-01T02\t2
+                                2026-01-01T03\t24
+                                2026-01-01T030350-000001\t7
+                                """);
+
+                // Everything below the frontier's own logical partition stays droppable while the
+                // split stands, and the view keeps applying: a tolerated failure is not a stall.
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-01T02'");
+                driveLiveViewWalApply(job);
+                assertQuery("SELECT name, numRows FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name\tnumRows
+                                2026-01-01T03\t24
+                                2026-01-01T030350-000001\t7
+                                """);
+                assertSqlCursors(
+                        "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                                "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW) AS s " +
+                                "FROM base WHERE ts >= '2026-01-01T03:00:00.000000Z'",
+                        "SELECT ts, sym, s FROM lv"
+                );
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
     public void testDropPartitionOnIdleViewRebuildsTierAndReconcilesTimeline() throws Exception {
         // A DROP on a view with nothing to flush lands through the lagging scan's apply retry:
         // rows leave the durable tier without a base commit, the in-memory tier is rebuilt
@@ -2485,6 +2626,28 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
      * picked, which is how a test tells a rebuilt in-memory tier (seam) from an un-stamped one
      * (disk-only).
      */
+    /**
+     * Sequences a {@code DROP PARTITION} naming {@code partitionName} straight into the live view's
+     * WAL, drives the apply, and asserts the writer's own active-partition guard is what refused
+     * it - a tolerated WAL command failure carrying the guard's message, rather than a parse error,
+     * a silent no-op or a suspension.
+     */
+    private void assertRawDropPartitionTolerated(LiveViewRefreshJob job, TableToken lvToken, String partitionName) {
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            sequenceRawDropPartition(lvToken, partitionName);
+            driveLiveViewWalApply(job);
+            capture.drain();
+            capture.assertLoggedRE("tolerated WAL command failure \\[table=" + lvToken.getDirName()
+                    + ", seqTxn=\\d+, command=ALTER TABLE, "
+                    + "error=cannot drop the active partition of a live view "
+                    + "\\[partition=2026-01-01T03:00:00\\.000000Z]");
+        } finally {
+            capture.stop();
+        }
+    }
+
     private void assertRoutingMode(int expectedRoutingMode) throws SqlException {
         try (
                 RecordCursorFactory factory = select("SELECT * FROM lv");
