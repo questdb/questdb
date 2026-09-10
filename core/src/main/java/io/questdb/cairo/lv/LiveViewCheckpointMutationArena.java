@@ -170,33 +170,6 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         append(OP_PUT, key, scalarState, null);
     }
 
-    /**
-     * Appends one anchor entry - a key and the eight little-endian bytes of its anchor
-     * value - which is the whole of what an anchor-root leaf carries.
-     * <p>
-     * Reached only by {@link LiveViewCheckpointAnchorRootBuilder}, which no production
-     * path calls: an anchored seal publishes a window root, whose payload leads with the
-     * same eight bytes and continues into the manifest's components.
-     */
-    public void putAnchor(@NotNull byte[] key, long anchorValue) {
-        ensureOpen();
-        LiveViewCheckpointMetadata.validateByteArrayLength(key.length, "partition key");
-        final long keyOffset = appendBytes(key);
-        final long scalarOffset = bytes.getAppendOffset();
-        for (int i = 0; i < LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE; i++) {
-            bytes.putByte((byte) (anchorValue >>> (i * Byte.SIZE)));
-        }
-        appendDescriptor(
-                OP_PUT,
-                keyOffset,
-                key.length,
-                scalarOffset,
-                LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE,
-                bytes.getAppendOffset(),
-                0
-        );
-    }
-
     public void remove(@NotNull byte[] key) {
         append(OP_REMOVE, key, null, null);
     }

@@ -26,7 +26,6 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.lv.LiveViewCheckpointAnchorRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
@@ -53,7 +52,6 @@ import org.junit.Test;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.util.stream.Stream;
 import java.util.zip.CRC32;
 
 /**
@@ -70,10 +68,11 @@ import java.util.zip.CRC32;
  * still correct at the end.
  * <p>
  * What makes it a live concern is what this branch itself did. It added a fused window root
- * ({@code PAGE_KIND = 0x1d}) and a {@code _retirements} file <b>without</b> bumping
+ * ({@code PAGE_KIND = 0x1d}) and a {@code _retirements} file long before it bumped
  * {@code LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION}, because neither addition made an
- * old page unreadable. A future release has every reason to extend the format the same way,
- * so the interesting failures are the ones the superblock version does not announce.
+ * old page unreadable - the bump came later, with the removal of the decoder that had kept
+ * them readable. A future release has every reason to extend the format the same way, so the
+ * interesting failures are still the ones the superblock version does not announce.
  * <p>
  * Three gates decide the outcome, in this order, and the cases below cover all three:
  * <ol>
@@ -284,7 +283,7 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
             );
 
             restart();
-            assertTheDecoderGateRefused("anchor root page kind unknown, kind=" + FUTURE_PAGE_KIND);
+            assertTheDecoderGateRefused("window state root page kind unknown, kind=" + FUTURE_PAGE_KIND);
             assertRebuiltFromTheBase();
             assertRestartsCleanlyAfterwards();
         });
@@ -502,32 +501,31 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
     }
 
     /**
-     * Asserts the tagged union declines a page kind this build does not know, rather than either
-     * claiming it or reporting it as damage.
+     * Asserts the state-root decoder refuses a page kind this build does not know, rather than
+     * either claiming it or reporting it as damage.
      * <p>
-     * Both halves matter. The fused probe answering yes would hand a newer shape to this build's
-     * decoder on the old field offsets, which is the misread a tagged union makes reachable. The
-     * other arm answering {@code metadata page checksum mismatch} would mean the build cannot
-     * tell a newer format from a corrupt one - the page's checksum agrees with its body here, so
-     * the only honest complaint is about the kind.
+     * Both halves matter. The probe answering yes would hand a newer shape to this build's
+     * decoder on the old field offsets, which is the misread a tagged union used to make
+     * reachable. The strict decode answering {@code metadata page checksum mismatch} would mean
+     * the build cannot tell a newer format from a corrupt one - the page's checksum agrees with
+     * its body here, so the only honest complaint is about the kind.
      */
     private void assertAFuturePageKindIsRejectedRatherThanMisread(File checkpointsRoot, PageSite site) {
         try (
                 Path dir = new Path().of(checkpointsRoot.getAbsolutePath());
-                LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(engine.getConfiguration());
-                LiveViewCheckpointAnchorRoot anchorRoot = new LiveViewCheckpointAnchorRoot(engine.getConfiguration())
+                LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(engine.getConfiguration())
         ) {
             Assert.assertFalse(
-                    "the fused probe must decline a page kind this build does not know",
+                    "the probe must decline a page kind this build does not know",
                     windowRoot.ofIfWindowRoot(dir, site.ref())
             );
             try {
-                anchorRoot.of(dir, site.ref());
-                Assert.fail("a page kind this build does not know must not decode as an anchor root");
+                windowRoot.of(dir, site.ref());
+                Assert.fail("a page kind this build does not know must not decode as a state root");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "anchor root page kind unknown");
+                TestUtils.assertContains(e.getFlyweightMessage(), "window state root page kind unknown");
             } finally {
-                anchorRoot.detach();
+                windowRoot.detach();
             }
         }
     }
@@ -640,17 +638,6 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
                         "2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2\n" +
                         "2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2\n" +
                         "2026-01-01T09:00:40.000000Z\tacct-1\t63.0\t3\n");
-    }
-
-    /**
-     * Counts every file under a directory tree. The blocked disposition is about what does
-     * <b>not</b> happen to those files, and a count of them is the cheapest statement of it that
-     * an accidental partial reset cannot satisfy.
-     */
-    private long countFiles(File root) throws IOException {
-        try (Stream<java.nio.file.Path> walk = Files.walk(root.toPath())) {
-            return walk.filter(Files::isRegularFile).count();
-        }
     }
 
     /**

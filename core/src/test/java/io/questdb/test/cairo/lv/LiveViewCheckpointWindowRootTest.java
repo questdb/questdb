@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
 import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
-import io.questdb.cairo.lv.LiveViewCheckpointAnchorRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
@@ -165,13 +164,12 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                     );
                 }
 
-                // The anchor root's own identity checks used to be reached from here by
-                // unbinding the plan and sealing again. No seal writes that shape any
-                // more - unbinding changes the runtime, not the layout - so a legacy root
-                // can only come from a timeline an older build wrote.
-                // LiveViewCheckpointReleaseCompatTest restores one of those from the
-                // released fixture, and LiveViewCheckpointAnchorRootTest holds the
-                // decoder's own field-by-field rejections.
+                // The window root is the only state root a boundary can carry. The shape
+                // an older build wrote beside it - a separate anchor root plus one root per
+                // grouped function - has no decoder here at all; a timeline holding one
+                // declares an older format version, and the lifecycle blocks that directory
+                // before a restore reaches it. LiveViewCheckpointReleaseCompatTest holds
+                // that outcome against a real released tree.
             }
         });
     }

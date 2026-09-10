@@ -1919,9 +1919,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * {@code old} holds, for every root a freeze of this runtime writes, a predecessor
      * the builder keeps rather than starts over from. Mirrors the freeze: the fused
      * window root when the anchored window compiled a plan, and a root per
-     * checkpoint-capable function the plan does not fold into it. The legacy anchor root
-     * needs no check - that path images every key whatever the domain - and neither does
-     * a scalar-state function, which has no keys to lose.
+     * checkpoint-capable function the plan does not fold into it. A scalar-state
+     * function needs no check, having no keys to lose.
      */
     private static boolean isKeyDomainSpliceableOver(
             RootPreviousBoundary old,
@@ -2329,7 +2328,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * exception to {@code outputKeys}: an anchor value is the anchor-period floor of
      * a key's last row, so a key the replay carried out of a truncated history holds
      * a strictly older floor there and its next row resets it, and a key the replay
-     * never carried is simply absent and keeps the entry the old anchor root wrote.
+     * never carried is simply absent and keeps the entry the predecessor root wrote.
      * <p>
      * A view whose anchored window compiled a {@link LiveViewWindowStatePlan} freezes a
      * {@code FrozenWindowState} in the anchor's place instead, and the functions that
@@ -3188,9 +3187,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * index-aligned; a payload is null exactly when a repair's key domain excluded the
      * key, in which case the predecessor's whole entry stands.
      * <p>
-     * The anchor arm of the same boundary is null whenever this one is set: the fused
-     * root replaces the legacy anchor root as the boundary's one state root, and the
-     * functions it groups are omitted from the function directory entirely.
+     * The fused root is the boundary's one state root, and the functions it groups are
+     * omitted from the function directory entirely.
      */
     private static final class FrozenWindowState {
         private final LongList anchorValues = new LongList();
@@ -3514,9 +3512,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         /**
          * Whether the previous boundary's state root is a window root this seal's own
          * layout may be built on: same window identity, key schema, anchor value type
-         * <b>and</b> manifest, byte for byte. Anything else - a legacy anchor root, a
-         * component codec bump, a reordered component - forces the full-scan conversion
-         * seal.
+         * <b>and</b> manifest, byte for byte. Anything else - a component codec bump, a
+         * reordered component - forces the full-scan conversion seal.
          */
         boolean isCompatibleWindowRoot(byte[] windowIdentity, int anchorValueType, byte[] keySchema, byte[] manifest);
 
@@ -4444,9 +4441,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * A capture opened with {@code Q} images the keys in it and leaves every other
          * key's entry to the root it re-versions, which only works when the publication
          * can build on that root: the same fused window shape, and the same function
-         * roots, byte for byte. A root that needs conversion - a legacy anchor root under
-         * a fused runtime, a component codec bump, a function whose state format or key
-         * schema moved - is one the builders start from empty, so every key outside
+         * roots, byte for byte. A root that needs conversion - a component codec bump, a
+         * function whose state format or key schema moved - is one the builders start
+         * from empty, so every key outside
          * {@code Q} would vanish from it, and the replay, which followed {@code Q} alone,
          * holds no state to put back. The caller declines the splice for such a repair and
          * takes the truncate, whose head seal images the whole runtime and converts the

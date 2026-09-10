@@ -38,8 +38,8 @@ import org.jetbrains.annotations.NotNull;
  * it.
  * <p>
  * The window root and the function roots are counted apart because they are the two halves
- * the layout-removal change moves state between: one window root replaces the anchor root
- * and every durable projection's root at once, and what stays on a root of its own is a
+ * the layout-removal change moved state between: one window root replaced the separate
+ * anchor root and every durable projection's root at once, and what stays on a root of its own is a
  * residual function or a component the inline leaf budget left out. A reading that pooled
  * them could not tell a seal that fused its state from one that did not.
  * <p>

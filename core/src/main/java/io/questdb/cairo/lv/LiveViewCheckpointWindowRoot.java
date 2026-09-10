@@ -40,12 +40,12 @@ import java.io.Closeable;
  * value and every compatible accumulator component of one anchored window, held in a
  * single persistent partition map instead of one map per SELECT-list function.
  * <p>
- * It stands where {@link LiveViewCheckpointAnchorRoot} stands - the enclosing
- * {@link LiveViewCheckpointRoot}'s one state-root reference is a tagged union decoded
- * by page kind - and it replaces both that root and the function roots of the functions
- * it fuses. A function the plan could not group keeps its own root in the function
- * directory beside this one, so "one B-tree per window" means one tree for the grouped
- * components plus independent roots for the shapes the group does not admit.
+ * It is the only shape the enclosing {@link LiveViewCheckpointRoot}'s state-root
+ * reference names, and it replaces both the separate anchor root an earlier layout wrote
+ * and the function roots of the functions it fuses. A function the plan could not group
+ * keeps its own root in the function directory beside this one, so "one B-tree per
+ * window" means one tree for the grouped components plus independent roots for the
+ * shapes the group does not admit.
  *
  * <h2>The manifest is the whole of the layout</h2>
  * A fused leaf entry is a flat run of bytes: no per-partition version, no component
@@ -96,9 +96,7 @@ public class LiveViewCheckpointWindowRoot implements Closeable {
 
     /**
      * Decodes the anchor value out of a fused scalar payload. It leads the payload at a
-     * fixed offset so a decoder can read it before it has looked at the manifest, and it
-     * is encoded exactly as a legacy anchor entry encodes it, which is what lets the two
-     * shapes hold the same bytes for the same key across a conversion seal.
+     * fixed offset so a decoder can read it before it has looked at the manifest.
      */
     public static long readAnchorValue(byte @NotNull [] scalarState) {
         if (scalarState.length < LiveViewWindowStatePlan.ANCHOR_STATE_OFFSET + LiveViewWindowStatePlan.ANCHOR_STATE_BYTES) {
@@ -204,9 +202,10 @@ public class LiveViewCheckpointWindowRoot implements Closeable {
 
     /**
      * Decodes {@code rootRef} when it names a window-state root, and answers false when
-     * it names something else - which is how the state-root tagged union is read: a
-     * legacy anchor root under an older checkpoint is an ordinary answer rather than
-     * corruption, and only a third kind is.
+     * it names something else, rather than raising. That is what a <b>probe</b> needs: a
+     * seal asking whether a predecessor is one it may build incrementally on top of has
+     * an ordinary answer for "no". A restore uses {@link #of} instead, because there the
+     * only page that may stand here is this one.
      */
     public boolean ofIfWindowRoot(@Transient @NotNull Path checkpointsDir, @NotNull LiveViewCheckpointPageRef rootRef) {
         return of0(checkpointsDir, rootRef);

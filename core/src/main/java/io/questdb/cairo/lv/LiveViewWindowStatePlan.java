@@ -703,9 +703,9 @@ public final class LiveViewWindowStatePlan {
          * eight-byte payload the anchor value alone fills.
          * <p>
          * Every function the factory compiled is a residual here, so the shape is the one a
-         * view has always had on disk minus the separate anchor root - one root for the
-         * window's keys and anchor values, one root per function for its state. What
-         * changes is only which root type carries the first half.
+         * view has always had on disk - one root for the window's keys and anchor values,
+         * one root per function for its state - carried by a window root whose manifest
+         * declares no components rather than by a state root of a second kind.
          *
          * @param runtimePlan the group the runtime builder made, whose projections join the
          *                    residual list because no component of theirs fits the leaf, or

@@ -11380,10 +11380,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         keys
                 );
                 if (result == null) {
-                    // A legacy root, or one whose functions are not all durable projections
-                    // of the group. The caller reads this as a failed restore and retires
-                    // the timeline, which is what makes it converge rather than repeat: the
-                    // rebuild that follows seals a root this route can read.
+                    // A boundary with no state root, or one whose functions are not all
+                    // durable projections of the group. The caller reads this as a failed
+                    // restore and retires the timeline, which is what makes it converge
+                    // rather than repeat: the rebuild that follows seals a root this route
+                    // can read.
                     LOG.info().$("live view O3 resume anchor cannot be restored key by key [view=")
                             .$(instance.getDefinition().getViewName())
                             .$(", anchorMaxTs=").$ts(anchorMaxTs)

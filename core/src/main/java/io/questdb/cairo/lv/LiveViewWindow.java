@@ -108,7 +108,7 @@ public class LiveViewWindow implements QuietCloseable {
     // entry to anything but the sweep carries a 0 here and still raises.
     // DIRTY_SLOT_NEW_SINCE_CHECKPOINT: 1 means the key is absent from the durable
     // predecessor, which is what keeps the logical-size accounting exact without a probe
-    // into the anchor root.
+    // into the window state root.
     private static final int DIRTY_SLOT_ANCHOR_MOVED = 2;
     private static final int DIRTY_SLOT_EVICTED = 1;
     private static final int DIRTY_SLOT_NEW_SINCE_CHECKPOINT = 0;
@@ -690,7 +690,7 @@ public class LiveViewWindow implements QuietCloseable {
 
     /**
      * Drops every anchor entry and the frontier that tracks them so a checkpoint
-     * restore can rehydrate the map through {@link #restoreCheckpointEntry}. The
+     * restore can rehydrate the map through {@link #restoreCheckpointWindowEntry}. The
      * caller validates the complete root first, so a framing failure cannot
      * leave the window with a half-restored map.
      * <p>
@@ -739,12 +739,12 @@ public class LiveViewWindow implements QuietCloseable {
         } else {
             declineWindowStatePlan();
         }
-        // The durable shape changed under the runtime - a legacy anchor root and a fused
-        // window root never share a leaf - so the next seal converts whole. Its own
-        // predecessor test would reach the same answer; forcing it here keeps the
-        // logical-byte baseline, which is charged per entry at a width that just moved,
-        // from being carried across the change. The same has just been done to each
-        // member's own root, which the window's flags do not reach.
+        // The durable leaf width changed under the runtime - a window root written for one
+        // manifest and one written for another never share a leaf - so the next seal
+        // converts whole. Its own predecessor test would reach the same answer; forcing it
+        // here keeps the logical-byte baseline, which is charged per entry at a width that
+        // just moved, from being carried across the change. The same has just been done to
+        // each member's own root, which the window's flags do not reach.
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         isCheckpointFullScanRequired = true;
         checkpointLogicalStateBytes = 0;
@@ -1300,7 +1300,7 @@ public class LiveViewWindow implements QuietCloseable {
 
     /**
      * @return the column type the anchor expression evaluates to. Persisted in
-     * the checkpoint anchor root and compared against the recompiled runtime on
+     * the checkpoint window state root and compared against the recompiled runtime on
      * restore, because a widened return type changes how the stored LONG slot
      * must be read back.
      */
@@ -1998,41 +1998,6 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
-     * Rehydrates one anchor entry read from a checkpoint anchor-map leaf.
-     * {@code keySource} is the entry's encoded partition key, bounded to its
-     * exact length; the decoder must consume all of it.
-     * <p>
-     * Callers restore a complete root, so {@link #beginCheckpointRestore()}
-     * must precede the first entry. The two retained frontier generations are
-     * reconstructed as the entries arrive, leaving the first post-restore sweep
-     * with exact reclaimable counts.
-     */
-    public void restoreCheckpointEntry(@NotNull LiveViewStatePageReader keySource, long anchorValue) {
-        final MapKey key = anchorMap.withKey();
-        final long consumed = LiveViewSnapshotKeyCodec.readKey(key, keySource, 0, partitionKeyTypes);
-        if (consumed != keySource.size()) {
-            throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                    .put("live view checkpoint anchor key decoder did not consume the entry exactly [expected=")
-                    .put(keySource.size()).put(", consumed=").put(consumed).put(']');
-        }
-        final MapValue value = key.createValue();
-        if (!value.isNew()) {
-            throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                    .put("live view checkpoint anchor contains a duplicate partition key");
-        }
-        value.putLong(SLOT_ANCHOR_VALUE, anchorValue);
-        value.putByte(SLOT_INITIALIZED, (byte) 1);
-        value.putByte(SLOT_TOMBSTONE, (byte) 0);
-        value.putShort(SLOT_DIRTY_EPOCH, EPOCH_NONE);
-        // A legacy anchor root carries no components, so the group's slots start at
-        // identity and the per-function roots restored after it fill them in. Writing
-        // them explicitly is what keeps a fresh map value's uninitialized bytes from
-        // being read as an accumulator.
-        resetWindowStateComponents(value);
-        restoreFrontierEntry(anchorValue);
-    }
-
-    /**
      * Rehydrates one fused entry read from a window-state root's leaf: the anchor value
      * and every grouped component, out of one payload and into one map value.
      * <p>
@@ -2285,8 +2250,7 @@ public class LiveViewWindow implements QuietCloseable {
      * writes. Every other member reading that component holds a root of its own - a derived
      * {@code count}'s eight bytes, a guarded one's corrected number - and neither is the
      * component's state; the contributor's image is, and restoring it restores every output
-     * that reads it. That is the same rule {@code endLegacyComponentRestore} applies when it
-     * hoists a legacy root, one root shape later.
+     * that reads it.
      */
     public void restoreCheckpointMemberEntry(
             int projectionIndex,
@@ -2320,52 +2284,6 @@ public class LiveViewWindow implements QuietCloseable {
                 value,
                 projection.getFunctionSlotBase()
         );
-    }
-
-    /**
-     * Opens the grouped functions' private maps so a legacy per-function root can be
-     * restored into them, and reports whether anything needs it.
-     * <p>
-     * This is the upgrade adapter's first half. A checkpoint written before the fused
-     * root existed holds one root per function, and the shortest correct way to read it
-     * into a fused runtime is to let each function's own restore run exactly as it
-     * always has and then hoist the result - rather than teach every decoder a second
-     * destination.
-     *
-     * @return true when the window owns a group, and so the caller must pair this with
-     * {@link #endLegacyComponentRestore()}
-     */
-    public boolean beginLegacyComponentRestore() {
-        final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
-        if (plan == null) {
-            return false;
-        }
-        plan.reopenProjectionMaps();
-        return true;
-    }
-
-    /**
-     * Copies every grouped component out of the private maps a legacy restore just
-     * filled and into the fused value, then closes those maps again. The second half of
-     * {@link #beginLegacyComponentRestore()}.
-     */
-    public void endLegacyComponentRestore() {
-        final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
-        if (plan == null) {
-            return;
-        }
-        try {
-            final MapRecordCursor cursor = anchorMap.getCursor();
-            final MapRecord record = anchorMap.getRecord();
-            while (cursor.hasNext()) {
-                final MapValue value = record.getValue();
-                for (int c = 0, n = plan.getComponentCount(); c < n; c++) {
-                    hoistComponentInto(plan, c, record, activeKeySink, value);
-                }
-            }
-        } finally {
-            plan.releaseProjectionMaps();
-        }
     }
 
     /**
@@ -2910,8 +2828,8 @@ public class LiveViewWindow implements QuietCloseable {
      * Adds one partition key to the checkpoint dirty set and records whether it was new
      * relative to the last durable checkpoint, and whether the row that named it moved
      * its anchor value. The first marker keeps logical-size accounting exact without
-     * probing the persistent anchor root; the second saves the seal a predecessor probe
-     * per key it can never elide.
+     * probing the persistent window state root; the second saves the seal a predecessor
+     * probe per key it can never elide.
      * <p>
      * Reached once per key per cadence rather than once per row - see the epoch test in
      * {@link #processRow} - so what it costs scales with the key domain the cadence

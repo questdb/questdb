@@ -53,9 +53,9 @@ import java.util.Arrays;
  * silent misread rather than a rejection - the decoder finds the total length it expects
  * and reads the wrong fields out of it. Four things must therefore match, not one: the
  * window identity, the key schema, the anchor value type <b>and</b> the manifest, byte
- * for byte. Anything else - a legacy anchor root below, a component codec bump that left
- * {@code definitionTxn} alone, a reordered component - makes the seal start from an
- * empty tree and image every live key.
+ * for byte. Anything else - a component codec bump that left {@code definitionTxn}
+ * alone, a reordered component - makes the seal start from an empty tree and image every
+ * live key.
  */
 public class LiveViewCheckpointWindowRootBuilder implements Closeable {
 
@@ -265,8 +265,8 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
 
     /**
      * Whether the root at {@code stateRootRef} may be built on incrementally by a seal
-     * that lays its entries out the given way. False for a null reference, for a legacy
-     * anchor root, and for any window root whose identity, key schema, anchor type or
+     * that lays its entries out the given way. False for a null reference, for a page of
+     * any other kind, and for any window root whose identity, key schema, anchor type or
      * manifest differs - all of which take the same full-scan conversion path.
      */
     public boolean isCompatiblePredecessor(

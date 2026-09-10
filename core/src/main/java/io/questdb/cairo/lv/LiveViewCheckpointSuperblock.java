@@ -93,7 +93,16 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public static final int SLOT_CRC_COVERAGE = SLOT_CRC_OFFSET;
     public static final int SLOT_DATA_BYTES_OFFSET = 80;
     public static final int SLOT_DEFINITION_TXN_OFFSET = 24;
-    public static final int SLOT_FORMAT_VERSION = 1;
+    /**
+     * Layout version of everything under {@code _checkpoints}, not of the slot alone.
+     * <p>
+     * Version 2 is the layout in which {@link LiveViewCheckpointWindowRoot} is the only
+     * state root an anchored view publishes. Version 1 also admitted the separate anchor
+     * root plus one function root per grouped window call; this build has no decoder for
+     * that shape, so a directory declaring version 1 is preserved and its view stopped
+     * rather than read. See {@link #foreignFormatVersion}.
+     */
+    public static final int SLOT_FORMAT_VERSION = 2;
     public static final int SLOT_FORMAT_VERSION_OFFSET = 8;
     public static final int SLOT_GENERATION_OFFSET = 16;
     public static final int SLOT_HISTORY_EPOCH_OFFSET = 32;
@@ -102,8 +111,11 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * Magic marking a superblock slot: ASCII {@code "LVTMLN"} with a trailing
      * version nibble. A distinctive 8-byte value so a foreign or zeroed slot is
      * rejected before the checksum runs.
+     * <p>
+     * The nibble tracks {@link #SLOT_FORMAT_VERSION}, so a slot whose two disagree was
+     * written by neither build and is damage rather than another build's generation.
      */
-    public static final long SLOT_MAGIC = 0x4C56_544D_4C4E_0001L;
+    public static final long SLOT_MAGIC = 0x4C56_544D_4C4E_0002L;
     /**
      * The magic without its version nibble. A slot matching this under
      * {@link #SLOT_MAGIC_FAMILY_MASK} was written as a timeline superblock by

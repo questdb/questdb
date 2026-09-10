@@ -31,6 +31,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
+import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
@@ -41,8 +42,10 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.mig.EngineMigrationTest;
 import org.junit.Assert;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.util.stream.Stream;
 
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 
@@ -53,9 +56,11 @@ import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
  * <p>
  * Both directions live here. {@link LiveViewCheckpointReleaseCompatTest} and
  * {@link LiveViewCheckpointReleaseShapesCompatTest} read trees an older, released build wrote
- * and expect a restore; {@link LiveViewCheckpointForwardCompatTest} reads a tree shaped the way
- * a newer build would write one and expects a refusal and a rebuild. They need the same two
- * things - a database root the engine will open, and a way to see which shape the head carries.
+ * and expect the format block; {@link LiveViewCheckpointForwardCompatTest} reads a tree shaped
+ * the way a newer build would write one and expects either the same block or a refusal and a
+ * rebuild, depending on which gate the shape trips. They need the same things - a database root
+ * the engine will open, a way to see which shape the head carries, a way to read the format
+ * version a directory declares, and a way to state that not one of its files moved.
  * <p>
  * Every helper here reads the tree rather than asserting anything about it. What each case is
  * evidence for belongs to the subclass that owns it.
@@ -114,6 +119,39 @@ public abstract class AbstractLiveViewCheckpointCompatTest extends AbstractLiveV
             cacheRW.clearCache();
         }
         engine.getMetadataCache().hydrateAllTables();
+    }
+
+    /**
+     * Counts every file under a directory tree. The blocked disposition is about what does
+     * <b>not</b> happen to those files, and a count of them is the cheapest statement of it that
+     * an accidental partial reset cannot satisfy.
+     */
+    protected static long countFiles(File root) throws IOException {
+        try (Stream<java.nio.file.Path> walk = java.nio.file.Files.walk(root.toPath())) {
+            return walk.filter(java.nio.file.Files::isRegularFile).count();
+        }
+    }
+
+    /**
+     * Reads the format version a {@code _timeline} declares, longhand - a little-endian INT at a
+     * fixed offset - rather than through the production probe the cases are about. A case whose
+     * whole premise is "this directory was written in another layout version" has to say so from
+     * the bytes, or it merely re-states what the code under test decided.
+     */
+    protected static int readSuperblockFormatVersion(File checkpointsRoot) throws IOException {
+        final File timeline = new File(checkpointsRoot, LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
+        final byte[] bytes = java.nio.file.Files.readAllBytes(timeline.toPath());
+        final int offset = LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET;
+        return (bytes[offset] & 0xff)
+                | ((bytes[offset + 1] & 0xff) << 8)
+                | ((bytes[offset + 2] & 0xff) << 16)
+                | ((bytes[offset + 3] & 0xff) << 24);
+    }
+
+    protected File checkpointsRoot(String viewName) {
+        try (Path dir = checkpointsDir(instance(viewName))) {
+            return new File(dir.toString());
+        }
     }
 
     protected Path checkpointsDir(LiveViewInstance instance) {

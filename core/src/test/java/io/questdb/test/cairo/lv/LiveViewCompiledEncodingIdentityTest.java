@@ -29,8 +29,6 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.lv.LiveViewCheckpointAnchorRoot;
-import io.questdb.cairo.lv.LiveViewCheckpointAnchorRootBuilder;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRootBuilder;
@@ -136,12 +134,9 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
     }
 
     private static void assertBuilderFailureReuse(CairoConfiguration configuration, Path dir) {
-        final byte[] invalidName = new byte[]{'x'};
         final byte[] invalidSchema = schema(ColumnType.INT);
         final byte[] invalidIdentity = new byte[]{9};
         final byte[] invalidManifest = new byte[]{8};
-        final byte[] nameA = new byte[]{'a'};
-        final byte[] nameB = new byte[]{'b'};
         final byte[] schemaA = schema(ColumnType.STRING);
         final byte[] schemaB = schema(ColumnType.DOUBLE);
         final byte[] identityA = new byte[]{1};
@@ -156,25 +151,6 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
                 LiveViewCheckpointLayout.PAGE_HEADER_SIZE
         );
         final LongList noSegments = new LongList();
-
-        try (LiveViewCheckpointAnchorRootBuilder builder = new LiveViewCheckpointAnchorRootBuilder(configuration);
-             LiveViewCheckpointMetaSegmentWriter unopened = new LiveViewCheckpointMetaSegmentWriter(configuration)) {
-            expectInitializerFailure(() -> ofBorrowedCompiled(
-                    builder, dir, invalidMetaRef, invalidName, ColumnType.TIMESTAMP_MICRO, invalidSchema, true
-            ));
-            Assert.assertFalse("anchor builder retained invalid-predecessor bytes",
-                    isBorrowingCompiled(builder, invalidName, invalidSchema));
-            ofBorrowedCompiled(builder, dir, nullMetaRef, nameB, ColumnType.TIMESTAMP_MICRO, schemaB, true);
-            Assert.assertTrue("anchor builder did not reuse after invalid predecessor",
-                    isBorrowingCompiled(builder, nameB, schemaB));
-            ofBorrowedCompiled(builder, dir, nullMetaRef, nameA, ColumnType.TIMESTAMP_MICRO, schemaA, true);
-            Assert.assertTrue("anchor builder cloned compiled bytes", isBorrowingCompiled(builder, nameA, schemaA));
-            expectBuildFailure(() -> builder.buildIntoOpenSegment(77, unopened, new LiveViewCheckpointPageRef()));
-            Assert.assertFalse("anchor builder retained failed-view bytes", isBorrowingCompiled(builder, nameA, schemaA));
-            ofBorrowedCompiled(builder, dir, nullMetaRef, nameB, ColumnType.TIMESTAMP_MICRO, schemaB, true);
-            Assert.assertTrue("anchor builder did not borrow replacement bytes", isBorrowingCompiled(builder, nameB, schemaB));
-            Assert.assertFalse("anchor builder leaked prior-view bytes", isBorrowingCompiled(builder, nameA, schemaA));
-        }
 
         try (LiveViewCheckpointFunctionRootBuilder builder = new LiveViewCheckpointFunctionRootBuilder(configuration);
              LiveViewCheckpointMetaSegmentWriter unopened = new LiveViewCheckpointMetaSegmentWriter(configuration)) {
@@ -216,22 +192,6 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
             Assert.assertFalse("window builder leaked prior-view bytes", isBorrowingCompiled(builder, identityA, schemaA, manifestA));
         }
 
-        final LiveViewCheckpointPageRef anchorPredecessor = new LiveViewCheckpointPageRef();
-        try (LiveViewCheckpointAnchorRootBuilder builder = new LiveViewCheckpointAnchorRootBuilder(configuration)) {
-            ofBorrowedCompiled(builder, dir, nullMetaRef, nameA, ColumnType.TIMESTAMP_MICRO, schemaA, true);
-            builder.build(80, anchorPredecessor);
-            expectInitializerFailure(() -> ofBorrowedCompiled(
-                    builder, dir, anchorPredecessor, nameB, ColumnType.TIMESTAMP_MICRO, schemaB, true
-            ));
-            Assert.assertFalse("anchor builder retained semantic-mismatch bytes",
-                    isBorrowingCompiled(builder, nameB, schemaB));
-            ofBorrowedCompiled(
-                    builder, dir, anchorPredecessor, nameA, ColumnType.TIMESTAMP_MICRO, schemaA, true
-            );
-            Assert.assertTrue("anchor builder did not reuse after semantic mismatch",
-                    isBorrowingCompiled(builder, nameA, schemaA));
-        }
-
         final LiveViewCheckpointPageRef functionPredecessor = new LiveViewCheckpointPageRef();
         try (LiveViewCheckpointFunctionRootBuilder builder = new LiveViewCheckpointFunctionRootBuilder(configuration)) {
             ofBorrowedCompiled(builder, dir, nullMetaRef, identityA, 1, schemaA);
@@ -245,13 +205,6 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
                     isBorrowingCompiled(builder, identityA, schemaA));
         }
 
-        try (LiveViewCheckpointAnchorRoot root = new LiveViewCheckpointAnchorRoot(configuration)) {
-            ofBuilder(root, nameA, ColumnType.TIMESTAMP_MICRO, schemaA, nullMetaRef, noSegments);
-            Assert.assertTrue("anchor result root cloned compiled bytes", isBorrowingCompiled(root, nameA, schemaA));
-            clearBorrowedCompiled(root);
-            ofBuilder(root, nameB, ColumnType.TIMESTAMP_MICRO, schemaB, nullMetaRef, noSegments);
-            Assert.assertTrue("anchor result root did not replace bytes", isBorrowingCompiled(root, nameB, schemaB));
-        }
         try (LiveViewCheckpointFunctionRoot root = new LiveViewCheckpointFunctionRoot(configuration)) {
             ofBuilder(root, identityA, 1, schemaA, nullStateRef, nullMetaRef, noSegments);
             Assert.assertTrue("function result root cloned compiled bytes", isBorrowingCompiled(root, identityA, schemaA));

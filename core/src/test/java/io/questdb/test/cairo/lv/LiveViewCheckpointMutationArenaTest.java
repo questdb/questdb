@@ -84,16 +84,17 @@ public class LiveViewCheckpointMutationArenaTest {
     }
 
     @Test
-    public void testAnchorKeyLengthBoundaryIsValidatedBeforeAppend() {
+    public void testKeyLengthBoundaryIsValidatedBeforeAppend() {
+        final byte[] anchorState = new byte[Long.BYTES];
         try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
-            arena.putAnchor(new byte[1 << 20], 42);
+            arena.put(new byte[1 << 20], anchorState);
             arena.sortAndValidateForTest();
             Assert.assertEquals(1, arena.getMutationCount());
 
             arena.clear();
             try {
-                arena.putAnchor(new byte[(1 << 20) + 1], 42);
-                Assert.fail("expected oversized anchor key rejection");
+                arena.put(new byte[(1 << 20) + 1], anchorState);
+                Assert.fail("expected oversized key rejection");
             } catch (CairoException e) {
                 Assert.assertTrue(e.getFlyweightMessage().toString().contains("partition key length out of bounds"));
             }

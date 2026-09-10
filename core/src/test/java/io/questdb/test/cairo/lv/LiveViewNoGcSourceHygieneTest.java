@@ -239,14 +239,12 @@ public class LiveViewNoGcSourceHygieneTest {
             final Path file = sourceRoot.resolve(hotFiles[i]);
             final String code = stripCommentsAndLiterals(Files.readString(file, StandardCharsets.UTF_8));
             final String[] methodNames = i == 0
-                    ? new String[]{"restoreFunctions", "validateAnchor", "validateFunction", "validateFunctions",
+                    ? new String[]{"restoreFunctions", "validateFunction", "validateFunctions",
                     "validateWindowStateShape"}
                     : new String[]{"buildRoot", "freezeBoundary", "freezeWindowState"};
             findCompiledEncodingViolationsInMethods(sourceRoot, file, code, methodNames, violations);
         }
         final String[] builderFiles = {
-                "io/questdb/cairo/lv/LiveViewCheckpointAnchorRoot.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointAnchorRootBuilder.java",
                 "io/questdb/cairo/lv/LiveViewCheckpointFunctionRoot.java",
                 "io/questdb/cairo/lv/LiveViewCheckpointFunctionRootBuilder.java",
                 "io/questdb/cairo/lv/LiveViewCheckpointWindowRoot.java",
@@ -272,7 +270,6 @@ public class LiveViewNoGcSourceHygieneTest {
         final Path sourceRoot = findSourceRoot();
         final List<String> violations = new ArrayList<>();
         final String[] files = {
-                "io/questdb/cairo/lv/LiveViewCheckpointAnchorRootBuilder.java",
                 "io/questdb/cairo/lv/LiveViewCheckpointCompaction.java",
                 "io/questdb/cairo/lv/LiveViewCheckpointDataStore.java",
                 "io/questdb/cairo/lv/LiveViewCheckpointTimelineStoreReader.java",
