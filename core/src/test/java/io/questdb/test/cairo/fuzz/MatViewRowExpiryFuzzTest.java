@@ -314,7 +314,9 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         all.add(transactions);
         Throwable primaryFailure = null;
         try {
-            fuzzer.applyManyWalParallel(all, rnd, getTestName(), true, true);
+            // Stop churn/refresh/cleanup as soon as ingestion ends, while WAL apply still runs.
+            // Waiting until applyManyWalParallel returns lets policy churn keep its drain alive.
+            fuzzer.applyManyWalParallel(all, rnd, getTestName(), true, true, () -> stop.set(true));
         } catch (Throwable th) {
             primaryFailure = th;
         } finally {

@@ -52,6 +52,57 @@ public class FuzzRunnerTest extends AbstractCairoTest {
     private final FuzzRunner fuzzer = new FuzzRunner();
 
     @Test
+    public void testApplyManyWalParallelDrainsAfterWritersDoneCallback() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTable("callback");
+            fuzzer.withDb(engine, sqlExecutionContext);
+            ObjList<ObjList<FuzzTransaction>> transactions = new ObjList<>();
+            ObjList<FuzzTransaction> tableTransactions = new ObjList<>();
+            FuzzTransaction transaction = new FuzzTransaction();
+            transaction.operationList.add((rnd, cairoEngine, writer, timestampIndex, excludedIntervals) -> {
+                var row = writer.newRow(0);
+                row.putSym(0, "ingest");
+                row.append();
+                return false;
+            });
+            tableTransactions.add(transaction);
+            transactions.add(tableTransactions);
+            AtomicInteger callbackCount = new AtomicInteger();
+
+            fuzzer.applyManyWalParallel(transactions, new Rnd(), "callback", false, true, () -> {
+                Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("callback")));
+                callbackCount.incrementAndGet();
+                // Model a background producer's final commit. Apply workers must still drain it.
+                TestUtils.unchecked(() -> execute("INSERT INTO callback VALUES ('final', 'value', 1)"));
+            });
+
+            Assert.assertEquals(1, callbackCount.get());
+            assertQuery("SELECT sym FROM callback ORDER BY sym").expectSize().returns("sym\nfinal\ningest\n");
+        });
+    }
+
+    @Test
+    public void testApplyManyWalParallelDrainsAfterWritersDoneCallbackFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTable("callback_failure");
+            fuzzer.withDb(engine, sqlExecutionContext);
+            ObjList<ObjList<FuzzTransaction>> transactions = new ObjList<>();
+            transactions.add(new ObjList<>());
+            RuntimeException failure = new RuntimeException("callback failure");
+
+            RuntimeException thrown = Assert.assertThrows(RuntimeException.class, () ->
+                    fuzzer.applyManyWalParallel(transactions, new Rnd(), "callback_failure", false, true, () -> {
+                        TestUtils.unchecked(() -> execute("INSERT INTO callback_failure VALUES ('final', 'value', 1)"));
+                        throw failure;
+                    })
+            );
+
+            Assert.assertSame(failure, thrown.getCause());
+            assertQuery("SELECT sym FROM callback_failure").expectSize().returns("sym\nfinal\n");
+        });
+    }
+
+    @Test
     public void testAssertStringColDensityUsesRetries() throws Exception {
         assertMemoryLeak(() -> {
             createWalTable("density");
