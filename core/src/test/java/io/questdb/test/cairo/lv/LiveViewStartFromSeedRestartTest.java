@@ -408,6 +408,413 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRestartMidSeedAcrossABaseStructuralChangeReSweeps() throws Exception {
+        // A structural sequencer entry (walId <= 0) between the root's base snapshot and the
+        // one the restart pins refuses the resume, even though a metadata change on its own
+        // preserves physical row order.
+        //
+        // The reason is what a structural entry does NOT say: one of them can be the
+        // ALTER TABLE ... SET TTL that turned the base's TTL back to 0 after an eviction had
+        // already run, and the entry carries no timestamps to test that against. The TTL guard
+        // reads the base's CURRENT ttl, so without this refusal that sequence - evict, clear,
+        // restart - would resume over a prefix rows had left.
+        //
+        // So this is a pin on the rule, not a bug repro: adding a column changes no row, and the
+        // rows below come out the same either way. What separates the two branches is the log
+        // line and the zeroed skip-write floor.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per turn
+        assertMemoryLeak(() -> {
+            createCutBaseAndView();
+
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedTurnsToOffset(job, 2);
+
+                restart();
+
+                execute("ALTER TABLE base ADD COLUMN z INT");
+                drainWalQueue();
+
+                LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(reloaded);
+                Assert.assertFalse("an unreferenced added column must not invalidate the view", reloaded.isInvalid());
+
+                capture.start();
+                try {
+                    driveSeedToCompletion(job, "lv");
+                    driveRefreshToQuiescence(job);
+                    capture.waitFor("live view discarding seed checkpoint across a base structural change [view=lv");
+                } finally {
+                    capture.stop();
+                }
+
+                Assert.assertEquals(
+                        "a refused resume skip-writes nothing; the replacement carries the discard",
+                        0,
+                        reloaded.getSeedSkipWriteFloor()
+                );
+            }
+
+            assertSeededRows();
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestartMidSeedUnderBaseTtlReSweepsWhenEvictionCouldReachTheView() throws Exception {
+        // TTL evicts inside the committing writer's housekeeping. There is no transaction of its
+        // own to walk, so the WAL-E scan cannot see it and the resume needs a separate witness
+        // that the swept prefix still holds every row it counted.
+        //
+        // That witness is the base's own minimum timestamp against the view's lower bound: TTL
+        // evicts a PREFIX of the partitions, so a surviving base row at or below the boundary
+        // proves the eviction never reached the rows the view's cursor counts. Here the boundary
+        // sits BELOW every base row, so no row can stand at or below it and the resume is
+        // refused - conservatively, since nothing was in fact evicted (the pinned clock keeps the
+        // threshold far below the data).
+        //
+        // A pin on the rule rather than a bug repro: the forward row the restart adds shifts no
+        // position, so the rows below come out the same with or without the guard.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per turn
+        assertMemoryLeak(() -> {
+            createTtlBaseAndUncutView();
+
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedTurnsToOffset(job, 2);
+
+                restart();
+
+                // Base progress the resume has to account for; without it the root's snapshot and
+                // the re-pinned one are the same seqTxn and the proof short-circuits.
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:09.000000Z', 'a', 9)");
+                drainWalQueue();
+
+                LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(reloaded);
+
+                capture.start();
+                try {
+                    driveSeedToCompletion(job, "lv");
+                    driveRefreshToQuiescence(job);
+                    capture.waitFor("live view discarding seed checkpoint over a base whose TTL may have evicted [view=lv");
+                } finally {
+                    capture.stop();
+                }
+
+                Assert.assertEquals(
+                        "a refused resume skip-writes nothing; the replacement carries the discard",
+                        0,
+                        reloaded.getSeedSkipWriteFloor()
+                );
+            }
+
+            // Every base row exactly once, the re-swept prefix having replaced the partial output
+            // rather than landing beside it.
+            assertQuery("SELECT ts, x, rn, s FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn\ts
+                            2026-04-01T00:00:01.000000Z\t1\t1\t1.0
+                            2026-04-01T00:00:02.000000Z\t2\t2\t3.0
+                            2026-04-01T00:00:03.000000Z\t3\t3\t6.0
+                            2026-04-01T00:00:04.000000Z\t4\t4\t10.0
+                            2026-04-01T00:00:05.000000Z\t5\t5\t14.0
+                            2026-04-01T00:00:06.000000Z\t6\t6\t18.0
+                            2026-04-01T00:00:07.000000Z\t7\t7\t22.0
+                            2026-04-01T00:00:08.000000Z\t8\t8\t26.0
+                            2026-04-01T00:00:09.000000Z\t9\t9\t30.0
+                            """);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestartMidSeedUnderBaseTtlResumesWhenTheBaseStillReachesTheBoundary() throws Exception {
+        // The other side of the TTL witness. The base carries the same TTL, but the view's
+        // boundary CUTS it: four base rows sit below the boundary, so the base's minimum
+        // timestamp is at or below it and the eviction prefix demonstrably never reached the
+        // view's range. The resume goes ahead.
+        //
+        // Without this case the TTL guard could degrade into "any TTL on the base re-seeds", and
+        // TTL on a base table is the common configuration, not the exotic one.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per turn
+        assertMemoryLeak(() -> {
+            createTtlBaseAndCutView();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedTurnsToOffset(job, 2);
+
+                restart();
+
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:09.000000Z', 'a', 9)");
+                drainWalQueue();
+
+                LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(reloaded);
+
+                // One turn: a resume restores offset 2 and feeds exactly one more row, a re-sweep
+                // would land on 1.
+                job.run();
+                drainWalQueue();
+                Assert.assertEquals(
+                        "a base whose oldest row still sits at or below the boundary must resume",
+                        3,
+                        reloaded.getSeedDataOffset()
+                );
+
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+            }
+
+            assertQuery("SELECT ts, x, rn, s FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn\ts
+                            2026-04-01T00:00:05.000000Z\t5\t1\t5.0
+                            2026-04-01T00:00:06.000000Z\t6\t2\t11.0
+                            2026-04-01T00:00:07.000000Z\t7\t3\t18.0
+                            2026-04-01T00:00:08.000000Z\t8\t4\t26.0
+                            2026-04-01T00:00:09.000000Z\t9\t5\t30.0
+                            """);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestartMidSeedWithBaseCommitAboveTheSweptPrefixResumes() throws Exception {
+        // The base moved while the process was down, but every row it gained sorts ABOVE the
+        // swept prefix. Nothing inside [0, seedCursorOffset) moved, so the positional resume is
+        // still sound and the sweep must take it rather than re-scanning the whole history.
+        //
+        // This is the case the cheap alternative - refusing any resume whose root names a
+        // different base seqTxn than the one the restart pinned - would throw away, and a base
+        // that keeps ingesting during a restart is the normal case, not the exotic one.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per turn
+        assertMemoryLeak(() -> {
+            createCutBaseAndView();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedTurnsToOffset(job, 2);
+
+                restart();
+
+                // Above the base's own maximum, and so above the two rows already swept.
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:09.000000Z', 'a', 9)");
+                drainWalQueue();
+
+                LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(reloaded);
+                Assert.assertEquals(
+                        "the durable generation must carry the seed cursor the sweep resumes from",
+                        2,
+                        durableSeedCursorOffset(reloaded)
+                );
+
+                // One turn: the resume restores offset 2 and feeds exactly one more row. A from-zero
+                // re-sweep would land on 1 instead, so this separates the two paths.
+                job.run();
+                drainWalQueue();
+                Assert.assertEquals(
+                        "a forward-only base commit must not cost the sweep its resume point",
+                        3,
+                        reloaded.getSeedDataOffset()
+                );
+
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+            }
+
+            assertQuery("SELECT ts, x, rn, s FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn\ts
+                            2026-04-01T00:00:05.000000Z\t5\t1\t5.0
+                            2026-04-01T00:00:06.000000Z\t6\t2\t11.0
+                            2026-04-01T00:00:07.000000Z\t7\t3\t18.0
+                            2026-04-01T00:00:08.000000Z\t8\t4\t26.0
+                            2026-04-01T00:00:09.000000Z\t9\t5\t30.0
+                            """);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestartMidSeedWithBaseCommitBetweenTheRootAndTheDurableFrontierReSweeps() throws Exception {
+        // The trusted prefix is not the root's prefix. A resume rewinds the CURSOR to the root but
+        // keeps skip-writing up to the table's row count, so it trusts the base rows behind the
+        // durable output too - and in production that stretch is the long one: a turn ends on the
+        // 50ms budget while a root is sealed every 1M rows or 5 minutes, so the root sits far
+        // behind the disk.
+        //
+        // This test reproduces that shape - a per-turn budget of one row with no row or duration
+        // cadence to seal on, so only the first root is written - and lands the base commit
+        // BETWEEN the root's maxTimestamp and the output's. A bound taken from the root alone
+        // admits it, and then the re-feed re-numbers the rows the skip-write floor is counting: the
+        // last durable row is appended a second time and the back-dated one is skip-written into
+        // nothing.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS, 0); // one row per turn
+        assertMemoryLeak(() -> {
+            createCutBaseAndView();
+
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                LiveViewInstance instance = driveSeedTurnsToOffset(job, 3);
+                Assert.assertEquals(
+                        "only the first turn seals; the root must stay behind the durable output",
+                        ts("2026-04-01T00:00:05.000000Z"),
+                        instance.getSeedCheckpointMaxTs()
+                );
+                Assert.assertEquals(
+                        "three admitted rows must be durable behind that one root",
+                        3,
+                        instance.getLvRowsTotal()
+                );
+
+                restart();
+
+                // Above the root's 00:00:05 and at or below the output's 00:00:07.
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:06.500000Z', 'a', 65)");
+                drainWalQueue();
+
+                LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(reloaded);
+                Assert.assertEquals(
+                        "the durable generation must carry the first turn's cursor",
+                        1,
+                        durableSeedCursorOffset(reloaded)
+                );
+
+                capture.start();
+                try {
+                    driveSeedToCompletion(job, "lv");
+                    driveRefreshToQuiescence(job);
+                    capture.waitFor("live view discarding seed checkpoint behind a base commit inside its trusted prefix [view=lv");
+                } finally {
+                    capture.stop();
+                }
+
+                Assert.assertEquals(
+                        "a refused resume skip-writes nothing; the replacement carries the discard",
+                        0,
+                        reloaded.getSeedSkipWriteFloor()
+                );
+            }
+
+            assertQuery("SELECT ts, x, rn, s FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn\ts
+                            2026-04-01T00:00:05.000000Z\t5\t1\t5.0
+                            2026-04-01T00:00:06.000000Z\t6\t2\t11.0
+                            2026-04-01T00:00:06.500000Z\t65\t3\t76.0
+                            2026-04-01T00:00:07.000000Z\t7\t4\t83.0
+                            2026-04-01T00:00:08.000000Z\t8\t5\t86.0
+                            """);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestartMidSeedWithBaseCommitInsideTheSweptPrefixReSweeps() throws Exception {
+        // The hazard the base-snapshot proof exists for. The sweep counts its resume point as a
+        // ROW POSITION in a bounded base cursor, and a restart cannot re-open the snapshot that
+        // position was counted against - a historical MVCC snapshot dies with the process that
+        // pinned it. So the restart pins the latest applied base instead, and an out-of-order
+        // commit that landed below the swept prefix while the process was down has inserted a row
+        // INSIDE [0, seedCursorOffset).
+        //
+        // Without the proof: skipRows(2) skips 05 and the back-dated 05.5, so the sweep resumes on
+        // 06 - a row it has already emitted and whose accumulator state the restored root already
+        // carries. The skip-write floor lets it through (it sits at the floor, not below it), so
+        // the view ends up holding 06 twice, never holding 05.5 at all, and carrying window values
+        // that counted 06 twice. A row count cannot tell that apart from the truth, which is why
+        // rn and the running sum are asserted here.
+        //
+        // With it, the root is discarded, the sweep re-runs from offset zero against the snapshot
+        // it actually pinned, and one full-range replacement swaps the unproven prefix for the
+        // recomputed one.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per turn
+        assertMemoryLeak(() -> {
+            createCutBaseAndView();
+
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                LiveViewInstance instance = driveSeedTurnsToOffset(job, 2);
+                Assert.assertEquals(
+                        // A one-row seal cadence keeps the root level with the durable output, so
+                        // the proof's bound - the higher of the two - is this timestamp either way.
+                        "the two swept rows must end at the root's maxTimestamp",
+                        ts("2026-04-01T00:00:06.000000Z"),
+                        instance.getSeedCheckpointMaxTs()
+                );
+
+                restart();
+
+                // Out of order, and at or below the bound: it sorts INSIDE the swept prefix.
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:05.500000Z', 'a', 55)");
+                drainWalQueue();
+
+                LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(reloaded);
+                Assert.assertEquals(
+                        "the durable generation must still carry the seed cursor the resume would take",
+                        2,
+                        durableSeedCursorOffset(reloaded)
+                );
+
+                capture.start();
+                try {
+                    driveSeedToCompletion(job, "lv");
+                    driveRefreshToQuiescence(job);
+                    capture.waitFor("live view discarding seed checkpoint behind a base commit inside its trusted prefix [view=lv");
+                } finally {
+                    capture.stop();
+                }
+
+                Assert.assertEquals(
+                        "a refused resume skip-writes nothing; the replacement carries the discard",
+                        0,
+                        reloaded.getSeedSkipWriteFloor()
+                );
+                Assert.assertFalse(
+                        "the replacement must be discharged by the time the sweep completes",
+                        reloaded.isSeedReplacePending()
+                );
+            }
+
+            // The back-dated row is in its event-time place, 06 appears once, and the running sum
+            // saw the four rows before each one exactly once.
+            assertQuery("SELECT ts, x, rn, s FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn\ts
+                            2026-04-01T00:00:05.000000Z\t5\t1\t5.0
+                            2026-04-01T00:00:05.500000Z\t55\t2\t60.0
+                            2026-04-01T00:00:06.000000Z\t6\t3\t66.0
+                            2026-04-01T00:00:07.000000Z\t7\t4\t73.0
+                            2026-04-01T00:00:08.000000Z\t8\t5\t76.0
+                            """);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRestartMidSeedWithoutCheckpointReSweepsUnderFiniteBoundary() throws Exception {
         // No timeline survives (a crash before the first cadence write, or a view whose window
         // functions cannot snapshot). Nothing then proves what the two rows already on disk are:
@@ -491,6 +898,37 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
     // metadata without invalidating the view.
     private void createCutBaseAndView() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT, y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        insertEightBaseRows();
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM " + START_FROM + " AS " + VIEW_SQL);
+    }
+
+    /**
+     * The cut base of {@link #createCutBaseAndView()} with a TTL on it, under the same cutting
+     * boundary. The base's oldest row therefore sits BELOW the boundary, which is what lets the
+     * resume prove a TTL eviction could not have reached the view's range.
+     * <p>
+     * The TTL never fires here: the pinned clock keeps the eviction threshold far below the data.
+     * What the tests exercise is the proof, which reads the base's declared TTL rather than any
+     * eviction it may or may not have taken.
+     */
+    private void createTtlBaseAndCutView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY TTL 3 DAYS WAL");
+        insertEightBaseRows();
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM " + START_FROM + " AS " + VIEW_SQL);
+    }
+
+    /**
+     * A TTL'd base under a boundary that admits every row - it sits below the base's oldest one -
+     * so no surviving base row can stand at or below it and the resume has no witness that a TTL
+     * eviction stayed clear of the view's range.
+     */
+    private void createTtlBaseAndUncutView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY TTL 3 DAYS WAL");
+        insertEightBaseRows();
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2026-03-31T00:00:00.000000Z' AS " + VIEW_SQL);
+    }
+
+    private void insertEightBaseRows() throws Exception {
         execute("""
                 INSERT INTO base (ts, sym, x) VALUES
                 ('2026-04-01T00:00:01.000000Z', 'a', 1),
@@ -502,7 +940,6 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
                 ('2026-04-01T00:00:07.000000Z', 'a', 7),
                 ('2026-04-01T00:00:08.000000Z', 'a', 8)""");
         drainWalQueue();
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM " + START_FROM + " AS " + VIEW_SQL);
     }
 
     /**

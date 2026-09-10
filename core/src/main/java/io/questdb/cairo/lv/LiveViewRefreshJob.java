@@ -10785,7 +10785,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     {@code sweepSeqTxn >= seedTargetSeqTxn} and every turn reads that same
      *     snapshot; re-opening at the latest applied seqTxn each turn would make the
      *     positional {@code skipRows()} resume unsound under concurrent out-of-order
-     *     base commits (they reorder physical rows below the swept prefix). Each turn
+     *     base commits (they reorder physical rows below the swept prefix). A restart
+     *     re-pins at the latest applied seqTxn because the old snapshot is gone, and
+     *     {@link #isSeedResumeBaseCompatible} is what stands in for the pin there. Each turn
      *     {@code skipRows()} past already-swept rows, feeds up to a row/duration
      *     budget, commits the batch, applies it, and seals a boundary on the
      *     checkpoint cadence.</li>
@@ -10818,6 +10820,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * appended in the same apply, or rows tied at a boundary timestamp, can leave the
      * count equal by coincidence. {@link #reconcileSeedPartitionRemovals} then settles
      * the counter against the table at the completion boundary.
+     * <p>
+     * The third witness is the BASE side of the same resume:
+     * {@link #isSeedResumeBaseCompatible} proves the root's cursor offset still names the
+     * rows it named when the offset was sealed, against the snapshot this process pinned
+     * rather than the one the earlier turns read.
      */
     private void runSeedSweep(LiveViewInstance instance) throws SqlException {
         final long seedTargetSeqTxn = instance.getStateReader().getSeedTargetSeqTxn();
@@ -10876,13 +10883,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (lvTracker.isInitialised() && lvTracker.getSeqTxn() > lvTracker.getWriterTxn()) {
                 return;
             }
+            // Pin the base snapshot the whole sweep reads BEFORE choosing a resume
+            // strategy: the restored root's cursor offset is a position in that snapshot's
+            // row order, so isSeedResumeBaseCompatible below has to measure it against the
+            // reader this sweep is actually going to skip into, not against the base's
+            // latest applied state. Sits ahead of the resume-attempted stamp so an
+            // apply-lag timeout re-enters the whole setup next turn.
+            final TableReader seedBaseReader = ensureSeedBaseReader(instance, baseToken, seedTargetSeqTxn);
             instance.setSeedResumeAttempted();
             long onDiskLvRows = 0;
+            // The durable output's own frontier, which is a BASE timestamp: a live view has to
+            // project the base's designated timestamp as a plain column, so the last output row
+            // on disk stands on a base row at exactly this timestamp. isSeedResumeBaseCompatible
+            // needs it because the resume does not stop at the root - it re-feeds from the root's
+            // cursor up to this point and skip-writes what it recomputes, so a base commit inside
+            // THAT stretch shifts the rows those already-durable ordinals stand on just as surely
+            // as one inside the root's own prefix.
+            long onDiskLvMaxTs = Numbers.LONG_NULL;
             try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
                 onDiskLvRows = lvReader.size();
+                if (onDiskLvRows > 0) {
+                    onDiskLvMaxTs = lvReader.getMaxTimestamp();
+                }
             } catch (CairoException e) {
                 // No readable LV table yet (fresh CREATE before first apply).
                 onDiskLvRows = 0;
+                onDiskLvMaxTs = Numbers.LONG_NULL;
             }
             // Always start from a clean slate; restore (if any) repopulates on top.
             clearWindowState(windowFactory, anchorWindow);
@@ -10922,7 +10948,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // the ahead root and fall through to the from-0 re-sweep below, where the
                 // skip-write floor keeps the R_cp on-disk prefix and re-emits everything
                 // above it.
-                if (restoredSeedState.lvRowsTotal <= onDiskLvRows) {
+                if (restoredSeedState.lvRowsTotal > onDiskLvRows) {
+                    // restoreSeedFromTimeline already wrote the ahead window state into
+                    // the functions; wipe it back to identity for the from-0 re-sweep.
+                    // The retire below takes the ahead root with it, so the re-sweep's
+                    // own boundaries do not have to climb past its maxTimestamp.
+                    clearWindowState(windowFactory, anchorWindow);
+                    LOG.info().$("live view discarding seed checkpoint ahead of restored on-disk output [view=")
+                            .$(viewName).$(", checkpointLvRows=").$(restoredSeedState.lvRowsTotal)
+                            .$(", onDiskLvRows=").$(onDiskLvRows).I$();
+                } else if (!isSeedResumeBaseCompatible(instance, seedBaseReader, restoredSeedState, onDiskLvMaxTs)) {
+                    // The root's cursor offset counts rows of a base snapshot this process
+                    // can no longer open, and nothing proves the one it pinned instead holds
+                    // those rows in the same places. Same disposition as the ahead root:
+                    // identity state and a from-0 re-sweep behind a full-range replacement.
+                    // The helper logs which rule refused.
+                    clearWindowState(windowFactory, anchorWindow);
+                } else {
                     instance.setSeedDataOffset(restoredSeedState.resumeDataOffset);
                     instance.setLvRowsTotal(restoredSeedState.lvRowsTotal);
                     if (restoredSeedState.maxTimestamp != Numbers.LONG_NULL) {
@@ -10934,20 +10976,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             Numbers.LONG_NULL
                     );
                     restored = true;
-                } else {
-                    // restoreSeedFromTimeline already wrote the ahead window state into
-                    // the functions; wipe it back to identity for the from-0 re-sweep.
-                    // The retire below takes the ahead root with it, so the re-sweep's
-                    // own boundaries do not have to climb past its maxTimestamp.
-                    clearWindowState(windowFactory, anchorWindow);
-                    LOG.info().$("live view discarding seed checkpoint ahead of restored on-disk output [view=")
-                            .$(viewName).$(", checkpointLvRows=").$(restoredSeedState.lvRowsTotal)
-                            .$(", onDiskLvRows=").$(onDiskLvRows).I$();
                 }
             }
             if (restored) {
                 // A proven resume: the root names the emitted ordinal its own position
-                // stands at, nothing has removed a row from under the table since, and the
+                // stands at, nothing has removed a row from under the table since, the base
+                // rows its cursor offset counts are still where it counted them, and the
                 // output is append-only above it. So the two coordinates coincide and the
                 // skip-write floor is simply the table's row count - rows re-fed between
                 // the root and it are recomputed to advance state but not re-appended.
@@ -10956,7 +10990,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             } else {
                 // Nothing proves the durable output is the prefix this sweep is about to
                 // recompute: a fresh CREATE, no timeline, an unreadable one, one holding no
-                // seed resume point, one rejected as ahead of the restored disk, or a live
+                // seed resume point, one rejected as ahead of the restored disk, one whose
+                // cursor offset the pinned base snapshot no longer supports, or a live
                 // retention marker. Re-sweep from offset 0 with empty state, skip-write
                 // nothing, and - when there is durable output to discard - replace the
                 // view's whole range with the re-swept result on the first commit.
@@ -11012,30 +11047,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long skipWriteUntil = instance.getSeedSkipWriteFloor();
         long dataOffset = instance.getSeedDataOffset();
 
-        // Pin ONE stable base snapshot for the entire multi-turn sweep. Opened lazily
-        // on the first turn (or after a fresh-snapshot re-arm) and held on the instance
-        // across turns. Re-opening the base at the latest applied seqTxn each turn (as
-        // this did before) makes the positional skipRows() resume unsound: an
-        // out-of-order base commit landing below the swept prefix between turns
-        // shifts physical row positions, so the next turn's skipRows(dataOffset) skips
-        // a different set - silently dropping the back-dated row and re-feeding the old
-        // boundary row (double-advancing the accumulators). Holding one snapshot keeps
-        // the physical order stable across turns; everything committed after it is
-        // handed to the ACTIVE phase's O3 detection from sweepSeqTxn + 1.
-        //
-        // Lazily null-guarded rather than folded into the isSeedResumeAttempted
-        // block above: waitForApply can throw (apply-lag timeout), and the flag is
-        // stamped before it. Gating the open on a null reader instead re-attempts it
-        // on the next turn without re-running the window-state restore.
-        TableReader reader = instance.getSeedBaseReader();
-        if (reader == null) {
-            reader = waitForApply(baseToken, seedTargetSeqTxn);
-            instance.setSeedBaseReader(reader);
-            // The reader may sit at a seqTxn strictly greater than the target if
-            // ApplyWal2TableJob caught up further while waitForApply was running;
-            // sweepSeqTxn pins the deferred drain to resume from after the snapshot.
-            instance.setSeedSweepSeqTxn(Math.max(seedTargetSeqTxn, reader.getSeqTxn()));
-        }
+        // Already pinned by the resume setup above on the sweep's first turn; every later
+        // turn reads the same snapshot straight off the instance.
+        final TableReader reader = ensureSeedBaseReader(instance, baseToken, seedTargetSeqTxn);
         final long sweepSeqTxn = instance.getSeedSweepSeqTxn();
 
         final long turnMaxRows = engine.getConfiguration().getLiveViewCheckpointRows();
@@ -11289,6 +11303,197 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", seedTargetSeqTxn=").$(seedTargetSeqTxn)
                 .$(", sweepSeqTxn=").$(sweepSeqTxn)
                 .$(", lvRowsTotal=").$(instance.getLvRowsTotal()).I$();
+    }
+
+    /**
+     * Pins ONE stable base snapshot for the entire multi-turn sweep, or hands back the
+     * one already pinned. Opened on the sweep's first turn (and again after a
+     * fresh-snapshot re-arm) and held on the instance across turns.
+     * <p>
+     * Re-opening the base at the latest applied seqTxn each turn (as the sweep did
+     * before it held one) makes the positional {@code skipRows()} resume unsound: an
+     * out-of-order base commit landing below the swept prefix between turns shifts
+     * physical row positions, so the next turn's {@code skipRows(dataOffset)} skips a
+     * different set - silently dropping the back-dated row and re-feeding the old
+     * boundary row (double-advancing the accumulators). Holding one snapshot keeps the
+     * physical order stable across turns; everything committed after it is handed to the
+     * ACTIVE phase's O3 detection from {@code sweepSeqTxn + 1}.
+     * <p>
+     * The one place the snapshot cannot carry that guarantee is across a process
+     * restart, or across the re-arm that follows a base metadata change, because the
+     * snapshot the earlier turns read is gone by then and a historical one cannot be
+     * re-opened. {@link #isSeedResumeBaseCompatible} is the proof that stands in for it:
+     * the resume setup calls this first, so the root it restores is measured against the
+     * snapshot the sweep is actually going to read.
+     * <p>
+     * {@link #waitForApply} can throw (apply-lag timeout, or the job's circuit breaker on
+     * shutdown / DROP). The caller runs this before it stamps
+     * {@link LiveViewInstance#setSeedResumeAttempted()}, so a throw simply re-enters the
+     * whole resume setup on the next turn rather than leaving it half done.
+     */
+    private TableReader ensureSeedBaseReader(LiveViewInstance instance, TableToken baseToken, long seedTargetSeqTxn) {
+        TableReader reader = instance.getSeedBaseReader();
+        if (reader == null) {
+            reader = waitForApply(baseToken, seedTargetSeqTxn);
+            instance.setSeedBaseReader(reader);
+            // The reader may sit at a seqTxn strictly greater than the target if
+            // ApplyWal2TableJob caught up further while waitForApply was running;
+            // sweepSeqTxn pins the deferred drain to resume from after the snapshot.
+            instance.setSeedSweepSeqTxn(Math.max(seedTargetSeqTxn, reader.getSeqTxn()));
+        }
+        return reader;
+    }
+
+    /**
+     * Reports whether the base snapshot the sweep is about to read leaves the prefix the
+     * resume is about to trust exactly where the sweep that wrote it left off.
+     * <p>
+     * The root names two coordinates the resume rests on: {@code seedCursorOffset}, a
+     * ROW POSITION in the bounded base cursor, and {@code normalizedBaseSeqTxn}, the base
+     * snapshot that position was counted against. A restart re-pins the base at the
+     * latest applied seqTxn instead, since a historical snapshot cannot be re-opened once
+     * the process that held it is gone, so the two can differ - and a position means
+     * nothing against a different row set. An out-of-order base commit that landed below
+     * the swept prefix while the process was down inserts rows INSIDE
+     * {@code [0, seedCursorOffset)}: {@code skipRows()} then stops short of the row the
+     * sweep really left off at, re-feeds rows already on disk (the skip-write floor lets
+     * them through, because they sit at or above it) and never emits the back-dated one.
+     * <p>
+     * So prove the prefix instead of assuming it. The bound the proof measures against is
+     * the higher of two frontiers, because the resume trusts base rows past the root as
+     * well as under it:
+     * <ul>
+     *     <li>the root's {@code maxTimestamp}, the timestamp of the last row the sweep
+     *     consumed before sealing it - exact, because a turn breaks on the row it has just
+     *     emitted, so even under a filter (where the offset counts the rows the filter
+     *     dropped BETWEEN emitted ones) the last row consumed is an emitted one;</li>
+     *     <li>{@code onDiskLvMaxTs}, the durable output's own frontier. The resume re-feeds
+     *     from the root's cursor up to the table's row count and skip-writes what it
+     *     recomputes there, so a commit inside that stretch re-numbers the ordinals those
+     *     already-durable rows stand at - the same duplication, one region further along.
+     *     A live view must project the base's designated timestamp as a plain column, so
+     *     this output timestamp is a base timestamp and the two frontiers compare.</li>
+     * </ul>
+     * The proof then holds when every base transaction in
+     * {@code (rootBaseSeqTxn, pinnedSeqTxn]} is a DATA commit whose effective minimum
+     * timestamp sits strictly above that bound: every row such a commit carries sorts above
+     * the whole trusted region, so no position inside it moves. The refusals:
+     * <ul>
+     *     <li>a commit reaching at or below the bound - it inserts into the prefix, or
+     *     (a {@code REPLACE_RANGE} delete, measured by
+     *     {@link #effectiveReplaceRangeDeleteLo}) removes from it. The comparison is
+     *     strict because the trusted region's cut can fall INSIDE a timestamp tie, so a
+     *     new row sharing the bound can sort either side of it;</li>
+     *     <li>a non-DATA commit (TRUNCATE / DROP PARTITION / UPDATE) - it can remove or
+     *     rewrite rows anywhere, and no arithmetic over its inserted timestamps bounds
+     *     that;</li>
+     *     <li>a structural or compacted sequencer entry ({@code walId <= 0}). Those
+     *     preserve physical row order, but one of them may be the {@code SET TTL} that
+     *     turned the guard below off after an eviction had already run, and none of them
+     *     says which;</li>
+     *     <li>a base carrying a TTL, unless the base's own minimum timestamp still sits at
+     *     or below the view's lower bound. TTL evicts inside the committing writer's
+     *     housekeeping with no transaction of its own to read, and it evicts a PREFIX of
+     *     the partitions - so a surviving row at or below the view's boundary proves the
+     *     eviction never reached the rows the view's cursor counts. A BEGINNING view has
+     *     no such boundary ({@link Numbers#LONG_NULL}) and no row can sit at or below it,
+     *     so a TTL on its base always refuses.</li>
+     * </ul>
+     * A snapshot identical to the root's needs none of it: the same seqTxn is the same row
+     * set, since every eviction runs inside a commit or an ALTER and so carries a seqTxn of
+     * its own. Any failure reading the base's transaction log or its WAL-E events -
+     * including segments purged out from under this walk - refuses too, which is the
+     * safe direction: the caller then re-sweeps from offset zero and replaces the
+     * unproven output rather than appending onto it.
+     */
+    private boolean isSeedResumeBaseCompatible(
+            LiveViewInstance instance,
+            TableReader baseReader,
+            RestoredSeedState restored,
+            long onDiskLvMaxTs
+    ) {
+        final String viewName = instance.getDefinition().getViewName();
+        final TableToken baseToken = instance.getDefinition().getBaseTableToken();
+        final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
+        final long rootBaseSeqTxn = restored.normalizedBaseSeqTxn;
+        final long trustedMaxTs = onDiskLvMaxTs == Numbers.LONG_NULL
+                ? restored.maxTimestamp
+                : Math.max(restored.maxTimestamp, onDiskLvMaxTs);
+        final long pinnedSeqTxn = baseReader.getSeqTxn();
+        if (rootBaseSeqTxn == pinnedSeqTxn) {
+            return true;
+        }
+        if (rootBaseSeqTxn < 0 || rootBaseSeqTxn > pinnedSeqTxn || restored.maxTimestamp == Numbers.LONG_NULL) {
+            LOG.info().$("live view discarding seed checkpoint with no usable base coordinate [view=")
+                    .$(viewName)
+                    .$(", rootBaseSeqTxn=").$(rootBaseSeqTxn)
+                    .$(", pinnedBaseSeqTxn=").$(pinnedSeqTxn)
+                    .$(", trustedMaxTs=").$ts(trustedMaxTs).I$();
+            return false;
+        }
+        if (baseReader.getMetadata().getTtlHoursOrMonths() != 0
+                && !(viewLowerBoundTimestamp != Numbers.LONG_NULL
+                && baseReader.getMinTimestamp() <= viewLowerBoundTimestamp)) {
+            LOG.info().$("live view discarding seed checkpoint over a base whose TTL may have evicted [view=")
+                    .$(viewName)
+                    .$(", rootBaseSeqTxn=").$(rootBaseSeqTxn)
+                    .$(", pinnedBaseSeqTxn=").$(pinnedSeqTxn)
+                    .$(", baseMinTs=").$ts(baseReader.getMinTimestamp())
+                    .$(", viewLowerBoundTs=").$ts(viewLowerBoundTimestamp).I$();
+            return false;
+        }
+        try (
+                TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, rootBaseSeqTxn);
+                // Every arm out of this walk leaves through the try, which closes the
+                // reader with the cursor - see the note on walEventReader.
+                WalEventReader eventReader = walEventReader
+        ) {
+            while (txnCursor.hasNext()) {
+                final long txn = txnCursor.getTxn();
+                if (txn > pinnedSeqTxn) {
+                    break;
+                }
+                final int walId = txnCursor.getWalId();
+                if (walId <= 0) {
+                    LOG.info().$("live view discarding seed checkpoint across a base structural change [view=")
+                            .$(viewName).$(", baseSeqTxn=").$(txn).$(", walId=").$(walId).I$();
+                    return false;
+                }
+                final int segmentId = txnCursor.getSegmentId();
+                final int segmentTxn = txnCursor.getSegmentTxn();
+                walPath.of(engine.getConfiguration().getDbRoot())
+                        .concat(baseToken)
+                        .concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                final WalEventCursor eventCursor = WalTxnDetails.openWalEFile(walPath, eventReader, segmentTxn, txn);
+                if (!WalTxnType.isDataType(eventCursor.getType())) {
+                    LOG.info().$("live view discarding seed checkpoint across a non-data base commit [view=")
+                            .$(viewName).$(", baseSeqTxn=").$(txn)
+                            .$(", type=").$(eventCursor.getType()).I$();
+                    return false;
+                }
+                final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                long txnMinTs = dataInfo.getMinTimestamp();
+                final long deleteLo = effectiveReplaceRangeDeleteLo(dataInfo, viewLowerBoundTimestamp);
+                if (deleteLo != Numbers.LONG_NULL) {
+                    txnMinTs = deleteLo;
+                }
+                if (txnMinTs <= trustedMaxTs) {
+                    LOG.info().$("live view discarding seed checkpoint behind a base commit inside its trusted prefix [view=")
+                            .$(viewName).$(", baseSeqTxn=").$(txn)
+                            .$(", txnMinTs=").$ts(txnMinTs)
+                            .$(", trustedMaxTs=").$ts(trustedMaxTs).I$();
+                    return false;
+                }
+            }
+        } catch (Throwable t) {
+            LOG.info().$("could not prove a live view seed resume against the base [view=")
+                    .$(viewName)
+                    .$(", rootBaseSeqTxn=").$(rootBaseSeqTxn)
+                    .$(", pinnedBaseSeqTxn=").$(pinnedSeqTxn)
+                    .$(", error=").$(t).I$();
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -12372,7 +12577,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Restores the newest logical root the timeline holds and rehydrates the
      * LV's mid-sweep window state (anchor map + per-function maps) from it,
      * surfacing the generation's seed cursor in {@code out.resumeDataOffset}
-     * alongside the root's {@code maxTimestamp} and lifetime row position.
+     * alongside the root's {@code maxTimestamp}, lifetime row position and the
+     * base snapshot it was sealed against.
      * <p>
      * A view with no valid generation - a fresh CREATE, or one whose timeline an
      * earlier turn retired - is an ordinary miss, not a failure: it returns
@@ -12429,6 +12635,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 out.resumeDataOffset = restored.seedCursorOffset;
                 out.maxTimestamp = restored.maxTimestamp;
                 out.lvRowsTotal = restored.effectiveLvRowPosition;
+                out.normalizedBaseSeqTxn = restored.normalizedBaseSeqTxn;
                 out.stateBytes = restored.logicalStateBytes;
                 return true;
             } finally {
@@ -14559,9 +14766,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
             // The recompiled factory expects the base's NEW metadata; the pinned base
             // snapshot is at the OLD metadata version. Drop it so the next sweep turn
-            // re-pins a fresh snapshot consistent with the recompiled factory. A
-            // metadata-only change preserves physical row order, so the sealed data
-            // offset still resumes correctly against the re-pinned snapshot.
+            // re-pins a fresh snapshot consistent with the recompiled factory, and re-arm
+            // the resume setup so it runs its proof against that snapshot. The structural
+            // entry the drift came from sits in the range isSeedResumeBaseCompatible walks,
+            // and the walk refuses one, so the re-armed sweep re-sweeps from offset zero
+            // behind a full-range replacement rather than resuming. A metadata change does
+            // preserve physical row order on its own, but nothing in the entry says whether
+            // it also turned the base's TTL off after an eviction had run.
             instance.freeSeedBaseReader();
             instance.resetSeedResumeAttempted();
             LOG.info().$("live view base table metadata changed mid-seed, sweep will resume recompiled [view=")
@@ -15724,6 +15935,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private static final class RestoredSeedState {
         long lvRowsTotal;
         long maxTimestamp;
+        // The base snapshot the restored generation was sealed against - the seqTxn
+        // the sweep that wrote it had its reader pinned at. isSeedResumeBaseCompatible
+        // measures the intervening base commits from here.
+        long normalizedBaseSeqTxn;
         // Seed sweep's data-cursor row offset, read from the seed cursor the
         // restored generation carries.
         long resumeDataOffset;
@@ -15732,6 +15947,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         void reset() {
             lvRowsTotal = 0L;
             maxTimestamp = Numbers.LONG_NULL;
+            normalizedBaseSeqTxn = Numbers.LONG_NULL;
             resumeDataOffset = Numbers.LONG_NULL;
             stateBytes = 0L;
         }
