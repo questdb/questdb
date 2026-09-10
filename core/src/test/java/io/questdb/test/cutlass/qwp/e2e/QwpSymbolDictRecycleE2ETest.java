@@ -210,8 +210,9 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
             // happen only at this test's explicit flushAndGetSequence() calls. The
             // default WS auto_flush_interval (100ms) could otherwise fire an
             // intra-batch flush that arms the recycle early (a smaller
-            // dictSizeAtSwap lowers the re-arm floor), letting the bounded
-            // SYMBOL_CARDINALITY set legally recycle a second time organically.
+            // dictSizeAtSwap at the first swap leaves a lower re-arm floor),
+            // letting the bounded SYMBOL_CARDINALITY set legally recycle a
+            // second time organically.
             // WebSocket rejects auto_flush_interval=off outright, so pin it to a
             // value well beyond this test's runtime instead of disabling it.
             String cfg;
@@ -230,6 +231,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
 
             List<Long> ackedFsns = Collections.synchronizedList(new ArrayList<>());
             long finalEpochBase;
+            long lastOrganicFsn = -1;
             long preRecycleFsn;
             long symbolDictEpoch;
             long tsBase = 1_700_000_000_000_000_000L;
@@ -261,8 +263,12 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                     if (batchFsn >= 0) {
                         Assert.assertTrue("batch ending at id=" + id + " must be acked within 10s",
                                 sender.awaitAckedFsn(batchFsn, 10_000));
+                        lastOrganicFsn = batchFsn;
                     }
                 }
+
+                Assert.assertTrue("setup: the organic loop must have handed out a non-zero FSN, got "
+                        + lastOrganicFsn, lastOrganicFsn > 0);
 
                 Assert.assertEquals("a bounded live set of " + SYMBOL_CARDINALITY
                                 + " symbols must recycle exactly once and then settle "
@@ -295,13 +301,20 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                                 + "exactly 2, got symbolDictEpoch=" + symbolDictEpoch,
                         2, symbolDictEpoch);
 
-                Assert.assertTrue("post-recycle awaitAckedFsn(preRecycleFsn) must return true, "
-                                + "proving fsnEpochBase rolled forward past the pre-recycle "
-                                + "high-water mark -- awaitAckedFsn short-circuits true for any "
-                                + "target from a prior epoch without consulting ack state, so this "
-                                + "proves the epoch translation, not that the FSN is acked (ack "
-                                + "state itself is covered by the row-count oracle below)",
-                        sender.awaitAckedFsn(preRecycleFsn, 5_000));
+                Assert.assertTrue("fsnEpochBase must have rolled past the last organic FSN: base="
+                        + finalEpochBase + " lastOrganicFsn=" + lastOrganicFsn,
+                        finalEpochBase > lastOrganicFsn);
+                // Anchored on the LAST organic batch, not the first: with the first
+                // (FSN 0) every epoch base satisfies the check, and with an epoch-0
+                // anchor a lost SECOND roll (base 3 instead of 30) still passes. The
+                // last organic FSN sits in the epoch before the final one; a correct
+                // base translates it to a negative internal target and short-circuits
+                // true, while any lost roll lands it at or above the final epoch's raw
+                // ack watermark -- which acked a single frame -- and the await fails.
+                Assert.assertTrue("post-recycle awaitAckedFsn(lastOrganicFsn) must return true via the "
+                        + "prior-epoch short-circuit: base=" + finalEpochBase
+                        + " lastOrganicFsn=" + lastOrganicFsn,
+                        sender.awaitAckedFsn(lastOrganicFsn, 5_000));
             }
 
             drainWalQueue();

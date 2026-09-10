@@ -245,13 +245,10 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                         // the table below rowsProduced.
                         //
                         // Deliberately NOT sampling getTotalReconnectsSucceeded()
-                        // here: recycleForDictReset() closes and discards
-                        // cursorSendLoop on every recycle and rebuilds a fresh
-                        // one, so that counter (and its siblings) resets to zero
-                        // on every recycle -- it reflects only "since the last
-                        // recycle", not this sender's whole lifetime, and a
-                        // single end-of-run sample of it would be meaningless
-                        // noise across a run with dozens of recycles.
+                        // here: it is sender-lifetime and carried across recycles,
+                        // but a single end-of-run sample says nothing this test can
+                        // check -- every recycle's own reconnect and every injected
+                        // outage both count, and the outage schedule is seeded noise.
                         symbolDictEpochHolder.set(sender.getSymbolDictEpoch());
                     } catch (Throwable t) {
                         producerError.set(t);
