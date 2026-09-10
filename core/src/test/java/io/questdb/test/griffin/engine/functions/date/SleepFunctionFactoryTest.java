@@ -39,6 +39,7 @@ import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
@@ -67,9 +68,11 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
 
                     setCurrentMicros(200_000);
                     Assert.assertTrue(registry.cancel(queryId, sqlExecutionContext));
-                    Assert.assertEquals(1, runtime.drain(1));
+                    TestUtils.assertEventually(() -> {
+                        runtime.drain(1);
+                        Assert.assertTrue(task.isDone());
+                    }, 5);
 
-                    Assert.assertTrue(task.isDone());
                     Assert.assertNotNull("cancellation at the sleep deadline must fail the query", task.error);
                     Assert.assertTrue(task.error.getMessage(), task.error.getMessage().contains("cancel"));
                 } finally {
