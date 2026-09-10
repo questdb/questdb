@@ -63,6 +63,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -2076,6 +2077,50 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportWithSkipAllAtomicityFailsOnOutOfBoundsNanosTimestamp() throws Exception {
+        // The abort twin of testImportWithSkipRowAtomicitySkipsOutOfBoundsNanosTimestamp: under
+        // SKIP_ALL the out-of-range row fails the import the way an unparsable timestamp does,
+        // and nothing lands in the table.
+        final String fileName = writeNanosBoundsCsv();
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (id INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ALL);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+                Assert.fail("import is expected to fail under SKIP_ALL");
+            } catch (TextImportException e) {
+                TestUtils.assertContains(
+                        e.getMessage(),
+                        "import failed [phase=indexing, msg=`designated timestamp out of bounds [line=1, column=1, "
+                                + "msg=designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed]`]"
+                );
+            }
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT id, ts FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("id\tts\n");
+        });
+    }
+
+    @Test
+    public void testImportWithSkipColumnAtomicitySkipsOutOfBoundsNanosTimestamp() throws Exception {
+        // SKIP_COLUMN cannot skip the designated timestamp, so it drops the row like SKIP_ROW.
+        assertSkipsOutOfBoundsNanosTimestampRow(Atomicity.SKIP_COL);
+    }
+
+    @Test
+    public void testImportWithSkipRowAtomicitySkipsOutOfBoundsNanosTimestamp() throws Exception {
+        // A numeric designated timestamp bypasses the date parser's year check, so parsing does
+        // not refuse a value beyond 2261-12-31. The indexing phase checks the parsed value against
+        // the column's bounds and applies the atomicity policy to it, where the writer's own
+        // refusal in the partition import phase used to fail the whole import. SKIP_ROW drops the
+        // row and imports its neighbours.
+        assertSkipsOutOfBoundsNanosTimestampRow(Atomicity.SKIP_ROW);
+    }
+
+    @Test
     public void testImportWithSkipRowAtomicityImportsOnlyRowsWithNoParseErrors() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
@@ -2975,6 +3020,55 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     private static boolean stackContains(String klass) {
         return Arrays.stream(new Exception().getStackTrace())
                 .anyMatch(stackTraceElement -> stackTraceElement.getClassName().endsWith(klass));
+    }
+
+    private void assertSkipsOutOfBoundsNanosTimestampRow(int atomicity) throws Exception {
+        final String fileName = writeNanosBoundsCsv();
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (id INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, atomicity);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT id, ts FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            id\tts
+                            1\t2261-12-31T23:59:59.999999998Z
+                            3\t2261-12-31T23:59:59.999999999Z
+                            """);
+        });
+    }
+
+    /**
+     * Writes a three-row CSV whose numeric nanosecond timestamps sit one below the nanos ceiling,
+     * one above it, and exactly on it, into a fresh folder, and points {@link #inputRoot} at that
+     * folder. {@link #setUp()} restores the shared CSV root before the next test.
+     * <p>
+     * Callers must invoke this <em>before</em> {@code executeWithPool()}, never inside its
+     * runnable. {@code execute()} hands the pool to {@link CopyImportJob#assignToPool} first, and
+     * {@link io.questdb.mp.WorkerPool#assign} clones the job once per worker right there, each
+     * clone building a {@link io.questdb.cutlass.text.CsvFileIndexer} whose constructor copies
+     * {@code getSqlCopyInputRoot()} into a final field. A root set later reaches only the
+     * importer's own {@code localImportJob}, so the indexing chunk resolves against the shared CSV
+     * root or the fresh folder depending on whether a pool worker or the work-stealing caller
+     * picks it up.
+     */
+    private String writeNanosBoundsCsv() throws Exception {
+        final File dir = temp.newFolder("nanos-bounds" + System.nanoTime());
+        final String fileName = "nanos-bounds.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                "id,ts\n"
+                        + "1," + (CommonUtils.MAX_TIMESTAMP - 1) + "\n"
+                        + "2," + (CommonUtils.MAX_TIMESTAMP + 1) + "\n"
+                        + "3," + CommonUtils.MAX_TIMESTAMP + "\n"
+        );
+        inputRoot = dir.getAbsolutePath();
+        return fileName;
     }
 
     private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, int workerCount) throws TextImportException {
