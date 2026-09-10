@@ -32,6 +32,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
@@ -48,6 +49,7 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.WalTxnNotificationTask;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.AbstractMultiNodeTest;
@@ -60,6 +62,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.cairo.TableUtils.WAL_2_TABLE_WRITE_REASON;
 import static org.junit.Assert.*;
 
 public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
@@ -919,6 +922,42 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 Assert.assertFalse(checkWalTransactionsJob.runSerially());
                 // Check that only 1 attempt is made to publish notification and then the job backs off
                 Assert.assertEquals(currentRepublishCounter + i + 1, engine.getUnpublishedWalTxnCount());
+            }
+        });
+    }
+
+    @Test
+    public void testWalTxnNotLostWhenWriterHeldByPartitionSwap() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            TableToken tableToken = createTable(createTableModel(tableName).wal());
+
+            execute("INSERT INTO " + tableName + " (ts) VALUES ('2022-02-24T00:00:00.000000Z')");
+            drainWalQueue();
+
+            try (ApplyWal2TableJob applyJob = new ApplyWal2TableJob(engine, 0)) {
+                CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
+                // Burn the job's one free scan, so the rest of this test cannot lean on the disk rescan.
+                checkJob.runSerially();
+
+                // A composite partition swap holds the table writer, the way PartitionCompactionScanJob
+                // does through getWriterOrPublishCommand().
+                String swapReason = TableWriterTask.getCommandName(TableWriterTask.CMD_COMPOSITE_PARTITION_SWAP);
+                try (TableWriter ignore = engine.getWriterUnsafe(tableToken, swapReason)) {
+                    // The table is caught up, so this commit publishes the one and only notification.
+                    execute("INSERT INTO " + tableName + " (ts) VALUES ('2022-02-25T00:00:00.000000Z')");
+                    // A queue-driven apply pops it and cannot take the writer, so it must re-queue it.
+                    Assert.assertTrue(applyJob.run());
+                }
+
+                // The holder is gone. The re-queued notification is the only thing left to wake the table.
+                //noinspection StatementWithEmptyBody
+                while (applyJob.run() || checkJob.run()) {
+                }
+            }
+
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertEquals(2, reader.size());
             }
         });
     }

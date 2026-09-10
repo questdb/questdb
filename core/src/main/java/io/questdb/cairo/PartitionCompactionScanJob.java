@@ -29,6 +29,7 @@ import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
@@ -260,13 +261,18 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         if (command == null) {
             return;
         }
+        boolean applied;
         try (TableWriter writer = engine.getWriterOrPublishCommand(tableToken, command)) {
-            if (writer != null) {
+            applied = writer != null;
+            if (applied) {
                 command.apply(writer, true);
             } else {
                 // Queued onto a busy writer: it applies the swap on its own thread, via tick().
                 pendingSwaps.add(fingerprint, nowMicros);
             }
+        }
+        if (applied) {
+            notifyWalApplyIfLagging(tableToken);
         }
     }
 
@@ -299,12 +305,17 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         }
         // This reader has to be gone before the writer runs: MAKE-PLAIN waits for the readers that still
         // resolve the geometry record it is about to retire, and this one is holding exactly that record.
+        boolean applied;
         try (TableWriter writer = engine.getWriterOrPublishCommand(tableToken, command)) {
-            if (writer != null) {
+            applied = writer != null;
+            if (applied) {
                 command.apply(writer, true);
             }
             // Queued onto a busy writer instead: it applies the command on its own thread, via tick(). A busy
             // writer is also one whose own per-commit compaction is running, so either path is fine.
+        }
+        if (applied) {
+            notifyWalApplyIfLagging(tableToken);
         }
     }
 
@@ -451,12 +462,33 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
             command = buildCompactedParquet(tableToken, reader, partitionIndex, partitionTimestamp);
         }
+        boolean applied;
         try (TableWriter writer = engine.getWriterOrPublishCommand(tableToken, command)) {
-            if (writer != null) {
+            applied = writer != null;
+            if (applied) {
                 command.apply(writer, true);
             } else {
                 pendingSwaps.add(fingerprint, nowMicros);
             }
+        }
+        if (applied) {
+            notifyWalApplyIfLagging(tableToken);
+        }
+    }
+
+    /**
+     * Hands the table a WAL apply notification when it still lags its sequencer. Taking the writer out of the pool
+     * to land a swap blocks WAL apply, and the notification apply dropped while it waited is gone for good:
+     * {@link io.questdb.cairo.wal.seq.SeqTxnTracker#notifyOnCommit} publishes only while a table is exactly caught
+     * up, so no later commit re-sends one.
+     */
+    private void notifyWalApplyIfLagging(TableToken tableToken) {
+        if (!tableToken.isWal()) {
+            return;
+        }
+        SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        if (!tracker.isSuspended() && tracker.getWriterTxn() < tracker.getSeqTxn()) {
+            engine.notifyWalTxnCommitted(tableToken);
         }
     }
 

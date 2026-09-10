@@ -1217,18 +1217,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 .$(", lockReason=").$(tableBusy.getReason())
                                 .I$();
                     }
-                    // Nothing applied this notification, so reset the tracker and let
-                    // CheckWalTransactionsJob re-publish it - a partition swap, a storage policy command or
-                    // an ALTER owes the table nothing on its way out.
+                    // Nothing applied this notification, and the queue slot it came on is already consumed.
+                    // Put the notification back rather than resetting the tracker: the reset only marks the
+                    // table for CheckWalTransactionsJob, which walks every table off disk and paces itself,
+                    // so the table can sit un-applied for a whole scan interval even though the writer frees
+                    // up in microseconds. SeqTxnTracker.notifyOnCommit publishes only while the table is
+                    // exactly caught up, so a dropped notification is the last wakeup the table gets.
                     //
-                    // Another WAL apply is the exception: it re-notifies itself below, and re-publishing
-                    // here bumps unpublishedWalTxnCount, which makes CheckWalTransactionsJob skip its
-                    // interval gate and rescan every table off disk.
+                    // Another WAL apply is the exception: it re-notifies on its own way out, below.
                     //
-                    // A direct caller is excluded too: LiveViewRefreshJob reads the tracker back to see
-                    // whether its block landed, and the reset to UNINITIALIZED erases that answer.
+                    // A direct caller is excluded too: it drives its own retry, and LiveViewRefreshJob reads
+                    // the tracker back to see whether its block landed.
                     if (queueDriven && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
-                        engine.notifyWalTxnRepublisher(tableToken);
+                        engine.notifyWalTxnCommitted(tableToken);
                     }
                     // Do not suspend table. Perhaps writer will be unlocked with no transaction applied.
                     // We do not suspend table because of having initial value on writerTxn. It will either be
