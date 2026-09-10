@@ -9300,6 +9300,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Whether the partition {@link #openPartition} is opening - the one {@code lastOpenPartitionTs} now names - is
+     * composite. {@code openPartition} stamps that field before it opens any column file, so this reads the target
+     * of the open in progress rather than the table's last partition.
+     */
+    private boolean isOpenPartitionComposite() {
+        final int partitionIndex = txWriter.getPartitionIndex(lastOpenPartitionTs);
+        return partitionIndex > -1 && txWriter.isPartitionComposite(partitionIndex);
+    }
+
+    /**
      * True when this table's last partition is closed only because merge-append WAS on. The setting can be
      * turned off under a pooled writer, and from that commit on the partition has to take in-place appends
      * again, so the caller reopens it. {@link #foldCompositePartitionsWhenMergeAppendDisabled()} covers the
@@ -11083,8 +11093,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
-        // A composite last partition stays closed; its writes go through processCompositePartition's own fds.
-        assert !isLastPartitionComposite() : "openColumnFiles must not run for a composite last partition";
+        // A composite partition stays closed; its writes go through processCompositePartition's own fds. Ask
+        // about the partition openPartition is actually opening, not about whichever one is last: the squash
+        // re-opens its target, and that target is never the last partition, so a composite partition further
+        // along the table says nothing about the one being opened here.
+        assert !isOpenPartitionComposite() : "openColumnFiles must not run for a composite partition";
         MemoryMA mem1 = getPrimaryColumn(columnIndex);
         MemoryMA mem2 = getSecondaryColumn(columnIndex);
 
