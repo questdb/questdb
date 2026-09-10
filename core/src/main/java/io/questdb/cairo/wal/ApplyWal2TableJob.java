@@ -1212,23 +1212,30 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writerTxn = writer.getSeqTxn();
                     dirtyWriterTxn = writer.getAppliedSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
+                    // Nothing applied this notification, and the queue slot it came on is already consumed.
+                    // SeqTxnTracker.notifyOnCommit publishes only while the table is exactly caught up, so
+                    // this was the last wakeup the table gets until something sends a new one. Who owes it
+                    // depends on what holds the writer.
+                    //
+                    // A direct caller drives its own retry and is excluded throughout: LiveViewRefreshJob
+                    // reads the tracker back to see whether its block landed.
                     if (isUnsolicitedTableLock(tableBusy.getReason())) {
                         LOG.critical().$("unsolicited table lock [table=").$(tableToken)
                                 .$(", lockReason=").$(tableBusy.getReason())
                                 .I$();
-                    }
-                    // Nothing applied this notification, and the queue slot it came on is already consumed.
-                    // Put the notification back rather than resetting the tracker: the reset only marks the
-                    // table for CheckWalTransactionsJob, which walks every table off disk and paces itself,
-                    // so the table can sit un-applied for a whole scan interval even though the writer frees
-                    // up in microseconds. SeqTxnTracker.notifyOnCommit publishes only while the table is
-                    // exactly caught up, so a dropped notification is the last wakeup the table gets.
-                    //
-                    // Another WAL apply is the exception: it re-notifies on its own way out, below.
-                    //
-                    // A direct caller is excluded too: it drives its own retry, and LiveViewRefreshJob reads
-                    // the tracker back to see whether its block landed.
-                    if (queueDriven && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
+                        // A lock the WAL machinery did not arrange can be held for as long as its holder
+                        // likes, so re-queueing here would spin a worker on it. Reset the tracker instead and
+                        // let CheckWalTransactionsJob pace the retry.
+                        if (queueDriven) {
+                            engine.notifyWalTxnRepublisher(tableToken);
+                        }
+                    } else if (queueDriven && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
+                        // A partition swap or a storage policy command: it lands one writer operation and
+                        // gives the writer straight back, so put the notification back on the queue rather
+                        // than marking the table for CheckWalTransactionsJob, which walks every table off disk
+                        // and paces itself - the table would sit un-applied for a whole scan interval.
+                        //
+                        // Another WAL apply needs neither: it re-notifies on its own way out, below.
                         engine.notifyWalTxnCommitted(tableToken);
                     }
                     // Do not suspend table. Perhaps writer will be unlocked with no transaction applied.
