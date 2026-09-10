@@ -27,7 +27,6 @@ package io.questdb;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.Target;
-import io.questdb.mp.Worker;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -208,15 +207,14 @@ public abstract class WorkerPoolManager implements Target {
 
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
-        long now = Worker.CLOCK_MICROS.getTicks();
-        sharedPoolNetwork.updateWorkerMetrics(now);
+        sharedPoolNetwork.updateWorkerMetrics();
         if (sharedPoolQuery != null) {
-            sharedPoolQuery.updateWorkerMetrics(now);
+            sharedPoolQuery.updateWorkerMetrics();
         }
-        sharedPoolWrite.updateWorkerMetrics(now);
+        sharedPoolWrite.updateWorkerMetrics();
         ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
         for (int i = 0, limit = poolNames.size(); i < limit; i++) {
-            dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics(now);
+            dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics();
         }
     }
 
