@@ -1342,6 +1342,278 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRetentionLowersARootByItsExactDeltaNotAFreshCount() throws Exception {
+        // Section 3.4's 100/10/5/10 counterexample, in the shape the resume anchor reads it.
+        // 03:00:10 seals a root at position 3 and two more rows then land on that same
+        // timestamp - a group the cadence cannot open a second boundary over, so the root
+        // covers one of the three rows in its own group and has to keep looking that way.
+        // Dropping hour 01 under it lowers every position above by exactly the row that
+        // went: 3 becomes 2 while the table still holds 4 rows at or below 03:00:10. Healing
+        // the position with a fresh count of that prefix - the repair section 3.4 rejects -
+        // would have written 4, the root would have read as complete, and the repair below
+        // would have resumed from state two rows short.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY HOUR START FROM NOW AS " +
+                    "(SELECT ts, sym, count(*) OVER (PARTITION BY sym ORDER BY ts " +
+                    "ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushOneRow(job, "2026-01-01T01:00:10.000000Z", 1, 1);
+                flushOneRow(job, "2026-01-01T02:00:10.000000Z", 2, 2);
+                flushOneRow(job, "2026-01-01T03:00:10.000000Z", 3, 3);
+                // The tie. Out-of-order detection compares strictly, so a row on the
+                // frontier's own timestamp is an ordinary forward append; the seal that
+                // follows it has no boundary above the head to open and is skipped.
+                flushOneRow(job, "2026-01-01T03:00:10.000000Z", 4, 4);
+                flushOneRow(job, "2026-01-01T03:00:10.000000Z", 5, 5);
+                flushOneRow(job, "2026-01-01T03:01:00.000000Z", 6, 6);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                assertLadder(
+                        instance,
+                        ts("2026-01-01T01:00:10.000000Z"), 1,
+                        ts("2026-01-01T02:00:10.000000Z"), 2,
+                        ts("2026-01-01T03:00:10.000000Z"), 3,
+                        ts("2026-01-01T03:01:00.000000Z"), 6
+                );
+
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-01T01'");
+                driveLiveViewWalApply(job);
+
+                // One row went, so every surviving position drops by one and no more. The
+                // under-covered root lands at 2 against the 4 rows the table holds at or
+                // below its timestamp, which is what keeps it distinguishable.
+                assertLadder(
+                        instance,
+                        ts("2026-01-01T02:00:10.000000Z"), 1,
+                        ts("2026-01-01T03:00:10.000000Z"), 2,
+                        ts("2026-01-01T03:01:00.000000Z"), 5
+                );
+                Assert.assertEquals("the dropped hour's root, and only it", 1, readRetiredCheckpointCount(lvToken));
+                Assert.assertEquals(5, instance.getLvRowsTotal());
+                assertRetentionMarker(lvToken, false);
+                assertNoRefreshFaults("lv");
+
+                // An out-of-order row 30 seconds above the tie. The plan searches for the
+                // newest boundary strictly below it, finds the tie root, and has to refuse
+                // it: the table holds more rows at or below 03:00:10 than the root claims
+                // as its whole prefix. It re-anchors on 02:00:10 instead.
+                capture.start();
+                try {
+                    execute("INSERT INTO base VALUES ('2026-01-01T03:00:40.000000Z', 'a', 100)");
+                    driveUntilDurableRowCount(job, 6);
+                    driveRefreshToQuiescence(job);
+                    capture.waitFor("live view resume anchor no longer covers its timestamp group, re-anchoring below it "
+                            + "[view=lv, anchorMaxTs=2026-01-01T03:00:10.000000Z");
+                    capture.assertLoggedRE(", lvRowPosition=2]");
+                } finally {
+                    capture.stop();
+                }
+
+                // Every row the repair re-emitted counts the whole tie: 03:00:40 is the
+                // sixth base row under 'a', not the fourth. An anchor at the tie root would
+                // have restored state that had seen one row at 03:00:10 and replayed from
+                // 03:00:11, numbering 03:00:40 and 03:01:00 4 and 5 - against the 4 and 5
+                // the tie's own rows already hold.
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\trn
+                                2026-01-01T02:00:10.000000Z\ta\t2
+                                2026-01-01T03:00:10.000000Z\ta\t3
+                                2026-01-01T03:00:10.000000Z\ta\t4
+                                2026-01-01T03:00:10.000000Z\ta\t5
+                                2026-01-01T03:00:40.000000Z\ta\t6
+                                2026-01-01T03:01:00.000000Z\ta\t7
+                                """);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testRestartRefusesATimelineTheRemovalMadeCountCorrect() throws Exception {
+        // The same counterexample where section 3.4 states it: at restart, against the row
+        // count. The head root claims 3 rows and covers one of the three that share its
+        // timestamp; dropping the two rows below it leaves the table holding exactly 3, all
+        // of them at or below the head's own timestamp. Every count a restore could take
+        // agrees with the ladder and the ladder is still wrong, so the count proves nothing
+        // and the durable marker is the whole of the evidence.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY DAY START FROM NOW AS " +
+                    "(SELECT ts, sym, count(*) OVER (PARTITION BY sym ORDER BY ts " +
+                    "ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushOneRow(job, "2026-01-01T00:00:00.000000Z", 1, 1);
+                flushOneRow(job, "2026-01-01T00:00:01.000000Z", 2, 2);
+                flushOneRow(job, "2026-01-02T00:00:00.000000Z", 3, 3);
+                flushOneRow(job, "2026-01-02T00:00:00.000000Z", 4, 4);
+                flushOneRow(job, "2026-01-02T00:00:00.000000Z", 5, 5);
+                assertLadder(
+                        engine.getLiveViewRegistry().getViewInstance("lv"),
+                        ts("2026-01-01T00:00:00.000000Z"), 1,
+                        ts("2026-01-01T00:00:01.000000Z"), 2,
+                        ts("2026-01-02T00:00:00.000000Z"), 3
+                );
+            }
+
+            // The global apply job takes the removal, as on a node with refresh disabled:
+            // it writes the marker and commits the removal, and reconciles nothing.
+            execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-01'");
+            try (ApplyWal2TableJob applyJob = new ApplyWal2TableJob(engine, 1)) {
+                applyJob.applyWalDirect(lvToken, Job.RUNNING_STATUS);
+            }
+
+            // The coincidence, spelled out: the head's stored position, the table's row
+            // count and the rows at or below the head's timestamp are all 3.
+            assertLadder(
+                    engine.getLiveViewRegistry().getViewInstance("lv"),
+                    ts("2026-01-01T00:00:00.000000Z"), 1,
+                    ts("2026-01-01T00:00:01.000000Z"), 2,
+                    ts("2026-01-02T00:00:00.000000Z"), 3
+            );
+            Assert.assertEquals(3, lvRowCount(lvToken));
+            assertTimelineExists(lvToken, true);
+            assertRetentionMarker(lvToken, true);
+
+            restartAndAssertRebuiltFromAppliedBase("pending retention marker present");
+            // The rebuild re-derives from the base, so the dropped day comes back - the
+            // documented DROP PARTITION recovery semantics.
+            assertQuery("SELECT * FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\trn
+                            2026-01-01T00:00:00.000000Z\ta\t1
+                            2026-01-01T00:00:01.000000Z\ta\t2
+                            2026-01-02T00:00:00.000000Z\ta\t3
+                            2026-01-02T00:00:00.000000Z\ta\t4
+                            2026-01-02T00:00:00.000000Z\ta\t5
+                            """);
+            Assert.assertEquals(5, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+
+            // The value the restored accumulator would have got wrong. A restore that had
+            // trusted the coinciding count would resume from state that had seen one row at
+            // 2026-01-02 and number this one 4.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushOneRow(job, "2026-01-03T00:00:00.000000Z", 6, 6);
+                assertQuery("SELECT ts, rn FROM lv WHERE ts = '2026-01-03T00:00:00.000000Z'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\trn
+                                2026-01-03T00:00:00.000000Z\t6
+                                """);
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testRetentionMarkerClearFailureLeavesTheRestartConservative() throws Exception {
+        // The step after the publication. The corrected generation is durable - the ladder on
+        // disk already accounts for the removal - but the unlink of the marker that guarded
+        // the window between the two fails. The marker has no staleness rule, so the next
+        // restart spends one applied-base rebuild rather than restoring from a timeline that
+        // is in fact correct. That is the direction the failure has to take, and the counter
+        // comes out of it matching the table exactly once: the rebuild re-seats it from the
+        // table it just rewrote rather than subtracting the removal a second time.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final AtomicBoolean swallowMarkerRemoval = new AtomicBoolean();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (swallowMarkerRemoval.get()
+                        && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.RETENTION_MARKER_FILE_NAME)) {
+                    return true;
+                }
+                return super.removeQuiet(name);
+            }
+        }, () -> {
+            createBaseAndView("PARTITION BY DAY");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushRow(job, "1970-01-01", 1, 1);
+                flushRow(job, "1970-01-02", 2, 2);
+                flushRow(job, "1970-01-03", 3, 3);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+
+                swallowMarkerRemoval.set(true);
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-02'");
+                driveLiveViewWalApply(job);
+
+                // The publication itself went through: the middle root retired, the head
+                // came down by the row that went, and the view carries on normally.
+                assertTimelineExists(lvToken, true);
+                assertLadder(instance, ts("1970-01-01"), 1, ts("1970-01-03"), 2);
+                Assert.assertEquals(1, readRetiredCheckpointCount(lvToken));
+                Assert.assertEquals(2, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n1\n3\n");
+                assertRetentionMarker(lvToken, true);
+                assertQuery("SELECT count() FROM live_views() WHERE view_status <> 'active'")
+                        .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            swallowMarkerRemoval.set(false);
+            restartAndAssertRebuiltFromAppliedBase("pending retention marker present");
+            assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n1\n2\n3\n");
+            Assert.assertEquals(3, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
+    public void testRetentionMarkerHasNoGenerationStalenessRule() throws Exception {
+        // The repair marker is cleared by a generation strictly past the one it recorded, and
+        // the retention marker deliberately carries no such rule: no later generation proves
+        // a removal was accounted for, so present means live. Both records a crash can leave
+        // behind are pinned here - the published one, under a generation many seals past the
+        // apply it names, and the staged sibling a crash inside the publish leaves instead.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createBaseAndView("PARTITION BY DAY");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushRow(job, "1970-01-01", 1, 1);
+                flushRow(job, "1970-01-02", 2, 2);
+                flushRow(job, "1970-01-03", 3, 3);
+            }
+            Assert.assertTrue(
+                    "the premise: generations have been sealed over the apply the marker names",
+                    readGeneration(lvToken) > 1
+            );
+
+            writeRetentionMarker(lvToken, 1);
+            restartAndAssertRebuiltFromAppliedBase("pending retention marker present");
+            assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n1\n2\n3\n");
+
+            // The rebuild retired the timeline with the marker, so seal a fresh one to leave
+            // the staged record something to be believed over.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushRow(job, "1970-01-04", 4, 4);
+            }
+            assertTimelineExists(lvToken, true);
+
+            writeRetentionMarker(lvToken, 2);
+            stageRetentionMarker(lvToken);
+            assertRetentionMarker(lvToken, true);
+            restartAndAssertRebuiltFromAppliedBase("pending retention marker present");
+            assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n1\n2\n3\n4\n");
+        });
+    }
+
+    @Test
     public void testTtlEvictionInsideFlushReconcilesCounterAndRebuildsTier() throws Exception {
         // TTL eviction is the one removal that lands inside the flush's own commit, so the
         // writer txn advances by exactly one and the flush would otherwise re-stamp a slot
@@ -2727,6 +2999,36 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
             drainWalQueue();
         }
         Assert.fail("the live view's table never reached " + expectedRows + " durable rows");
+    }
+
+    /**
+     * Writes the durable retention marker into the view's {@code _checkpoints}, as
+     * {@link io.questdb.cairo.TableWriter} does before the commit that makes a removal durable.
+     * The tests that call this directly are pinning the restart rule the record carries rather
+     * than driving a removal that would write it.
+     */
+    private void writeRetentionMarker(TableToken lvToken, long seqTxn) {
+        try (Path dir = new Path()) {
+            LiveViewRetentionMarker.write(configuration, checkpointsDir(dir, lvToken), lvToken.getTableId(), seqTxn);
+        }
+    }
+
+    /**
+     * Renames a published retention marker back to the {@code .tmp} sibling it is staged
+     * through, which is what a crash inside its own publish leaves on disk.
+     */
+    private void stageRetentionMarker(TableToken lvToken) {
+        try (Path dir = new Path(); Path from = new Path(); Path to = new Path()) {
+            checkpointsDir(dir, lvToken);
+            LiveViewCheckpointLayout.retentionMarkerPath(from, dir);
+            LiveViewCheckpointLayout.retentionMarkerPath(to, dir);
+            to.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+            Assert.assertEquals(
+                    "could not stage the retention marker",
+                    Files.FILES_RENAME_OK,
+                    configuration.getFilesFacade().rename(from.$(), to.$())
+            );
+        }
     }
 
     /**
