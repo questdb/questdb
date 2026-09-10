@@ -332,17 +332,39 @@ public class WalEventChecksumTest extends AbstractCairoTest {
 
         @Override
         public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-            final Long real = sidecarFds.get(fd);
-            if (real != null) {
-                sawSidecarMapping.set(true);
-                if (flags == io.questdb.std.Files.MAP_RO && offset + len > real) {
-                    // CreateFileMapping under PAGE_READONLY cannot grow the file: ERROR_NOT_ENOUGH_MEMORY.
-                    oversizedLen.set(len);
-                    oversizedReal.set(real);
-                    return -1;
-                }
+            if (rejectsSidecarMapping(fd, len, offset, flags)) {
+                return -1;
             }
             return super.mmap(fd, len, offset, flags, memoryTag);
+        }
+
+        /**
+         * WalEventReader maps the sidecar with madviseOpts != -1, which routes MemoryCMRImpl.map()
+         * through TableUtils.mapRONoCache() -> ff.mmapNoCache(), a method that does not delegate to
+         * mmap(). Overriding mmap() alone leaves the real call path untouched, so this fake has to
+         * intercept both entry points or it models Windows for a call nobody makes.
+         */
+        @Override
+        public long mmapNoCache(long fd, long len, long offset, int flags, int memoryTag) {
+            if (rejectsSidecarMapping(fd, len, offset, flags)) {
+                return -1;
+            }
+            return super.mmapNoCache(fd, len, offset, flags, memoryTag);
+        }
+
+        private boolean rejectsSidecarMapping(long fd, long len, long offset, int flags) {
+            final Long real = sidecarFds.get(fd);
+            if (real == null) {
+                return false;
+            }
+            sawSidecarMapping.set(true);
+            if (flags == io.questdb.std.Files.MAP_RO && offset + len > real) {
+                // CreateFileMapping under PAGE_READONLY cannot grow the file: ERROR_NOT_ENOUGH_MEMORY.
+                oversizedLen.set(len);
+                oversizedReal.set(real);
+                return true;
+            }
+            return false;
         }
 
         @Override
