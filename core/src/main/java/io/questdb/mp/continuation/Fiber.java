@@ -582,6 +582,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 ? new IllegalStateException("fiber task leaked role-switch read lock [depth=" + leakedDepth + ']')
                 : null;
         final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        final ObjList<Object> previousSlots = FiberLocal.enter(scratch);
         final Fiber previousFiber = scope.fiber;
         final SuspensionScope.Mode previousMode = scope.mode;
         final SuspensionScope.Mode savedMode = roleSwitchReadLocks.getPreviousMode();
@@ -601,6 +602,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
             roleSwitchReadLocks.clear();
             scope.fiber = previousFiber;
             scope.mode = previousFiber == this ? savedMode : previousMode;
+            FiberLocal.exit(previousSlots);
         }
         return failure;
     }
@@ -767,7 +769,6 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         }
     }
 
-    @Nullable
     void freeScratch() {
         Misc.freeObjListIfCloseable(scratch);
         scratch.clear();
@@ -1045,6 +1046,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         if (scope.roleSwitchReadLocks.hasAny() || scope.roleSwitchWriteLockDepth > 0) {
             throw new IllegalStateException("fiber mount would hide a carrier role-switch lock");
         }
+        final ObjList<Object> previousSlots = FiberLocal.enter(scratch);
         final Fiber previousFiber = scope.fiber;
         final FiberCancellationSignal previousCancellationSignal = scope.cancellationSignal;
         final long previousCancellationSignalGeneration = scope.cancellationSignalGeneration;
@@ -1086,6 +1088,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 scope.supplementalCancellationSignal = previousSupplementalCancellationSignal;
                 scope.supplementalCancellationSignalGeneration = previousSupplementalCancellationSignalGeneration;
                 scope.timerShards = previousTimerShards;
+                FiberLocal.exit(previousSlots);
             }
         }
     }
@@ -1094,7 +1097,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         lastMountWorkerId = workerId;
     }
 
-    void setPendingRedispatchTicket(FiberDispatchTicket ticket) {
+    void setPendingRedispatchTicket(@Nullable FiberDispatchTicket ticket) {
         pendingRedispatchTicket = ticket;
     }
 
@@ -1260,13 +1263,5 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         protected void onPinned(Pinned reason) {
             pinnedReason = reason;
         }
-    }
-
-    static {
-        FiberLocal.installSlotProvider(() -> {
-            final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
-            final Fiber fiber = scope.fiber;
-            return fiber != null ? fiber.scratch : scope.scratch;
-        });
     }
 }

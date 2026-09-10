@@ -54,6 +54,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -63,11 +64,9 @@ import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import io.questdb.std.CarrierLocal;
 
 public class LeastNumericFunctionFactory implements FunctionFactory {
-    private static final CarrierLocal<IntHashSet> tlSet = CarrierLocal.withInitial(IntHashSet::new);
-
+    private static final FiberLocal<IntHashSet> tlSet = new FiberLocal<>(IntHashSet::new);
     @Override
     public String getSignature() {
         return "least(V)";

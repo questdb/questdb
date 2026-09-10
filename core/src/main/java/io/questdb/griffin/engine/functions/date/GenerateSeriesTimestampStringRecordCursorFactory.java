@@ -35,16 +35,16 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.CarrierLocal;
 
 
 public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGenerateSeriesRecordCursorFactory {
     private static final RecordMetadata METADATA_MICROS;
     private static final RecordMetadata METADATA_NANOS;
-    private static final CarrierLocal<GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod> tlSampleByUnit = new CarrierLocal<>(GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod::new);
+    private static final FiberLocal<GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod> tlSampleByUnit = new FiberLocal<>(GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod::new);
     private final TimestampDriver timestampDriver;
     private GenerateSeriesTimestampStringRecordCursor cursor;
 

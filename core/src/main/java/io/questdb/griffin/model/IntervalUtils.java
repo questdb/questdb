@@ -32,6 +32,7 @@ import io.questdb.cairo.TickCalendarService;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.Interval;
 import io.questdb.std.LongGroupSort;
 import io.questdb.std.LongList;
@@ -47,7 +48,6 @@ import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
-import io.questdb.std.CarrierLocal;
 
 public final class IntervalUtils {
     public static final int HI_INDEX = 1;
@@ -73,13 +73,13 @@ public final class IntervalUtils {
     //   tlCompileSink2  — time override parsing (parseSink)
     //   tlCompileSink3  — bracket expansion inside static elements (expansionSink)
     //   tlCompileTmp    — scratch list for intermediate parsing
-    private static final CarrierLocal<StringSink> tlCompileSink1 = CarrierLocal.withInitial(StringSink::new);
-    private static final CarrierLocal<StringSink> tlCompileSink2 = CarrierLocal.withInitial(StringSink::new);
-    private static final CarrierLocal<StringSink> tlCompileSink3 = CarrierLocal.withInitial(StringSink::new);
-    private static final CarrierLocal<LongList> tlCompileTmp = CarrierLocal.withInitial(LongList::new);
-    private static final CarrierLocal<StringSink> tlDateVarSink = CarrierLocal.withInitial(StringSink::new);
-    private static final CarrierLocal<FlyweightCharSequence> tlExchangeCs = CarrierLocal.withInitial(FlyweightCharSequence::new);
-    private static final CarrierLocal<LongList> tlExchangeFilterTemp = CarrierLocal.withInitial(LongList::new);
+    private static final FiberLocal<StringSink> tlCompileSink1 = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<StringSink> tlCompileSink2 = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<StringSink> tlCompileSink3 = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<LongList> tlCompileTmp = new FiberLocal<>(LongList::new);
+    private static final FiberLocal<StringSink> tlDateVarSink = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<FlyweightCharSequence> tlExchangeCs = new FiberLocal<>(FlyweightCharSequence::new);
+    private static final FiberLocal<LongList> tlExchangeFilterTemp = new FiberLocal<>(LongList::new);
     // Thread-local sinks for bracket expansion, isolated to avoid conflicts with other code.
     // Two sinks are needed for nested usage scenarios:
     //   1. parseTickExpr -> expandBracketsRecursive (uses tlSink1)
@@ -89,9 +89,8 @@ public final class IntervalUtils {
     //                           -> expandDateList with brackets in elements
     //                           -> expandBracketsRecursive (needs tlSink2, since tlSink1 is in use)
     //   3. tlDateVarSink is used for date variable formatting (isolated from other sinks)
-    private static final CarrierLocal<StringSink> tlSink1 = CarrierLocal.withInitial(StringSink::new);
-    private static final CarrierLocal<StringSink> tlSink2 = CarrierLocal.withInitial(StringSink::new);
-
+    private static final FiberLocal<StringSink> tlSink1 = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<StringSink> tlSink2 = new FiberLocal<>(StringSink::new);
     /**
      * Formats a timestamp as "YYYY-MM-DD" into the given sink.
      *

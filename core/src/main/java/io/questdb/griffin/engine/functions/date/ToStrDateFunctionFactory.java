@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -43,12 +44,10 @@ import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
-import io.questdb.std.CarrierLocal;
 
 public class ToStrDateFunctionFactory implements FunctionFactory {
 
-    private static final CarrierLocal<StringSink> tlSink = CarrierLocal.withInitial(StringSink::new);
-
+    private static final FiberLocal<StringSink> tlSink = new FiberLocal<>(StringSink::new);
     @Override
     public String getSignature() {
         return "to_str(Ms)";

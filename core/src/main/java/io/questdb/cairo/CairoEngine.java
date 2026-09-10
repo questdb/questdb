@@ -153,9 +153,9 @@ import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.TimerShards;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.BoolList;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -204,9 +204,9 @@ public class CairoEngine implements Closeable, WriterSource {
     // metadata/token mismatch into a silent infinite hang (see PR #7031 CI timeout).
     private static final int MAX_EXECUTE_RETRIES = 1000;
     private static final int MAX_SLEEP_MILLIS = 250;
-    private static final CarrierLocal<ObjList<LiveViewInstance>> tlInvalidateSink = new CarrierLocal<>(ObjList::new);
-    private static final CarrierLocal<StringSink> tlInvalidationReasonSink = new CarrierLocal<>(StringSink::new);
-    private static final CarrierLocal<MatViewRefreshTask> tlMatViewRefreshTask = new CarrierLocal<>(MatViewRefreshTask::new);
+    private static final FiberLocal<ObjList<LiveViewInstance>> tlInvalidateSink = new FiberLocal<>(ObjList::new);
+    private static final FiberLocal<StringSink> tlInvalidationReasonSink = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<MatViewRefreshTask> tlMatViewRefreshTask = new FiberLocal<>(MatViewRefreshTask::new);
     // Fences client commits against the PRIMARY-to-REPLICA role flip. Commit/DDL paths
     // (TableUpdateDetails.commit/closeNoLock/releaseWriter, the /exec and pg-wire executor
     // commits, the ILP-UDP flush) hold the READ side while re-checking read-only mode and

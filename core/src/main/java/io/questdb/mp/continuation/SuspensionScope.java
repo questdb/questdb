@@ -25,7 +25,6 @@
 package io.questdb.mp.continuation;
 
 import io.questdb.std.CarrierLocal;
-import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -259,7 +258,6 @@ public final class SuspensionScope {
         Mode mode;
         final RoleSwitchReadLockState roleSwitchReadLocks = new RoleSwitchReadLockState();
         int roleSwitchWriteLockDepth;
-        final ObjList<Object> scratch = FiberLocal.carrierSlots();
         FiberCancellationSignal supplementalCancellationSignal;
         long supplementalCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
         TimerShards timerShards;

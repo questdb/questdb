@@ -34,12 +34,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.Decimals;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.CarrierLocal;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -48,8 +48,8 @@ import static io.questdb.cairo.ColumnType.*;
 public class CaseCommon {
     private static final LongObjHashMap<FunctionFactory> castFactories = new LongObjHashMap<>();
     private static final ObjList<CaseFunctionConstructor> constructors = new ObjList<>(NULL + 1);
-    private static final CarrierLocal<IntList> tlArgPositions = new CarrierLocal<>(IntList::new);
-    private static final CarrierLocal<ObjList<Function>> tlArgs = new CarrierLocal<>(ObjList::new);
+    private static final FiberLocal<IntList> tlArgPositions = new FiberLocal<>(IntList::new);
+    private static final FiberLocal<ObjList<Function>> tlArgs = new FiberLocal<>(ObjList::new);
     private static final LongIntHashMap typeEscalationMap = new LongIntHashMap();
 
     // public for testing

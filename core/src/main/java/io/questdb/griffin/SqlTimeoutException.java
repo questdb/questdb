@@ -24,11 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.std.CarrierLocal;
+import io.questdb.std.FiberLocal;
 
 public class SqlTimeoutException extends SqlException {
-    private static final CarrierLocal<SqlTimeoutException> tlException = new CarrierLocal<>(SqlTimeoutException::new);
-
+    private static final FiberLocal<SqlTimeoutException> tlException = new FiberLocal<>(SqlTimeoutException::new);
     public static SqlTimeoutException timeout(CharSequence message) {
         SqlTimeoutException ex = tlException.get();
         ex.put(message);

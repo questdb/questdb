@@ -25,6 +25,7 @@
 package io.questdb.mp;
 
 import io.questdb.std.CarrierLocal;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Os;
 
@@ -78,6 +79,7 @@ public final class CarrierIdentity {
     public static int bind() {
         IdHolder holder = new IdHolder();
         int id = RECYCLED.tryDequeue(holder) ? holder.id : NEXT_ID.getAndIncrement();
+        FiberLocal.bindCarrier(id);
         try {
             BIND.invokeExact(id);
         } catch (RuntimeException | Error e) {
@@ -144,6 +146,7 @@ public final class CarrierIdentity {
             MemoryTracker.detachResourceMemoryCurrentThread();
         } finally {
             CarrierLocal.releaseRow(id);
+            FiberLocal.releaseCarrier(id);
             try {
                 BIND.invokeExact(UNBOUND);
             } catch (RuntimeException | Error e) {

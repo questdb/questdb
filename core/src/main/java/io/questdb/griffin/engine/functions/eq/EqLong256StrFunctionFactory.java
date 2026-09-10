@@ -36,12 +36,11 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.*;
+import io.questdb.std.FiberLocal;
 
-import io.questdb.std.CarrierLocal;
 
 public class EqLong256StrFunctionFactory implements FunctionFactory {
-    private static final CarrierLocal<Long256ConstDecoder> DECODER = CarrierLocal.withInitial(Long256ConstDecoder::new);
-
+    private static final FiberLocal<Long256ConstDecoder> DECODER = new FiberLocal<>(Long256ConstDecoder::new);
     @Override
     public String getSignature() {
         return "=(HS)";
