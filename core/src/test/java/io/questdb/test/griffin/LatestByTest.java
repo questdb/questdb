@@ -74,6 +74,89 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestKeyPushdownAllSymbolsSkipsOlderPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            // An absent NULL must not keep the all-key scan searching an older partition.
+            ff = failOpenForPartition("2024-01-01");
+            execute("CREATE TABLE all_keys (s SYMBOL, v DOUBLE, ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO all_keys VALUES
+                    ('a', 1, '2024-01-01'),
+                    ('a', 10, '2024-01-02'),
+                    ('b', 20, '2024-01-02'),
+                    ('a', 11, '2024-01-02')
+                    """);
+            String predicate = "s IN ('a', 'b', 'a', 'missing', NULL)";
+            assertQuery(latestKeyQuery("all_keys", predicate, false))
+                    .sizeMayVary().returns("v\n20.0\n11.0\n");
+            assertQuery(latestKeyQuery("all_keys", predicate, true))
+                    .sizeMayVary().returns("v\n20.0\n11.0\n");
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownAllSymbolsReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE all_keys (s SYMBOL, v DOUBLE, ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO all_keys VALUES ('a', 1, '2024-01-01'), ('b', 2, '2024-01-01')");
+            try (RecordCursorFactory factory = select(latestKeyQuery("all_keys", "s IN ('a', 'b', NULL, 'missing')", false))) {
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n1.0\n2.0\n");
+                execute("INSERT INTO all_keys VALUES ('other', 3, '2024-01-02')");
+                // The previously complete selector must not admit the new, unselected symbol.
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n1.0\n2.0\n");
+                execute("INSERT INTO all_keys VALUES (NULL, 4, '2024-01-03'), ('missing', 5, '2024-01-03')");
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n1.0\n2.0\n4.0\n5.0\n");
+                execute("ALTER TABLE all_keys DROP PARTITION LIST '2024-01-02'");
+                // Dropping rows need not remove their symbols from the dictionary.
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n1.0\n2.0\n4.0\n5.0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownAllSymbolsNullBoundaries() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE all_keys (s SYMBOL, v DOUBLE, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts)");
+            try (RecordCursorFactory factory = select(latestKeyQuery("all_keys", "s IN ('a', 'b', NULL)", false))) {
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n");
+                execute("INSERT INTO all_keys VALUES (NULL, 1, '2024-01-01'), (NULL, 2, '2024-01-01')");
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n2.0\n");
+                execute("INSERT INTO all_keys VALUES ('a', 3, '2024-01-02'), ('b', 4, '2024-01-02')");
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n2.0\n3.0\n4.0\n");
+            }
+            assertQuery(latestKeyQuery("all_keys", "s IN ('a', 'b')", false))
+                    .sizeMayVary().returns("v\n3.0\n4.0\n");
+        });
+    }
+
+    @Test
+    public void testLatestByAllSymbolsBindReuseAndExclusions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE all_keys (s SYMBOL, v DOUBLE, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO all_keys VALUES
+                    ('a', 1, '2024-01-01'), ('b', 2, '2024-01-01'),
+                    ('a', 10, '2024-01-02'), ('b', 20, '2024-01-02')
+                    """);
+            bindVariableService.setStr("key", "b");
+            try (RecordCursorFactory factory = select(latestKeyQuery("all_keys", "s IN ('a', :key, NULL)", true))) {
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n10.0\n20.0\n");
+                bindVariableService.setStr("key", "missing");
+                // The absent NULL cannot stand in for the missing non-NULL key in the coverage count.
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n10.0\n");
+                bindVariableService.setStr("key", "b");
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n10.0\n20.0\n");
+            }
+            assertQuery(latestKeyQuery("all_keys", "s IN ('a', 'b', NULL) AND s NOT IN ('b')", true))
+                    .sizeMayVary().returns("v\n10.0\n");
+            assertQuery(latestKeyQuery("all_keys", "s IN ('a', 'b', NULL) AND v < 10", true))
+                    .sizeMayVary().returns("v\n1.0\n2.0\n");
+        });
+    }
+
+    @Test
     public void testLatestKeyPushdownFeasibility() throws Exception {
         assertMemoryLeak(() -> {
             assertLatestKeyFeasibility("plain", "");
