@@ -1662,11 +1662,19 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.exportWorkerSleepTimeout = getMillis(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_TIMEOUT, 10);
             this.exportWorkerYieldThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_YIELD_THRESHOLD, 1000);
 
-            // ADAPTIVE by default, because a single node has nothing else standing between it and a
-            // power loss. The cost is real (~15-17% lower ingest and ~1.6x the bytes written, measured
-            // on a full-day 489M-row load, and far worse on small commits -- see
-            // docs/adaptive-commit-mode.md §3) but it buys crash-safe recovery that no other layer is
-            // providing here.
+            // The shipped default is CommitMode.DEFAULT, which is NOSYNC. Adaptive buys crash-safe
+            // recovery that no other layer provides on a single node, but it costs real throughput
+            // (~15-17% lower ingest and ~1.6x the bytes written, measured on a full-day 489M-row load,
+            // and far worse on small commits -- see docs/adaptive-commit-mode.md §3), so it stays
+            // opt-in until an ingest benchmark justifies imposing that trade on every user.
+            //
+            // Flipping the default is a one-line change to CommitMode.DEFAULT, which both this class and
+            // DefaultCairoConfiguration defer to so a server and an embedded process cannot disagree.
+            // Change the shipped conf template alongside it (site/conf/server.conf documents the default
+            // in prose) or the two drift apart.
+            //
+            // The TEST SUITE does not follow this default: it runs adaptive via questdb.test.commit.mode
+            // (see Overrides.TEST_COMMIT_MODE), so CI exercises the durable path everywhere.
             //
             // Enterprise overrides this to nosync WHEN REPLICATION IS CONFIGURED
             // (EntPropServerConfiguration): a replicated deployment already survives the loss of a
@@ -1674,6 +1682,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             // local durability as well is redundant. That override is conditioned on replication
             // actually being set up, not on the edition -- an enterprise node without an object store
             // has no more redundancy than an OSS one and keeps this default.
+            // While the OSS default is itself nosync that override resolves to the same value it would
+            // have anyway; it is the guard for the day this default flips, not a behaviour difference today.
             //
             // An explicit cairo.commit.mode always wins over both.
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE, CommitMode.toString(CommitMode.DEFAULT));

@@ -719,8 +719,8 @@ public class Bootstrap {
     private void verifyWriteBarriers(CairoConfiguration cairoConfig) {
         // ADAPTIVE as well as SYNC: a nobarrier mount means fsync does not flush the device cache, which
         // breaks the adaptive WAL commit point and the durable epoch for exactly the same reason it breaks
-        // SYNC -- and ADAPTIVE is now the default, so gating on SYNC alone left the warning unreachable for
-        // most installs. NOSYNC/ASYNC make no power-loss promise, so they stay silent.
+        // SYNC, so gating on SYNC alone would leave an adaptive install unwarned. NOSYNC/ASYNC make no
+        // power-loss promise, so they stay silent -- including under the shipped default, which is NOSYNC.
         final int commitMode = cairoConfig.getCommitMode();
         if (commitMode != CommitMode.SYNC && commitMode != CommitMode.ADAPTIVE) {
             return;
