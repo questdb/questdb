@@ -2171,7 +2171,9 @@ public class PostingIndexWriter implements IndexWriter {
         return switch (ColumnType.tagOf(colType)) {
             case ColumnType.DOUBLE -> {
                 int alpSize = CoveringCompressor.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
-                int rawSize = 4 + valueCount * Double.BYTES;
+                // The raw layout is never wider than CoveringCompressor.maxCompressedSize, which
+                // validateSidecarBlockSize already held to Integer.MAX_VALUE, so the narrowing is safe.
+                int rawSize = (int) (4L + (long) valueCount * Double.BYTES);
                 if (alpSize <= rawSize) {
                     yield alpSize;
                 }
@@ -2181,7 +2183,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
             case ColumnType.FLOAT -> {
                 int alpSize = CoveringCompressor.compressFloats(rawBuf, valueCount, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
-                int rawSize = 4 + valueCount * Float.BYTES;
+                int rawSize = (int) (4L + (long) valueCount * Float.BYTES);
                 if (alpSize <= rawSize) {
                     yield alpSize;
                 }
@@ -2202,7 +2204,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // Raw copy for remaining fixed-width types: LONG128, UUID, LONG256, DECIMAL128/256
                 Unsafe.putInt(destBuf, valueCount);
                 Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
-                yield 4 + (valueCount << shift);
+                yield (int) (4L + ((long) valueCount << shift));
             }
         };
     }
@@ -2288,6 +2290,32 @@ public class PostingIndexWriter implements IndexWriter {
         return longOffsets
                 ? Unsafe.getLong(mem.addressOf(offsetsStart + idx * Long.BYTES))
                 : Unsafe.getInt(mem.addressOf(offsetsStart + idx * Integer.BYTES)) & 0xFFFFFFFFL;
+    }
+
+    /**
+     * Rejects a per-key sidecar block whose worst-case compressed form cannot be addressed with a
+     * 32-bit size. The block header stores its value count in a 32-bit word (with the top bit
+     * reserved for {@link CoveringCompressor#RAW_BLOCK_FLAG}), and every compressor returns an
+     * {@code int} size, so a larger block has no representation. Lifting the limit needs a sidecar
+     * format bump.
+     * <p>
+     * The bound bites well below {@code Integer.MAX_VALUE} values: DOUBLE's worst case is ~20 bytes
+     * per value, so ~107M values for one index key in one sealed partition generation reach it.
+     * Nothing upstream caps a per-key count below the ~2^31 whole-generation limit, so a table where
+     * a single symbol dominates a partition can get there.
+     *
+     * @param blockSize   worst-case block size from {@link CoveringCompressor#maxCompressedSize}
+     * @param maxKeyCount the largest per-key value count that size covers
+     * @param colType     the covered column type
+     */
+    private static void validateSidecarBlockSize(long blockSize, int maxKeyCount, int colType) {
+        if (blockSize > Integer.MAX_VALUE) {
+            throw CairoException.critical(0)
+                    .put("posting index sidecar block exceeds 2^31 bytes [valueCount=").put(maxKeyCount)
+                    .put(", columnType=").put(ColumnType.nameOf(colType))
+                    .put(", blockSize=").put(blockSize)
+                    .put("]; reduce the rows per index key in a partition");
+        }
     }
 
     private static void writeNullSentinel(MemoryMARW mem, int valueSize, int colType) {
@@ -3430,6 +3458,25 @@ public class PostingIndexWriter implements IndexWriter {
         if (!hasPendingData || pendingCountsAddr == 0 || activeKeyCount == 0) {
             return;
         }
+        // A preceding commit/seal flush can fail to extend the .pv (for example an
+        // I/O fault during the valueMem mremap) and leave valueMem closed while its
+        // pending batch is still queued and valueMemSize still reflects the old
+        // mapped extent. A later flush -- rollbackValues() unwinding that same failed
+        // commit, or a seal() from ADD INDEX, REINDEX or snapshot restore -- would
+        // then jumpTo() the stale valueMemSize. MemoryCMARWImpl.close() zeroes lim and
+        // appendAddress, so checkAndExtend() short-circuits only on a zero address: any
+        // positive valueMemSize routes into extend0(), which trips the size > 0 assert
+        // under -ea and dereferences the nulled FilesFacade in TableUtils.allocateDiskSpace
+        // without it. The guard below covers the remaining zero case as well. There is
+        // nothing to flush into, so raise a domain error naming the writer state and
+        // let the caller's rollback mark the writer distressed; the next open recovers
+        // the on-disk chain.
+        if (!valueMem.isOpen()) {
+            throw CairoException.critical(0)
+                    .put("cannot flush posting index into closed value memory [valueMemSize=")
+                    .put(valueMemSize).put(", genCount=").put(genCount)
+                    .put(", activeKeyCount=").put(activeKeyCount).put(']');
+        }
 
         // Sort active keys for the sparse format (requires ascending keyIds).
         // Skip sort if keys were added in order (common for sequential writes).
@@ -3679,6 +3726,20 @@ public class PostingIndexWriter implements IndexWriter {
     private void flushAllPendingDense() {
         if (!hasPendingData || pendingCountsAddr == 0 || activeKeyCount == 0) {
             return;
+        }
+        // Mirror flushAllPending's guard: a failed .pv extend can leave valueMem
+        // closed with a pending batch queued, and this dense flush would then write
+        // into it. getAppendOffset() is pure arithmetic over the zeroed bounds, so the
+        // first putLong() is what fails -- inside extend0(), on the size > 0 assert
+        // under -ea or on the nulled FilesFacade without it; the addressOf() reads
+        // further down never run. A domain error naming the writer state beats both.
+        // Keep the check below the hasPendingData early-return so a genuine no-op
+        // stays a no-op.
+        if (!valueMem.isOpen()) {
+            throw CairoException.critical(0)
+                    .put("cannot flush posting index into closed value memory [valueMemSize=")
+                    .put(valueMemSize).put(", genCount=").put(genCount)
+                    .put(", activeKeyCount=").put(activeKeyCount).put(']');
         }
 
         boolean isSorted = true;
@@ -4805,7 +4866,8 @@ public class PostingIndexWriter implements IndexWriter {
             //     anywhere in the precondition. Both methods now arm
             //     upcomingTableTxn (which FrameAlgebra.append hands them before
             //     the call) ahead of rollbackConditionally. Pinned by
-            //     PostingIndexCriticalIssuesTest#testSquashAppendRollbackPublishesUpcomingTxnAtSeal.
+            //     PostingIndexCriticalIssuesTest#testSquashAppendRollbackPublishesUpcomingTxnAtSeal
+            //     and #testSquashAppendNullsRollbackPublishesUpcomingTxnAtSeal.
             //   - TableWriter.openPartition reached here the same way --
             //     configureFollowerAndWriter, whose of() resets this field, then
             //     rollbackConditionally(rowCount) -- so a partition whose index
@@ -5110,6 +5172,22 @@ public class PostingIndexWriter implements IndexWriter {
      *                       any other value trims per-key values to those <= cutoff (rollback path)
      */
     private void reencodeAllGenerations(long newSealTxn, long maxValue, long maxValueCutoff) {
+        // The third flush/reencode site a closed valueMem reaches: Phase 1 reads
+        // every generation out of valueMem (addressOf below). truncate() closes
+        // valueMem before it opens the replacement .pv, so a failed open leaves the
+        // writer with valueMem closed and genCount > 0; a failed .pv extend leaves
+        // the same state. Both arrive here through sealFull(), or through
+        // rollbackToMaxValue() under rollbackValues() -- the path a failed truncate()
+        // leaves behind. These three guards do not cover every valueMem deref in the
+        // class: sealIncremental() dereferences it unguarded too, byte-identical to
+        // base and not provably reachable with a closed valueMem, so those sites stay
+        // as they are. genCount == 0 never touches valueMem here (empty gen loop
+        // routes to truncate()), so guard only when there is a generation to read.
+        if (genCount > 0 && !valueMem.isOpen()) {
+            throw CairoException.critical(0)
+                    .put("cannot reencode posting index generations over closed value memory [valueMemSize=")
+                    .put(valueMemSize).put(", genCount=").put(genCount).put(']');
+        }
 
         // Phase 1: Count total values per key across all generations
         long totalCountsSize = (long) keyCount * Integer.BYTES;
@@ -7194,7 +7272,8 @@ public class PostingIndexWriter implements IndexWriter {
         for (int j = 0; j < ks; j++) {
             maxKeyCount = Math.max(maxKeyCount, keyCounts[j]);
         }
-        int compressBufSize = maxKeyCount > 0 ? CoveringCompressor.maxCompressedSize(maxKeyCount, colType) : 0;
+        long compressBufSize = maxKeyCount > 0 ? CoveringCompressor.maxCompressedSize(maxKeyCount, colType) : 0;
+        validateSidecarBlockSize(compressBufSize, maxKeyCount, colType);
         long compressBuf = compressBufSize > 0 ? Unsafe.malloc(compressBufSize, MemoryTag.NATIVE_INDEX_READER) : 0;
 
         try {
@@ -7369,7 +7448,8 @@ public class PostingIndexWriter implements IndexWriter {
         long longWorkspaceSize = (long) maxKeyCount * Long.BYTES;
         long longWorkspaceAddr = 0;
         long exceptionWorkspaceAddr = 0;
-        int compressBufSize = (!isVarSize && maxKeyCount > 0) ? CoveringCompressor.maxCompressedSize(maxKeyCount, colType) : 0;
+        long compressBufSize = (!isVarSize && maxKeyCount > 0) ? CoveringCompressor.maxCompressedSize(maxKeyCount, colType) : 0;
+        validateSidecarBlockSize(compressBufSize, maxKeyCount, colType);
         long compressBuf = 0;
         long sidecarBufSize = isVarSize ? 0 : (long) maxKeyCount * valueSize;
 
@@ -7766,16 +7846,28 @@ public class PostingIndexWriter implements IndexWriter {
 
         if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
             Path p = Path.getThreadLocal(coveredPartitionPath);
-            for (int c = 0; c < coverCount; c++) {
-                if (coveredColumnIndices.getQuick(c) < 0) {
-                    continue;
+            try {
+                for (int c = 0; c < coverCount; c++) {
+                    if (coveredColumnIndices.getQuick(c) < 0) {
+                        continue;
+                    }
+                    try {
+                        mapCoveredColumn(p, c);
+                        writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
+                    } finally {
+                        unmapCoveredColumn(c);
+                    }
                 }
-                try {
-                    mapCoveredColumn(p, c);
-                    writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
-                } finally {
-                    unmapCoveredColumn(c);
-                }
+            } finally {
+                // The per-column map/unmap loop above leaves the covered
+                // read-map arrays allocated with every entry unmapped (0).
+                // ensureCoveredColumnReadMaps() early-returns on non-null
+                // arrays, so keeping them would make every later covered
+                // read -- post-seal gen flushes (writeSidecarGenData) and
+                // incremental seals (writeSidecarStrideData) -- resolve to
+                // addr 0 and silently write NULL covered values. Null the
+                // arrays so the next covered read lazily re-maps.
+                unmapCoveredColumnReads();
             }
         } else if (coveredColumnAddrs.size() > 0) {
             // O3 addr-based path: all addresses provided by caller, no per-column mapping needed
@@ -7809,16 +7901,23 @@ public class PostingIndexWriter implements IndexWriter {
 
         if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
             Path p = Path.getThreadLocal(coveredPartitionPath);
-            for (int c = 0; c < coverCount; c++) {
-                if (coveredColumnIndices.getQuick(c) < 0) {
-                    continue;
+            try {
+                for (int c = 0; c < coverCount; c++) {
+                    if (coveredColumnIndices.getQuick(c) < 0) {
+                        continue;
+                    }
+                    try {
+                        mapCoveredColumn(p, c);
+                        writeSidecarForColumnStreaming(c, sc, siSize, totalCountsAddr, keyBuffer, maxKeyCount, keyCounts);
+                    } finally {
+                        unmapCoveredColumn(c);
+                    }
                 }
-                try {
-                    mapCoveredColumn(p, c);
-                    writeSidecarForColumnStreaming(c, sc, siSize, totalCountsAddr, keyBuffer, maxKeyCount, keyCounts);
-                } finally {
-                    unmapCoveredColumn(c);
-                }
+            } finally {
+                // See writeSidecarsPerColumn: reset the lazy-mapping state so
+                // ensureCoveredColumnReadMaps() re-maps on the next covered
+                // read instead of early-returning on stale all-zero arrays.
+                unmapCoveredColumnReads();
             }
         } else if (coveredColumnAddrs.size() > 0) {
             ensureCoveredColumnReadMaps();

@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinFunction;
@@ -106,9 +107,11 @@ import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -1637,6 +1640,46 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testNonDeterministicRejectionFreesFunctionNativeMemory() throws Exception {
+        // A context that forbids non-deterministic functions (e.g. materialized-view validation)
+        // rejects such a function AFTER it is successfully constructed. The rejection must close the
+        // returned function - not merely free its argument list - so a function that owns native
+        // memory it allocated during construction (over and above its arguments) does not leak.
+        //
+        // No production function currently reaches this exact path: rnd_* functions allocate lazily
+        // in init() (rejected before init), and the diff's InLongConstFunction derives its
+        // non-determinism from its key, which is rejected at the key node before the IN function is
+        // ever built. This test therefore uses a synthetic function that both allocates native memory
+        // in its constructor and reports isNonDeterministic()==true, exercising the FunctionParser
+        // rejection path directly and guarding it against future functions with that shape.
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "nondet_alloc()";
+            }
+
+            @Override
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+                return new NonDeterministicAllocatingFunction();
+            }
+        });
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        assertMemoryLeak(() -> {
+            final FunctionParser functionParser = createFunctionParser();
+            final boolean allowed = sqlExecutionContext.allowNonDeterministicFunctions();
+            sqlExecutionContext.setAllowNonDeterministicFunction(false);
+            try {
+                parseFunction("nondet_alloc()", metadata, functionParser);
+                fail("expected non-deterministic rejection");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "non-deterministic function cannot be used in materialized view");
+            } finally {
+                sqlExecutionContext.setAllowNonDeterministicFunction(allowed);
+            }
+        });
+    }
+
+    @Test
     public void testNonDeterministicFunctionIsClosedWhenRejected() throws Exception {
         final AtomicInteger closeCount = new AtomicInteger();
         functions.add(new FunctionFactory() {
@@ -2340,5 +2383,37 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
         });
         assertSame(constant, parseFunction("x()", new GenericRecordMetadata(), createFunctionParser()));
+    }
+
+    /**
+     * A non-deterministic function that allocates tracked native memory in its constructor and frees
+     * it in {@link #close()}. Used to prove that FunctionParser closes the returned function when it
+     * rejects a non-deterministic function, rather than leaking the memory the function owns.
+     */
+    private static class NonDeterministicAllocatingFunction extends LongFunction {
+        private static final long ALLOC_BYTES = 1024;
+        private long addr = Unsafe.malloc(ALLOC_BYTES, MemoryTag.NATIVE_DEFAULT);
+
+        @Override
+        public void close() {
+            if (addr != 0) {
+                addr = Unsafe.free(addr, ALLOC_BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return 42;
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("nondet_alloc()");
+        }
     }
 }

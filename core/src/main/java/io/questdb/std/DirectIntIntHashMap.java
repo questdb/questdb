@@ -39,9 +39,9 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     private int capacity;
     private int free;
     private long mask;
-    // Per-query native memory tracker bound by the owning component before the
-    // backing directory is (re)allocated. Null when no per-query limit applies;
-    // all Unsafe.{malloc,realloc,free} calls degrade to the global-only overloads.
+    // Per-workload native memory tracker bound by the owning cursor at workload start.
+    // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
+    // degrade to the global-only overloads in that case.
     @Nullable
     private MemoryTracker memoryTracker;
     private long ptr;
@@ -91,6 +91,11 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
             mask = 0;
             size = 0;
         }
+        // The block is gone, so the tracker that charged it carries no debt for this map any more.
+        // Dropping the reference keeps a later free - one that runs after the pooled tracker was
+        // recycled by another workload - on the global counter, where it cannot corrupt someone
+        // else's total.
+        memoryTracker = null;
     }
 
     public boolean excludes(int key) {
@@ -168,14 +173,18 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     }
 
     /**
-     * Binds the per-query tracker. It must be bound before the backing directory is
-     * allocated and cleared only after it is freed, so that a malloc and its matching free
-     * charge the same tracker. Rebinding over a live directory would refund bytes the new
-     * tracker was never charged.
+     * Binds the per-workload {@link MemoryTracker} that every subsequent allocation charges. A
+     * {@code null} tracker degrades the map to global-only accounting.
+     * <p>
+     * Rebinding releases the live block first: a block has to be freed under the tracker that
+     * charged it, or the two counters drift apart and the per-query limit stops holding. Callers
+     * therefore bind at workload start, immediately before {@link #reopen()}, when the map is empty.
      */
-    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
-        assert ptr == 0 || memoryTracker == null : "tracker must be bound before allocation";
-        this.memoryTracker = memoryTracker;
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker != memoryTracker) {
+            close();
+            memoryTracker = tracker;
+        }
     }
 
     public int size() {

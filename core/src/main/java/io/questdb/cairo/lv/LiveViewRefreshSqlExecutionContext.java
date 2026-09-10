@@ -182,6 +182,11 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
         return baseTableReader != null;
     }
 
+    @Override
+    public boolean isPartitionFormatChangeTolerated() {
+        return true;
+    }
+
     public void of(TableReader baseTableReader) {
         this.baseTableReader = baseTableReader;
     }

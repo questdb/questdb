@@ -158,9 +158,11 @@ namespace questdb::x86 {
             c.mov(length, ptr(column_address, offset, 0, 0, header_size));
         }
         c.bind(l_nonzero);
-        if (header_size == 4) {
-            return {length.r32(), data_type_t::i32, data_kind_t::kMemory};
-        }
+        // Report i64 for a four-byte STRING header as well as for an eight-byte BINARY one. Both
+        // arms leave a sign-correct 64-bit value in `length`: the fast path subtracts two 64-bit
+        // offsets, and the slow path sign-extends the header with movsxd. Typing the result i64
+        // matches serializeNull(), which spells every var-size header NULL sentinel as an I8
+        // immediate, so convert() harmonises nothing and the loop pays no per-row int32_to_int64.
         return {length, data_type_t::i64, data_kind_t::kMemory};
     }
 
@@ -216,7 +218,11 @@ namespace questdb::x86 {
         // Check if value is already cached
         Gp cached_gp;
         Vec cached_xmm;
-        if (type == data_type_t::f32 || type == data_type_t::f64) {
+        // i128 belongs with the floating-point types here, not in the else branch: read_mem
+        // stores it through addXmm below, and find() answers only for a general-purpose register,
+        // so an i128 column was cached and then never found. Every UUID and LONG128 read reloaded
+        // the column even where the predicate had already read it in the same row.
+        if (type == data_type_t::f32 || type == data_type_t::f64 || type == data_type_t::i128) {
             if (value_cache.findXmm(column_idx, type, cached_xmm)) {
                 return {cached_xmm, type, data_kind_t::kMemory};
             }
@@ -985,6 +991,17 @@ namespace questdb::x86 {
         }
     };
 
+    // Declines the filter. Compiler::report_error records the reason on the JitErrorHandler that
+    // compileFunction() installed, and compileFunction() reads that error BEFORE c.finalize() and
+    // before gGlobalContext.rt.add(), so a declined function is never register-allocated, never
+    // assembled and never registered - nothing emitted after this call can run. SqlCodeGenerator
+    // then falls back to the Java filter, the same graceful decline any other unsupported shape
+    // takes. Mirrors questdb::avx2::decline_filter(); the scalar backends cannot reach that one
+    // because avx2.h is x86-only and is included after this header.
+    inline void decline_filter(Compiler &c, const char *reason) {
+        c.report_error(asmjit::Error::kInvalidState, reason);
+    }
+
     void emit_bin_op(Compiler &c, Arena &arena, const instruction_t &instr, ArenaVector<jit_value_t> &values, bool null_check,
                      bool has_short_circuit_label, opcodes next_opcode) {
         // Special case: comparison with immediate zero can use TEST instead of CMP
@@ -1030,14 +1047,16 @@ namespace questdb::x86 {
                     case data_type_t::i64:
                         c.cmp(lhs.gp(), rhs.gp());
                         break;
-                    case data_type_t::i128: {
-                        // For i128, use pcmpeqb + pmovmskb + cmp (same as int128_cmp)
-                        Gp mask = c.new_gp16();
-                        c.pcmpeqb(lhs.vec(), rhs.vec());
-                        c.pmovmskb(mask, lhs.vec());
-                        c.cmp(mask, 0xffff);
+                    case data_type_t::i128:
+                        // Call int128_cmp rather than repeating it. The copy of this block that
+                        // stood here folded pcmpeqb - the two-operand SSE form - into lhs, which is
+                        // the register read_mem hands back for every later read of the same column
+                        // in the same row: "u = 'A' OR u = 'B'" over a UUID column compared the
+                        // second constant against the first comparison's mask and dropped every row
+                        // only the second one matched. int128_cmp leaves the same flags this block
+                        // wants, and having one copy is what keeps the two from drifting again.
+                        int128_cmp(c, lhs.vec(), rhs.vec());
                         break;
-                    }
                     default:
                         break;
                 }
@@ -1091,7 +1110,21 @@ namespace questdb::x86 {
                 values.append(arena, div(c, lhs, rhs, null_check));
                 break;
             default:
-                __builtin_unreachable();
+                // Fail closed, for the same reason avx2::emit_bin_op does. emit_code() routes EVERY
+                // opcode it does not handle itself into this function, so this arm sees whatever a
+                // corrupt or future-extended IR stream carries. __builtin_unreachable() made that
+                // undefined behaviour: the compiler drops the range check on the jump table and an
+                // out-of-enum opcode indexes past its end, inside the JVM and with no recovery.
+                //
+                // get_arguments() already popped both operands, so push a placeholder mask back -
+                // the same balancing the flag-optimization path above does with its flags_marker.
+                // scalar_tail() reads the top of the stack as a Gp (test/jz), and lhs is an XMM for
+                // a float operand, so the placeholder is a fresh i32 register rather than lhs. It
+                // is never read: compileFunction() sees the error before c.finalize(), so the
+                // function is never register-allocated, assembled or registered.
+                decline_filter(c, "unsupported opcode in the scalar path");
+                values.append(arena, {c.new_gp32("declined_mask"), data_type_t::i32, data_kind_t::kConst});
+                break;
         }
     }
 
@@ -1121,7 +1154,17 @@ namespace questdb::x86 {
             auto &instr = istream[i];
             switch (instr.opcode) {
                 case opcodes::Inv:
-                    return; // todo: throw exception
+                    // Fail closed. Inv is the placeholder the serializer writes for a symbol bind
+                    // variable and a constant stub; backfillNode() either overwrites those 24 bytes
+                    // or throws, so a finished IR stream never carries one. Should one ever survive,
+                    // returning here abandons code generation with NOTHING on the value stack, and
+                    // scalar_tail()'s !values.is_empty() guard - which exists for the legitimate
+                    // case where every predicate resolved through a short-circuit jump - then skips
+                    // the final test/jz and falls straight into the unconditional row store. That
+                    // filter selects every row, silently. Decline first so it falls back to the
+                    // Java filter and the log names the reason.
+                    decline_filter(c, "invalid opcode in the scalar path");
+                    return;
                 case opcodes::Ret:
                     return;
                 case opcodes::Var: {

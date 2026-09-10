@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -63,6 +64,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     boolean allowNonDeterministicFunctions();
 
     void changePageFrameSizes(int minRows, int maxRows);
+
+    default void clearCancelledFlag(AtomicBoolean expected) {
+        getCircuitBreaker().clearCancelledFlag(expected);
+        getSimpleCircuitBreaker().clearCancelledFlag(expected);
+    }
+
+    default void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        getCircuitBreaker().clearCancelledFlag(expected, expectedGeneration);
+        getSimpleCircuitBreaker().clearCancelledFlag(expected, expectedGeneration);
+    }
 
     void clearWindowContext();
 
@@ -102,6 +113,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
+    default void copyCancelledFlagsTo(CancellationBinding circuitBreakerTarget, CancellationBinding simpleCircuitBreakerTarget) {
+        getCircuitBreaker().copyCancelledFlagTo(circuitBreakerTarget);
+        getSimpleCircuitBreaker().copyCancelledFlagTo(simpleCircuitBreakerTarget);
+    }
+
     default Rnd getAsyncRandom() {
         return SharedRandom.getAsyncRandom(getCairoEngine().getConfiguration());
     }
@@ -121,6 +137,10 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     Decimal256 getDecimal256();
 
     Decimal64 getDecimal64();
+
+    default @Nullable ExecutionState getExecutionState() {
+        return null;
+    }
 
     int getIntervalFunctionType();
 
@@ -204,6 +224,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     int getSharedQueryWorkerCount();
 
+    @NotNull
     SqlExecutionCircuitBreaker getSimpleCircuitBreaker();
 
     default int getTableStatus(Path path, CharSequence tableName) {
@@ -287,6 +308,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParquetRowGroupPruningEnabled();
 
+    /**
+     * Returns whether cached table scans may retain their compiled optimization state across
+     * partition-format changes. A tolerant context accepts that Parquet row-group pruning may no
+     * longer match the current table format; the ordinary row filter still preserves SQL semantics.
+     */
+    default boolean isPartitionFormatChangeTolerated() {
+        return false;
+    }
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
@@ -326,6 +356,21 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void reset();
 
+    default void restoreCancelledFlag(
+            AtomicBoolean expected,
+            CancellationBinding circuitBreakerPrevious,
+            CancellationBinding simpleCircuitBreakerPrevious
+    ) {
+        final SqlExecutionCircuitBreaker circuitBreaker = getCircuitBreaker();
+        final SqlExecutionCircuitBreaker simpleCircuitBreaker = getSimpleCircuitBreaker();
+        if (circuitBreaker.getCancelledFlag() == expected) {
+            circuitBreaker.setCancelledFlag(circuitBreakerPrevious);
+        }
+        if (simpleCircuitBreaker != circuitBreaker && simpleCircuitBreaker.getCancelledFlag() == expected) {
+            simpleCircuitBreaker.setCancelledFlag(simpleCircuitBreakerPrevious);
+        }
+    }
+
     void restoreToDefaultPageFrameSizes();
 
     void setAllowNonDeterministicFunction(boolean value);
@@ -333,6 +378,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setCacheHit(boolean value);
 
     void setCancelledFlag(AtomicBoolean cancelled);
+
+    default void setCancelledFlag(CancellationBinding source) {
+        getCircuitBreaker().setCancelledFlag(source);
+        getSimpleCircuitBreaker().setCancelledFlag(source);
+    }
+
+    default void setCancelledFlag(AtomicBoolean cancelled, long generation) {
+        getCircuitBreaker().setCancelledFlag(cancelled, generation);
+        getSimpleCircuitBreaker().setCancelledFlag(cancelled, generation);
+    }
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
 

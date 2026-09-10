@@ -43,6 +43,10 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
     private ObjList<Function> castFunctionsA;
     private ObjList<Function> castFunctionsB;
 
+    protected AbstractSetRecordCursorFactory(RecordMetadata metadata) {
+        super(metadata);
+    }
+
     public AbstractSetRecordCursorFactory(
             RecordMetadata metadata,
             RecordCursorFactory factoryA,
@@ -50,7 +54,7 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB
     ) {
-        super(metadata);
+        this(metadata);
         this.factoryA = factoryA;
         this.factoryB = factoryB;
         this.castFunctionsB = castFunctionsB;

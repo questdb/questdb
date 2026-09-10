@@ -30,12 +30,32 @@ import io.questdb.test.griffin.fuzz.expr.FuzzConstant;
 public final class CharType implements FuzzColumnType {
     public static final CharType INSTANCE = new CharType();
 
+    // Code points that sit on a boundary the filter layer treats specially.
+    // A CHAR lives in a 16-bit lane the JIT backends read as signed, so
+    // everything from 0x8000 up is where an unsigned CHAR order and a signed
+    // lane order part ways; 0 is the CHAR null sentinel and reaches the
+    // literal path only through the null keyword. Surrogates (0xD800-0xDFFF)
+    // are left out: a lone surrogate does not survive a round trip through
+    // any UTF-8 sink, which would turn the dump file and the log line into
+    // an unusable repro.
+    private static final char[] CORNER_CHARS = {
+            '\u0001', '\u007f', '\u0080', '\u00ff', '\u0100',
+            '\u7ffe', '\u7fff', '\u8000', '\u8001', '\ufffe', '\uffff'
+    };
+
     private CharType() {
     }
 
     @Override
     public FuzzConstant generateConstant(Rnd rnd) {
-        char c = rnd.nextChar();
+        if (rnd.nextInt(32) == 0) {
+            return FuzzConstant.nonBindable("null");
+        }
+        // rnd.nextChar() only draws 'B'..'Z', so on its own it never reaches
+        // the half of the code space where the signed lane goes negative.
+        final char c = rnd.nextInt(3) == 0
+                ? CORNER_CHARS[rnd.nextInt(CORNER_CHARS.length)]
+                : rnd.nextChar();
         return new FuzzConstant("'" + c + "'", "CHAR", String.valueOf(c));
     }
 
@@ -51,7 +71,15 @@ public final class CharType implements FuzzColumnType {
 
     @Override
     public String getRndCall() {
-        return "rnd_char()";
+        // rnd_char() draws 'B'..'Z' and never NULL, which left both halves of
+        // the CHAR ordering contract - the null sentinel a range predicate has
+        // to drop, and the code points a signed 16-bit lane reads as negative
+        // - out of the corpus. The two cast branches cover the rest of the
+        // code space either side of the surrogate range; the null rate on
+        // rnd_int() reaches CHAR through the INT_NULL -> 0 cast.
+        return "CASE WHEN rnd_boolean() THEN rnd_char()"
+                + " WHEN rnd_boolean() THEN rnd_int(1, 55_295, 6)::CHAR"
+                + " ELSE rnd_int(57_344, 65_535, 6)::CHAR END";
     }
 
     @Override

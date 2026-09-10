@@ -272,9 +272,35 @@ public class QwpTudCache implements QuietCloseable {
         }
     }
 
-    public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
+    /**
+     * Whether ANY live table in this cache still holds rows appended but not committed.
+     * <p>
+     * This is the fact behind {@code QwpIngressProcessorState.uncommittedDeferredRows}: the per-table
+     * force-commit at the max-uncommitted-rows cap covers whichever tables crossed the cap and no others,
+     * so "did a deferred frame run" is not the same question as "is anything still uncommitted". A dropped
+     * table is skipped -- its buffered rows are discarded on eviction, and the commit loops raise on that
+     * separately so the clamp cannot release over discarded rows.
+     */
+    public boolean hasUncommittedRows() {
+        final ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            WalTableUpdateDetails tud = tableUpdateDetails.valueQuick(i);
+            if (!tud.isDropped() && !tud.isFirstRow()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Force-commits tables at the configured row cap and reports committed txns.
+     *
+     * @return whether any surviving table holds uncommitted rows after this pass
+     */
+    public boolean commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         Utf8Sequence discardedTableName = null;
+        boolean hasUncommittedRows = false;
         for (int i = 0; i < keys.size(); ) {
             Utf8Sequence tableName = keys.getQuick(i);
             int keyIndex = tableUpdateDetails.keyIndex(tableName);
@@ -313,6 +339,10 @@ public class QwpTudCache implements QuietCloseable {
                 }
                 Misc.free(tud);
             } else {
+                // Inspect the surviving TUD after its possible commit. Do not
+                // short-circuit: the remaining entries still need commits,
+                // committed-txn reporting, and dropped-entry cleanup.
+                hasUncommittedRows |= !tud.isFirstRow();
                 i++;
             }
         }
@@ -321,6 +351,7 @@ public class QwpTudCache implements QuietCloseable {
                     .put("dropped table discarded buffered rows, cannot acknowledge: ")
                     .put(discardedTableName);
         }
+        return hasUncommittedRows;
     }
 
     /**

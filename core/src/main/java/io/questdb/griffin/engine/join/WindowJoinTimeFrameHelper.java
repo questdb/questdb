@@ -48,6 +48,7 @@ public class WindowJoinTimeFrameHelper {
     private int bookmarkedFrameIndex = -1;
     private long bookmarkedRowIndex = Long.MIN_VALUE;
     private long bookmarkedTimestampLo = Long.MIN_VALUE;
+    private boolean isFrameCursorExhausted;
     private int prevailingFrameIndex = -1;
     private long prevailingRowIndex = Long.MIN_VALUE;
     private Record record;
@@ -120,6 +121,7 @@ public class WindowJoinTimeFrameHelper {
         // Reset prevailing candidate
         prevailingFrameIndex = -1;
         prevailingRowIndex = Long.MIN_VALUE;
+        isFrameCursorExhausted = false;
 
         // let's start with the last found frame and row id
         if (bookmarkedFrameIndex != -1 && timestampLo >= bookmarkedTimestampLo) {
@@ -159,7 +161,7 @@ public class WindowJoinTimeFrameHelper {
         for (; ; ) {
             // find the frame to be scanned
             if (rowLo == Long.MIN_VALUE) {
-                while (timeFrameCursor.next()) {
+                while (advanceTimeFrame()) {
                     // carry on if the frame is to the left of the interval
                     if (scaleTimestamp(timeFrame.getTimestampEstimateHi(), scale) < timestampLo) {
                         if (recordPrevailing && timeFrameCursor.open() > 0) {
@@ -250,6 +252,7 @@ public class WindowJoinTimeFrameHelper {
         // record prevailing candidate across frames
         long prevailingRowIndex = Long.MIN_VALUE;
         int prevailingFrameIndex = -1;
+        isFrameCursorExhausted = false;
 
         if (bookmarkedFrameIndex != -1 && timestampLo >= bookmarkedTimestampLo) {
             timeFrameCursor.jumpTo(bookmarkedFrameIndex);
@@ -280,7 +283,7 @@ public class WindowJoinTimeFrameHelper {
 
         for (; ; ) {
             if (rowLo == Long.MIN_VALUE) {
-                while (timeFrameCursor.next()) {
+                while (advanceTimeFrame()) {
                     long frameEstimateHi = scaleTimestamp(timeFrame.getTimestampEstimateHi(), scale);
                     long frameEstimateLo = scaleTimestamp(timeFrame.getTimestampEstimateLo(), scale);
 
@@ -438,17 +441,37 @@ public class WindowJoinTimeFrameHelper {
         return timestampIndex;
     }
 
+    /**
+     * Returns true when the most recent {@link #findRowLo(long, long, boolean)},
+     * {@link #findRowLoWithPrevailing(long, long)} or {@link #nextFrame(long)} call walked past the
+     * last time frame, i.e. the scan ran out of rows rather than stopping at its upper bound.
+     * <p>
+     * Callers use it to tell "there is no more data" apart from "there is more data, but it sits
+     * above the requested interval". The flag reflects that single call, so read it right after it.
+     */
+    public boolean isFrameCursorExhausted() {
+        return isFrameCursorExhausted;
+    }
+
     public SymbolTable newSymbolTable(int columnIndex) {
         return timeFrameCursor.newSymbolTable(columnIndex);
     }
 
     // note: recordAt() must be called after making this call!!!
     public boolean nextFrame(long timestampHi) {
-        if (!timeFrameCursor.next()) {
-            return false;
-        }
-        if (timestampHi >= scaleTimestamp(timeFrame.getTimestampEstimateLo(), scale)) {
-            return timeFrameCursor.open() > 0;
+        isFrameCursorExhausted = false;
+        while (advanceTimeFrame()) {
+            if (timestampHi < scaleTimestamp(timeFrame.getTimestampEstimateLo(), scale)) {
+                // The frame opens past the horizon: there is more data, just none this scan wants.
+                return false;
+            }
+            if (timeFrameCursor.open() > 0) {
+                return true;
+            }
+            // Step over an empty frame rather than end the scan on it, the way findRowLo() does.
+            // No TimeFrameCursor hands out an empty frame today, so this loop never spins; it keeps
+            // nextFrame() consistent with findRowLo() and every other open() consumer, since ending
+            // the scan here would silently truncate the index and drop window rows past the frame.
         }
         return false;
     }
@@ -463,10 +486,13 @@ public class WindowJoinTimeFrameHelper {
 
     // note: recordAt() must be called after making this call!!!
     public boolean previousFrame() {
-        if (!timeFrameCursor.prev()) {
-            return false;
+        while (timeFrameCursor.prev()) {
+            if (timeFrameCursor.open() > 0) {
+                return true;
+            }
+            // Step over an empty frame, as nextFrame() does.
         }
-        return timeFrameCursor.open() > 0;
+        return false;
     }
 
     public void recordAt(long rowId) {
@@ -495,9 +521,19 @@ public class WindowJoinTimeFrameHelper {
         if (timeFrameCursor != null) {
             timeFrameCursor.toTop();
         }
+        isFrameCursorExhausted = false;
         bookmarkedFrameIndex = -1;
         bookmarkedRowIndex = Long.MIN_VALUE;
         bookmarkedTimestampLo = Long.MIN_VALUE;
+    }
+
+    // Advances the frame cursor, remembering whether it ran past the last frame.
+    private boolean advanceTimeFrame() {
+        if (timeFrameCursor.next()) {
+            return true;
+        }
+        isFrameCursorExhausted = true;
+        return false;
     }
 
     private long binarySearchScrollUp(long low, long high, long timestampLo) {

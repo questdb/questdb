@@ -693,13 +693,24 @@ fn apply_thrift_stats(
     let mut ool_min: Option<Vec<u8>> = None;
     let mut ool_max: Option<Vec<u8>> = None;
 
+    // Parquet stores both counts signed and nothing validates the footer a third-party writer
+    // produced. `_pm` says "unknown" by leaving the flag clear, so a negative count takes that
+    // road: clamping it to 0 would turn no information into an authoritative "this row group holds
+    // no nulls", and the read paths prune a NULL-sentinel filter on exactly that claim - see
+    // ParquetDecoder::can_skip_row_group, which drops a negative count for the same reason. A clear
+    // flag is the conservative answer everywhere it is read (parquet_metadata::skip reads it as
+    // None; prepare_chunk reads col_top 0 and is_all_null false).
     if let Some(nc) = stats.null_count {
-        stat_flags = stat_flags.with_null_count();
-        raw.null_count = nc.max(0) as u64;
+        if let Ok(nc) = u64::try_from(nc) {
+            stat_flags = stat_flags.with_null_count();
+            raw.null_count = nc;
+        }
     }
     if let Some(dc) = stats.distinct_count {
-        stat_flags = stat_flags.with_distinct_count();
-        raw.distinct_count = dc.max(0) as u64;
+        if let Ok(dc) = u64::try_from(dc) {
+            stat_flags = stat_flags.with_distinct_count();
+            raw.distinct_count = dc;
+        }
     }
 
     // Parquet treats an absent is_*_value_exact as exact: the field post-dates the
@@ -782,6 +793,67 @@ mod tests {
         let mut raw = ColumnChunkRaw::zeroed();
         let (ool_min, ool_max) = apply_thrift_stats(&mut raw, Some(&stats));
         (raw, ool_min, ool_max)
+    }
+
+    /// Run `apply_thrift_stats` over a thrift `Statistics` carrying only the two counts.
+    fn apply_thrift_counts_for(
+        null_count: Option<i64>,
+        distinct_count: Option<i64>,
+    ) -> ColumnChunkRaw {
+        let stats = parquet2::thrift_format::Statistics {
+            max: None,
+            min: None,
+            null_count,
+            distinct_count,
+            max_value: None,
+            min_value: None,
+            is_max_value_exact: None,
+            is_min_value_exact: None,
+        };
+        let mut raw = ColumnChunkRaw::zeroed();
+        apply_thrift_stats(&mut raw, Some(&stats));
+        raw
+    }
+
+    #[test]
+    fn pm_counts_carried_when_non_negative() {
+        // The positive control for the test below: it catches an over-correction that stops
+        // recording a perfectly good count, which is the way that fix could go wrong. It does not
+        // redden on a revert - the old clamp carried these values too.
+        let raw = apply_thrift_counts_for(Some(0), Some(7));
+        let sf = raw.stat_flags();
+        assert!(sf.has_null_count());
+        assert_eq!(0, raw.null_count);
+        assert!(sf.has_distinct_count());
+        assert_eq!(7, raw.distinct_count);
+
+        let raw = apply_thrift_counts_for(Some(5), None);
+        assert!(raw.stat_flags().has_null_count());
+        assert_eq!(5, raw.null_count);
+        assert!(!raw.stat_flags().has_distinct_count());
+    }
+
+    #[test]
+    fn pm_null_count_flag_cleared_when_thrift_count_negative() {
+        // Parquet's counts are signed and a foreign footer is not validated. Clamping a negative
+        // one to 0 recorded "no nulls" with the flag SET, which is an authoritative claim the read
+        // paths prune on: a NULL-sentinel equality lies outside min/max, so the row group - and
+        // every null row in it - would be skipped. A clear flag is the only "unknown" _pm has.
+        for null_count in [-1i64, -32, i64::MIN] {
+            let raw = apply_thrift_counts_for(Some(null_count), None);
+            let sf = raw.stat_flags();
+            assert!(
+                !sf.has_null_count(),
+                "a negative null count must not be recorded as known [null_count={null_count}]"
+            );
+            assert_eq!(0, raw.null_count);
+        }
+        // Same for the distinct count, which shares the encoding.
+        for distinct_count in [-1i64, i64::MIN] {
+            let raw = apply_thrift_counts_for(None, Some(distinct_count));
+            assert!(!raw.stat_flags().has_distinct_count());
+            assert_eq!(0, raw.distinct_count);
+        }
     }
 
     #[test]

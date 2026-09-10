@@ -58,4 +58,13 @@ public abstract class AbstractSetRecordCursor implements RecordCursor {
         this.cursorB = cursorB;
         this.circuitBreaker = executionContext.getCircuitBreaker();
     }
+
+    protected long sumBranchSizes() {
+        final long sizeA = cursorA.size();
+        final long sizeB = cursorB.size();
+        if (sizeA == -1 || sizeB == -1) {
+            return -1;
+        }
+        return sizeA + sizeB;
+    }
 }

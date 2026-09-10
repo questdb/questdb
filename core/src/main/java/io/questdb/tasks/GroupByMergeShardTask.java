@@ -24,7 +24,7 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.griffin.engine.table.GroupByShardingContext;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.Mutable;
@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class GroupByMergeShardTask implements Mutable {
     private GroupByShardingContext shardingCtx;
-    private AtomicBooleanCircuitBreaker circuitBreaker;
+    private PostAggregationCircuitBreaker circuitBreaker;
     private CountDownLatchSPI doneLatch;
     private int shardIndex = -1;
     private AtomicInteger startedCounter;
@@ -51,7 +51,7 @@ public class GroupByMergeShardTask implements Mutable {
         return shardingCtx;
     }
 
-    public AtomicBooleanCircuitBreaker getCircuitBreaker() {
+    public PostAggregationCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
     }
 
@@ -68,7 +68,7 @@ public class GroupByMergeShardTask implements Mutable {
     }
 
     public void of(
-            AtomicBooleanCircuitBreaker circuitBreaker,
+            PostAggregationCircuitBreaker circuitBreaker,
             AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch,
             GroupByShardingContext shardingCtx,

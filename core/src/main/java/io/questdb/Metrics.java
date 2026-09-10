@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.line.LineMetrics;
 import io.questdb.cutlass.pgwire.PGMetrics;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
+import io.questdb.metrics.FiberMetrics;
 import io.questdb.metrics.GCMetrics;
 import io.questdb.metrics.HealthMetricsImpl;
 import io.questdb.metrics.MetricsRegistry;
@@ -49,6 +50,7 @@ import org.jetbrains.annotations.NotNull;
 public class Metrics implements Target, Mutable {
     public static final Metrics DISABLED = new Metrics(false, new NullMetricsRegistry());
     public static final Metrics ENABLED = new Metrics(true, new MetricsRegistryImpl());
+    private final FiberMetrics fiberMetrics;
     private final GCMetrics gcMetrics;
     private final HealthMetricsImpl healthCheck;
     private final HttpMetrics httpMetrics;
@@ -72,6 +74,8 @@ public class Metrics implements Target, Mutable {
         this.jsonQueryMetrics = new JsonQueryMetrics(metricsRegistry);
         this.httpMetrics = new HttpMetrics(metricsRegistry);
         this.pgMetrics = new PGMetrics(metricsRegistry);
+        this.fiberMetrics = new FiberMetrics();
+        metricsRegistry.addTarget(fiberMetrics);
         this.qwpEgressMetrics = new QwpEgressMetrics(metricsRegistry);
         this.lineMetrics = new LineMetrics(metricsRegistry);
         this.healthCheck = new HealthMetricsImpl(metricsRegistry);
@@ -87,6 +91,7 @@ public class Metrics implements Target, Mutable {
         gcMetrics.clear();
         jsonQueryMetrics.clear();
         pgMetrics.clear();
+        fiberMetrics.clear();
         qwpEgressMetrics.clear();
         lineMetrics.clear();
         healthCheck.clear();
@@ -99,6 +104,10 @@ public class Metrics implements Target, Mutable {
 
     public void disable() {
         enabled = false;
+    }
+
+    public FiberMetrics fiberMetrics() {
+        return fiberMetrics;
     }
 
     public MetricsRegistry getRegistry() {

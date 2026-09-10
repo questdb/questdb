@@ -35,9 +35,9 @@ import org.junit.Before;
 
 /**
  * Bootstrap test base for QWP tests that need to exercise the HTTP fragmentation
- * code paths. Each test method gets a fresh pair of random recv / send chunk
- * sizes in [1, 500] derived from the JUnit-managed seed, so failures replay
- * deterministically from the seed log written by
+ * code paths. Each test method gets a fresh pair of random chunk sizes derived
+ * from the JUnit-managed seed -- recv in [1, 500] and send in [64, 500] -- so
+ * failures replay deterministically from the seed log written by
  * {@link TestUtils#generateRandom}. Subclasses launch the server via
  * {@link #startFragmented(String...)}, which threads the chunks through
  * {@code DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE} and
@@ -53,14 +53,28 @@ public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
     @Before
     public void setUpFragmentationChunks() {
         Rnd rnd = TestUtils.generateRandom(LOG);
+        // recvChunk drives the incremental request parser, which is offset
+        // sensitive, and requests are small -- keep the 1-byte draw.
         recvChunk = 1 + rnd.nextInt(500);
-        sendChunk = 1 + rnd.nextInt(500);
+        // sendChunk is floored. HttpResponseSink#sendBuffer ships at most
+        // sendChunk bytes per event-loop pass and parks in between, so egress
+        // pays one dispatcher round trip per chunk. A 1-byte draw made a
+        // 50k-row LONG projection (~400 KB) take 62.4 s on a hosted macOS
+        // agent, overrunning the 60 s query.timeout and aborting the query
+        // mid-stream. The floor still fragments every batch (~2k parks per
+        // 131 KB batch), and the send resume path only advances a byte pointer
+        // (ChunkUtf8Sink#onRead) rather than driving an offset-sensitive state
+        // machine, so a finer split adds no coverage. Tests that need a
+        // specific 1-byte split pin sendChunk themselves.
+        sendChunk = 64 + rnd.nextInt(437);
     }
 
     protected long firstBatchTimeoutMs(long baseMs) {
         // HttpResponseSink#sendBuffer parks every sendChunk bytes; a first batch
-        // can be ~131 KB (MAX_ROWS_PER_BATCH=16384 LONGs) plus framing, so at the
-        // worst random sendChunk=1 it needs tens of thousands of park-resume cycles.
+        // can be ~131 KB (MAX_ROWS_PER_BATCH=16384 LONGs) plus framing, so a small
+        // sendChunk needs tens of thousands of park-resume cycles. The default draw
+        // is floored at 64 and lands on baseMs; this still scales for a test that
+        // pins a smaller sendChunk itself.
         int effectiveChunk = Math.max(1, Math.min(sendChunk, 64));
         return baseMs * 64L / effectiveChunk;
     }
