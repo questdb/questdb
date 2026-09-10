@@ -3460,6 +3460,189 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testTtlEvictionBelowTheResumeFloorStillWritesEveryLaterOutput() throws Exception {
+        // The skip-write floor is a durable output POSITION, established once per process by a
+        // proven resume, and the sweep keeps writing every output whose emitted ordinal reaches it.
+        // A TTL eviction inside the sweep's own commit takes the table below that position - here
+        // three of the four rows the floor counts go at once - and the sweep then rides out the
+        // rest of its turns with a floor that names more rows than the table holds.
+        //
+        // That only works because nothing lowers lvRowsTotal while the view is SEEDING: the sweep
+        // settles the removal against the counter once, at the completion boundary, where the
+        // counter has no second role left. Settle it in the turn that takes the removal instead -
+        // reconcileSeedPartitionRemovals called right after the turn's own apply, the mutation this
+        // case was run against - and the next turn re-enters with an emitted ordinal below the floor
+        // and skips writing the outputs it recomputes. That is a permanent hole rather than a
+        // duplicate: the 300-emitted-rows-lose-their-first-100 case, run forward through a sweep
+        // instead of across a restart.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 2); // two rows per seed turn
+        assertMemoryLeak(() -> {
+            createResumeFloorSeedBase();
+            createSeedView("TTL 3 DAYS ");
+            final TableToken lvToken = engine.verifyTableName("lv");
+
+            // Two clean turns, four durable rows, nothing evicted - so the restart below finds a
+            // root it can prove and a table whose size still names the emitted ordinal.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedTurnsUntil(
+                        job,
+                        () -> lvRowCount(lvToken) >= 4,
+                        "the seed never reached four durable rows"
+                );
+                assertRetentionMarker(lvToken, false);
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // 1970-01-07 carries the view's frontier three days past 1970-01-04's ceiling, so
+                // the turn that commits it evicts the first three days. Drive on the table's own
+                // size rather than on the pending events: the events are what a mid-sweep
+                // reconciliation would consume, and the premise here is the row count.
+                final LiveViewInstance instance = driveSeedTurnsUntil(
+                        job,
+                        () -> lvRowCount(lvToken) < 4,
+                        "the seed never evicted below the resume floor"
+                );
+                Assert.assertEquals(
+                        "the resume must be the proven kind, whose floor is the durable row count",
+                        4,
+                        instance.getSeedSkipWriteFloor()
+                );
+                Assert.assertFalse(instance.isSeedReplacePending());
+                Assert.assertEquals("the table must now hold fewer rows than the floor names", 3, lvRowCount(lvToken));
+                Assert.assertEquals("the emitted ordinal must not follow the table down", 6, instance.getLvRowsTotal());
+                Assert.assertTrue(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, true);
+
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+
+                // Both outputs the later turns processed are on disk, at the row numbers a single
+                // uninterrupted pass produces.
+                assertResumeFloorSeedRows();
+                Assert.assertEquals("the evicted rows must leave the lifetime counter", 5, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertLadder(instance, ts("1970-01-07T02:00:00.000000Z"), 5);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testInProcessSeedFailureAfterAnEvictionDoesNotReuseTheResumeFloor() throws Exception {
+        // The same eviction, followed by a turn that faults before it commits. A mid-seed fault
+        // re-arms the resume in the SAME process - rebuildWindowStateAfterMidDrainFailure keeps the
+        // pinned base snapshot and clears the resume-attempted flag - so the next turn runs the
+        // whole resume setup again over a table a removal has already holed.
+        //
+        // It must reach the same verdict a restart does: the retention marker stands (a SEEDING view
+        // defers its reconciliation), so no root is trusted, the sweep re-runs from the membership
+        // lower bound behind a full-range replacement, and the floor the earlier resume derived goes
+        // back to zero. Carrying that floor into the re-sweep is what "reuse of the old skip-write
+        // path" means: the replacement wipes the durable range and the first four recomputed outputs
+        // are then skip-written into it, so 1970-01-04 - the one row below the floor that survives to
+        // the end - never comes back. Re-deriving the floor from the table's own size instead, which
+        // is the literal shape of the old path, holes the re-sweep just as surely but not visibly:
+        // the three days it drops are the three the TTL evicts anyway. The floor assertion below is
+        // what names that one.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 2); // two rows per seed turn
+        final String[] baseDir = new String[1];
+        final AtomicBoolean armBaseReadFault = new AtomicBoolean();
+        final AtomicBoolean baseReadFailed = new AtomicBoolean();
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                // The base is hour-partitioned, so the sweep crosses a base partition boundary
+                // inside the view's last day - which is what lets the fault land on a turn that has
+                // already fed a row (windowStateDirty, the mid-drain rebuild's own guard) rather
+                // than on its very first hasNext(). One shot: the re-swept read succeeds.
+                if (armBaseReadFault.get()
+                        && baseDir[0] != null
+                        && Utf8s.endsWithAscii(name, "x.d")
+                        && Utf8s.containsAscii(name, baseDir[0])
+                        && Utf8s.containsAscii(name, "1970-01-07T02")
+                        && !Utf8s.containsAscii(name, "wal")) {
+                    armBaseReadFault.set(false);
+                    baseReadFailed.set(true);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        }, () -> {
+            createResumeFloorSeedBase();
+            createSeedView("TTL 3 DAYS ");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            baseDir[0] = engine.verifyTableName("base").getDirName();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedTurnsUntil(
+                        job,
+                        () -> lvRowCount(lvToken) >= 4,
+                        "the seed never reached four durable rows"
+                );
+                assertRetentionMarker(lvToken, false);
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            capture.start();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = driveSeedTurnsUntil(
+                        job,
+                        () -> lvRowCount(lvToken) < 4,
+                        "the seed never evicted below the resume floor"
+                );
+                Assert.assertEquals(4, instance.getSeedSkipWriteFloor());
+                Assert.assertEquals(3, lvRowCount(lvToken));
+                Assert.assertEquals(6, instance.getLvRowsTotal());
+                Assert.assertTrue(instance.hasPendingPartitionRemovals());
+
+                armBaseReadFault.set(true);
+                job.run();
+                drainWalQueue();
+                Assert.assertTrue("the mid-seed read must actually have been failed", baseReadFailed.get());
+                Assert.assertEquals("the faulting turn commits nothing", 3, lvRowCount(lvToken));
+                Assert.assertEquals(
+                        "the faulting turn leaves the emitted ordinal where the last commit put it",
+                        6,
+                        instance.getLvRowsTotal()
+                );
+                Assert.assertEquals("a mid-seed fault must not charge the retry budget", 0, instance.getFlushRetryCount());
+                Assert.assertFalse("a mid-seed fault must not invalidate the view", instance.isInvalid());
+
+                // The re-armed turn runs the resume setup again, in this same process.
+                driveSeedTurnsUntil(
+                        job,
+                        () -> instance.getSeedSkipWriteFloor() == 0,
+                        "the re-armed resume setup never cleared the floor the earlier resume derived"
+                );
+                capture.waitFor("live view seed sweep replacing unproven durable output [view=lv");
+
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+
+                // The re-sweep re-derives every output off the base, so the result is the one an
+                // uninterrupted seed produces - 1970-01-04 included.
+                assertResumeFloorSeedRows();
+                Assert.assertEquals(5, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertLadder(instance, ts("1970-01-07T02:00:00.000000Z"), 5);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                Assert.assertEquals("exactly the injected fault, and no other", 1, instance.getRefreshFaultCount());
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
     public void testDropPartitionWhileSeedingReconcilesTheCounterAtCompletion() throws Exception {
         // A DROP PARTITION sequenced against a SEEDING view is applied by the next sweep turn,
         // whose own apply carries it. The sweep keeps its cursor and its emitted-output total,
@@ -4438,6 +4621,59 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                         1970-01-04T00:00:00.000000Z\t4\t4
                         1970-01-05T00:00:00.000000Z\t5\t5
                         """);
+    }
+
+    /**
+     * The result {@link #createResumeFloorSeedBase}'s history seeds down to under {@code TTL 3
+     * DAYS}: 1970-01-04 is the newest of the four days the pre-restart turns wrote, and the only
+     * one of them the view's final frontier still keeps. Every row carries the {@code rn} a single
+     * uninterrupted pass over the whole base produces, so a re-fed row shows up as a repeat and a
+     * skipped one as a gap - neither of which a row count alone would name.
+     */
+    private void assertResumeFloorSeedRows() throws Exception {
+        assertQuery("SELECT ts, x, rn FROM lv")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tx\trn
+                        1970-01-04T00:00:00.000000Z\t4\t4
+                        1970-01-07T00:00:00.000000Z\t5\t5
+                        1970-01-07T01:00:00.000000Z\t6\t6
+                        1970-01-07T01:30:00.000000Z\t7\t7
+                        1970-01-07T02:00:00.000000Z\t8\t8
+                        """);
+    }
+
+    /**
+     * Eight base rows shaped so that a two-row seed turn can cross into a fresh base partition
+     * without carrying the view's own frontier past what {@code TTL 3 DAYS} keeps.
+     * <p>
+     * The first four rows sit on consecutive days and stay whole under the TTL, so a restart taken
+     * after them resumes off a root it can prove and derives a skip-write floor of four. The fifth
+     * row jumps to 1970-01-07, which is three days past 1970-01-04's partition ceiling: the turn
+     * that commits it evicts the first three days at once and leaves the table holding fewer rows
+     * than the floor names, with 1970-01-04 - an ordinal below the floor - surviving to the end.
+     * <p>
+     * The last three rows share that day and sit in three different base hours. The base is
+     * hour-partitioned and the view day-partitioned for exactly that reason: a turn can open a
+     * fresh base partition mid-flight, which is where a read fault reaches a turn that has already
+     * fed a row, while the view's frontier moves by two hours rather than by a day.
+     */
+    private void createResumeFloorSeedBase() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        execute("""
+                INSERT INTO base (ts, sym, x) VALUES
+                ('1970-01-01T00:00:00.000000Z', 'a', 1),
+                ('1970-01-02T00:00:00.000000Z', 'a', 2),
+                ('1970-01-03T00:00:00.000000Z', 'a', 3),
+                ('1970-01-04T00:00:00.000000Z', 'a', 4),
+                ('1970-01-07T00:00:00.000000Z', 'a', 5),
+                ('1970-01-07T01:00:00.000000Z', 'a', 6),
+                ('1970-01-07T01:30:00.000000Z', 'a', 7),
+                ('1970-01-07T02:00:00.000000Z', 'a', 8)""");
+        drainWalQueue();
+        setCurrentMicros(ts("1970-02-01T00:00:00.000000Z"));
     }
 
     /**
