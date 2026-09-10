@@ -1743,6 +1743,27 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testMatViewRowExpiryCleanupMinExpiredFractionRejectsAboveOne() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath(), "1.1");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION);
+    }
+
+    @Test
+    public void testMatViewRowExpiryCleanupMinExpiredFractionRejectsNaN() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath(), "NaN");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION);
+    }
+
+    @Test
+    public void testMatViewRowExpiryCleanupMinExpiredFractionRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath(), "-0.1");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION);
+    }
+
+    @Test
     public void testMinimum2SharedWorkers() throws Exception {
         final Properties properties = new Properties();
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
