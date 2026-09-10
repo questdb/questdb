@@ -413,7 +413,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
      */
     private void assertSymbolsIntact(long expected) throws Exception {
         assertQuery("SELECT count() FROM " + TABLE_NAME
-                        + " WHERE sym IS NULL OR sym <> concat('s', (id % " + SYMBOL_CARDINALITY + ")::string)")
+                + " WHERE sym IS NULL OR sym <> concat('s', (id % " + SYMBOL_CARDINALITY + ")::string)")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
@@ -423,7 +423,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
         // pairs with the zero-mismatch query above so a degenerate predicate
         // can't pass both checks vacuously.
         assertQuery("SELECT count() FROM " + TABLE_NAME
-                        + " WHERE sym = concat('s', (id % " + SYMBOL_CARDINALITY + ")::string)")
+                + " WHERE sym = concat('s', (id % " + SYMBOL_CARDINALITY + ")::string)")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()

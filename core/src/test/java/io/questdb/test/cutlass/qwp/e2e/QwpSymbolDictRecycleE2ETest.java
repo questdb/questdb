@@ -318,7 +318,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
             // across a recycle boundary reads back the wrong value here even
             // though the row count above stays correct.
             assertQuery("SELECT count() FROM " + TABLE_NAME
-                            + " WHERE sym IS NULL OR sym <> concat('s', (id % " + SYMBOL_CARDINALITY + ")::string)")
+                    + " WHERE sym IS NULL OR sym <> concat('s', (id % " + SYMBOL_CARDINALITY + ")::string)")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -332,7 +332,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
             // once, since together they must account for every one of the
             // TOTAL_ROWS rows exactly once.
             assertQuery("SELECT count() FROM " + TABLE_NAME
-                            + " WHERE sym = concat('s', (id % " + SYMBOL_CARDINALITY + ")::string)")
+                    + " WHERE sym = concat('s', (id % " + SYMBOL_CARDINALITY + ")::string)")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
