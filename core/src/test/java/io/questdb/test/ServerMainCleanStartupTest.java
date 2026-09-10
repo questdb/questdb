@@ -75,7 +75,7 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
 
                 // ensure transactions. Project only the deterministic columns: under the
                 // default ADAPTIVE commit mode a real ServerMain fires durable epochs on a
-                // wall-clock schedule, so durableEpochSeqTxn/walRetentionTxn/lastEpochTs are
+                // wall-clock schedule, so durableEpochSeqTxn/lastEpochTs are
                 // timing-dependent (lastEpochTs is a wall-clock instant). The epoch columns
                 // are covered deterministically by the adaptive-epoch suites; this clean-start
                 // smoke check asserts the stable frontier instead.

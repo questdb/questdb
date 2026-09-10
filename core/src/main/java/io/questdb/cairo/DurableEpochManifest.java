@@ -216,8 +216,12 @@ public final class DurableEpochManifest {
                     .put("could not open table metadata to record adaptive enrollment [table=")
                     .put(tableToken.getTableName()).put(", path=").put(tablePath).put(']');
         }
-        final long tempMem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);
+        // malloc INSIDE the try: checkAllocLimit throws when rssMemLimit is exceeded, and an allocation
+        // that failed outside the guard would strand the _meta descriptor opened just above. The DDL
+        // failure is non-critical, so the operator retries and each retry would leak another fd.
+        long tempMem = 0;
         try {
+            tempMem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);
             TableUtils.writeIntOrFail(
                     ff,
                     fd,
@@ -232,7 +236,9 @@ public final class DurableEpochManifest {
             TableUtils.refreshMetaBodyChecksumOnFd(ff, fd, tempMem, tablePath);
             ff.fsync(fd);
         } finally {
-            Unsafe.free(tempMem, Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);
+            if (tempMem != 0) {
+                Unsafe.free(tempMem, Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);
+            }
             ff.close(fd);
         }
         tablePath.trimTo(rootLen);

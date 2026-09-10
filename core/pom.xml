@@ -85,16 +85,44 @@
             <resource>
                 <directory>src/main/resources</directory>
             </resource>
-            <resource>
-                <directory>${project.basedir}/..</directory>
-                <targetPath>META-INF</targetPath>
-                <includes>
-                    <include>LICENSE.txt</include>
-                    <include>THIRD_PARTY_LICENSES.txt</include>
-                </includes>
-            </resource>
         </resources>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <!--
+                      LICENSE.txt and THIRD_PARTY_LICENSES.txt live at the repository
+                      root: the latter is generated and committed by CI (see
+                      .github/workflows/rebuild_rust.yml) and both describe the whole
+                      repo, not just this module. Copy them rather than declaring the
+                      repo root as a <resource> directory of this module: a resource
+                      root above the module base cannot be represented in Eclipse's
+                      resource model, so m2e (and therefore jdtls/VS Code/Zed) aborts
+                      the whole workspace import on it.
+                    -->
+                    <execution>
+                        <id>copy-licenses</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.outputDirectory}/META-INF</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/..</directory>
+                                    <includes>
+                                        <include>LICENSE.txt</include>
+                                        <include>THIRD_PARTY_LICENSES.txt</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -252,8 +280,8 @@
 
                  NOTE tmpfs is not on QuestDB's supported-filesystem list, which would make
                  FilesFacadeImpl.allowMixedIO answer false and quietly move the suite onto the non-mixed-IO
-                 O3 write path, the opposite of what CI exercises. TestFilesFacadeImpl.allowMixedIO keeps
-                 the on-disk answer for a tmpfs root so that does not happen; see the note there. -->
+                 O3 write path, the opposite of what CI exercises. CairoTestConfiguration.isWriterMixedIOEnabled
+                 keeps the on-disk answer for a tmpfs root so that does not happen; see the note there. -->
             <id>ram-disk-test-root</id>
             <activation>
                 <property>

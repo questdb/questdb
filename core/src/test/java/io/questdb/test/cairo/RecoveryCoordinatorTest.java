@@ -906,7 +906,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             }
 
             Assert.assertEquals(1, syncAttempts.get());
-            Assert.assertTrue(engine.isDurabilityPoisoned());
+            Assert.assertTrue(engine.isDurabilityFailed());
             Assert.assertEquals("fsyncAndClose", engine.getDurabilityFailure().getOperation());
         } finally {
             AbstractCairoTest.ff = ffBefore;

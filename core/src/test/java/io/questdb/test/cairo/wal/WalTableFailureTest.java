@@ -1403,16 +1403,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\twalRetentionTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
-                            tableToken.getTableName() + "\tfalse\t1\t0\t1\t\t\t0\tnosync\t0\t0\t0\t-1\t\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\tfalse\t1\t0\t1\t\t\t0\tnosync\t0\t0\t-1\t\n");
 
             execute("alter table " + tableToken.getTableName() + " suspend wal");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\twalRetentionTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
-                            tableToken.getTableName() + "\ttrue\t1\t0\t1\t\t\t0\tnosync\t0\t0\t0\t-1\t\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\ttrue\t1\t0\t1\t\t\t0\tnosync\t0\t0\t-1\t\n");
 
             execute("update " + tableToken.getTableName() + " set x = 1111;");
             drainWalQueue();
@@ -1428,16 +1428,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\twalRetentionTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
-                            tableToken.getTableName() + "\ttrue\t1\t0\t2\tDISK FULL\ttest error message\t0\tnosync\t0\t0\t0\t-1\t\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\ttrue\t1\t0\t2\tDISK FULL\ttest error message\t0\tnosync\t0\t0\t-1\t\n");
 
             execute("alter table " + tableToken.getTableName() + " resume wal;");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\twalRetentionTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
-                            tableToken.getTableName() + "\tfalse\t1\t0\t2\t\t\t0\tnosync\t0\t0\t0\t-1\t\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\tfalse\t1\t0\t2\t\t\t0\tnosync\t0\t0\t-1\t\n");
 
             drainWalQueue();
             assertQuery(tableToken.getTableName())
@@ -1821,8 +1821,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\twalRetentionTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
-                            tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\tnosync\t0\t0\t0\t-1\t\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\tnosync\t0\t0\t-1\t\n");
         });
     }
 
@@ -2449,9 +2449,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\twalRetentionTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
                             tableToken.getTableName() + "\ttrue\t1\t0\t4\t" + expectedTag +
-                            "\t" + errorMessage + "\t0\tnosync\t0\t0\t0\t-1\t\n");
+                            "\t" + errorMessage + "\t0\tnosync\t0\t0\t-1\t\n");
 
             execute("alter table " + tableToken.getTableName() + " resume wal");
             execute("alter table " + tableToken.getTableName() + " resume wal from transaction 0"); // ignored
@@ -2467,8 +2467,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\twalRetentionTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
-                            tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\tnosync\t0\t0\t0\t-1\t\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\tnosync\t0\t0\t-1\t\n");
 
             execute("drop table " + tableToken.getTableName());
         });

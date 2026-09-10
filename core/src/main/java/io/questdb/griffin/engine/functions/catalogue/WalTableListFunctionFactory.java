@@ -78,7 +78,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     private static final int recoveryIncarnationColumn;
     private static final int sequencerTxnColumn;
     private static final int suspendedColumn;
-    private static final int walRetentionTxnColumn;
     private static final int writerTxnColumn;
 
     @Override
@@ -216,7 +215,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                 private long sequencerTxn;
                 private boolean suspendedFlag;
                 private String tableName;
-                private long walRetentionTxn;
                 private long writerTxn;
 
                 @Override
@@ -248,9 +246,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     }
                     if (col == durableEpochSeqTxnColumn) {
                         return durableEpochSeqTxn;
-                    }
-                    if (col == walRetentionTxnColumn) {
-                        return walRetentionTxn;
                     }
                     if (col == recoveryIncarnationColumn) {
                         return recoveryIncarnation;
@@ -311,7 +306,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             writerTxn = seqTxnTracker.getWriterTxn();
                             bufferedTxnSize = seqTxnTracker.getLagTxnCount();
                             durableEpochSeqTxn = seqTxnTracker.getDurableEpochSeqTxn();
-                            walRetentionTxn = seqTxnTracker.getDurableEpochSeqTxn();
                             recoveryIncarnation = seqTxnTracker.getRecoveryIncarnation();
                             localDurableSeqTxn = seqTxnTracker.getLocalDurableSeqTxn();
                             // getLastEpochTs() is wall-clock MILLIS (0 == no epoch yet); the column is
@@ -333,7 +327,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
                         // Tracker not yet initialised: epoch/retention fields default to 0
                         durableEpochSeqTxn = 0;
-                        walRetentionTxn = 0;
                         recoveryIncarnation = 0;
                         localDurableSeqTxn = 0;
                         lastEpochTs = Numbers.LONG_NULL;
@@ -410,8 +403,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         commitModeColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("durableEpochSeqTxn", ColumnType.LONG));
         durableEpochSeqTxnColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("walRetentionTxn", ColumnType.LONG));
-        walRetentionTxnColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("recoveryIncarnation", ColumnType.LONG));
         recoveryIncarnationColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("localDurableSeqTxn", ColumnType.LONG));

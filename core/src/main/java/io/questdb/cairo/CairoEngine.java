@@ -3827,10 +3827,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return durabilityFailure.get() != null;
     }
 
-    public boolean isDurabilityPoisoned() {
-        return isDurabilityFailed();
-    }
-
     /**
      * Permanently poison this engine after a synchronous durability barrier failed. The first failure wins.
      * The callback is invoked only by the first failing thread. It must hard-stop production; standalone and

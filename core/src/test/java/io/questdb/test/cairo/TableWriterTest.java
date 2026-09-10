@@ -566,7 +566,7 @@ public class TableWriterTest extends AbstractCairoTest {
                         Assert.assertTrue(CairoException.isDataSyncFailure(expected));
                     }
                     Assert.assertEquals(1, ff.syncFailureCount);
-                    Assert.assertTrue(engine.isDurabilityPoisoned());
+                    Assert.assertTrue(engine.isDurabilityFailed());
                 }
             });
         } finally {

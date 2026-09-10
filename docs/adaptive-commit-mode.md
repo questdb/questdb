@@ -262,7 +262,7 @@ per-table drill-down, and **Prometheus** for process-level aggregates.
 
 ```sql
 SELECT name, commitMode, sequencerTxn, writerTxn,
-       localDurableSeqTxn, durableEpochSeqTxn, walRetentionTxn,
+       localDurableSeqTxn, durableEpochSeqTxn,
        lastEpochTs, recoveryIncarnation
 FROM wal_tables();
 ```
@@ -273,8 +273,7 @@ FROM wal_tables();
 | `sequencerTxn` | LONG | The latest acked (sequenced) transaction — the visible/apply frontier's upper bound. |
 | `writerTxn` | LONG | The transaction the table writer has applied. |
 | `localDurableSeqTxn` | LONG | The **local durable frontier**: the highest seqTxn whose WAL is device-durable (`fdatasync`'d). Advances only on adaptive tables. |
-| `durableEpochSeqTxn` | LONG | The seqTxn of the last durable **epoch** (the fast-boot anchor / recovery base). |
-| `walRetentionTxn` | LONG | The WAL retention floor — the seqTxn below which WAL segments may be purged. Under adaptive this equals `durableEpochSeqTxn` (the epoch is the retention floor). |
+| `durableEpochSeqTxn` | LONG | The seqTxn of the last durable **epoch** (the fast-boot anchor / recovery base). Under adaptive it also contributes the epoch term to the WAL retention floor, but it is not the floor itself — `WalPurgeJob` takes the minimum of the epoch term and every mat-view / live-view consumer floor. |
 | `lastEpochTs` | TIMESTAMP | Wall-clock time of the last durable epoch; `NULL` if no epoch has been taken yet. |
 | `recoveryIncarnation` | LONG | Per-table count of recovery roll-forwards — bumps each time this table is recovered. A crash/recover detector. |
 
@@ -292,12 +291,15 @@ SELECT name, sequencerTxn - durableEpochSeqTxn AS epoch_lag
 FROM wal_tables();
 ```
 
-Confirmed in source (`WalTableListFunctionFactory.java`): `commitMode` STRING
-(`:409`), `durableEpochSeqTxn` LONG (`:411`), `walRetentionTxn` LONG (`:413`, set
-from `getDurableEpochSeqTxn()` at `:314` — hence equal to `durableEpochSeqTxn`),
-`recoveryIncarnation` LONG (`:415`), `localDurableSeqTxn` LONG (`:417`),
-`lastEpochTs` TIMESTAMP (`:419`, `NULL` when no epoch, `:321`); plus existing
-`sequencerTxn` (`:400`) and `writerTxn` (`:396`).
+Confirmed in source (`WalTableListFunctionFactory.java`): `commitMode` STRING,
+`durableEpochSeqTxn` LONG, `recoveryIncarnation` LONG, `localDurableSeqTxn` LONG,
+`lastEpochTs` TIMESTAMP (`NULL` when no epoch); plus existing `sequencerTxn` and
+`writerTxn`.
+
+There is deliberately no `walRetentionTxn` column: the real floor is the minimum
+`WalPurgeJob` computes across the epoch term and every view consumer, which a
+per-table catalogue row cannot reproduce. Exposing the epoch term under a
+retention name would report a different quantity than its name promises.
 
 ### 5.2 Prometheus metrics
 
