@@ -92,8 +92,11 @@ public final class FuzzConfig {
         // generators in every run.
         this.numTables = 2 + rnd.nextInt(2);
         this.rowsPerTable = 60 + rnd.nextInt(90);
-        this.minColumnsPerTable = 3;
-        this.maxColumnsPerTable = 10;
+        // Wide enough that one table takes a real slice off the shuffled type
+        // deck FuzzTableFactory deals from, so a run covers a good part of the
+        // type registry even when it builds a single table.
+        this.minColumnsPerTable = 5;
+        this.maxColumnsPerTable = 12;
         // 30 minutes: rowsPerTable * 30min covers 30..75 hours, so 2-4 DAY partitions.
         this.stepMicros = 30L * 60L * 1_000_000L;
         this.tsStart = "2024-01-01";

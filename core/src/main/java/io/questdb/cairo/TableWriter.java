@@ -10021,6 +10021,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // insertPartition only touches attachedPartitions.
         final boolean wasActivePartition = partitionIndex == txWriter.getPartitionCount() - 1;
         txWriter.insertPartition(partitionIndex + 1, tailPartitionTs, written, newNameTxn);
+        // The sibling this leaves behind is a split like any other, and squashSplitPartitions scans from
+        // minSplitPartitionTimestamp - so without this it never sees a MOVE-TAIL's output at all and the
+        // split population grows past o3.last.partition.max.splits unchecked. Measured on a 100M-row
+        // ingest: 42 partitions in one logical day against a limit of 20, and not one squash.
+        minSplitPartitionTimestamp = Math.min(minSplitPartitionTimestamp, tailPartitionTs);
         if (wasActivePartition) {
             txWriter.fixedRowCount += prefixRows;
             txWriter.transientRowCount = written;

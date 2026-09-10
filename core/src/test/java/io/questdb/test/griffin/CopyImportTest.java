@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -45,6 +46,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.CountDownLatch;
 
 import static org.junit.Assert.*;
@@ -624,6 +626,77 @@ public class CopyImportTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyWithSkipAllAtomicityImportsNothing() throws Exception {
         testCopyWithAtomicity(true, "ABORT", 0);
+    }
+
+    @Test
+    public void testParallelCopyWithSkipRowAtomicitySkipsOutOfBoundsNanosTimestamp() throws Exception {
+        // A numeric designated timestamp bypasses the date parser's year check, so the importer's
+        // indexing phase is what refuses a value beyond 2261-12-31. ON ERROR SKIP_ROW drops that
+        // row, imports its neighbours, and reports it as an indexing error in the import log,
+        // where rows_handled counts the rows that reached the partition import phase; the refusal
+        // used to escape from the writer in that phase and fail the whole COPY.
+        final String csvRoot = inputRoot;
+        try {
+            final File dir = temp.newFolder("nanos-bounds" + System.nanoTime());
+            TestUtils.writeStringToFile(
+                    new File(dir, "nanos-bounds.csv"),
+                    "id,ts\n"
+                            + "1," + (CommonUtils.MAX_TIMESTAMP - 1) + "\n"
+                            + "2," + (CommonUtils.MAX_TIMESTAMP + 1) + "\n"
+                            + "3," + CommonUtils.MAX_TIMESTAMP + "\n"
+            );
+            inputRoot = dir.getAbsolutePath();
+
+            CopyRunnable stmt = () -> {
+                execute("CREATE TABLE tab (id INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+                runAndFetchCopyID(
+                        "COPY tab FROM 'nanos-bounds.csv' WITH HEADER true TIMESTAMP 'ts' ON ERROR SKIP_ROW;",
+                        sqlExecutionContext
+                );
+            };
+
+            CopyRunnable test = () -> {
+                assertQuery("SELECT id, ts FROM tab")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                id\tts
+                                1\t2261-12-31T23:59:59.999999998Z
+                                3\t2261-12-31T23:59:59.999999999Z
+                                """);
+                assertQuery("SELECT phase, status, rows_handled, rows_imported, errors FROM " + configuration.getSystemTableNamePrefix() + "text_import_log")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                phase\tstatus\trows_handled\trows_imported\terrors
+                                \tstarted\tnull\tnull\t0
+                                analyze_file_structure\tstarted\tnull\tnull\t0
+                                analyze_file_structure\tfinished\tnull\tnull\t0
+                                boundary_check\tstarted\tnull\tnull\t0
+                                boundary_check\tfinished\tnull\tnull\t0
+                                indexing\tstarted\tnull\tnull\t0
+                                indexing\tfinished\tnull\tnull\t1
+                                partition_import\tstarted\tnull\tnull\t0
+                                partition_import\tfinished\tnull\tnull\t0
+                                symbol_table_merge\tstarted\tnull\tnull\t0
+                                symbol_table_merge\tfinished\tnull\tnull\t0
+                                update_symbol_keys\tstarted\tnull\tnull\t0
+                                update_symbol_keys\tfinished\tnull\tnull\t0
+                                build_symbol_index\tstarted\tnull\tnull\t0
+                                build_symbol_index\tfinished\tnull\tnull\t0
+                                move_partitions\tstarted\tnull\tnull\t0
+                                move_partitions\tfinished\tnull\tnull\t0
+                                attach_partitions\tstarted\tnull\tnull\t0
+                                attach_partitions\tfinished\tnull\tnull\t0
+                                \tfinished\t2\t2\t1
+                                """);
+            };
+
+            testCopy(stmt, test);
+        } finally {
+            inputRoot = csvRoot;
+        }
     }
 
     @Test
