@@ -169,6 +169,12 @@ public class CompositePartitionForceSquashTest extends AbstractCairoTest {
      * unconditional composite guard used to bail out on.
      */
     private static void createSplitCompositeDay() throws Exception {
+        // The opportunistic squash folds composite siblings now, so being composite no longer keeps this
+        // day's split alive on its own. Raise the split limits instead: the fixture holds far fewer
+        // siblings than this, so the opportunistic pass finds nothing to do and the forced squash under
+        // test is still the one that folds them.
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1000);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1000);
         execute("CREATE TABLE x AS (" +
                 "SELECT cast(x AS int) i, rnd_str(5, 16, 2) s," +
                 " timestamp_sequence('2024-01-01', 1_000_000L) ts" +
@@ -194,7 +200,7 @@ public class CompositePartitionForceSquashTest extends AbstractCairoTest {
         Assert.assertTrue("fixture produced no composite partition", isComposite("2024-01-01"));
 
         // A later day, so the split day is no longer the last one: the last partition can never be
-        // detached. The composite flag is what keeps the opportunistic squash off the day in the
+        // detached. The raised split limits are what keep the opportunistic squash off the day in the
         // meantime, so the siblings survive this commit.
         execute("INSERT INTO x SELECT cast(x AS int) + 100_000 i, rnd_str(5, 16, 2) s," +
                 " timestamp_sequence('2024-01-03', 1_000_000L) ts FROM long_sequence(1_000)");

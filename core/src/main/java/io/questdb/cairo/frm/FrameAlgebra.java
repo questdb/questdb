@@ -170,7 +170,7 @@ public class FrameAlgebra {
         final long nullPaddingRowCount = Math.max(0, Math.min(sourceColumnTop, sourceHi) - sourceLo);
         if (nullPaddingRowCount > 0) {
             long targetColTop = targetColumn.getColumnTop();
-            if (targetColTop == targetRowCount) {
+            if (targetColTop == targetRowCount && targetColumn.canExtendColumnTop()) {
                 // Increase target column top
                 targetColumn.addTop(nullPaddingRowCount);
             } else {

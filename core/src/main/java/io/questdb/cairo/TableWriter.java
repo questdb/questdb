@@ -16419,17 +16419,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         assert partitionIndexHi >= 0 && partitionIndexHi <= txWriter.getPartitionCount() && partitionIndexLo >= 0;
 
-        // A composite partition anywhere in the range is unsafe to fold here: this squash reads each source as one
-        // contiguous frame sized to live rows from file row 0, which misreads a directory whose live rows are
-        for (int i = partitionIndexLo; !force && i < partitionIndexHi; i++) {
-            if (txWriter.isPartitionComposite(i)) {
-                LOG.info().$("skipping partition squash, partition is composite [table=").$(tableToken)
-                        .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))
-                        .I$();
-                return;
-            }
-        }
-
         long targetPartition = Long.MIN_VALUE;
         boolean copyTargetFrame = false;
         final PartitionGeometry geometry = getGeometry();
@@ -16437,9 +16426,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Move targetPartitionIndex to the first unlocked partition in the range.
         int targetPartitionIndex = partitionIndexLo;
         for (int n = partitionIndexHi - 1; targetPartitionIndex < n; targetPartitionIndex++) {
-            if (!force && geometry.isComposite(targetPartitionIndex)) {
-                continue;
-            }
             boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
             if (canOverwrite || force) {
                 targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
@@ -16472,21 +16458,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        if (!force && geometry.isComposite(targetPartitionIndex + 1)) {
-            // The very next sibling is composite and this pass cannot fold across it, so return before
-            // opening any frame or committing a no-op transaction.
-            return;
-        }
-
-        // The target and every source get read as one contiguous frame sized to live rows from file row
-        // 0, which is only correct for an ordinary partition. The selection loop above keeps a composite
-        // one out of targetPartitionIndex except under force.
+        // A forced squash - ALTER TABLE SQUASH PARTITIONS, detach, parquet conversion - owes its caller one
+        // ordinary partition, so the target is flattened first and the composite path below never applies.
         if (force) {
             compactPartitionToPlain(targetPartitionIndex, "squash");
         }
+        // A composite target's rows stop short of its files: the appends have to start past the dead space,
+        // at E, or they would land on top of rows a piece still points at. Its live count and its geometry
+        // are then maintained by hand below, since neither is the frame's row count any more.
+        final boolean targetIsComposite = geometry.isComposite(targetPartitionIndex);
+        if (targetIsComposite && copyTargetFrame) {
+            // The copy republishes the target under a new name txn, and a name txn is half the key its
+            // geometry record is filed under, so the pieces below would be written against a directory the
+            // geometry no longer knows. It would also duplicate the dead space on the way. Leave the fold
+            // to a later pass, once the readers have moved off and the append can go in place.
+            return;
+        }
         long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
         setPathForNativePartition(path, timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
-        final long originalSize = txWriter.getPartitionRowCountByTimestamp(targetPartition);
+        final long targetLiveRows = txWriter.getPartitionRowCountByTimestamp(targetPartition);
+        final long targetExtent = targetIsComposite ? geometry.getE(targetPartitionIndex) : targetLiveRows;
+        final long originalSize = targetExtent;
 
         boolean rw = !copyTargetFrame;
         Frame targetFrame = null;
@@ -16523,17 +16515,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
             // Cold version of the merged partition: max of the merged sources' offset-3 seqTxns, not the high-water.
             long squashedSeqTxn = Math.max(0, nativePartitionSeqTxn(targetPartitionIndex));
+            // Routing bounds of the run the loop appends, needed only when the target stays composite.
+            long squashedPieceTsLo = Long.MAX_VALUE;
+            long squashedPieceTsHi = Numbers.LONG_NULL;
             for (int i = 0; i < squashCount; i++) {
-                if (geometry.isComposite(targetPartitionIndex + 1)) {
-                    if (!force) {
-                        // Stop rather than skip: folding a later sibling across this one would land the
-                        // target's rows ahead of a still-standing partition covering an earlier range.
-                        break;
-                    }
-                    compactPartitionToPlain(targetPartitionIndex + 1, "squash");
+                final int sourceIndex = targetPartitionIndex + 1;
+                if (force && geometry.isComposite(sourceIndex)) {
+                    // A forced squash owes its caller one ordinary partition, so a composite source is
+                    // flattened before it is folded.
+                    compactPartitionToPlain(sourceIndex, "squash");
                 }
-                long sourcePartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex + 1);
-                squashedSeqTxn = Math.max(squashedSeqTxn, nativePartitionSeqTxn(targetPartitionIndex + 1));
+                final boolean sourceIsComposite = geometry.isComposite(sourceIndex);
+                // The last partition is left alone when composite: its file carries lagRowCount rows past
+                // the live ones, accounted by transientRowCount + lagRowCount and by no piece, so folding it
+                // a piece at a time would drop them.
+                if (sourceIsComposite && sourceIndex + 1 == txWriter.getPartitionCount()) {
+                    break;
+                }
+                long sourcePartition = txWriter.getPartitionTimestampByIndex(sourceIndex);
+                squashedSeqTxn = Math.max(squashedSeqTxn, nativePartitionSeqTxn(sourceIndex));
 
                 other.trimTo(pathSize);
                 long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
@@ -16549,6 +16549,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 assert partitionRowCount > 0;
+                // The lag rows the last partition carries past its live ones ride along with the copy but
+                // belong to no piece and no timestamp bound.
+                final long sourceLagRows = lastPartitionSquashed ? txWriter.getLagRowCount() : 0;
+
+                if (targetIsComposite) {
+                    // The piece this fold adds to the target has to state the run's TRUE bounds: a piece's
+                    // tsHi is read back as the directory's max timestamp, so a routing ceiling would not do.
+                    // A composite source already carries them; an ordinary one has them at the two ends of
+                    // its timestamp column.
+                    final long srcTsLo;
+                    final long srcTsHi;
+                    if (sourceIsComposite) {
+                        srcTsLo = geometry.getPieceTimestampLo(sourceIndex, 0);
+                        srcTsHi = geometry.getPieceTimestampHi(sourceIndex, geometry.getPieceCount(sourceIndex) - 1);
+                    } else {
+                        final int sourcePathSize = other.size();
+                        try {
+                            readNativeMinMaxTimestamps(other, metadata.getColumnName(metadata.getTimestampIndex()), partitionRowCount - sourceLagRows);
+                        } finally {
+                            other.trimTo(sourcePathSize);
+                        }
+                        srcTsLo = attachMinTimestamp;
+                        srcTsHi = attachMaxTimestamp;
+                    }
+                    squashedPieceTsLo = Math.min(squashedPieceTsLo, srcTsLo);
+                    squashedPieceTsHi = Math.max(squashedPieceTsHi, srcTsHi);
+                }
 
                 LOG.info().$("squashing partitions [table=").$(tableToken)
                         .$(", target=").$(formatPartitionForTimestamp(targetPartition, targetPartitionNameTxn))
@@ -16557,9 +16584,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$(", sourceSize=").$(partitionRowCount)
                         .I$();
 
-                try (Frame sourceFrame = frameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionRowCount)) {
-                    FrameAlgebra.append(targetFrame, sourceFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
-                    addPhysicallyWrittenRows(sourceFrame.getRowCount());
+                // A composite source is opened to its extent and its pieces appended in order, so its live
+                // rows arrive contiguously at the target's tail - one piece, whatever shape it had.
+                final long sourceExtent = sourceIsComposite ? geometry.getE(sourceIndex) : partitionRowCount;
+                try (Frame sourceFrame = frameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, sourceExtent)) {
+                    if (sourceIsComposite) {
+                        for (int p = 0, pn = geometry.getPieceCount(sourceIndex); p < pn; p++) {
+                            final long pieceRows = geometry.getPieceRowCount(sourceIndex, p);
+                            if (pieceRows == 0) {
+                                continue;
+                            }
+                            final long pieceLo = geometry.getPieceRowOffset(sourceIndex, p);
+                            FrameAlgebra.append(targetFrame, sourceFrame, pieceLo, pieceLo + pieceRows,
+                                    txWriter.getTxn() + 1L, configuration.getCommitMode());
+                            addPhysicallyWrittenRows(pieceRows);
+                        }
+                    } else {
+                        FrameAlgebra.append(targetFrame, sourceFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
+                        addPhysicallyWrittenRows(sourceFrame.getRowCount());
+                    }
                 } catch (Throwable th) {
                     LOG.critical().$("partition squashing failed [table=").$(tableToken)
                             .$(", error=").$(th).I$();
@@ -16574,32 +16617,75 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getRowCount());
-            // Squashing leaves the target one contiguous piece at row 0, the ordinary shape.
-            setGeometryRefRetiringGenerations(targetPartition, NO_GEOMETRY_REF);
-            txWriter.setPartitionSeqTxn(targetPartitionIndex, squashedSeqTxn);
-            if (!txWriter.incrementPartitionSquashCounter(targetPartitionIndex)) {
-                // The squash counter overflew its 16 bits
-                // To help back to detect partition changes we will save a file inside the partition with the current timestamp
-                // to indicate the squash timing. When squash timing/version has changed, even when the partitition has
-                // the same version and row count it will be included in a backup.
-                // It is OK to overwrite the file, it is not read by backup process at the moment
-                // because backup locks scoreboard to not allow to squash into the partitions it operates on
-                squashSplitPartitions_updateSquashTimestampFile(targetPartition, targetPartitionNameTxn);
-            }
+            // Everything the loop appended landed as one run starting at the extent the target had when it
+            // was opened. Nothing appended means every source was refused, and then the target has to be
+            // left exactly as it was found - a composite one above all, which still needs its geometry.
+            final long appendedRows = targetFrame.getRowCount() - targetExtent;
+            if (appendedRows > 0 || copyTargetFrame) {
+                // The lag rows rode along with the last partition's copy. They belong to no piece and are
+                // not live, so they count towards the target's extent but not towards its row count.
+                final long lagRows = lastPartitionSquashed ? txWriter.getLagRowCount() : 0;
+                final long newLiveRows = targetLiveRows + appendedRows - lagRows;
+                if (targetIsComposite) {
+                    // The target keeps the pieces it had and gains one for that run; its files are longer than
+                    // its live rows, so it stays composite rather than collapsing to the ordinary shape.
+                    geometry.beginUpdate(targetPartitionIndex);
+                    for (int p = 0, pn = geometry.getPieceCount(targetPartitionIndex); p < pn; p++) {
+                        geometry.addPiece(
+                                geometry.getPieceTimestampLo(targetPartitionIndex, p),
+                                geometry.getPieceTimestampHi(targetPartitionIndex, p),
+                                geometry.getPieceRowOffset(targetPartitionIndex, p),
+                                geometry.getPieceRowCount(targetPartitionIndex, p),
+                                geometry.getPieceWriterTxn(targetPartitionIndex, p),
+                                geometry.getPieceLastWriteMicros(targetPartitionIndex, p)
+                        );
+                    }
+                    geometry.addPiece(
+                            squashedPieceTsLo,
+                            squashedPieceTsHi,
+                            targetExtent,
+                            appendedRows - lagRows,
+                            txWriter.getTxn() + 1,
+                            configuration.getMicrosecondClock().getTicks()
+                    );
+                    geometry.commitUpdate(targetPartitionIndex, targetExtent + appendedRows);
+                    final long targetGeometryRef = geometry.publish(
+                            targetPartitionIndex,
+                            txWriter.getTxn() + 1,
+                            getCompositePartitionSeqTxn(),
+                            configuration.getMicrosecondClock().getTicks(),
+                            configuration.getCommitMode()
+                    );
+                    txWriter.updatePartitionSizeByTimestamp(targetPartition, newLiveRows);
+                    setGeometryRefRetiringGenerations(targetPartition, targetGeometryRef);
+                } else {
+                    txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getRowCount());
+                    // Squashing leaves the target one contiguous piece at row 0, the ordinary shape.
+                    setGeometryRefRetiringGenerations(targetPartition, NO_GEOMETRY_REF);
+                }
+                txWriter.setPartitionSeqTxn(targetPartitionIndex, squashedSeqTxn);
+                if (!txWriter.incrementPartitionSquashCounter(targetPartitionIndex)) {
+                    // The squash counter overflew its 16 bits
+                    // To help back to detect partition changes we will save a file inside the partition with the current timestamp
+                    // to indicate the squash timing. When squash timing/version has changed, even when the partitition has
+                    // the same version and row count it will be included in a backup.
+                    // It is OK to overwrite the file, it is not read by backup process at the moment
+                    // because backup locks scoreboard to not allow to squash into the partitions it operates on
+                    squashSplitPartitions_updateSquashTimestampFile(targetPartition, targetPartitionNameTxn);
+                }
 
-
-            if (lastPartitionSquashed) {
-                // last partition is squashed, adjust fixed/transient row sizes
-                long newTransientRowCount = targetFrame.getRowCount() - txWriter.getLagRowCount();
-                assert newTransientRowCount >= 0;
-                txWriter.fixedRowCount += txWriter.getTransientRowCount() - newTransientRowCount;
-                assert txWriter.fixedRowCount >= 0;
-                txWriter.transientRowCount = newTransientRowCount;
+                if (lastPartitionSquashed) {
+                    // last partition is squashed, adjust fixed/transient row sizes
+                    long newTransientRowCount = targetIsComposite ? newLiveRows : targetFrame.getRowCount() - lagRows;
+                    assert newTransientRowCount >= 0;
+                    txWriter.fixedRowCount += txWriter.getTransientRowCount() - newTransientRowCount;
+                    assert txWriter.fixedRowCount >= 0;
+                    txWriter.transientRowCount = newTransientRowCount;
+                }
+                // Only now, with every source squashed in, do the target's own tops become the committed ones.
+                ColumnTopSink sink = columnVersionWriter.asColumnTopSink(targetPartition);
+                targetFrame.publishColumnTops(sink);
             }
-            // Only now, with every source squashed in, do the target's own tops become the committed ones.
-            ColumnTopSink sink = columnVersionWriter.asColumnTopSink(targetPartition);
-            targetFrame.publishColumnTops(sink);
         } finally {
             Misc.free(targetFrame);
             path.trimTo(pathSize);
@@ -16648,7 +16734,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // non-CairoException paths do not distress on their own.
             try {
                 if (lastPartitionSquashed) {
-                    openLastPartition();
+                    // A composite last partition is deliberately left closed - openColumnFiles asserts on
+                    // it, because its writes go through processCompositePartition's own descriptors rather
+                    // than the writer's append memories.
+                    if (!isLastPartitionComposite()) {
+                        openLastPartition();
+                    }
                 } else {
                     // Same reason as the lastPartitionSquashed close above: freeIndexers ->
                     // PostingIndexWriter.close() -> releasePendingPurges() drops the outbox
@@ -16661,7 +16752,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // asserts that partitionTimestampHi and txWriter.maxTimestamp resolve to the
                     // same partition. The squash changes neither, so restore the value it had.
                     final long lastPartitionTimestampHi = partitionTimestampHi;
-                    final long targetRowCount = txWriter.getPartitionRowCountByTimestamp(targetPartition);
+                    // A composite target's files run to its extent, past its live rows. The append memories
+                    // have to describe the FILE: left at the live count, the next truncating close would cut
+                    // the squash's own bytes back off.
+                    final long targetRowCount = targetIsComposite
+                            ? geometry.getE(targetPartitionIndex)
+                            : txWriter.getPartitionRowCountByTimestamp(targetPartition);
                     openPartition(targetPartition, targetRowCount);
                     setAppendPosition(targetRowCount, false);
                     partitionTimestampHi = lastPartitionTimestampHi;

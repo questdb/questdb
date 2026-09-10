@@ -41,6 +41,19 @@ public interface FrameColumn extends Closeable {
     void addTop(long value);
 
     /**
+     * Whether {@link #addTop(long)} may absorb the source's leading NULLs into this column's own top
+     * instead of writing them out.
+     * <p>
+     * Extending a top is only meaningful while the target's rows are one flat run from row 0, because a top
+     * counts rows of the partition rather than rows of the file. A composite target breaks that: its live
+     * rows sit at piece offsets inside a larger extent, and the row count an append reports is that extent.
+     * Answering false costs the NULLs on disk and is correct for every shape.
+     */
+    default boolean canExtendColumnTop() {
+        return false;
+    }
+
+    /**
      * Appends source frame to this frame starting at the specific offset in this frame.
      *
      * @param appendOffsetRowCount offset in number of rows after which data is appended
