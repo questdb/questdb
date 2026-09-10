@@ -167,6 +167,10 @@ public final class FiberPool {
         runtime.enqueue(fiber);
     }
 
+    void enqueueAfterProcessing(Fiber fiber, @Nullable FiberRuntime.OwnerContext ownerContext) {
+        runtime.enqueueAfterProcessing(fiber, ownerContext);
+    }
+
     FiberRuntime getRuntime() {
         return runtime;
     }
