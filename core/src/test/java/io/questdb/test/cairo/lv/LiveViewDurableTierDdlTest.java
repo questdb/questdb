@@ -35,11 +35,14 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
+import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
+import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRetentionMarker;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -2872,6 +2875,499 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testTtlEvictionIntoTheOverlapBandRebuildsTheBandItInvalidates() throws Exception {
+        // The eviction the seam arithmetic has to survive: an IN MEMORY window wider than what the
+        // TTL keeps, so the rows the flush's own commit evicts are rows the overlap band holds. The
+        // band is the identity the seam cuts on - it has to BE the LV table's trailing rows - and an
+        // evicted prefix breaks it. Re-stamping the slot does not lose a row, because the read path
+        // treats a band longer than the disk scan as a contract violation and degrades it to
+        // lead-only (LiveViewRecordCursor asserts leadStart <= diskSize under -ea and falls back
+        // otherwise), but that band is now one row too long against every later disk size: the seam
+        // never cuts again on a view where nothing else forces a rebuild, and RAM holds rows no
+        // reader can be served from. The flush un-stamps and rebuilds instead, and the band comes
+        // back as the surviving table's own suffix in the same cycle - with the assert as the thing
+        // that fires first if it ever stops doing so.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        // The default cap on the IN MEMORY window is an hour, which is exactly the span an hour
+        // TTL keeps: the band could never reach a row the eviction takes.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_MAX, "3h");
+        assertMemoryLeak(() -> {
+            createHourlyBandedView("3h", "TTL 1 HOUR ");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushOneRow(job, "1970-01-01T00:00:00.000000Z", 1, 1);
+                flushOneRow(job, "1970-01-01T01:00:00.000000Z", 2, 2);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                // Both hours sit inside the 3h window, so the band is the whole table and the hour
+                // TTL is about to take a row out from under it.
+                assertBand(instance, "1970-01-01T00:00:00.000000Z", 2);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+
+                // The flush that lands 02:00 evicts hour 00 inside its own commit. TTL judges age by
+                // the smaller of the table frontier and the wall clock, and the clock was pinned
+                // below the data, so move it up to the frontier the flush is about to reach.
+                setCurrentMicros(ts("1970-01-01T02:00:00.000000Z"));
+                execute("INSERT INTO base VALUES ('1970-01-01T02:00:00.000000Z', 'a', 3)");
+                driveUntil(
+                        job,
+                        () -> {
+                            try (TableReader reader = engine.getReader(lvToken)) {
+                                return reader.size() == 2 && reader.getMinTimestamp() == ts("1970-01-01T01:00:00.000000Z");
+                            }
+                        },
+                        "the flush never evicted hour 00"
+                );
+                driveRefreshToQuiescence(job);
+
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T01:00:00.000000Z\t2\t2
+                                1970-01-01T02:00:00.000000Z\t3\t3
+                                """);
+                assertQuery("SELECT count(), max(rn) FROM lv")
+                        .noLeakCheck().noRandomAccess().expectSize().returns("count\tmax\n2\t3\n");
+                // The band is the surviving table's suffix: the evicted row is not resident.
+                assertBand(instance, "1970-01-01T01:00:00.000000Z", 2);
+                Assert.assertFalse("the flush must rebuild the band it invalidated", instance.isTierStale());
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertEquals(2, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+
+                // A row inside the surviving hour, so disk grows under the band without another
+                // eviction - which is where a band left one row too long stops cutting for good.
+                execute("INSERT INTO base VALUES ('1970-01-01T02:30:00.000000Z', 'a', 4)");
+                driveUntilDurableRowCount(job, 3);
+                driveRefreshToQuiescence(job);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                assertBand(instance, "1970-01-01T01:00:00.000000Z", 3);
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T01:00:00.000000Z\t2\t2
+                                1970-01-01T02:00:00.000000Z\t3\t3
+                                1970-01-01T02:30:00.000000Z\t4\t4
+                                """);
+                assertQuery("SELECT count(), max(rn) FROM lv")
+                        .noLeakCheck().noRandomAccess().expectSize().returns("count\tmax\n3\t4\n");
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testTtlEvictionUnderAPinnedCursorKeepsThatSnapshotWhole() throws Exception {
+        // Section 2.2's cached-row clause, in the shape a reader meets it: a cursor open across the
+        // evicting flush pinned its slot and its disk reader before the removal, so it goes on
+        // serving rows the table no longer holds. What it may not do is disagree with itself - the
+        // size() a LIMIT reads and the rows the scan yields are one snapshot - or lose a row it was
+        // already serving. Meanwhile a cursor opened after the removal sees the surviving table, so
+        // both snapshots stand at once and neither borrows the other's rows.
+        //
+        // The pin is what buys that: the flush's rebuild replaces the published slot IN PLACE when
+        // no reader holds it, and takes the other slot only because this cursor does. A rebuild
+        // that read the pin wrongly would rewrite the rows under an open scan.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        // The default cap on the IN MEMORY window is an hour, which is exactly the span an hour
+        // TTL keeps: the band could never reach a row the eviction takes.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_MAX, "3h");
+        assertMemoryLeak(() -> {
+            createHourlyBandedView("3h", "TTL 1 HOUR ");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushOneRow(job, "1970-01-01T00:00:00.000000Z", 1, 1);
+                flushOneRow(job, "1970-01-01T01:00:00.000000Z", 2, 2);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+
+                try (
+                        RecordCursorFactory factory = select("SELECT ts, x, rn FROM lv");
+                        LiveViewRecordCursor pinned = (LiveViewRecordCursor) unwrapLvFactory(factory).getCursor(sqlExecutionContext)
+                ) {
+                    // The band holds both rows and disk holds both rows, so the seam cuts the disk
+                    // scan at zero and the pinned snapshot lives entirely in the slot.
+                    Assert.assertEquals(LiveViewRecordCursor.ROUTING_SEAM, pinned.routingMode());
+                    Assert.assertEquals("[1,2]", drainPinnedCursor(pinned).toString());
+
+                    setCurrentMicros(ts("1970-01-01T02:00:00.000000Z"));
+                    execute("INSERT INTO base VALUES ('1970-01-01T02:00:00.000000Z', 'a', 3)");
+                    driveUntil(
+                            job,
+                            () -> {
+                                try (TableReader reader = engine.getReader(lvToken)) {
+                                    return reader.size() == 2 && reader.getMinTimestamp() == ts("1970-01-01T01:00:00.000000Z");
+                                }
+                            },
+                            "the flush never evicted hour 00"
+                    );
+
+                    // The pinned snapshot is unchanged: the evicted row is still served, the row the
+                    // flush added is not, and size() still names the rows the scan yields.
+                    Assert.assertEquals("[1,2]", drainPinnedCursor(pinned).toString());
+                    // A cursor opened now reads the surviving table instead.
+                    assertQuery("SELECT ts, x, rn FROM lv")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
+                                    ts\tx\trn
+                                    1970-01-01T01:00:00.000000Z\t2\t2
+                                    1970-01-01T02:00:00.000000Z\t3\t3
+                                    """);
+                }
+
+                driveRefreshToQuiescence(job);
+                assertBand(instance, "1970-01-01T01:00:00.000000Z", 2);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertEquals(2, instance.getLvRowsTotal());
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testSetTtlZeroStopsEvictionWithoutBringingBackWhatWentEarlier() throws Exception {
+        // The clear, on an ACTIVE view that has already lost a day to the TTL it clears. Two things
+        // have to hold and they pull in opposite directions: no partition may be evicted after the
+        // clear - 1970-01-02 goes on the next flush while the TTL stands, and stays while it does
+        // not - and the day the earlier TTL took may not come back, because a removal is durable and
+        // clearing the retention that caused it is not a restore.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createBaseAndView("PARTITION BY DAY");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushRow(job, "1970-01-01", 1, 1);
+                flushRow(job, "1970-01-02", 2, 2);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+
+                execute("ALTER LIVE VIEW lv SET TTL 1 DAY");
+                driveLiveViewWalApply(job);
+                setCurrentMicros(ts("1970-01-03T00:00:00.000000Z"));
+                execute("INSERT INTO base VALUES ('1970-01-03T00:00:00.000000Z', 3)");
+                driveUntil(
+                        job,
+                        () -> {
+                            try (TableReader reader = engine.getReader(lvToken)) {
+                                return reader.size() == 2 && reader.getMinTimestamp() == ts("1970-01-02");
+                            }
+                        },
+                        "the flush never evicted 1970-01-01"
+                );
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(2, instance.getLvRowsTotal());
+
+                execute("ALTER LIVE VIEW lv SET TTL 0 HOURS");
+                driveLiveViewWalApply(job);
+                driveRefreshToQuiescence(job);
+                assertTtl("lv", 0);
+
+                // Under TTL 1 DAY this flush would take 1970-01-02 with it: its ceiling is
+                // 1970-01-03 and the frontier reaches a day past that.
+                setCurrentMicros(ts("1970-01-04T00:00:00.000000Z"));
+                execute("INSERT INTO base VALUES ('1970-01-04T00:00:00.000000Z', 4)");
+                driveUntilDurableRowCount(job, 3);
+                driveRefreshToQuiescence(job);
+
+                assertQuery("SELECT name FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name
+                                1970-01-02
+                                1970-01-03
+                                1970-01-04
+                                """);
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-02T00:00:00.000000Z\t2\t1
+                                1970-01-03T00:00:00.000000Z\t3\t1
+                                1970-01-04T00:00:00.000000Z\t4\t1
+                                """);
+                Assert.assertEquals("the cleared TTL does not restore the evicted day", 3, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            // The restart restores from the timeline the eviction and the clear both left behind,
+            // and 1970-01-01 is still gone.
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n2\n3\n4\n");
+            Assert.assertEquals(3, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
+    public void testClearingTtlMidSeedStopsEvictionWithoutRestoringTheSweepsOrdinal() throws Exception {
+        // The clear against a SEEDING view: it has to stop the next eviction - 1970-01-02 and
+        // 1970-01-03 go with the sweep's next two commits while the TTL stands - without bringing
+        // back the day the TTL already took or disturbing what the sweep has written. lvRowsTotal
+        // is the EMITTED output total for the whole sweep, so it leads the table by the evicted row
+        // until the completion boundary corrects it once, and rn carries each row's position in the
+        // stream the window ran over, which is what a re-emitted or recomputed row would break.
+        // The counterexample for the deferral itself - what a reconcile that ran mid-sweep would
+        // cost a resume - is testRestartAfterClearingTtlMidSeedStillReplacesUnprovenOutput; a sweep
+        // that runs to completion in one process has no skip-write floor to get wrong.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per seed turn
+        assertMemoryLeak(() -> {
+            createSevenDaySeedBase();
+            createSeedView("TTL 2 DAYS ");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = driveSeedTurnsUntilEviction(job);
+                // The sweep's own commit of 1970-01-04 evicted 1970-01-01: its ceiling is
+                // 1970-01-02 and the sweep's frontier reached two days past that.
+                Assert.assertEquals("the sweep must have written four rows and lost one", 3, lvRowCount(lvToken));
+                Assert.assertEquals(4, instance.getLvRowsTotal());
+
+                execute("ALTER LIVE VIEW lv SET TTL 0 HOURS");
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                assertTtl("lv", 0);
+
+                // 1970-01-02 and 1970-01-03 would have gone with the sweep's next two commits under
+                // the TTL. The rn column is what pins the other half: the window ran over all seven
+                // days, so the survivors carry their own ordinals and no row was written twice.
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-02T00:00:00.000000Z\t2\t2
+                                1970-01-03T00:00:00.000000Z\t3\t3
+                                1970-01-04T00:00:00.000000Z\t4\t4
+                                1970-01-05T00:00:00.000000Z\t5\t5
+                                1970-01-06T00:00:00.000000Z\t6\t6
+                                1970-01-07T00:00:00.000000Z\t7\t7
+                                """);
+                Assert.assertEquals("the evicted row must stay off the lifetime counter", 6, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertLadder(instance, ts("1970-01-07"), 6);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n2\n3\n4\n5\n6\n7\n");
+            Assert.assertEquals(6, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
+    public void testRestartAfterClearingTtlMidSeedStillReplacesUnprovenOutput() throws Exception {
+        // The cleared-TTL shape of the seed resume. A sweep interrupted after one of its commits
+        // evicted a day may not resume off its partial output: the newest seed root stands at an
+        // emitted position the table no longer holds. Clearing the TTL before the interruption
+        // changes nothing about that, and the retention marker is what says so - a resume that
+        // asked whether the view HAS a TTL rather than whether a removal HAPPENED would read a
+        // cleared TTL as an untouched prefix, skip-write the rows already on disk and append the
+        // tail a second time.
+        //
+        // The re-sweep then runs with no TTL, so it re-derives all seven days off the base: the
+        // rows the eviction took come back, which is section 2.2's rule that recovery can undo a
+        // removal, and is the outcome a resume could not produce.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per seed turn
+        assertMemoryLeak(() -> {
+            createSevenDaySeedBase();
+            createSeedView("TTL 2 DAYS ");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedTurnsUntilEviction(job);
+                execute("ALTER LIVE VIEW lv SET TTL 0 HOURS");
+                final LiveViewInstance instance = driveSeedTurnsUntil(
+                        job,
+                        () -> {
+                            try (TableMetadata metadata = engine.getTableMetadata(lvToken)) {
+                                return metadata.getTtlHoursOrMonths() == 0;
+                            }
+                        },
+                        "the seeding view never applied the cleared TTL"
+                );
+                Assert.assertTrue(
+                        "the sweep must still be mid-flight when the process ends",
+                        instance.getLvRowsTotal() < 7
+                );
+                // The evidence the resume has to key on outlives the TTL that caused it.
+                assertRetentionMarker(lvToken, true);
+            }
+
+            final LogCapture capture = new LogCapture();
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            capture.start();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                capture.waitFor("live view seed sweep replacing unproven durable output [view=lv");
+            } finally {
+                capture.stop();
+            }
+
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            assertQuery("SELECT ts, x, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn
+                            1970-01-01T00:00:00.000000Z\t1\t1
+                            1970-01-02T00:00:00.000000Z\t2\t2
+                            1970-01-03T00:00:00.000000Z\t3\t3
+                            1970-01-04T00:00:00.000000Z\t4\t4
+                            1970-01-05T00:00:00.000000Z\t5\t5
+                            1970-01-06T00:00:00.000000Z\t6\t6
+                            1970-01-07T00:00:00.000000Z\t7\t7
+                            """);
+            Assert.assertEquals(7, reloaded.getLvRowsTotal());
+            Assert.assertFalse(reloaded.hasPendingPartitionRemovals());
+            assertRetentionMarker(lvToken, false);
+            assertLadder(reloaded, ts("1970-01-07"), 7);
+            assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                    .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testWallClockTtlKeepsWhatAFutureDatedFrontierWouldEvict() throws Exception {
+        // TTL measures partition age against the SMALLER of the table frontier and the wall clock,
+        // and the wall clock is the half that bounds a base row dated in the future. A live view
+        // that takes one carries it into its own table, so a view whose base stalls at yesterday and
+        // then receives a single row dated next week would lose everything below that row's TTL
+        // window if the frontier alone drove eviction. Nothing is evicted while the clock stands
+        // where it did; the days go later, when the clock itself reaches them.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createBaseAndView("PARTITION BY DAY");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushRow(job, "1970-01-01", 1, 1);
+                flushRow(job, "1970-01-02", 2, 2);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                execute("ALTER LIVE VIEW lv SET TTL 1 DAY");
+                driveLiveViewWalApply(job);
+
+                // The clock is still parked under the data, so this row's own partition is eight
+                // days past the frontier and both older days are further past it than the TTL.
+                execute("INSERT INTO base VALUES ('1970-01-10T00:00:00.000000Z', 10)");
+                driveUntilDurableRowCount(job, 3);
+                driveRefreshToQuiescence(job);
+                assertQuery("SELECT name FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name
+                                1970-01-01
+                                1970-01-02
+                                1970-01-10
+                                """);
+                assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n1\n2\n10\n");
+                Assert.assertEquals(3, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+
+                // Move the clock past both older days' TTL window. The eviction the future-dated row
+                // did not cause happens now, and it stops where the clock stops: the row dated
+                // 1970-01-10 is not old against a clock at 1970-01-05, whatever the frontier says.
+                setCurrentMicros(ts("1970-01-05T00:00:00.000000Z"));
+                execute("INSERT INTO base VALUES ('1970-01-11T00:00:00.000000Z', 11)");
+                driveUntil(
+                        job,
+                        () -> {
+                            try (TableReader reader = engine.getReader(engine.verifyTableName("lv"))) {
+                                return reader.size() == 2 && reader.getMinTimestamp() == ts("1970-01-10");
+                            }
+                        },
+                        "the flush never evicted the two days the clock left behind"
+                );
+                driveRefreshToQuiescence(job);
+                assertQuery("SELECT name FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name
+                                1970-01-10
+                                1970-01-11
+                                """);
+                assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n10\n11\n");
+                Assert.assertEquals(2, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testTtlWithoutTheWallClockEvictsAgainstAFutureDatedFrontier() throws Exception {
+        // The counterexample the case above rests on. With cairo.ttl.use.wall.clock off, TTL judges
+        // age by the table frontier alone, so the same future-dated row takes both older days with
+        // it on the commit that lands it - and the view's counter, ladder and tier follow the
+        // removal the same way they follow any other eviction. This is the opt-out documented for
+        // tables; a live view inherits it, since its durable tier is one.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_TTL_USE_WALL_CLOCK, "false");
+        assertMemoryLeak(() -> {
+            createBaseAndView("PARTITION BY DAY");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushRow(job, "1970-01-01", 1, 1);
+                flushRow(job, "1970-01-02", 2, 2);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                execute("ALTER LIVE VIEW lv SET TTL 1 DAY");
+                driveLiveViewWalApply(job);
+
+                execute("INSERT INTO base VALUES ('1970-01-10T00:00:00.000000Z', 10)");
+                driveUntil(
+                        job,
+                        () -> {
+                            try (TableReader reader = engine.getReader(lvToken)) {
+                                return reader.size() == 1 && reader.getMinTimestamp() == ts("1970-01-10");
+                            }
+                        },
+                        "the flush never evicted the two days below the future-dated row"
+                );
+                driveRefreshToQuiescence(job);
+
+                assertQuery("SELECT name FROM table_partitions('lv') ORDER BY name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                name
+                                1970-01-10
+                                """);
+                assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n10\n");
+                Assert.assertEquals("both evicted rows must leave the lifetime counter", 1, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
     public void testTtlEvictionDuringSeedCompletesWithoutDuplicating() throws Exception {
         // TTL enforcement stays live while the view is SEEDING, so the sweep's own commits evict
         // days its earlier turns wrote. The sweep has to ride that out, because its coordinates
@@ -3614,6 +4110,24 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         }
     }
 
+    /**
+     * Asserts the published in-memory slot holds exactly {@code expectedRows} rows, the first of
+     * them at {@code expectedFirstTimestamp}. This is how a test tells a band that IS the LV
+     * table's trailing rows - the identity the seam cuts on - from one still holding rows a
+     * removal took out from under it.
+     */
+    private void assertBand(LiveViewInstance instance, String expectedFirstTimestamp, long expectedRows) {
+        final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        Assert.assertNotNull("the view must hold an in-memory tier", tier);
+        final LiveViewInMemoryBuffer slot = tier.getSlot(tier.getPublishedIdx());
+        Assert.assertEquals("published slot row count", expectedRows, slot.rowCount());
+        Assert.assertEquals(
+                "published slot's first row",
+                ts(expectedFirstTimestamp),
+                slot.getLong(0, instance.getCompiledPlan().getOutputMetadata().getTimestampIndex())
+        );
+    }
+
     private void assertRoutingMode(int expectedRoutingMode) throws SqlException {
         try (
                 RecordCursorFactory factory = select("SELECT * FROM lv");
@@ -3621,6 +4135,23 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         ) {
             Assert.assertEquals("live view cursor routing mode", expectedRoutingMode, cursor.routingMode());
         }
+    }
+
+    /**
+     * Reads {@code cursor} from the top and returns the {@code x} of every row it serves, asserting
+     * the cursor's own {@code size()} names that many rows. A snapshot pinned across a removal may
+     * hold rows the table no longer does; what it may not do is disagree with itself about how many
+     * rows it has, which is what a LIMIT and a full scan would then read differently.
+     */
+    private LongList drainPinnedCursor(LiveViewRecordCursor cursor) {
+        final LongList rows = new LongList();
+        cursor.toTop();
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            rows.add(record.getLong(1));
+        }
+        Assert.assertEquals("the cursor's size() must name the rows its scan serves", rows.size(), cursor.size());
+        return rows;
     }
 
     private void assertShowCreateContains(String viewName, String expectedFragment) throws SqlException {
@@ -3913,6 +4444,26 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
      * Five daily base rows under one symbol, and a wall clock parked above them so TTL measures
      * partition age against the live view's own frontier rather than against the clock.
      */
+    /**
+     * {@link #createSeedBase}'s history over seven days rather than five, so a sweep under
+     * {@code TTL 2 DAYS} still has turns left after its first eviction - which is what a mid-sweep
+     * {@code SET TTL 0} needs in order to change the outcome at all.
+     */
+    private void createSevenDaySeedBase() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("""
+                INSERT INTO base (ts, sym, x) VALUES
+                ('1970-01-01T00:00:00.000000Z', 'a', 1),
+                ('1970-01-02T00:00:00.000000Z', 'a', 2),
+                ('1970-01-03T00:00:00.000000Z', 'a', 3),
+                ('1970-01-04T00:00:00.000000Z', 'a', 4),
+                ('1970-01-05T00:00:00.000000Z', 'a', 5),
+                ('1970-01-06T00:00:00.000000Z', 'a', 6),
+                ('1970-01-07T00:00:00.000000Z', 'a', 7)""");
+        drainWalQueue();
+        setCurrentMicros(ts("1970-02-01T00:00:00.000000Z"));
+    }
+
     private void createSeedBase() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("""
@@ -3990,6 +4541,19 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 "DEDUP UPSERT KEYS(ts, sym)");
         execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY DAY START FROM NOW AS " +
                 "(SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+    }
+
+    /**
+     * An hourly base and a view holding its recent hours in RAM. The {@code IN MEMORY} window is
+     * wider than the hour TTL keeps, so an eviction lands INSIDE the overlap band rather than below
+     * it, and {@code rn} is a running ordinal over one symbol, so a row served twice or served from
+     * a stale band shows up as a repeated or shifted value rather than only as a row count.
+     */
+    private void createHourlyBandedView(String inMemory, String ttlClause) throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY " + inMemory + " PARTITION BY HOUR " + ttlClause +
+                "START FROM NOW AS (SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts " +
+                "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
     }
 
     private void createBaseAndView(String partitionByClause) throws Exception {
