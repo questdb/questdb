@@ -1388,7 +1388,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long partitionTimestamp = txWriter.getLastPartitionTimestamp();
                 lastOpenPartitionTxnName = setStateForTimestamp(path, partitionTimestamp);
                 lastOpenPartitionTs = partitionTimestamp;
-                openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
+                openColumnFiles(partitionTimestamp, columnName, columnNameTxn, columnIndex, path.size());
                 setColumnAppendPosition(columnIndex, getLastPartitionFileRowCount(), false);
                 path.trimTo(pathSize);
             }
@@ -1525,7 +1525,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // column name txn for partition columns would not change
                     // we updated only symbol table version
                     columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
+                    openColumnFiles(partitionTimestamp, columnName, columnNameTxn, columnIndex, path.size());
                     setColumnAppendPosition(columnIndex, transientRowCount, false);
                     path.trimTo(pathSize);
 
@@ -9300,12 +9300,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Whether the partition {@link #openPartition} is opening - the one {@code lastOpenPartitionTs} now names - is
-     * composite. {@code openPartition} stamps that field before it opens any column file, so this reads the target
-     * of the open in progress rather than the table's last partition.
+     * Whether the partition at {@code partitionTimestamp} is composite. Tolerates a timestamp no partition
+     * carries - a caller opening a partition the table does not record yet gets {@code false}.
      */
-    private boolean isOpenPartitionComposite() {
-        final int partitionIndex = txWriter.getPartitionIndex(lastOpenPartitionTs);
+    private boolean isPartitionComposite(long partitionTimestamp) {
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         return partitionIndex > -1 && txWriter.isPartitionComposite(partitionIndex);
     }
 
@@ -9328,14 +9327,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * exactly as it does for a partition that is already COMPOSITE. Keeping the two regimes apart would mean the
      * last partition flips between open and closed on every commit that happens to tile into one piece.
      * <p>
-     * An empty table is excluded, same as the parquet and composite terms: the first commit still opens the
-     * partition it creates, and {@code newRow} needs {@code partitionTimestampHi} set before it can place a row.
+     * The predicate is about the TABLE, not about any one partition, so it holds from the empty table on: the
+     * first commit creates its partition without opening it, same as every commit after it.
      */
-    private boolean isMergeAppendLastPartitionBlocked() {
-        return txWriter.getPartitionCount() > 0
-                && metadata.isWalEnabled()
+    private boolean isMergeAppendTable() {
+        return metadata.isWalEnabled()
                 && configuration.isO3PartitionMergeAppendEnabled()
                 && PartitionBy.isPartitioned(partitionBy);
+    }
+
+    /**
+     * {@link #isMergeAppendTable()} narrowed to the question {@link #isLastPartitionAppendBlocked()} asks: is there
+     * a last partition, and does it refuse an in-place append? An empty table has no last partition to block.
+     */
+    private boolean isMergeAppendLastPartitionBlocked() {
+        return txWriter.getPartitionCount() > 0 && isMergeAppendTable();
     }
 
     /**
@@ -11092,12 +11098,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3CommitBatchTimestampMin = Math.min(o3CommitBatchTimestampMin, timestamp);
     }
 
-    private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
-        // A composite partition stays closed; its writes go through processCompositePartition's own fds. Ask
-        // about the partition openPartition is actually opening, not about whichever one is last: the squash
-        // re-opens its target, and that target is never the last partition, so a composite partition further
-        // along the table says nothing about the one being opened here.
-        assert !isOpenPartitionComposite() : "openColumnFiles must not run for a composite partition";
+    private void openColumnFiles(long partitionTimestamp, CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
+        // A composite partition stays closed; its writes go through processCompositePartition's own fds. The
+        // caller names the partition it is opening: neither "the last partition" nor lastOpenPartitionTs
+        // answers that question. The squash re-opens a target that is never the last partition, and a table
+        // that opens no partition at all - every merge-append table, after its first commit - leaves
+        // lastOpenPartitionTs on whichever partition some earlier writer state last opened.
+        assert !isPartitionComposite(partitionTimestamp) : "openColumnFiles must not run for a composite partition";
         MemoryMA mem1 = getPrimaryColumn(columnIndex);
         MemoryMA mem2 = getSecondaryColumn(columnIndex);
 
@@ -11169,7 +11176,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (lastPartitionComposite) {
                 touchColumnFiles(name, columnNameTxn, columnIndex, plen);
             } else {
-                openColumnFiles(name, columnNameTxn, columnIndex, plen);
+                openColumnFiles(partitionTimestamp, name, columnNameTxn, columnIndex, plen);
             }
             // The top is a FILE row and must sit above E, not merely above the LIVE rows.
             final long columnTop = lastPartitionComposite
@@ -11306,7 +11313,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         createIndexFiles(name, columnNameTxn, metadata.getIndexValueBlockCapacity(i), metadata.getColumnIndexType(i), plen, rowCount < 1, isInCtorRecovery);
                     }
 
-                    openColumnFiles(name, columnNameTxn, i, plen);
+                    openColumnFiles(lastOpenPartitionTs, name, columnNameTxn, i, plen);
 
                     if (indexer != null) {
                         final long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, i);
@@ -12242,7 +12249,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // The table is empty, last partition does not exist
                 // WAL processing needs last partition to store LAG data
                 // Create artificial partition at the point of o3TimestampMin.
-                openPartition(o3TimestampMin, 0);
+                if (isMergeAppendTable()) {
+                    // A merge-append table takes no LAG, so it has nothing to open the partition FOR, and
+                    // the O3 path creates the directory and every column file when it writes the first
+                    // piece. Opening it here would map column files the writer never appends to, and
+                    // lastOpenPartitionTs would go on naming this partition for the rest of the writer's
+                    // life - long after it has gone composite and the table has moved on to another one.
+                    // Only partitionTimestampHi is genuinely needed, and openPartition sets it from the
+                    // same expression.
+                    partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMin);
+                    // openPartition ends by rebuilding this, and the O3 path sizes o3Basket off the
+                    // indexCount it leaves behind. An empty table has no initLastPartition to do it either.
+                    populateDenseIndexerList();
+                } else {
+                    openPartition(o3TimestampMin, 0);
+                }
                 txWriter.setMaxTimestamp(o3TimestampMin);
                 // Add the partition to the list of partitions with 0 size.
                 txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1);
