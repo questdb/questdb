@@ -72,6 +72,14 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
     }
 
     @Override
+    public int getScanDirection() {
+        // Rows are emitted grouped by symbol value (ORDER BY symbol), ascending by the designated
+        // timestamp only within each symbol group -- not globally. Reporting a forward scan would let
+        // generateOrderBy() elide an ORDER BY timestamp ASC over a timestamp()-re-designated result.
+        return SCAN_DIRECTION_OTHER;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

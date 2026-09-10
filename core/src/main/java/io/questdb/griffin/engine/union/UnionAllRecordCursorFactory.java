@@ -53,6 +53,14 @@ public class UnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory 
     }
 
     @Override
+    public int getScanDirection() {
+        // UNION ALL concatenates input A then input B; the join of two individually-ordered streams is
+        // not globally ordered by the designated timestamp. Reporting a forward scan would let
+        // generateOrderBy() elide an ORDER BY timestamp ASC over a timestamp()-re-designated result.
+        return SCAN_DIRECTION_OTHER;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

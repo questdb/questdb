@@ -1126,15 +1126,17 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         // that the master supports random access. When that validation throws, the generator's
         // catch must free the extracted owner key functions, or the whole key chain - including
         // the nested sub-query factory - leaks. alloc() places tracked native memory inside the
-        // key chain so assertMemoryLeak() sees the leak. The UNION ALL master supports neither
-        // page frames (downgrading to the single-threaded path) nor random access (triggering the
-        // post-assembly failure), while timestamp(ts) re-designates the timestamp so the
-        // pre-assembly master validation passes.
+        // key chain so assertMemoryLeak() sees the leak. The window-function master supports
+        // neither page frames (downgrading to the single-threaded path) nor random access
+        // (triggering the post-assembly failure), while timestamp(ts) re-designates the timestamp
+        // so the pre-assembly master validation passes. It must also scan the timestamp forward:
+        // a UNION ALL master would now be rejected by the earlier ASC-order check instead, which
+        // would silently stop exercising the post-assembly catch this test exists for.
         assertMemoryLeak(() -> {
             execute("create table trades (sym symbol, qty double, ts timestamp) timestamp(ts) partition by day");
             execute("create table prices (ts timestamp, sym symbol, price double) timestamp(ts)");
             assertQuery("select t.qty + alloc(32) > (select max(price) from prices) k, avg(p.price) a " +
-                    "from ((select * from trades union all select * from trades) timestamp(ts)) t " +
+                    "from ((select sym, qty, ts, row_number() over (order by ts) rn from trades) timestamp(ts)) t " +
                     "horizon join prices p on (t.sym = p.sym) list (0) as h " +
                     "group by k")
                     .fails(-1, "left-hand side of HORIZON JOIN can only be a table with an optional filter");
@@ -1153,7 +1155,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             execute("create table prices (ts timestamp, sym symbol, price double) timestamp(ts)");
             execute("create table asks (ts timestamp, sym symbol, ask double) timestamp(ts)");
             assertQuery("select t.qty + alloc(32) > (select max(price) from prices) k, avg(p.price) a, avg(a2.ask) b " +
-                    "from ((select * from trades union all select * from trades) timestamp(ts)) t " +
+                    "from ((select sym, qty, ts, row_number() over (order by ts) rn from trades) timestamp(ts)) t " +
                     "horizon join prices p on (t.sym = p.sym) horizon join asks a2 on (t.sym = a2.sym) list (0) as h " +
                     "group by k")
                     .fails(-1, "left-hand side of HORIZON JOIN can only be a table with an optional filter");
