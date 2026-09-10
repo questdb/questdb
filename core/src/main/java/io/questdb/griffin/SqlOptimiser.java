@@ -5109,6 +5109,98 @@ public class SqlOptimiser implements Mutable {
         return column;
     }
 
+    private ExpressionNode getLatestKeySelector(IQueryModel root, SqlExecutionContext executionContext) throws SqlException {
+        if (!isLatestKeyModel(root, false, true) || root.getSelectModelType() != SELECT_MODEL_CHOOSE) {
+            return null;
+        }
+        IQueryModel outer = root;
+        // ORDER BY on an unselected column introduces a choose layer that hides the sort column.
+        if (outer.getNestedModel() != null && outer.getNestedModel().getSelectModelType() == SELECT_MODEL_CHOOSE) {
+            if (root.getOrderBy().size() > 0 || root.getLimitLo() != null || root.getLimitHi() != null) {
+                return null;
+            }
+            outer = outer.getNestedModel();
+            if (!isLatestKeyModel(outer, false, true) || outer.getOrderBy().size() == 0) {
+                return null;
+            }
+        }
+        final IQueryModel filter = outer.getNestedModel();
+        if (!isLatestKeyModel(filter, true, false) || filter.getSelectModelType() != SELECT_MODEL_NONE
+                || filter.getTableNameExpr() != null || filter.getWhereClause() == null) {
+            return null;
+        }
+        final IQueryModel projection = filter.getNestedModel();
+        if (!isLatestKeyModel(projection, false, false) || projection.getSelectModelType() != SELECT_MODEL_CHOOSE) {
+            return null;
+        }
+        final IQueryModel table = projection.getNestedModel();
+        if (!isLatestKeyModel(table, false, false) || table.getSelectModelType() != SELECT_MODEL_NONE
+                || table.getNestedModel() != null || table.getTableNameExpr() == null
+                || table.getTableNameExpr().type != LITERAL || table.getLatestBy().size() != 1
+                || root.getLatestBy().size() > 0 || outer.getLatestBy().size() > 0
+                || filter.getLatestBy().size() > 0 || projection.getLatestBy().size() > 0) {
+            return null;
+        }
+        final QueryColumn key = getLatestSourceColumn(table, table, table.getLatestBy().getQuick(0));
+        if (key == null || !ColumnType.isSymbol(getQueryColumnType(table, key))) {
+            return null;
+        }
+        ExpressionNode selector = null;
+        final ObjList<ExpressionNode> conjuncts = filter.parseWhereClause();
+        try {
+            for (int i = 0, n = conjuncts.size(); i < n; i++) {
+                ExpressionNode node = conjuncts.getQuick(i);
+                if (isLatestKeySelector(node, filter, table, key, executionContext)) {
+                    if (selector == null) {
+                        selector = node;
+                    }
+                } else if (!isLatestKeyResidual(node, filter, table)) {
+                    return null;
+                }
+            }
+        } finally {
+            filter.getParsedWhere().clear();
+        }
+        if (selector == null) {
+            return null;
+        }
+        boolean hasKeyOrder = false;
+        for (int i = 0, n = outer.getOrderBy().size(); i < n; i++) {
+            QueryColumn column = getLatestSourceColumn(outer, table, outer.getOrderBy().getQuick(i));
+            if (column == null) {
+                return null;
+            }
+            hasKeyOrder |= column == key;
+        }
+        if ((outer.getLimitLo() != null || outer.getLimitHi() != null)
+                && !Chars.equals(selector.token, "=")
+                && !(isInKeyword(selector.token) && selector.paramCount == 2)
+                && !hasKeyOrder) {
+            return null;
+        }
+        return selector;
+    }
+
+    private QueryColumn getLatestSourceColumn(IQueryModel model, IQueryModel table, ExpressionNode node) {
+        if (node == null || node.type != LITERAL) {
+            return null;
+        }
+        CharSequence token = node.token;
+        while (model != null) {
+            final QueryColumn column = getQueryColumn(model, token, Chars.indexOfLastUnquoted(token, '.'));
+            if (column == null || column.getAst() == null || column.getAst().type != LITERAL) {
+                return null;
+            }
+            if (model == table) {
+                return column;
+            }
+            // A NONE layer copies its source's output map; only CHOOSE evaluates the alias mapping.
+            token = model.getSelectModelType() == SELECT_MODEL_NONE ? column.getName() : column.getAst().token;
+            model = model.getNestedModel();
+        }
+        return null;
+    }
+
     private int getQueryColumnType(IQueryModel model, QueryColumn column) {
         while (column != null && column.getColumnType() < 0) {
             final ExpressionNode ast = column.getAst();
@@ -5577,6 +5669,153 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return true;
+    }
+
+    private boolean isLatestKeyEquality(
+            ExpressionNode node, IQueryModel model, IQueryModel table, QueryColumn key,
+            SqlExecutionContext executionContext, boolean isBindAllowed
+    ) throws SqlException {
+        if (node.paramCount != 2 || !Chars.equals(node.token, "=")) {
+            return false;
+        }
+        ExpressionNode value;
+        if (getLatestSourceColumn(model, table, node.lhs) == key) {
+            value = node.rhs;
+        } else if (getLatestSourceColumn(model, table, node.rhs) == key) {
+            value = node.lhs;
+        } else {
+            return false;
+        }
+        if (isLatestKeyLiteral(value)) {
+            return true;
+        }
+        if (!isBindAllowed || value == null || value.type != BIND_VARIABLE
+                || executionContext.getBindVariableService() == null) {
+            return false;
+        }
+        Function bind;
+        if (Chars.startsWith(value.token, ':')) {
+            bind = executionContext.getBindVariableService().getFunction(value.token);
+        } else {
+            try {
+                int index = Numbers.parseInt(value.token, 1, value.token.length());
+                if (index < 1) {
+                    return false;
+                }
+                bind = executionContext.getBindVariableService().getFunction(index - 1);
+            } catch (NumericException e) {
+                return false;
+            }
+        }
+        if (bind == null || (bind.getType() != ColumnType.STRING && bind.getType() != ColumnType.VARCHAR)) {
+            return false;
+        }
+        // The deferred indexed single-key cursor cannot encode a runtime NULL symbol key.
+        // Do not inspect the current bind value: a later execution may supply NULL.
+        TableToken token = executionContext.getTableTokenIfExists(table.getTableNameExpr().token);
+        if (token == null) {
+            return false;
+        }
+        try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(token)) {
+            int index = metadata.getColumnIndexQuiet(key.getAst().token);
+            return index >= 0 && !IndexType.isIndexed(metadata.getColumnIndexType(index));
+        }
+    }
+
+    private boolean isLatestKeyLiteral(ExpressionNode node) {
+        return node != null && node.type == CONSTANT
+                && (isNullKeyword(node.token) || Chars.isQuoted(node.token));
+    }
+
+    private boolean isLatestKeyModel(IQueryModel model, boolean hasOuterFilter, boolean hasOuterOrder) {
+        if (model == null || !model.isOptimisable() || model.hasSharedRefs()
+                || (model.getSelectModelType() != SELECT_MODEL_NONE && model.getSelectModelType() != SELECT_MODEL_CHOOSE)
+                || model.getJoinModels().size() != 1 || model.getJoinType() != JOIN_NONE
+                || model.getUnionModel() != null || model.getTableNameFunction() != null
+                || model.isDistinct() || model.getSampleBy() != null || model.getGroupBy().size() > 0
+                || model.getConstWhereClause() != null || model.getPostJoinWhereClause() != null
+                || model.getParsedWhere().size() > 0 || (!hasOuterFilter && model.getWhereClause() != null)
+                || (!hasOuterOrder && (model.getOrderBy().size() > 0 || model.getLimitLo() != null || model.getLimitHi() != null))) {
+            return false;
+        }
+        ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            ExpressionNode ast = columns.getQuick(i).getAst();
+            if (ast == null || ast.type != LITERAL) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean isLatestKeyResidual(ExpressionNode node, IQueryModel model, IQueryModel table) {
+        if (node.paramCount != 2 || !(Chars.equals(node.token, "=") || Chars.equals(node.token, "!=")
+                || Chars.equals(node.token, "<>") || Chars.equals(node.token, "<") || Chars.equals(node.token, "<=")
+                || Chars.equals(node.token, ">") || Chars.equals(node.token, ">="))) {
+            return false;
+        }
+        ExpressionNode value;
+        if (getLatestSourceColumn(model, table, node.lhs) != null) {
+            value = node.rhs;
+        } else if (getLatestSourceColumn(model, table, node.rhs) != null) {
+            value = node.lhs;
+        } else {
+            return false;
+        }
+        if (value == null || value.type != CONSTANT) {
+            return false;
+        }
+        if (isLatestKeyLiteral(value) || isTrueKeyword(value.token) || isFalseKeyword(value.token) || isIntegerConstant(value)) {
+            return true;
+        }
+        try {
+            Numbers.parseDouble(value.token);
+            return true;
+        } catch (NumericException e) {
+            return false;
+        }
+    }
+
+    private boolean isLatestKeySelector(
+            ExpressionNode node, IQueryModel model, IQueryModel table, QueryColumn key, SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (isInKeyword(node.token)) {
+            if (node.paramCount < 2) {
+                return false;
+            }
+            ExpressionNode column = node.paramCount == 2 ? node.lhs : node.args.getLast();
+            if (getLatestSourceColumn(model, table, column) != key) {
+                return false;
+            }
+            if (node.paramCount == 2) {
+                return isLatestKeyLiteral(node.rhs);
+            }
+            for (int i = 0, n = node.args.size() - 1; i < n; i++) {
+                if (!isLatestKeyLiteral(node.args.getQuick(i))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (!isOrKeyword(node.token)) {
+            return isLatestKeyEquality(node, model, table, key, executionContext, true);
+        }
+        sqlNodeStack.clear();
+        sqlNodeStack.push(node);
+        try {
+            while (!sqlNodeStack.isEmpty()) {
+                ExpressionNode leaf = sqlNodeStack.pop();
+                if (isOrKeyword(leaf.token) && leaf.paramCount == 2) {
+                    sqlNodeStack.push(leaf.rhs);
+                    sqlNodeStack.push(leaf.lhs);
+                } else if (!isLatestKeyEquality(leaf, model, table, key, executionContext, false)) {
+                    return false;
+                }
+            }
+            return true;
+        } finally {
+            sqlNodeStack.clear();
+        }
     }
 
     /**
@@ -6270,6 +6509,15 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void moveWhereInsideSubQueries(IQueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        // Validate the original pipeline once, before this pass splits or moves any conjuncts.
+        moveWhereInsideSubQueries(model, sqlExecutionContext, getLatestKeySelector(model, sqlExecutionContext));
+    }
+
+    private void moveWhereInsideSubQueries(
+            IQueryModel model,
+            SqlExecutionContext sqlExecutionContext,
+            ExpressionNode latestKeySelector
+    ) throws SqlException {
         if (!model.isOptimisable()) {
             return;
         }
@@ -6380,7 +6628,7 @@ public class SqlOptimiser implements Mutable {
                     } else if (nested == null
                             || !nested.isOptimisable()
                             || nested.hasSharedRefs()
-                            || nested.getLatestBy().size() > 0
+                            || (nested.getLatestBy().size() > 0 && node != latestKeySelector)
                             || nested.getLimitLo() != null
                             || nested.getLimitHi() != null
                             || (nested.getSampleBy() != null && !canPushToSampleBy(nested, literalCollectorANames))
@@ -6412,12 +6660,15 @@ public class SqlOptimiser implements Mutable {
 
                             // whenever nested model has explicitly defined columns it must also
                             // have its own nested model, where we assign new "where" clauses
-                            node.innerPredicate = false;
-                            addWhereNode(nested, node);
+                            final ExpressionNode pushedNode = node == latestKeySelector && nested.getLatestBy().size() > 0 && isOrKeyword(node.token)
+                                    ? rewriteLatestKeyOr(node)
+                                    : node;
+                            pushedNode.innerPredicate = false;
+                            addWhereNode(nested, pushedNode);
                             // the predicate just landed on a nested join sub-query whose join
                             // optimisation already ran, so re-derive transitive constant filters to
                             // let the constant reach the slave scans (e.g. a view wrapping LEFT JOINs)
-                            deriveTransitiveFiltersFromPushedPredicate(nested, node, sqlExecutionContext);
+                            deriveTransitiveFiltersFromPushedPredicate(nested, pushedNode, sqlExecutionContext);
                             // we do not have to deal with "union" models here
                             // because "where" clause is made to apply to the result of the union
                         } catch (NonLiteralException ignore) {
@@ -6448,21 +6699,44 @@ public class SqlOptimiser implements Mutable {
 
         IQueryModel nested = model.getNestedModel();
         if (nested != null) {
-            moveWhereInsideSubQueries(nested, sqlExecutionContext);
+            moveWhereInsideSubQueries(nested, sqlExecutionContext, latestKeySelector);
         }
 
         ObjList<IQueryModel> joinModels = model.getJoinModels();
         for (int i = 1, m = joinModels.size(); i < m; i++) {
             nested = joinModels.getQuick(i);
             if (nested != model) {
-                moveWhereInsideSubQueries(nested, sqlExecutionContext);
+                moveWhereInsideSubQueries(nested, sqlExecutionContext, null);
             }
         }
 
         nested = model.getUnionModel();
         if (nested != null) {
-            moveWhereInsideSubQueries(nested, sqlExecutionContext);
+            moveWhereInsideSubQueries(nested, sqlExecutionContext, null);
         }
+    }
+
+    private ExpressionNode rewriteLatestKeyOr(ExpressionNode node) {
+        ExpressionNode in = expressionNodePool.next().of(FUNCTION, "in", node.precedence, node.position);
+        ExpressionNode column = null;
+        sqlNodeStack.clear();
+        sqlNodeStack.push(node);
+        while (!sqlNodeStack.isEmpty()) {
+            ExpressionNode leaf = sqlNodeStack.pop();
+            if (isOrKeyword(leaf.token)) {
+                sqlNodeStack.push(leaf.lhs);
+                sqlNodeStack.push(leaf.rhs);
+            } else if (leaf.lhs.type == LITERAL) {
+                column = leaf.lhs;
+                in.args.add(leaf.rhs);
+            } else {
+                column = leaf.rhs;
+                in.args.add(leaf.lhs);
+            }
+        }
+        in.args.add(column);
+        in.paramCount = in.args.size();
+        return in;
     }
 
     private ExpressionNode negate(ExpressionNode node) {
