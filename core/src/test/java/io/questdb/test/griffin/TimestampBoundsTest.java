@@ -346,7 +346,7 @@ public class TimestampBoundsTest extends AbstractCairoTest {
                 execute("INSERT INTO base VALUES (" + CommonUtils.MAX_TIMESTAMP + ", 1)");
                 // close the WAL writer so the segment on disk is complete before the rewrite
                 engine.releaseInactive();
-                rewriteWalSegmentDesignatedTimestamp("base", CommonUtils.MAX_TIMESTAMP, OUT_OF_BOUNDS_NANO);
+                rewriteWalSegmentDesignatedTimestamp("base", 0, 1, CommonUtils.MAX_TIMESTAMP, OUT_OF_BOUNDS_NANO);
                 drainWalQueue();
                 assertQuery("SELECT ts, x FROM base").noLeakCheck().timestamp("ts").expectSize().returns("""
                         ts\tx
@@ -391,7 +391,7 @@ public class TimestampBoundsTest extends AbstractCairoTest {
             execute("INSERT INTO base VALUES (" + CommonUtils.MAX_TIMESTAMP + ", 1)");
             // close the WAL writer so the segment on disk is complete before the rewrite
             engine.releaseInactive();
-            rewriteWalSegmentDesignatedTimestamp("base", CommonUtils.MAX_TIMESTAMP, OUT_OF_BOUNDS_NANO);
+            rewriteWalSegmentDesignatedTimestamp("base", 0, 1, CommonUtils.MAX_TIMESTAMP, OUT_OF_BOUNDS_NANO);
             drainWalQueue();
 
             // the base table now holds a designated timestamp no writer on this build accepts
@@ -450,7 +450,7 @@ public class TimestampBoundsTest extends AbstractCairoTest {
             execute("INSERT INTO base VALUES (" + CommonUtils.MAX_TIMESTAMP + ", 1)");
             // close the WAL writer so the segment on disk is complete before the rewrite
             engine.releaseInactive();
-            rewriteWalSegmentDesignatedTimestamp("base", CommonUtils.MAX_TIMESTAMP, OUT_OF_BOUNDS_NANO);
+            rewriteWalSegmentDesignatedTimestamp("base", 0, 1, CommonUtils.MAX_TIMESTAMP, OUT_OF_BOUNDS_NANO);
             drainWalQueue();
             assertQuery("SELECT ts, x FROM base").noLeakCheck().timestamp("ts").expectSize().returns("""
                     ts\tx
@@ -479,6 +479,94 @@ public class TimestampBoundsTest extends AbstractCairoTest {
             }
 
             assertLiveViewInvalidatedByLegacyNanoRow();
+        });
+    }
+
+    /**
+     * The seeding leg once more, at the cadence that turns every swept row into its own turn, so that
+     * the sweep commits the rows ahead of the legacy one and then meets it with a resume point BELOW
+     * the output already on disk. A permanent seed fault in that shape must still invalidate the view.
+     * <p>
+     * The three legal rows share one timestamp, and that is the whole point of them. With
+     * {@code cairo.live.view.checkpoint.rows=1} every row is a turn: the first turn seals the only seed
+     * boundary, at data offset 1, and the next two cannot seal another because the timeline refuses a
+     * boundary whose max timestamp does not climb above the sealed one - three equal timestamps make
+     * that refusal certain. The fourth turn faults on the legacy row and rolls back, so the recovery
+     * rewinds the sweep to that one boundary and replays rows two and three off the on-disk output
+     * without appending them, then meets the legacy row again. A build that records a refresh success
+     * for those replay turns zeroes the retry count and the streak clock every third turn, so neither
+     * budget can expire: {@code live_views()} reports {@code seeding} forever, the fault count climbs,
+     * and every refresh call keeps reporting work. Replaying rows the view already holds is not
+     * evidence that the faulting row cleared; only a turn that commits new output past the on-disk
+     * prefix, or completes the sweep, may reset the budget.
+     * {@link #testDesignatedNanosTimestampOutOfBoundsRowInvalidatesSeedingLiveView()} runs the same
+     * fault at the default cadence, where the single turn faults before any boundary exists and every
+     * retry re-sweeps from offset zero, so it invalidates and never sees this sequence.
+     * <p>
+     * The three rows the sweep committed before the fault stay in the view, readable after the
+     * invalidation, with a running count that a re-appended replay row would have inflated.
+     */
+    @Test
+    public void testDesignatedNanosTimestampOutOfBoundsRowInvalidatesSeedingLiveViewAfterReplay() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        // one swept row per turn: the rows ahead of the legacy one commit, and seal, before the fault
+        node1.setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            // Pin the clock below the data, as the siblings do.
+            setCurrentMicros(0L);
+            execute("CREATE TABLE base (ts TIMESTAMP_NS, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // One transaction, in timestamp order: three rows one nanosecond below the ceiling, then
+            // one at the ceiling itself, so the segment rewrite lifts only the last row - and with it
+            // the transaction's max timestamp - past the ceiling. The min timestamp is row one's and
+            // stays legal.
+            final long belowCeilingNano = CommonUtils.MAX_TIMESTAMP - 1;
+            execute("""
+                    INSERT INTO base VALUES
+                    (%d, 1),
+                    (%d, 1),
+                    (%d, 1),
+                    (%d, 1)
+                    """.formatted(belowCeilingNano, belowCeilingNano, belowCeilingNano, CommonUtils.MAX_TIMESTAMP));
+            // close the WAL writer so the segment on disk is complete before the rewrite
+            engine.releaseInactive();
+            rewriteWalSegmentDesignatedTimestamp("base", 3, 4, CommonUtils.MAX_TIMESTAMP, OUT_OF_BOUNDS_NANO);
+            drainWalQueue();
+            final String baseRows = """
+                    ts\tx
+                    2261-12-31T23:59:59.999999998Z\t1
+                    2261-12-31T23:59:59.999999998Z\t1
+                    2261-12-31T23:59:59.999999998Z\t1
+                    2262-01-01T00:00:00.000000000Z\t1
+                    """;
+            assertQuery("SELECT ts, x FROM base").noLeakCheck().timestamp("ts").expectSize().returns(baseRows);
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '1970-01-01T00:00:00.000000000Z' AS "
+                    + "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn "
+                    + "FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' is not registered", instance);
+                Assert.assertEquals(
+                        "live view 'lv' must start out SEEDING",
+                        LiveViewState.SEED_STATE_SEEDING,
+                        instance.getStateReader().getSeedState()
+                );
+                driveLiveViewToInvalidation(job, instance);
+                assertLiveViewRefreshJobIdle(job);
+            }
+
+            // The three legal rows committed one per turn and share the x partition, so the second and
+            // third carry the two-row frame's count; a replay that re-appended them would add rows here.
+            assertLiveViewInvalidatedByLegacyNanoRow(
+                    """
+                            ts\tx\trn
+                            2261-12-31T23:59:59.999999998Z\t1\t1
+                            2261-12-31T23:59:59.999999998Z\t1\t2
+                            2261-12-31T23:59:59.999999998Z\t1\t2
+                            """,
+                    baseRows
+            );
         });
     }
 
@@ -723,17 +811,20 @@ public class TimestampBoundsTest extends AbstractCairoTest {
     }
 
     /**
-     * Replaces the designated timestamp of the first row of the first WAL segment of {@code tableName},
-     * so that the pending transaction carries a value the WAL apply job imports but no writer on this
-     * build would have accepted.
+     * Replaces the designated timestamp of row {@code rowIndex} of the first WAL segment of
+     * {@code tableName}, whose single transaction holds {@code rowCount} rows written in timestamp
+     * order, so that the pending transaction carries a value the WAL apply job imports but no writer
+     * on this build would have accepted. The transaction's min timestamp is its first row's and its
+     * max its last row's, so the helper patches the {@code _event} record only for the rows that own those.
      */
-    private static void rewriteWalSegmentDesignatedTimestamp(String tableName, long expected, long replacement) {
-        // A WAL segment stores the designated timestamp as a LONG128 (timestamp, row id) pair, so the
-        // first row's timestamp is the first 8 bytes of ts.d.
-        final long timestampColumnOffset = 0;
-        // The segment's _event file repeats that timestamp as the transaction's min and max. TableWriter
-        // takes the table's own min/max from there and MatViewRefreshJob sizes its refresh interval from
-        // the table's min/max, so leaving those behind would hide the row from the refresh entirely.
+    private static void rewriteWalSegmentDesignatedTimestamp(String tableName, int rowIndex, int rowCount, long expected, long replacement) {
+        Assert.assertTrue("row index out of range", rowIndex >= 0 && rowIndex < rowCount);
+        // A WAL segment stores the designated timestamp as a LONG128 (timestamp, row id) pair, so row
+        // i's timestamp is the first 8 bytes of the 16 bytes at offset 16 * i of ts.d.
+        final long timestampColumnOffset = 2L * Long.BYTES * rowIndex;
+        // The segment's _event file repeats the transaction's min and max timestamp. TableWriter takes
+        // the table's own min/max from there and MatViewRefreshJob sizes its refresh interval from the
+        // table's min/max, so leaving those behind would hide the row from the refresh entirely.
         // First record of a segment: WALE_HEADER_SIZE, record length (int), txn (long), txn type (byte),
         // start row id (long), end row id (long), then min timestamp and max timestamp.
         final long eventMinTimestampOffset = WalUtils.WALE_HEADER_SIZE + Integer.BYTES + Long.BYTES + Byte.BYTES + 2L * Long.BYTES;
@@ -746,24 +837,42 @@ public class TimestampBoundsTest extends AbstractCairoTest {
                     .concat("0");
             final int segmentLen = path.size();
             rewriteLongs(ff, path.concat("ts.d"), expected, replacement, timestampColumnOffset);
-            rewriteLongs(
-                    ff,
-                    path.trimTo(segmentLen).concat(WalUtils.EVENT_FILE_NAME),
-                    expected,
-                    replacement,
-                    eventMinTimestampOffset,
-                    eventMaxTimestampOffset
-            );
+            path.trimTo(segmentLen).concat(WalUtils.EVENT_FILE_NAME);
+            if (rowIndex == 0) {
+                rewriteLongs(ff, path, expected, replacement, eventMinTimestampOffset);
+            }
+            if (rowIndex == rowCount - 1) {
+                rewriteLongs(ff, path, expected, replacement, eventMaxTimestampOffset);
+            }
         }
     }
 
     /**
-     * Asserts the end state both live-view tests share: the view is durably invalid and its reason
-     * names the flush retry budget rather than the nano ceiling, nothing reached the view, and its
-     * base table is untouched and still queryable. Drops the view last, so the enclosing
-     * {@code assertMemoryLeak} does not take its reading with the view's resources still held.
+     * Asserts the end state the single-row live-view tests share: the view is durably invalid and its
+     * reason names the flush retry budget rather than the nano ceiling, nothing reached the view
+     * because the ceiling rejects the only row before the copier runs, and the base holds that row.
      */
     private void assertLiveViewInvalidatedByLegacyNanoRow() throws Exception {
+        assertLiveViewInvalidatedByLegacyNanoRow(
+                """
+                        ts\tx\trn
+                        """,
+                """
+                        ts\tx
+                        2262-01-01T00:00:00.000000000Z\t1
+                        """
+        );
+    }
+
+    /**
+     * Asserts the end state every live-view test here shares: the view is durably invalid and its
+     * reason names the flush retry budget rather than the nano ceiling, the view holds exactly
+     * {@code expectedViewRows} - the output the refresh committed before the fault, or nothing - and
+     * its base table is untouched, holds {@code expectedBaseRows} and is still queryable. Drops the
+     * view last, so the enclosing {@code assertMemoryLeak} does not take its reading with the view's
+     * resources still held.
+     */
+    private void assertLiveViewInvalidatedByLegacyNanoRow(String expectedViewRows, String expectedBaseRows) throws Exception {
         // the refresh failure is durable, and the reason names the budget rather than the ceiling
         assertQuery("SELECT view_name, base_table_name, view_status, invalidation_reason FROM live_views()")
                 .noRandomAccess()
@@ -772,15 +881,10 @@ public class TimestampBoundsTest extends AbstractCairoTest {
                         view_name\tbase_table_name\tview_status\tinvalidation_reason
                         lv\tbase\tinvalid\tflush retry budget exhausted
                         """);
-        // nothing reached the view: the ceiling rejects the row before the copier runs
-        assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns("""
-                ts\tx\trn
-                """);
+        // an invalid view stays queryable and holds whatever the refresh committed before the fault
+        assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(expectedViewRows);
         // an invalid view leaves its base alone, and both stay queryable
-        assertQuery("SELECT ts, x FROM base").noLeakCheck().timestamp("ts").expectSize().returns("""
-                ts\tx
-                2262-01-01T00:00:00.000000000Z\t1
-                """);
+        assertQuery("SELECT ts, x FROM base").noLeakCheck().timestamp("ts").expectSize().returns(expectedBaseRows);
         execute("DROP LIVE VIEW lv");
     }
 
@@ -795,7 +899,7 @@ public class TimestampBoundsTest extends AbstractCairoTest {
         execute("INSERT INTO legacy VALUES (" + CommonUtils.MAX_TIMESTAMP + ", 1)");
         // close the WAL writer so the segment on disk is complete before the rewrite
         engine.releaseInactive();
-        rewriteWalSegmentDesignatedTimestamp("legacy", CommonUtils.MAX_TIMESTAMP, LEGACY_BAND_NANO);
+        rewriteWalSegmentDesignatedTimestamp("legacy", 0, 1, CommonUtils.MAX_TIMESTAMP, LEGACY_BAND_NANO);
         drainWalQueue();
 
         assertQuery("SELECT ts, x FROM legacy").timestamp("ts").expectSize().returns("""

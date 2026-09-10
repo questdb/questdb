@@ -9032,7 +9032,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
                     attempted = true;
                     runSeedSweep(instance);
-                    instance.recordRefreshSuccess();
+                    // Clear the flush-retry budget only when the turn proved the sweep got past
+                    // whatever last faulted: it completed, or it committed output past the skip-write
+                    // floor, the LV row count that was on disk when the resume derived it. A mid-seed
+                    // fault that struck after the turn fed a row re-arms the resume,
+                    // which rewinds the sweep to its newest sealed root, and that root can sit
+                    // well below the on-disk output: turns that end on the same max
+                    // timestamp seal no new root, so recovery rewinds and replays rows already on
+                    // disk. A replay turn re-feeds those rows to rebuild the window state and appends
+                    // nothing, so it is no evidence that the faulting row cleared. Recording a success
+                    // for it zeroed the count and the streak clock on every rewind, and a permanent
+                    // fault - a row the LV writer refuses, a base column that no longer reads - then
+                    // re-faulted forever with neither budget able to expire. The resume-attempted
+                    // check covers a turn that left the resume block before sweeping (the LV apply
+                    // lag return): its lvRowsTotal and floor are the stale values a re-arm leaves
+                    // behind, not a measurement of this turn.
+                    if (instance.getStateReader().getSeedState() != LiveViewState.SEED_STATE_SEEDING
+                            || (instance.isSeedResumeAttempted()
+                            && instance.getLvRowsTotal() > instance.getSeedSkipWriteFloor())) {
+                        instance.recordRefreshSuccess();
+                    }
                     return attempted;
                 }
                 // A previous turn wiped or half-advanced the accumulators and its own
