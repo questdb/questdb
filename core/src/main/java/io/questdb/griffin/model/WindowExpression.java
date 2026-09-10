@@ -81,6 +81,11 @@ public final class WindowExpression extends QueryColumn {
     private int framingMode = FRAMING_RANGE; // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
     private boolean ignoreNulls = false;
     private int nullsDescPos = 0;
+    // The optimiser binds names once; codegen clones this recipe before every validation/parse.
+    private ExpressionNode pendingSubsample;
+    private boolean isSubsampleProjectionPending;
+    private boolean hasSubsampleSourceTimestamp;
+    private int subsamplePosition;
     private long rowsHi = Long.MAX_VALUE;
     private ExpressionNode rowsHiExpr;
     private int rowsHiExprPos;
@@ -168,6 +173,10 @@ public final class WindowExpression extends QueryColumn {
         ignoreNulls = false;
         nullsDescPos = 0;
         subsampleKeepFlag = false;
+        pendingSubsample = null;
+        isSubsampleProjectionPending = false;
+        hasSubsampleSourceTimestamp = false;
+        subsamplePosition = 0;
         windowName = null;
         windowNamePosition = 0;
         resolvedWindowName = null;
@@ -238,6 +247,14 @@ public final class WindowExpression extends QueryColumn {
         dst.windowNamePosition = this.windowNamePosition;
         dst.resolvedWindowName = this.resolvedWindowName;
         dst.resolvedWindowAnchored = this.resolvedWindowAnchored;
+        dst.subsampleKeepFlag = this.subsampleKeepFlag;
+        dst.pendingSubsample = ExpressionNode.deepClone(expressionNodePool, pendingSubsample);
+        dst.isSubsampleProjectionPending = isSubsampleProjectionPending;
+        dst.hasSubsampleSourceTimestamp = hasSubsampleSourceTimestamp;
+        dst.subsamplePosition = subsamplePosition;
+        if (dst.getAst() != null) {
+            dst.getAst().windowExpression = dst;
+        }
         return dst;
     }
 
@@ -299,6 +316,18 @@ public final class WindowExpression extends QueryColumn {
 
     public long getRowsHi() {
         return rowsHi;
+    }
+
+    public ExpressionNode getPendingSubsample() {
+        return pendingSubsample;
+    }
+
+    public int getSubsamplePosition() {
+        return subsamplePosition;
+    }
+
+    public boolean hasSubsampleSourceTimestamp() {
+        return hasSubsampleSourceTimestamp;
     }
 
     public ExpressionNode getRowsHiExpr() {
@@ -375,6 +404,10 @@ public final class WindowExpression extends QueryColumn {
         return framingMode != FRAMING_RANGE || rowsLoKind != PRECEDING || rowsHiKind != CURRENT || rowsHiExpr != null || rowsLoExpr != null;
     }
 
+    public boolean isSubsampleProjectionPending() {
+        return isSubsampleProjectionPending;
+    }
+
     public boolean isResolvedWindowAnchored() {
         return resolvedWindowAnchored;
     }
@@ -439,6 +472,17 @@ public final class WindowExpression extends QueryColumn {
      */
     public void setSubsampleKeepFlag(boolean subsampleKeepFlag) {
         this.subsampleKeepFlag = subsampleKeepFlag;
+    }
+
+    public void setPendingSubsample(ExpressionNode pendingSubsample, int position, boolean hasSourceTimestamp) {
+        this.pendingSubsample = pendingSubsample;
+        this.subsamplePosition = position;
+        this.hasSubsampleSourceTimestamp = hasSourceTimestamp;
+        this.isSubsampleProjectionPending = pendingSubsample != null;
+    }
+
+    public void setSubsampleProjectionPending(boolean isSubsampleProjectionPending) {
+        this.isSubsampleProjectionPending = isSubsampleProjectionPending;
     }
 
     public void setRowsHi(long rowsHi) {

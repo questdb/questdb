@@ -35,6 +35,417 @@ import org.junit.Test;
 public class LttbWindowFunctionTest extends AbstractCairoTest {
 
     @Test
+    public void testGapImplicitTimestampUnitsWithNanoOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE nano_order (id INT, ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts)");
+            execute("INSERT INTO nano_order VALUES (1, 0, 1), (2, 1_000_000_000, 2), (3, 2_000_000_000, 3), " +
+                    "(4, 10_000_000_000, 4), (5, 11_000_000_000, 5), (6, 12_000_000_000, 6)");
+            final ObjList<String> expressions = new ObjList<>();
+            expressions.add("ts::TIMESTAMP::LONG");
+            expressions.add("ts::DATE");
+            expressions.add("ts::STRING");
+            for (int cache = 0; cache < 2; cache++) {
+                final boolean isLight = cache == 1;
+                setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(isLight));
+                for (int i = 0; i < expressions.size(); i++) {
+                    assertQuery("SELECT id, lttb(" + expressions.getQuick(i) + ", v, 2, '1s') OVER (ORDER BY ts) keep FROM nano_order")
+                            .noLeakCheck().expectSize().columnType(0, io.questdb.cairo.ColumnType.INT)
+                            .columnType(1, io.questdb.cairo.ColumnType.BOOLEAN)
+                            .withPlanContaining(isLight ? "CachedWindowLight" : "CachedWindow\n", "unorderedFunctions")
+                            .returns("id\tkeep\n1\ttrue\n2\tfalse\n3\ttrue\n4\ttrue\n5\tfalse\n6\ttrue\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGapImplicitTimestampBoundaries() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE boundary_input (id INT, t LONG, v DOUBLE)");
+            for (int cache = 0; cache < 2; cache++) {
+                setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, cache == 1 ? "true" : "false");
+                // LONG uses micros, DATE has 1ms input resolution, and text preserves individual nanos.
+                for (int type = 0; type < 3; type++) {
+                    final long second = type == 2 ? 1_000_000_000L : 1_000_000L;
+                    final long unit = type == 1 ? 1000 : 1;
+                    final String expression = type == 0 ? "t" : type == 1 ? "(t / 1000)::DATE" : "t::TIMESTAMP_NS::STRING";
+                    for (int boundary = -1; boundary <= 1; boundary++) {
+                        final long next = second + boundary * unit;
+                        execute("TRUNCATE TABLE boundary_input");
+                        execute("INSERT INTO boundary_input VALUES (1, " + (-2 * second) + ", 1), (2, " + (-second) +
+                                ", 2), (3, 0, 3), (4, " + next + ", 4), (5, " + (next + second) + ", 5), (6, " + (next + 2 * second) + ", 6)");
+                        final boolean hasSplit = boundary == 1;
+                        assertQuery("SELECT id, lttb(" + expression + ", v, 2, '1s') OVER (ORDER BY id) keep FROM boundary_input")
+                                .noLeakCheck().expectSize().returns("id\tkeep\n1\ttrue\n2\tfalse\n3\t" + hasSplit +
+                                        "\n4\t" + hasSplit + "\n5\tfalse\n6\ttrue\n");
+                    }
+                }
+                execute("TRUNCATE TABLE boundary_input");
+                execute("INSERT INTO boundary_input VALUES (1, -2_000_000, 1), (2, -1_000_000, 2), (3, 0, 3), " +
+                        "(4, 10_000_000, 4), (5, 11_000_000, 5), (6, 12_000_000, 6)");
+                final ObjList<String> expressions = implicitTimestampExpressions();
+                for (int i = 0; i < expressions.size(); i++) {
+                    assertQuery("SELECT id, lttb(" + expressions.getQuick(i) + ", v, 2, '1h') OVER (ORDER BY id) keep FROM boundary_input")
+                            .noLeakCheck().expectSize().returns("id\tkeep\n1\ttrue\n2\tfalse\n3\tfalse\n4\tfalse\n5\tfalse\n6\ttrue\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGapImplicitTimestampNullsAndSmallInputs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE small_input (id INT, t LONG, v DOUBLE)");
+            final ObjList<String> expressions = implicitTimestampExpressions();
+            for (int cache = 0; cache < 2; cache++) {
+                setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, cache == 1 ? "true" : "false");
+                for (int i = 0; i < expressions.size(); i++) {
+                    final String expression = expressions.getQuick(i);
+                    execute("TRUNCATE TABLE small_input");
+                    assertSmallInput(expression, 2, "id\tkeep\n");
+                    execute("INSERT INTO small_input VALUES (1, NULL, 1), (2, 0, NULL), (3, NULL, NULL)");
+                    assertSmallInput(expression, 2, "id\tkeep\n1\tfalse\n2\tfalse\n3\tfalse\n");
+                    execute("TRUNCATE TABLE small_input");
+                    execute("INSERT INTO small_input VALUES (1, 0, 1)");
+                    assertSmallInput(expression, 2, "id\tkeep\n1\ttrue\n");
+                    execute("INSERT INTO small_input VALUES (2, 1_000_000, 2)");
+                    assertSmallInput(expression, 2, "id\tkeep\n1\ttrue\n2\ttrue\n");
+                    assertSmallInput(expression, 8, "id\tkeep\n1\ttrue\n2\ttrue\n");
+                    execute("INSERT INTO small_input VALUES (3, NULL, 3), (4, 2_000_000, NULL)");
+                    assertSmallInput(expression, 2, "id\tkeep\n1\ttrue\n2\ttrue\n3\tfalse\n4\tfalse\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGapTimestampConstantsAndBinds() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = "x\tkeep\n1\ttrue\n2\tfalse\n3\tfalse\n4\ttrue\n";
+            final ObjList<String> constants = new ObjList<>();
+            constants.add("'1970-01-01T00:00:00.000001Z'");
+            constants.add("'1970-01-01T00:00:00.000000001Z'");
+            constants.add("1::TIMESTAMP");
+            constants.add("1::TIMESTAMP_NS");
+            for (int cache = 0; cache < 2; cache++) {
+                setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, cache == 1 ? "true" : "false");
+                for (int i = 0; i < constants.size(); i++) {
+                    assertQuery("SELECT x, lttb(" + constants.getQuick(i) + ", x::DOUBLE, 2, '1s') OVER (ORDER BY x) keep FROM long_sequence(4)")
+                            .noLeakCheck().expectSize().columnType(0, io.questdb.cairo.ColumnType.LONG)
+                            .columnType(1, io.questdb.cairo.ColumnType.BOOLEAN).returns(expected);
+                }
+                for (int type = 0; type < 6; type++) {
+                    final int bindType = type;
+                    final ObjList<BindVarTuple> cases = new ObjList<>();
+                    cases.add(BindVarTuple.ok("typed timestamp getter", expected, binds -> setTimestampBind(binds, bindType, false)));
+                    cases.add(BindVarTuple.ok("typed NULL", "x\tkeep\n1\tfalse\n2\tfalse\n3\tfalse\n4\tfalse\n",
+                            binds -> setTimestampBind(binds, bindType, true)));
+                    cases.add(BindVarTuple.ok("reopen typed timestamp getter", expected, binds -> setTimestampBind(binds, bindType, false)));
+                    assertQuery("SELECT x, lttb($1, x::DOUBLE, 2, '1s') OVER (ORDER BY x) keep FROM long_sequence(4)")
+                            .noLeakCheck().expectSize().assertBinds(cases);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGapImplicitTimestampFailureThenReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int cache = 0; cache < 2; cache++) {
+                setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, cache == 1 ? "true" : "false");
+                for (int type = 4; type < 6; type++) {
+                    final int bindType = type;
+                    for (int cast = 0; cast < 2; cast++) {
+                        final ObjList<BindVarTuple> cases = new ObjList<>();
+                        final String expected = "x\tkeep\n1\ttrue\n2\tfalse\n3\tfalse\n4\ttrue\n";
+                        cases.add(BindVarTuple.ok("valid text", expected, binds -> setTimestampBind(binds, bindType, false)));
+                        final io.questdb.test.tools.BindVariableTestSetter malformed = binds -> {
+                            if (bindType == 4) {
+                                binds.setStr(0, "not-a-timestamp");
+                            } else {
+                                binds.setVarchar(0, new io.questdb.std.str.Utf8String("not-a-timestamp"));
+                            }
+                        };
+                        // Explicit text casts return NULL on parse errors; implicit timestamp getters throw.
+                        // Pin both existing contracts while reopening the same factory after the bad value.
+                        cases.add(cast == 0
+                                ? BindVarTuple.fails("malformed timestamp", "inconvertible value", malformed)
+                                : BindVarTuple.ok("explicit malformed timestamp is NULL",
+                                        "x\tkeep\n1\tfalse\n2\tfalse\n3\tfalse\n4\tfalse\n", malformed));
+                        cases.add(BindVarTuple.ok("valid after failure", expected, binds -> setTimestampBind(binds, bindType, false)));
+                        cases.add(BindVarTuple.ok("NULL after failure", "x\tkeep\n1\tfalse\n2\tfalse\n3\tfalse\n4\tfalse\n",
+                                binds -> setTimestampBind(binds, bindType, true)));
+                        assertQuery("SELECT x, lttb($1" + (cast == 0 ? "" : "::TIMESTAMP_NS") +
+                                ", x::DOUBLE, 2, '1s') OVER (ORDER BY x) keep FROM long_sequence(4)")
+                                .noLeakCheck().expectSize().assertBinds(cases);
+                    }
+                }
+                for (int type = 0; type < 2; type++) {
+                    final String sql = "SELECT x, lttb(x" + (type == 0 ? "" : "::DATE") +
+                            ", x::DOUBLE, $1, '1h') OVER (ORDER BY x) keep FROM long_sequence(4)";
+                    final ObjList<BindVarTuple> cases = new ObjList<>();
+                    cases.add(BindVarTuple.ok("all", "x\tkeep\n1\ttrue\n2\ttrue\n3\ttrue\n4\ttrue\n", binds -> binds.setLong(0, 8)));
+                    cases.add(BindVarTuple.fails("invalid target", sql.indexOf("$1"), "target points must be at least 2", binds -> binds.setLong(0, 1)));
+                    cases.add(BindVarTuple.ok("reuse", "x\tkeep\n1\ttrue\n2\tfalse\n3\tfalse\n4\ttrue\n", binds -> binds.setLong(0, 2)));
+                    assertQuery(sql).noLeakCheck().expectSize().assertBinds(cases);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGapImplicitTimestampOrdering() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE order_input (id INT, ts TIMESTAMP, v DOUBLE, reverse_id INT) TIMESTAMP(ts)");
+            execute("INSERT INTO order_input VALUES (1, 0, 1, 4), (2, 0, 2, 3), (3, 1_000_000, 3, 2), (4, 1_000_000, 4, 1)");
+            final ObjList<String> expressions = new ObjList<>();
+            expressions.add("ts::LONG");
+            expressions.add("ts::DATE");
+            expressions.add("ts::STRING");
+            for (int cache = 0; cache < 2; cache++) {
+                setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, cache == 1 ? "true" : "false");
+                for (int i = 0; i < expressions.size(); i++) {
+                    final String prefix = "SELECT id, lttb(" + expressions.getQuick(i) + ", v, 2, '1s') OVER (";
+                    final ObjList<String> orders = new ObjList<>();
+                    orders.add("ts");
+                    orders.add("id");
+                    for (int order = 0; order < orders.size(); order++) {
+                        assertQuery(prefix + "ORDER BY " + orders.getQuick(order) + " DESC) keep FROM order_input")
+                                .noLeakCheck().fails(11, "requires ascending ORDER BY");
+                        assertQuery(prefix + "ORDER BY " + orders.getQuick(order) + ") keep FROM order_input")
+                                .noLeakCheck().expectSize().returns("id\tkeep\n1\ttrue\n2\tfalse\n3\tfalse\n4\ttrue\n");
+                    }
+                    assertQuery(prefix + "PARTITION BY id ORDER BY ts) keep FROM order_input")
+                            .noLeakCheck().fails(11, "does not support PARTITION BY");
+                    assertQuery(prefix + "ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) keep FROM order_input")
+                            .noLeakCheck().fails(11, "does not support framing");
+                    assertQuery(prefix + "ORDER BY reverse_id) keep FROM order_input")
+                            .noLeakCheck().fails(11, "requires the timestamp argument in ascending ORDER BY order");
+                    assertQuery(prefix + "ORDER BY ts) keep FROM order_input")
+                            .noLeakCheck().expectSize().returns("id\tkeep\n1\ttrue\n2\tfalse\n3\tfalse\n4\ttrue\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGapTimestampConversionDiagnosticsThenReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            final String suffix = ") OVER (ORDER BY x) keep FROM long_sequence(4)";
+            final String valid = "SELECT x, lttb(x, x::DOUBLE, 2, '1s'" + suffix;
+            for (int cache = 0; cache < 2; cache++) {
+                setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, cache == 1 ? "true" : "false");
+                final ObjList<String> unsupported = new ObjList<>();
+                unsupported.add("true");
+                unsupported.add("x::BYTE");
+                unsupported.add("x::SHORT");
+                unsupported.add("x::FLOAT");
+                unsupported.add("x::DOUBLE");
+                unsupported.add("x::CHAR");
+                for (int i = 0; i < unsupported.size(); i++) {
+                    assertQuery("SELECT x, lttb(" + unsupported.getQuick(i) + ", x::DOUBLE, 2, '1s'" + suffix)
+                            .noLeakCheck().fails(10, "there is no matching function `lttb`");
+                    assertQuery(valid).noLeakCheck().expectSize().returns("x\tkeep\n1\ttrue\n2\tfalse\n3\tfalse\n4\ttrue\n");
+                }
+                assertQuery("SELECT x, lttb(NULL, x::DOUBLE, 2, '1s'" + suffix)
+                        .noLeakCheck().fails(10, "does not support an untyped NULL argument; cast it to a concrete type");
+                assertQuery(valid).noLeakCheck().expectSize().returns("x\tkeep\n1\ttrue\n2\tfalse\n3\tfalse\n4\ttrue\n");
+                final String overflow = "SELECT x, lttb(x, x::DOUBLE, 2, '9223372036855s'" + suffix;
+                assertQuery(overflow).noLeakCheck().fails(overflow.indexOf("'"), "gap threshold overflow");
+                assertQuery(valid).noLeakCheck().expectSize().returns("x\tkeep\n1\ttrue\n2\tfalse\n3\tfalse\n4\ttrue\n");
+                final String competing = "SELECT x, lttb(x, x::DOUBLE, 1, '0s'" + suffix;
+                assertQuery(competing).noLeakCheck().fails(competing.indexOf("1,"), "target points must be at least 2");
+                assertQuery(valid).noLeakCheck().expectSize().returns("x\tkeep\n1\ttrue\n2\tfalse\n3\tfalse\n4\ttrue\n");
+            }
+        });
+    }
+
+    private void assertSmallInput(String expression, int target, String expected) throws Exception {
+        assertQuery("SELECT id, lttb(" + expression + ", v, " + target + ", '1s') OVER (ORDER BY id) keep FROM small_input")
+                .noLeakCheck().expectSize().columnType(0, io.questdb.cairo.ColumnType.INT)
+                .columnType(1, io.questdb.cairo.ColumnType.BOOLEAN).returns(expected);
+    }
+
+    private static ObjList<String> implicitTimestampExpressions() {
+        final ObjList<String> expressions = new ObjList<>();
+        expressions.add("t");
+        expressions.add("(t / 1000)::DATE");
+        expressions.add("t::INT");
+        expressions.add("t::TIMESTAMP::STRING");
+        expressions.add("t::TIMESTAMP::VARCHAR");
+        expressions.add("t::TIMESTAMP::STRING::SYMBOL");
+        return expressions;
+    }
+
+    private static void setTimestampBind(io.questdb.cairo.sql.BindVariableService binds, int type, boolean isNull) throws SqlException {
+        final long value = isNull ? io.questdb.std.Numbers.LONG_NULL : 1;
+        switch (type) {
+            case 0 -> binds.setLong(0, value);
+            case 1 -> binds.setDate(0, value);
+            case 2 -> binds.setTimestamp(0, value);
+            case 3 -> binds.setTimestampNano(0, value);
+            case 4 -> binds.setStr(0, isNull ? null : "1970-01-01T00:00:00.000000001Z");
+            case 5 -> binds.setVarchar(0, isNull ? null : new io.questdb.std.str.Utf8String("1970-01-01T00:00:00.000000001Z"));
+            default -> throw new AssertionError(type);
+        }
+    }
+
+    @Test
+    public void testGapImplicitLongTimestamp() throws Exception {
+        assertTimestampConversion("ts::LONG", true);
+    }
+
+    @Test
+    public void testGapImplicitDateTimestamp() throws Exception {
+        assertTimestampConversion("ts::DATE", true);
+    }
+
+    @Test
+    public void testGapImplicitIntTimestamp() throws Exception {
+        assertTimestampConversion("ts::LONG::INT", true);
+    }
+
+    @Test
+    public void testGapImplicitStringTimestamp() throws Exception {
+        assertTimestampConversion("ts::STRING", true);
+    }
+
+    @Test
+    public void testGapImplicitVarcharTimestamp() throws Exception {
+        assertTimestampConversion("ts::VARCHAR", true);
+    }
+
+    @Test
+    public void testGapImplicitSymbolTimestamp() throws Exception {
+        assertTimestampConversion("ts::STRING::SYMBOL", true);
+    }
+
+    @Test
+    public void testGapExplicitTimestampConversionControls() throws Exception {
+        assertTimestampConversion("ts::LONG::TIMESTAMP", true);
+        assertTimestampConversion("ts::DATE::TIMESTAMP", true);
+        assertTimestampConversion("ts::TIMESTAMP_NS", true);
+        assertTimestampConversion("ts::STRING::TIMESTAMP_NS", true);
+    }
+
+    @Test
+    public void testNoGapImplicitTimestampConversionControls() throws Exception {
+        assertTimestampConversion("ts::LONG", false);
+        assertTimestampConversion("ts::DATE", false);
+        assertTimestampConversion("ts::LONG::INT", false);
+        assertTimestampConversion("ts::STRING", false);
+        assertTimestampConversion("ts::VARCHAR", false);
+        assertTimestampConversion("ts::STRING::SYMBOL", false);
+    }
+
+    private void assertTimestampConversion(String timestampExpression, boolean hasGap) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE conversion_input (id INT, ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts)");
+            execute("INSERT INTO conversion_input VALUES (1, 0, 1), (2, 1_000_000, 2), (3, 2_000_000, 3), " +
+                    "(4, 10_000_000, 4), (5, 11_000_000, 5), (6, 12_000_000, 6)");
+            for (int cache = 0; cache < 2; cache++) {
+                final boolean isLight = cache == 1;
+                setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(isLight));
+                for (int order = 0; order < 2; order++) {
+                    final String orderColumn = order == 0 ? "ts" : "id";
+                    final String sql = "SELECT id, lttb(" + timestampExpression + ", v, 2" +
+                            (hasGap ? ", '1s'" : "") + ") OVER (ORDER BY " + orderColumn + ") keep FROM conversion_input";
+                    // Adjacent points exactly 1s apart stay together; only the 8s hole splits.
+                    // A DATE getter returns micros, whereas STRING/VARCHAR/SYMBOL getters return nanos.
+                    assertQuery(sql).noLeakCheck().expectSize()
+                            .withPlanContaining(isLight ? "CachedWindowLight" : "CachedWindow\n",
+                                    order == 0 ? "unorderedFunctions" : "orderedFunctions")
+                            .returns("id\tkeep\n1\ttrue\n2\tfalse\n3\t" + hasGap +
+                                    "\n4\t" + hasGap + "\n5\tfalse\n6\ttrue\n");
+                }
+            }
+            execute("DROP TABLE conversion_input");
+        });
+    }
+
+    @Test
+    public void testImplicitTimestampNullControls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE nullable_input (id INT, t LONG, v DOUBLE)");
+            execute("INSERT INTO nullable_input VALUES (1, NULL, 1), (2, 0, NULL), (3, 1_000_000, 3), (4, 2_000_000, 4)");
+            final ObjList<String> expressions = new ObjList<>();
+            expressions.add("t");
+            expressions.add("(t / 1000)::DATE");
+            expressions.add("t::INT");
+            expressions.add("t::TIMESTAMP::STRING");
+            expressions.add("t::TIMESTAMP::VARCHAR");
+            expressions.add("t::TIMESTAMP::STRING::SYMBOL");
+            for (int cache = 0; cache < 2; cache++) {
+                setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, cache == 1 ? "true" : "false");
+                for (int i = 0; i < expressions.size(); i++) {
+                    final String expression = expressions.getQuick(i);
+                    assertQuery("SELECT id, lttb(" + expression + ", v, 2) OVER (ORDER BY id) keep FROM nullable_input")
+                            .noLeakCheck().expectSize().returns("id\tkeep\n1\tfalse\n2\tfalse\n3\ttrue\n4\ttrue\n");
+                    assertQuery("SELECT id, lttb(" + expression + "::TIMESTAMP, v, 2, '1s') OVER (ORDER BY id) keep FROM nullable_input")
+                            .noLeakCheck().expectSize().returns("id\tkeep\n1\tfalse\n2\tfalse\n3\ttrue\n4\ttrue\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampConversionErrorThenReuseControls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE error_input (id INT, t LONG, v DOUBLE)");
+            execute("INSERT INTO error_input VALUES (1, 0, 1), (2, 1_000_000, 2), (3, 2_000_000, 3), (4, 3_000_000, 4)");
+            for (int cache = 0; cache < 2; cache++) {
+                setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, cache == 1 ? "true" : "false");
+                final String prefix = "SELECT id, lttb(t, v, 2, ";
+                assertQuery(prefix + "'0s') OVER (ORDER BY id) FROM error_input")
+                        .noLeakCheck().fails(prefix.length(), "gap threshold must be greater than zero");
+                assertQuery(prefix + "NULL::STRING) OVER (ORDER BY id) FROM error_input")
+                        .noLeakCheck().fails(prefix.length() + 4, "gap threshold must be a string constant");
+                assertQuery(prefix + "'1q') OVER (ORDER BY id) FROM error_input")
+                        .noLeakCheck().fails(prefix.length() + 2, "unsupported interval unit: q");
+                assertQuery("SELECT id, lttb(true, v, 2, '1s') OVER (ORDER BY id) FROM error_input")
+                        .noLeakCheck().fails(11, "there is no matching function `lttb`");
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                cases.add(BindVarTuple.ok("keep all", "id\tkeep\n1\ttrue\n2\ttrue\n3\ttrue\n4\ttrue\n",
+                        binds -> binds.setLong(0, 8)));
+                final String sql = "SELECT id, lttb(t::DATE::TIMESTAMP, v, $1, '1h') OVER (ORDER BY id) keep FROM error_input";
+                cases.add(BindVarTuple.fails("invalid target", sql.indexOf("$1"), "target points must be at least 2",
+                        binds -> binds.setLong(0, 1)));
+                cases.add(BindVarTuple.ok("reuse after failure", "id\tkeep\n1\ttrue\n2\tfalse\n3\tfalse\n4\ttrue\n",
+                        binds -> binds.setLong(0, 2)));
+                assertQuery(sql).noLeakCheck().expectSize().assertBinds(cases);
+            }
+        });
+    }
+
+    @Test
+    public void testGapLongSequenceTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = "x\tlttb\n1\ttrue\n2\ttrue\n3\tfalse\n4\tfalse\n5\tfalse\n" +
+                    "6\tfalse\n7\tfalse\n8\tfalse\n9\tfalse\n10\ttrue\n";
+            assertQuery("SELECT x, lttb(x::TIMESTAMP, x::DOUBLE, 3, '1h') OVER (ORDER BY x) FROM long_sequence(10)")
+                    .noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT x, lttb(x, x::DOUBLE, 3) OVER (ORDER BY x) FROM long_sequence(10)")
+                    .noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT x, lttb(x, x::DOUBLE, 3, '1h') OVER (ORDER BY x) FROM long_sequence(10)")
+                    .noLeakCheck().expectSize().returns(expected);
+        });
+    }
+
+    @Test
+    public void testGapDateSequenceTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = "x\tlttb\n1\ttrue\n2\ttrue\n3\tfalse\n4\tfalse\n5\tfalse\n" +
+                    "6\tfalse\n7\tfalse\n8\tfalse\n9\tfalse\n10\ttrue\n";
+            assertQuery("SELECT x, lttb(x::DATE::TIMESTAMP, x::DOUBLE, 3, '1h') OVER (ORDER BY x) FROM long_sequence(10)")
+                    .noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT x, lttb(x::DATE, x::DOUBLE, 3) OVER (ORDER BY x) FROM long_sequence(10)")
+                    .noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT x, lttb(x::DATE, x::DOUBLE, 3, '1h') OVER (ORDER BY x) FROM long_sequence(10)")
+                    .noLeakCheck().expectSize().returns(expected);
+        });
+    }
+
+    @Test
     public void testBindVariableTarget() throws Exception {
         // lttb(ts, value, target) accepts a runtime-constant (bind-variable) target, read PER-EXECUTION:
         // the SAME compiled factory produces keep-all vs downsampled keep-sets as $1 is re-bound between

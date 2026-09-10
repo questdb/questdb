@@ -24,12 +24,428 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class SdtWindowFunctionTest extends AbstractCairoTest {
 
     private static final String DDL = "create table tab (ts timestamp, val double) timestamp(ts)";
+    private static final int JSON_BUFFER_SIZE = 1_048_576;
+    private static final String LIFECYCLE_EXPECTED = "id\tkeep\n1\ttrue\n2\tfalse\n3\tfalse\n4\tfalse\n5\ttrue\n";
+
+    @Test
+    public void testPartitionExpressionCursorClosedLight() throws Exception {
+        assertPartitionExpressionCursorClosed(true);
+    }
+
+    @Test
+    public void testPartitionExpressionCursorClosedRegular() throws Exception {
+        assertPartitionExpressionCursorClosed(false);
+    }
+
+    @Test
+    public void testPartitionExpressionLifecycleControls() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, JSON_BUFFER_SIZE);
+            execute("CREATE TABLE lifecycle (id INT, k INT, j VARCHAR, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO lifecycle SELECT x::int, 1, '{\"k\":\"12345\"}', x::double, x::timestamp FROM long_sequence(5)");
+            for (boolean isLight : new boolean[]{true, false}) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(isLight));
+                for (boolean isSorted : new boolean[]{false, true}) {
+                    String order = isSorted ? "id" : "ts";
+                    Assert.assertTrue(assertLifecycleQuery("SELECT id, sdt(ts, val, 0.1) OVER (ORDER BY " + order + ") keep FROM lifecycle", isLight) < 65_536);
+                    Assert.assertTrue(assertLifecycleQuery("SELECT id, sdt(ts, val, 0.1) OVER (PARTITION BY k ORDER BY " + order + ") keep FROM lifecycle", isLight) < 65_536);
+                    Assert.assertTrue(assertLifecycleQuery("SELECT id, sdt(ts, val, 0.1) OVER (PARTITION BY json_extract(j, '$.k')::int ORDER BY " + order + ") keep FROM lifecycle", isLight) < 65_536);
+                    Assert.assertTrue(assertLifecycleQuery("SELECT id, sdt(ts, length(json_extract(j, '$.k')), 0.1) OVER (ORDER BY " + order + ") keep FROM lifecycle", isLight) < 65_536);
+                    Assert.assertTrue(assertLifecycleQuery("SELECT id, sdt(ts, length(json_extract(j, '$.k')), 0.1) OVER (PARTITION BY k ORDER BY " + order + ") keep FROM lifecycle", isLight) < 65_536);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionExpressionNullAndMultiplePartitionControls() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, JSON_BUFFER_SIZE);
+            execute("CREATE TABLE lifecycle (id INT, j VARCHAR, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO lifecycle VALUES
+                    (1, '{"k":"a"}', 1, 1::timestamp),
+                    (2, '{"k":"bb"}', 2, 2::timestamp),
+                    (3, NULL, 3, 3::timestamp),
+                    (4, '{"k":"a"}', 4, 4::timestamp),
+                    (5, '{"k":"bb"}', 5, 5::timestamp),
+                    (6, NULL, 6, 6::timestamp),
+                    (7, '{"k":"a"}', 7, 7::timestamp),
+                    (8, '{"k":"bb"}', 8, 8::timestamp),
+                    (9, NULL, 9, 9::timestamp)
+                    """);
+            for (boolean isLight : new boolean[]{true, false}) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(isLight));
+                for (boolean isSorted : new boolean[]{false, true}) {
+                    String query = "SELECT id, sdt(ts, val, 0.1) OVER (PARTITION BY abs(length(json_extract(j, '$.k')) + 1) ORDER BY "
+                            + (isSorted ? "id" : "ts") + ") keep FROM lifecycle";
+                    assertLifecycleQuery(query, isLight, """
+                            id\tkeep
+                            1\ttrue
+                            2\ttrue
+                            3\ttrue
+                            4\tfalse
+                            5\tfalse
+                            6\tfalse
+                            7\ttrue
+                            8\ttrue
+                            9\ttrue
+                            """, 9, 1);
+                    assertLifecycleQuery(query + " WHERE id < 0", isLight, "id\tkeep\n", 0, 1);
+                    assertLifecycleQuery(query + " WHERE id = 3", isLight, "id\tkeep\n3\ttrue\n", 1, 1);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionExpressionCancellationThenReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, JSON_BUFFER_SIZE);
+            execute("CREATE TABLE lifecycle (id INT, j VARCHAR, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO lifecycle SELECT x::int, '{\"k\":\"12345\"}', x::double, x::timestamp FROM long_sequence(5)");
+            for (boolean isLight : new boolean[]{true, false}) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(isLight));
+                for (boolean isSorted : new boolean[]{false, true}) {
+                    String query = "SELECT id, sdt(ts, val, 0.1) OVER (PARTITION BY length(json_extract(j, '$.k')) ORDER BY "
+                            + (isSorted ? "id" : "ts") + ") keep FROM lifecycle";
+                    long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+                    try (RecordCursorFactory factory = select(query)) {
+                        assertLifecycleFactory(factory, isLight);
+                        MemoryTracker tracker;
+                        long live;
+                        // No hasNext: init alone inflates both output sinks. Double close must be safe.
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            tracker = sqlExecutionContext.getMemoryTracker();
+                            live = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+                            cursor.close();
+                            Assert.assertEquals(2L * JSON_BUFFER_SIZE, live - Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK));
+                            assertLifecycleClosed(baseline);
+                            cursor.close();
+                        }
+                        Assert.assertEquals(0, tracker.getUsed());
+                        assertLifecycleClosed(baseline);
+                        SqlExecutionCircuitBreaker originalBreaker = sqlExecutionContext.getCircuitBreaker();
+                        AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+                        ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                        try {
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                tracker = sqlExecutionContext.getMemoryTracker();
+                                live = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+                                breaker.cancel();
+                                try {
+                                    cursor.hasNext();
+                                    Assert.fail("expected cancellation after partition expression init");
+                                } catch (CairoException e) {
+                                    Assert.assertTrue(e.isCancellation());
+                                }
+                            }
+                            Assert.assertEquals(2L * JSON_BUFFER_SIZE, live - Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK));
+                            assertLifecycleClosed(baseline);
+                            Assert.assertEquals(0, tracker.getUsed());
+                            System.out.println("SDT_CANCEL light=" + isLight + " sorted=" + isSorted + " released=" + (2L * JSON_BUFFER_SIZE));
+                        } finally {
+                            breaker.reset();
+                            ((SqlExecutionContextImpl) sqlExecutionContext).with(originalBreaker);
+                        }
+                        assertLifecycleResult(factory, LIFECYCLE_EXPECTED, 5, baseline, 1);
+                    }
+                    Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionExpressionMultipleOwnersCursorClosed() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, JSON_BUFFER_SIZE);
+            execute("CREATE TABLE lifecycle (id INT, k INT, j VARCHAR, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO lifecycle SELECT x::int, 1, '{\"k\":\"a\",\"other\":\"bb\"}', x::double, x::timestamp FROM long_sequence(5)");
+            for (boolean isLight : new boolean[]{true, false}) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(isLight));
+                for (boolean isSorted : new boolean[]{false, true}) {
+                    String order = isSorted ? "id" : "ts";
+                    String query = "SELECT id, sdt(ts, val, 0.1) OVER (PARTITION BY k, json_extract(j, '$.k'), json_extract(j, '$.other') ORDER BY " + order
+                            + ") keep, sdt(ts, val, 0.1) OVER (PARTITION BY k, abs(length(json_extract(j, '$.k')) + 1) ORDER BY " + order
+                            + ") keep2, sum(val) OVER (PARTITION BY k) total, avg(val) OVER (PARTITION BY k) mean FROM lifecycle";
+                    long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+                    try (RecordCursorFactory factory = select(query)) {
+                        assertLifecycleFactory(factory, isLight);
+                        Assert.assertEquals(ColumnType.BOOLEAN, factory.getMetadata().getColumnType(2));
+                        Assert.assertEquals(ColumnType.DOUBLE, factory.getMetadata().getColumnType(3));
+                        Assert.assertEquals(ColumnType.DOUBLE, factory.getMetadata().getColumnType(4));
+                        assertLifecycleResult(factory, """
+                                id\tkeep\tkeep2\ttotal\tmean
+                                1\ttrue\ttrue\t15.0\t3.0
+                                2\tfalse\tfalse\t15.0\t3.0
+                                3\tfalse\tfalse\t15.0\t3.0
+                                4\tfalse\tfalse\t15.0\t3.0
+                                5\ttrue\ttrue\t15.0\t3.0
+                                """, 5, baseline, 3);
+                    }
+                    Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionExpressionFailedOpenThenReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, JSON_BUFFER_SIZE);
+            execute("CREATE TABLE lifecycle (id INT, j VARCHAR, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO lifecycle SELECT x::int, '{\"k\":\"12345\"}', x::double, x::timestamp FROM long_sequence(5)");
+            for (boolean isLight : new boolean[]{true, false}) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(isLight));
+                for (boolean isSorted : new boolean[]{false, true}) {
+                    String query = "SELECT id, sdt(ts, val, 0.1) OVER (PARTITION BY length(json_extract(j, '$.k')) ORDER BY "
+                            + (isSorted ? "id" : "ts") + ") keep FROM lifecycle";
+                    long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+                    try (RecordCursorFactory factory = select(query)) {
+                        assertLifecycleFactory(factory, isLight);
+                        // First fail before any successful init, then fail after successful reuse.
+                        for (int run = 0; run < 2; run++) {
+                            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+                            try {
+                                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                                    Assert.fail("expected OOM during getCursor, not during hasNext");
+                                } catch (CairoException e) {
+                                    Assert.assertTrue("expected OOM: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                    System.out.println("SDT_FAILED_OPEN light=" + isLight + " sorted=" + isSorted + " error=" + e.getFlyweightMessage());
+                                }
+                                assertLifecycleClosed(baseline);
+                                Assert.assertNull("failed open must unbind its query tracker", sqlExecutionContext.getMemoryTracker());
+                            } finally {
+                                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+                            }
+                            assertLifecycleResult(factory, LIFECYCLE_EXPECTED, 5, baseline, 1);
+                        }
+                    }
+                    Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionExpressionEvaluationFailureThenReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, JSON_BUFFER_SIZE);
+            execute("CREATE TABLE lifecycle (id INT, j VARCHAR, val DOUBLE, ats STRING, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO lifecycle SELECT x::int, '{\"k\":\"12345\"}', 0.0, '1970-01-01T00:00:00.000000001Z', x::timestamp FROM long_sequence(5)");
+            for (boolean isLight : new boolean[]{true, false}) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(isLight));
+                for (boolean isSorted : new boolean[]{false, true}) {
+                    bindVariableService.setBoolean(0, false);
+                    String query = "SELECT id, sdt(CASE WHEN $1 THEN 'not-a-timestamp' ELSE ats END, val, 0.1) OVER (PARTITION BY length(json_extract(j, '$.k')) ORDER BY "
+                            + (isSorted ? "id" : "ts") + ") keep FROM lifecycle";
+                    long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+                    try (RecordCursorFactory factory = select(query)) {
+                        assertLifecycleFactory(factory, isLight);
+                        // Constant valid timestamps make each row a timestamp boundary.
+                        String expected = "id\tkeep\n1\ttrue\n2\ttrue\n3\ttrue\n4\ttrue\n5\ttrue\n";
+                        assertLifecycleResult(factory, expected, 5, baseline, 1);
+                        bindVariableService.setBoolean(0, true);
+                        MemoryTracker tracker;
+                        long live;
+                        try {
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                tracker = sqlExecutionContext.getMemoryTracker();
+                                live = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+                                try {
+                                    cursor.hasNext();
+                                    Assert.fail("expected implicit STRING timestamp conversion failure in pass1");
+                                } catch (ImplicitCastException e) {
+                                    Assert.assertEquals("inconvertible value: `not-a-timestamp` [STRING -> TIMESTAMP_NS]", e.getFlyweightMessage().toString());
+                                    boolean hasSdtPass1 = false;
+                                    for (StackTraceElement frame : e.getStackTrace()) {
+                                        hasSdtPass1 |= frame.getClassName().endsWith("SdtWindowFunctionFactory$SdtOverPartitionFunction") && frame.getMethodName().equals("pass1");
+                                    }
+                                    // SDT pass1 evaluates the partition key before calling the timestamp getter.
+                                    Assert.assertTrue("error must follow SDT partition-key evaluation", hasSdtPass1);
+                                    System.out.println("SDT_EVALUATION_ERROR light=" + isLight + " sorted=" + isSorted + " afterKey=" + hasSdtPass1 + " error=" + e.getFlyweightMessage());
+                                }
+                            }
+                            Assert.assertEquals(2L * JSON_BUFFER_SIZE, live - Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK));
+                            assertLifecycleClosed(baseline);
+                            Assert.assertEquals(0, tracker.getUsed());
+                        } finally {
+                            bindVariableService.setBoolean(0, false);
+                        }
+                        assertLifecycleResult(factory, expected, 5, baseline, 1);
+                    }
+                    Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionExpressionReopenAfterInsert() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, JSON_BUFFER_SIZE);
+            for (boolean isLight : new boolean[]{true, false}) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(isLight));
+                for (boolean isSorted : new boolean[]{false, true}) {
+                    String table = "lifecycle_" + isLight + '_' + isSorted;
+                    execute("CREATE TABLE " + table + " (id INT, j VARCHAR, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO " + table + " VALUES (1, '{\"k\":\"a\"}', 0, '1970-01-01'), (2, NULL, 0, '1970-01-02'), (5, '{\"k\":\"a\"}', 0, '1970-01-05'), (6, NULL, 0, '1970-01-06')");
+                    drainWalQueue();
+                    String query = "SELECT id, sdt(ts, val, 0.1) OVER (PARTITION BY json_extract(j, '$.k') ORDER BY "
+                            + (isSorted ? "id" : "ts") + ") keep FROM " + table;
+                    long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+                    try (RecordCursorFactory factory = select(query)) {
+                        assertLifecycleFactory(factory, isLight);
+                        assertLifecycleResult(factory, "id\tkeep\n1\ttrue\n2\ttrue\n5\ttrue\n6\ttrue\n", 4, baseline, 1);
+                        execute("INSERT INTO " + table + " VALUES (3, '{\"k\":\"a\"}', 0, '1970-01-03'), (4, NULL, 0, '1970-01-04'), (7, '{\"k\":\"bb\"}', 0, '1970-01-07')");
+                        drainWalQueue();
+                        assertLifecycleResult(factory, "id\tkeep\n1\ttrue\n2\ttrue\n3\tfalse\n4\tfalse\n5\ttrue\n6\ttrue\n7\ttrue\n", 7, baseline, 1);
+                    }
+                    Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK));
+                }
+            }
+        });
+    }
+
+    private void assertLifecycleSize(RecordCursorFactory factory, long expectedSize) throws Exception {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            RecordCursor.Counter counter = new RecordCursor.Counter();
+            counter.set(7);
+            cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+            Assert.assertEquals(7 + expectedSize, counter.get());
+            Assert.assertFalse(cursor.hasNext());
+            cursor.toTop();
+            long rows = 0;
+            while (cursor.hasNext()) {
+                rows++;
+            }
+            Assert.assertEquals(expectedSize, rows);
+        }
+    }
+
+    private static void assertLifecycleFactory(RecordCursorFactory factory, boolean isLight) {
+        RecordCursorFactory current = factory;
+        Class<?> expected = isLight ? CachedWindowLightRecordCursorFactory.class : CachedWindowRecordCursorFactory.class;
+        while (current != null && !expected.isInstance(current)) {
+            current = current.getBaseFactory();
+        }
+        Assert.assertNotNull(expected.getSimpleName(), current);
+        Assert.assertEquals(ColumnType.BOOLEAN, factory.getMetadata().getColumnType(1));
+        TextPlanSink plan = new TextPlanSink();
+        plan.of(factory, sqlExecutionContext);
+        for (int i = 1; i <= plan.getLineCount(); i++) {
+            System.out.println("SDT_PLAN " + plan.getLine(i));
+        }
+    }
+
+    private void assertLifecycleResult(RecordCursorFactory factory, String expected, long rows, long baseline, int jsonFunctions) throws Exception {
+        new QueryAssertion(engine, factory).withContext(sqlExecutionContext).expectSize().returns(expected);
+        assertLifecycleSize(factory, rows);
+        for (int run = 0; run < 3; run++) {
+            long live;
+            MemoryTracker tracker;
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                tracker = sqlExecutionContext.getMemoryTracker();
+                assertCursorTwoPass(expected, cursor, factory.getMetadata());
+                live = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+            }
+            long closed = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+            Assert.assertEquals("JSON output backing released", 2L * JSON_BUFFER_SIZE * jsonFunctions, live - closed);
+            assertLifecycleClosed(baseline);
+            Assert.assertEquals(0, tracker.getUsed());
+            System.out.println("SDT_RELEASE functions=" + jsonFunctions + " bytes=" + (live - closed) + " retained=" + (closed - baseline));
+        }
+    }
+
+    private long assertLifecycleQuery(String query, boolean isLight, String expected, long rows, int jsonFunctions) throws Exception {
+        long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+        long retained;
+        try (RecordCursorFactory factory = select(query)) {
+            assertLifecycleFactory(factory, isLight);
+            assertLifecycleResult(factory, expected, rows, baseline, jsonFunctions);
+            retained = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK) - baseline;
+        }
+        Assert.assertEquals("factory disposal: " + query, baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK));
+        return retained;
+    }
+
+    private static void assertLifecycleClosed(long baseline) {
+        long retained = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK) - baseline;
+        // JSON keeps its small parser/input/path state, not its max-size output backing.
+        Assert.assertTrue("cursor-scoped JSON buffers retained=" + retained, retained >= 0 && retained < 65_536);
+        Assert.assertEquals("busy readers after cursor close", 0, engine.getBusyReaderCount());
+    }
+
+    private long assertLifecycleQuery(String query, boolean isLight) throws Exception {
+        long maxRetained = 0;
+        long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+        try (RecordCursorFactory factory = select(query)) {
+            assertLifecycleFactory(factory, isLight);
+            new QueryAssertion(engine, factory).withContext(sqlExecutionContext).expectSize().returns("""
+                    id\tkeep
+                    1\ttrue
+                    2\tfalse
+                    3\tfalse
+                    4\tfalse
+                    5\ttrue
+                    """);
+            assertLifecycleSize(factory, 5);
+            for (int run = 0; run < 3; run++) {
+                long live;
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("id\tkeep\n1\ttrue\n2\tfalse\n3\tfalse\n4\tfalse\n5\ttrue\n", cursor, factory.getMetadata());
+                    live = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK) - baseline;
+                }
+                long retained = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK) - baseline;
+                maxRetained = Math.max(maxRetained, retained);
+                System.out.println("SDT_LIFECYCLE light=" + isLight + " run=" + run + " live=" + live + " retained=" + retained + " query=" + query);
+            }
+        }
+        Assert.assertEquals("factory disposal: " + query, baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK));
+        return maxRetained;
+    }
+
+    private void assertPartitionExpressionCursorClosed(boolean isLight) throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, JSON_BUFFER_SIZE);
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(isLight));
+            execute("CREATE TABLE lifecycle (id INT, j VARCHAR, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO lifecycle SELECT x::int, '{\"k\":\"12345\"}', x::double, x::timestamp FROM long_sequence(5)");
+            long maxRetained = 0;
+            for (boolean isSorted : new boolean[]{false, true}) {
+                String query = "SELECT id, sdt(ts, val, 0.1) OVER (PARTITION BY length(json_extract(j, '$.k')) ORDER BY "
+                        + (isSorted ? "id" : "ts") + ") keep FROM lifecycle";
+                maxRetained = Math.max(maxRetained, assertLifecycleQuery(query, isLight, LIFECYCLE_EXPECTED, 5, 1));
+            }
+            // JSON retains its small path/input/parser state until factory disposal, but not
+            // the two max-size output buffers. Check while factories survive each cursor close.
+            Assert.assertTrue("cursor-scoped JSON buffers retained=" + maxRetained, maxRetained < 65_536);
+        });
+    }
 
     @Test
     public void testRejectsNegativeCompdev() throws Exception {

@@ -240,6 +240,11 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public boolean isSelectionAllRows() {
+            return keepAll;
+        }
+
+        @Override
         public void initRecordComparator(
                 SqlCodeGenerator sqlGenerator,
                 RecordMetadata metadata,

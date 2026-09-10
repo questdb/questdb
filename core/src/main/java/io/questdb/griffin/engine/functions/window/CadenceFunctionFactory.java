@@ -310,6 +310,11 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public boolean isSelectionAllRows() {
+            return keepAll;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             strideFunc.init(symbolTableSource, executionContext);

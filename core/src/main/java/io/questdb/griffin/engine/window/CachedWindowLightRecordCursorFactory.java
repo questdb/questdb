@@ -438,8 +438,8 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         private final WindowLightRecord recordA;
         private final WindowLightRecord recordB;
         // Row-selecting mode only: ascending ABSOLUTE incoming-row indices emitted by this cursor.
-        // The function itself reports pass1 traversal ordinals into selectedTraversalRows; ordered
-        // traversal ordinals are translated through the owning WindowSortBuffer before emission.
+        // Forward functions write directly here. Ordered/backward traversal ordinals use
+        // selectedTraversalRows for translation before emission. Select-all uses neither list.
         private final DirectLongList selectedRowIds;
         private final DirectLongList selectedTraversalRows;
         private final ObjList<WindowSortBuffer> sortBuffers;
@@ -447,6 +447,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long currentRowIndex;
         private boolean isOpen;
+        private boolean isSelectionAllRows;
         private boolean isWindowComputed;
         private long outputSize;
         private long size;
@@ -504,6 +505,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 if (windowMapGroups != null) {
                     windowMapGroups.reset();
                 }
+                isSelectionAllRows = false;
                 isOpen = false;
             }
         }
@@ -531,7 +533,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             if (rowSelecting) {
                 if (currentRowIndex < outputSize) {
                     // Emit only the kept rows: index the base at the selected absolute row id.
-                    positionRecordA(selectedRowIds.get(currentRowIndex));
+                    positionRecordA(isSelectionAllRows ? currentRowIndex : selectedRowIds.get(currentRowIndex));
                     currentRowIndex++;
                     return true;
                 }
@@ -716,8 +718,13 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             // forward branch validates its identity mapping as strictly ascending and skips the
             // sort. This still skips the O(N) boolean pass2 write and downstream Filter.
             if (rowSelecting) {
-                mapSelectedRows();
-                outputSize = selectedRowIds.size();
+                isSelectionAllRows = selectingFunction.isSelectionAllRows();
+                if (isSelectionAllRows) {
+                    outputSize = size;
+                } else {
+                    mapSelectedRows();
+                    outputSize = selectedRowIds.size();
+                }
             } else {
                 if (ordered2PassFunctions != null) {
                     for (int i = 0, n = ordered2PassFunctions.size(); i < n; i++) {
@@ -794,6 +801,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             this.baseCursor = baseCursor;
             baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             isWindowComputed = false;
+            isSelectionAllRows = false;
             currentRowIndex = 0;
             size = 0;
             outputSize = 0;
@@ -846,7 +854,6 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         private void mapSelectedRows() {
             selectedRowIds.clear();
             selectedTraversalRows.clear();
-            selectingFunction.getSelectedRows(selectedTraversalRows);
 
             boolean isSortNeeded = true;
             int orderedGroup = -1;
@@ -860,6 +867,8 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
             }
 
+            final boolean isForward = orderedGroup < 0 && containsFunction(forwardUnorderedFunctions, selectingFunction);
+            selectingFunction.getSelectedRows(isForward ? selectedRowIds : selectedTraversalRows);
             if (orderedGroup >= 0) {
                 final WindowSortBuffer group = sortBuffers.getQuick(orderedGroup);
                 group.toTop();
@@ -881,23 +890,22 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 if (selectedIndex != selectedCount) {
                     throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
                 }
-            } else if (containsFunction(forwardUnorderedFunctions, selectingFunction)) {
+            } else if (isForward) {
                 // Forward pass1 traversal ordinal == absolute buffered-row index, so this identity
                 // mapping preserves the getSelectedRows contract order: strictly ascending ordinals
                 // in, strictly ascending row ids out. Enforce that strictness in-loop (prevOrdinal
                 // starts at -1 so ordinal 0 passes) instead of repairing violations with the tail
                 // sort, which is redundant work on already-sorted input.
                 long prevOrdinal = -1;
-                for (long i = 0, n = selectedTraversalRows.size(); i < n; i++) {
+                for (long i = 0, n = selectedRowIds.size(); i < n; i++) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
-                    final long traversalOrdinal = selectedTraversalRows.get(i);
+                    final long traversalOrdinal = selectedRowIds.get(i);
                     if (traversalOrdinal < 0 || traversalOrdinal >= size) {
                         throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
                     }
                     if (traversalOrdinal <= prevOrdinal) {
                         throw CairoException.nonCritical().put("invalid row-selecting traversal order");
                     }
-                    selectedRowIds.add(traversalOrdinal);
                     prevOrdinal = traversalOrdinal;
                 }
                 isSortNeeded = false;

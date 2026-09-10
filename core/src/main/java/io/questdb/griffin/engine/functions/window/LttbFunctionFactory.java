@@ -151,7 +151,7 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
         String gapInterval = null;
         if (hasGap) {
             final CharSequence interval = args.getQuick(3).getStrA(null);
-            gapThreshold = parseGapThreshold(interval, argPositions.getQuick(3), tsArg.getType());
+            gapThreshold = parseGapThreshold(interval, argPositions.getQuick(3), ColumnType.getTimestampType(tsArg.getType()));
             gapInterval = Chars.toString(interval);
         }
 
@@ -173,11 +173,10 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
     // lowercase 's' in "lttb(NDls)"), so getStrA() returns unquoted content. The SUBSAMPLE clause
     // validates its raw quoted token through the same parseGapThresholdMicros().
     //
-    // The interval is parsed to micros and then scaled into the timestamp column's NATIVE unit.
-    // LttbAlgorithm compares the threshold against raw column timestamps, so on a TIMESTAMP_NS
-    // column an unscaled micros threshold would be 1000x too small - '1h' would split segments
-    // every 3.6 seconds, over-segmenting the series and blowing past target_points (gap mode uses
-    // soft targets, so every extra segment adds rows).
+    // Scale the micros interval to match tsArg.getTimestamp(), not the argument's storage type
+    // or ORDER BY precision: DATE yields micros, text yields nanos, and integers use micros.
+    // LttbAlgorithm compares these getter values unchanged, so a nano getter needs a threshold
+    // 1000x larger than micros to avoid over-segmenting the series.
     private static long parseGapThreshold(CharSequence interval, int gapPosition, int timestampType) throws SqlException {
         return toTimestampUnits(parseGapThresholdMicros(interval, gapPosition), timestampType);
     }
@@ -224,8 +223,8 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
         return n * unitMicros;
     }
 
-    // Scales a micros threshold into the timestamp column's native unit: identity for TIMESTAMP,
-    // x1000 for TIMESTAMP_NS. The result is an unsigned duration; only thresholds beyond
+    // Scales a micros threshold into the effective timestamp getter's unit: identity for micros,
+    // x1000 for nanos. The result is an unsigned duration; only thresholds beyond
     // unsigned MAX saturate to -1L, which no timestamp delta can exceed. Zero remains reserved
     // for disabled gap detection. The "gap threshold overflow" compile error stays attached
     // to the micros computation above, so the micros-column contract is unchanged.

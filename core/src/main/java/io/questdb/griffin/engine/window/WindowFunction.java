@@ -760,6 +760,15 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Returns whether the selection includes every input traversal row, including NULL rows.
+     * Only valid after {@link #preparePass2()} on a row-selecting function. A false result is
+     * conservative: the executor must enumerate the selection via {@link #getSelectedRows(DirectLongList)}.
+     */
+    default boolean isSelectionAllRows() {
+        return false;
+    }
+
+    /**
      * Records that the frontier sweep has dropped the partition {@code record} names, so
      * the next seal can freeze the removal instead of re-deriving the whole live domain
      * to find it. {@code keySink} reads the partition-by columns off the ANCHOR map's
