@@ -136,7 +136,10 @@ public class CoveringCompressor {
             if (val > forMax) forMax = val;
         }
         int bw = bitsRequired(forBase, forMax);
-        if (forBase == Long.MAX_VALUE) {
+        // Unsafe.getByte() bounds every value far inside the Long.MAX_VALUE seed,
+        // so this site cannot collide; it tests the count only for uniformity with
+        // compressInts/compressLongs, where the collision is real.
+        if (count == 0) {
             forBase = 0;
         }
 
@@ -212,7 +215,11 @@ public class CoveringCompressor {
             forMax = Math.max(forMax, v);
         }
         int bw = bitsRequired(forBase, forMax);
-        if (forBase == Long.MAX_VALUE) {
+        // alpEncode() diverts every non-encodable value into the exception list and
+        // clamps the encoded magnitudes it does store, so no slot ever holds the
+        // Long.MAX_VALUE seed and this site cannot collide; it tests the count only
+        // for uniformity with compressInts/compressLongs, where the collision is real.
+        if (count == 0) {
             forBase = 0;
         }
 
@@ -305,7 +312,11 @@ public class CoveringCompressor {
             forMax = Math.max(forMax, v);
         }
         int bw = bitsRequired(forBase, forMax);
-        if (forBase == Long.MAX_VALUE) {
+        // alpEncodeFloat() diverts every non-encodable value into the exception list
+        // and each stored slot holds a clamped int, so no slot ever holds the
+        // Long.MAX_VALUE seed and this site cannot collide; it tests the count only
+        // for uniformity with compressInts/compressLongs, where the collision is real.
+        if (count == 0) {
             forBase = 0;
         }
 
@@ -357,7 +368,13 @@ public class CoveringCompressor {
             forMax = Math.max(forMax, val);
         }
         int bw = bitsRequired(forBase, forMax);
-        if (forBase == Integer.MAX_VALUE) {
+        // count == 0 is the only case that leaves forBase at its seed. Testing
+        // for the seed value instead also fires on a stride that is entirely
+        // Integer.MAX_VALUE: bitsRequired returns 0 for a zero span, so no
+        // packed payload follows and both readers hand this base straight back
+        // for every row of the block -- which used to surface as 0, or NULL for
+        // an IPv4 column.
+        if (count == 0) {
             forBase = 0;
         }
 
@@ -395,7 +412,9 @@ public class CoveringCompressor {
             forMax = Math.max(forMax, val);
         }
         int bw = bitsRequired(forBase, forMax);
-        if (forBase == Long.MAX_VALUE) {
+        // See compressInts: an all-Long.MAX_VALUE stride must keep its real
+        // base, and only count == 0 leaves forBase at its seed.
+        if (count == 0) {
             forBase = 0;
         }
 
@@ -448,7 +467,12 @@ public class CoveringCompressor {
         if (bw > 63) {
             return compressLongs(srcAddr, count, destAddr);
         }
-        if (resMin == Long.MAX_VALUE) {
+        // Unreachable, and kept only so the file carries one idiom: count <= 1
+        // already delegated to compressLongs, and residual[0] is val[0] minus
+        // firstValue, which reads the same slot, so resMin is always <= 0.
+        // Testing the sentinel here would be the compressInts collision again
+        // if that early return ever moved.
+        if (count == 0) {
             resMin = 0;
         }
 
@@ -482,7 +506,10 @@ public class CoveringCompressor {
             if (val > forMax) forMax = val;
         }
         int bw = bitsRequired(forBase, forMax);
-        if (forBase == Long.MAX_VALUE) {
+        // Unsafe.getShort() bounds every value far inside the Long.MAX_VALUE seed,
+        // so this site cannot collide; it tests the count only for uniformity with
+        // compressInts/compressLongs, where the collision is real.
+        if (count == 0) {
             forBase = 0;
         }
 
@@ -988,32 +1015,38 @@ public class CoveringCompressor {
     }
 
     /**
-     * Compute the maximum compressed size for a stride of values.
+     * Computes the maximum compressed size for a stride of values.
      * Used to pre-allocate the output buffer.
+     * <p>
+     * Returns a {@code long} because the worst case grows to ~20 bytes per value for DOUBLE, so
+     * a per-key block of ~107M values already exceeds {@code Integer.MAX_VALUE}. An {@code int}
+     * here wrapped negative and the caller then skipped its allocation, handing the encoder a null
+     * destination. Callers that must materialise the block still have to reject a size above
+     * {@code Integer.MAX_VALUE}: the block header stores its value count in 32 bits.
      */
-    public static int maxCompressedSize(int count, int columnType) {
+    public static long maxCompressedSize(int count, int columnType) {
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DOUBLE ->
                 // ALP header + packed data (worst case 64 bits) + all exceptions
-                    DOUBLE_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64)
-                            + count * (4 + 8); // worst case: all exceptions (4B pos + 8B value)
+                    DOUBLE_HEADER_SIZE + packedDataSizeLong(count, 64)
+                            + (long) count * (4 + 8); // worst case: all exceptions (4B pos + 8B value)
             case ColumnType.FLOAT ->
                 // Float ALP header + packed data (worst case 32 bits) + all exceptions
-                    FLOAT_ALP_HEADER_SIZE + BitpackUtils.packedDataSize(count, 32)
-                            + count * (4 + 4); // worst case: all exceptions (4B pos + 4B value)
+                    FLOAT_ALP_HEADER_SIZE + packedDataSizeLong(count, 32)
+                            + (long) count * (4 + 4); // worst case: all exceptions (4B pos + 4B value)
             case ColumnType.LONG, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
-                    LONG_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64);
+                    LONG_HEADER_SIZE + packedDataSizeLong(count, 64);
             case ColumnType.TIMESTAMP ->
                 // Linear-prediction header is larger than delta (29 vs 21 bytes)
-                    LONG_LINEAR_PRED_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64);
+                    LONG_LINEAR_PRED_HEADER_SIZE + packedDataSizeLong(count, 64);
             case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
-                    INT_HEADER_SIZE + BitpackUtils.packedDataSize(count, 32);
+                    INT_HEADER_SIZE + packedDataSizeLong(count, 32);
             case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
-                    SHORT_HEADER_SIZE + BitpackUtils.packedDataSize(count, 16);
+                    SHORT_HEADER_SIZE + packedDataSizeLong(count, 16);
             case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
-                    BYTE_HEADER_SIZE + BitpackUtils.packedDataSize(count, 8);
+                    BYTE_HEADER_SIZE + packedDataSizeLong(count, 8);
             case ColumnType.LONG128, ColumnType.UUID, ColumnType.DECIMAL128, ColumnType.LONG256,
-                 ColumnType.DECIMAL256 -> 4 + count * ColumnType.sizeOf(columnType);
+                 ColumnType.DECIMAL256 -> 4 + (long) count * ColumnType.sizeOf(columnType);
             default -> throw new AssertionError("maxCompressedSize: unsupported column type " + columnType);
         };
     }
@@ -1173,6 +1206,14 @@ public class CoveringCompressor {
         }
         long span = max - min;
         return span == 0 ? 0 : 64 - Long.numberOfLeadingZeros(span);
+    }
+
+    /**
+     * {@link BitpackUtils#packedDataSize(int, int)} without the narrowing cast back to
+     * {@code int}, for {@link #maxCompressedSize(int, int)}.
+     */
+    private static long packedDataSizeLong(int valueCount, int bitWidth) {
+        return ((long) valueCount * bitWidth + 7) / 8;
     }
 
     /**
