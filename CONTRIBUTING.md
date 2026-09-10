@@ -77,6 +77,8 @@ know you're working on it.
 
 ## Repository overview
 
+- High-level subsystem map: [ARCHITECTURE.md](ARCHITECTURE.md)
+
 - QuestDB database and libraries source in Java:
   [`core/src/main/java/`](https://github.com/questdb/questdb/tree/master/core/src/main/java)
 - QuestDB database tests:
