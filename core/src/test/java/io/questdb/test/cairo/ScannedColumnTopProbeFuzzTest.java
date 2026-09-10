@@ -282,9 +282,12 @@ public class ScannedColumnTopProbeFuzzTest extends AbstractTest {
             final long hi = intervals == null ? Long.MAX_VALUE : intervals.getQuick(2 * i + 1);
             for (int p = 0; p < partitionCount; p++) {
                 final long partitionLo = tx.getPartitionTimestampByIndex(p);
+                // The ceiling belongs to the next logical partition, so every partition ends one
+                // below it -- the last one included.
+                final long partitionCeil = tx.getNextLogicalPartitionTimestamp(partitionLo);
                 final long partitionHi = p + 1 < partitionCount
-                        ? Math.min(tx.getPartitionTimestampByIndex(p + 1), tx.getNextLogicalPartitionTimestamp(partitionLo)) - 1
-                        : tx.getNextLogicalPartitionTimestamp(partitionLo);
+                        ? Math.min(tx.getPartitionTimestampByIndex(p + 1), partitionCeil) - 1
+                        : (partitionCeil == Long.MAX_VALUE ? partitionCeil : partitionCeil - 1);
                 if (lo > partitionHi || hi < partitionLo) {
                     continue; // this interval does not reach this partition
                 }

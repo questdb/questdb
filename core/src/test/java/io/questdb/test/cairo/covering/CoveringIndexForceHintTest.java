@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -111,6 +112,41 @@ public class CoveringIndexForceHintTest extends AbstractCairoTest {
                     + " WHERE sym = null AND ts IN '2024-01-01'");
             assertThrowsForcedNullKey("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_interval"
                     + " WHERE sym = null");
+        });
+    }
+
+    @Test
+    public void testHintHoldsOverRangePastTheLastPartition() throws Exception {
+        // A range at or past the end of the data reads no partition at all, so the promise holds
+        // however many tops the table carries. The last partition used to report its own ceiling --
+        // the first timestamp it CANNOT hold -- as a timestamp it could, so a range opening exactly
+        // there read as reaching it, and the hint failed a query that returns nothing.
+        assertMemoryLeak(() -> {
+            createTopTable("t_fc_past_end");
+            for (String where : new String[]{
+                    "sym = null AND ts IN '2024-01-02'",
+                    "sym = null AND ts >= '2024-01-02'",
+                    "sym = null AND ts BETWEEN '2024-01-02T00:00:00' AND '2024-01-05T00:00:00'",
+                    "sym IN (null, 'A') AND ts IN '2024-01-02'",
+            }) {
+                final String sql = "SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_past_end"
+                        + " WHERE " + where + " ORDER BY ts";
+                QueryAssertion assertion = assertQuery(sql)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .withPlanNotContaining("backup: true");
+                // The multi-key merge answers size() with -1; the single-key scan knows its own.
+                assertion = where.contains("IN (") ? assertion.sizeMayVary() : assertion.expectSize();
+                assertion.returns("ts\tsym\tval\n");
+                assertSqlCursors(sql, sql.replace("/*+ force_use_covering */", "/*+ no_covering */"));
+            }
+            // The microsecond below the ceiling is still inside the topped partition, and still an
+            // error: the bound moved by one, the rule did not.
+            assertThrowsForcedNullKey("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_past_end"
+                    + " WHERE sym = null AND ts BETWEEN '2024-01-01T23:59:59.999999' AND '2024-01-05'");
+            assertThrowsForcedNullKey("SELECT /*+ force_use_covering */ ts, sym, val FROM t_fc_past_end"
+                    + " WHERE sym = null AND ts IN '2024-01-01'");
         });
     }
 

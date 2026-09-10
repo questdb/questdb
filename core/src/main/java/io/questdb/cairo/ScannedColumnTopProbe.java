@@ -27,6 +27,9 @@ package io.questdb.cairo;
 import io.questdb.std.LongList;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Answers whether any partition a scan reads lacks values for one column -- what QuestDB calls a
@@ -41,6 +44,14 @@ import org.jetbrains.annotations.Nullable;
  * can produce one are few, while the partitions a scan reads are many.
  */
 public final class ScannedColumnTopProbe {
+
+    // Counts the partitions hasPartitionBeforeColumn() actually visits. The walk's bounds are an
+    // optimisation -- every bound answers the same as no bound at all -- so only a count can pin
+    // them. Off by default; a test turns it on around the call it measures.
+    @TestOnly
+    public static boolean isPartitionWalkCounterEnabled = false;
+    @TestOnly
+    public static final AtomicLong testPartitionWalkSteps = new AtomicLong();
 
     private ScannedColumnTopProbe() {
     }
@@ -86,10 +97,16 @@ public final class ScannedColumnTopProbe {
      * table was created reports {@link ColumnVersionReader#COL_TOP_DEFAULT_PARTITION} as its add
      * time, which comes after nothing, so it fails the test.
      * <p>
-     * Only when it holds does this walk, and then only across the partitions between the scan's
-     * opening and the add -- a query reading recent data has none. A partition there that owns a
+     * Only when it holds does this walk, and then only across the partitions the scan's own filter
+     * admits, up to the add -- a query reading recent data has none. A partition there that owns a
      * record is decided by that record, not here: an out-of-order write can back-fill a partition
      * that came before the add, which leaves a zero top and means the column is there in full.
+     * <p>
+     * Two bounds end the walk, and the filter's is the one that matters on a long history: a scan
+     * pinned to a few old days must not go on reading metadata for the thousands of partitions
+     * between them and a column added last week. Both are optimisations -- an unbounded walk
+     * answers the same, because {@link #isPartitionScanned} rejects every partition the filter
+     * excludes -- which is why {@link #testPartitionWalkSteps} exists to hold them.
      */
     public static boolean hasPartitionBeforeColumn(
             ColumnVersionReader cv,
@@ -110,11 +127,23 @@ public final class ScannedColumnTopProbe {
         if (addedAtPartition <= txReader.getPartitionTimestampByIndex(firstScannedPartition)) {
             return false;
         }
+        if (intervals != null && intervals.size() == 0) {
+            // The filter admits nothing, so the scan reads no partition to have a top.
+            return false;
+        }
+        // The last interval's own end. Partitions ascend, so one starting after it is outside every
+        // interval, and so is every partition after it. Without this the walk ran on to the column's
+        // add time -- every partition in between, each costing a _cv search and an overlap test --
+        // to decide partitions the filter had already excluded.
+        final long scanEnd = intervals == null ? Long.MAX_VALUE : intervals.getQuick(intervals.size() - 1);
         for (int p = firstScannedPartition; p < partitionCount; p++) {
             final long partitionTimestamp = txReader.getPartitionTimestampByIndex(p);
-            if (partitionTimestamp >= addedAtPartition) {
-                // Partitions ascend, so no later one came before the column either.
+            if (partitionTimestamp >= addedAtPartition || partitionTimestamp > scanEnd) {
+                // Partitions ascend, so no later one came before the column, or is scanned, either.
                 return false;
+            }
+            if (isPartitionWalkCounterEnabled) {
+                testPartitionWalkSteps.incrementAndGet();
             }
             if (cv.getRecordIndex(partitionTimestamp, writerIndex) < 0
                     && txReader.getPartitionSize(p) > 0
@@ -214,21 +243,28 @@ public final class ScannedColumnTopProbe {
     }
 
     /**
-     * Upper bound of the timestamps the partition at {@code partitionIndex} can hold. Mirrors
+     * Last timestamp the partition at {@code partitionIndex} can hold, inclusive. Follows
      * {@code TableReader.getPartitionMaxTimestampFromMetadata}: the logical ceiling of the
      * partition's own start, pulled back to the next partition's start when a split put one inside
      * the same logical partition.
      * <p>
-     * Inclusive for every partition but the last, which returns the ceiling itself -- one past the
-     * final timestamp it can hold. That asymmetry is inherited from the method it mirrors and only
-     * widens the bound, so an interval opening exactly on the ceiling reads as reaching the last
-     * partition when it does not. The effect is an over-report, never a missed column top.
+     * The ceiling itself belongs to the NEXT logical partition, so every case subtracts one --
+     * including the last partition, which that method leaves alone because it hands the ceiling to
+     * callers that read it as an exclusive end. {@link #isPartitionScanned} compares against it
+     * with {@code <=}, so leaving it here said an interval opening exactly on the ceiling reached
+     * the last partition. That is a partition the scan cannot read, and under
+     * {@code force_use_covering} the over-report is an error rather than a slower plan: a query for
+     * a day at or past the end of the data would fail on a promise it had in fact kept.
+     * <p>
+     * {@code PartitionBy.NONE} has no ceiling and reports {@link Long#MAX_VALUE}, which is already
+     * the widest bound there is and must not wrap.
      */
     private static long partitionEndTimestamp(TxReader txReader, int partitionCount, int partitionIndex) {
         final long ceil = txReader.getNextLogicalPartitionTimestamp(txReader.getPartitionTimestampByIndex(partitionIndex));
         final int next = partitionIndex + 1;
-        return next < partitionCount
-                ? Math.min(txReader.getPartitionTimestampByIndex(next), ceil) - 1
-                : ceil;
+        if (next < partitionCount) {
+            return Math.min(txReader.getPartitionTimestampByIndex(next), ceil) - 1;
+        }
+        return ceil == Long.MAX_VALUE ? ceil : ceil - 1;
     }
 }

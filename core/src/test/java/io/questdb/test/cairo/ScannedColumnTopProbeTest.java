@@ -528,7 +528,126 @@ public class ScannedColumnTopProbeTest extends AbstractCairoTest {
         });
     }
 
+    // ---------- partitionEndTimestamp: the last partition's own ceiling ----------
+
+    @Test
+    public void testIntervalOpeningOnTheLastPartitionCeilingIsNotRead() throws Exception {
+        // The ceiling belongs to the next logical partition, so a scan opening exactly on it reads
+        // nothing the last partition holds -- even though that partition does carry a top. Every
+        // other partition already ended one microsecond below its ceiling; the last one used to
+        // report the ceiling itself, and the <= in isPartitionScanned turned that into a scanned
+        // partition. Under force_use_covering the over-report is an error, not a slower plan.
+        assertMemoryLeak(() -> {
+            createTopOnLastPartitionTable("t_ceil_last");
+            try (TableReader reader = engine.getReader("t_ceil_last")) {
+                Assert.assertEquals(1, reader.getTxFile().getPartitionCount());
+                Assert.assertTrue(hasNonZeroTopRecord(reader, writerIndexOf(reader, "sym")));
+                // JAN1 + DAY is the ceiling: the first timestamp the partition cannot hold.
+                assertProbe(reader, false, intervals(JAN1 + DAY, JAN1 + 2 * DAY - 1));
+                // One microsecond below it still reaches the partition, top and all.
+                assertProbe(reader, true, intervals(JAN1 + DAY - 1, JAN1 + 2 * DAY - 1));
+            }
+        });
+    }
+
+    // ---------- hasPartitionBeforeColumn: what ends the walk ----------
+
+    @Test
+    public void testEmptyIntervalListNeverStartsTheWalk() throws Exception {
+        // An empty list admits nothing, so no partition is scanned and no step is owed.
+        assertMemoryLeak(() -> {
+            createAddedLaterTable("t_walk_empty");
+            try (TableReader reader = engine.getReader("t_walk_empty")) {
+                Assert.assertFalse(before(reader, new LongList()));
+                Assert.assertEquals(0, countWalkSteps(reader, new LongList()));
+            }
+        });
+    }
+
+    @Test
+    public void testWalkStopsAtTheIntervalUpperBound() throws Exception {
+        // The walk ends at the last interval's own end, not at the column's add time. Both answer
+        // the same -- isPartitionScanned rejects every partition the filter excludes -- so only the
+        // step count separates them, and on a long history that count is the whole cost.
+        assertMemoryLeak(() -> {
+            createBackFilledFirstDayTable("t_walk_bound");
+            try (TableReader reader = engine.getReader("t_walk_bound")) {
+                Assert.assertEquals(6, reader.getTxFile().getPartitionCount());
+                // Day 1 carries the column in full, so the answer is false either way.
+                final LongList dayOne = intervals(JAN1, JAN1 + DAY - 1);
+                Assert.assertFalse(before(reader, dayOne));
+                Assert.assertEquals(
+                        "the walk must stop at the filter's end, not run on to the column's add",
+                        1,
+                        countWalkSteps(reader, dayOne)
+                );
+                // Widening the filter by one day reaches day two, which never got the column, so
+                // the walk has to see it: the bound may shorten the walk, never hide a top.
+                final LongList dayOneAndTwo = intervals(JAN1, JAN1 + 2 * DAY - 1);
+                Assert.assertTrue(before(reader, dayOneAndTwo));
+                Assert.assertEquals(2, countWalkSteps(reader, dayOneAndTwo));
+                // No filter reads every partition, so it stops on day two for the same reason.
+                Assert.assertTrue(before(reader, null));
+                Assert.assertEquals(2, countWalkSteps(reader, null));
+            }
+        });
+    }
+
     // ---------- helpers ----------
+
+    /**
+     * Runs the walk with the counter on and answers how many partitions it visited.
+     */
+    private static long countWalkSteps(TableReader reader, LongList intervals) {
+        ScannedColumnTopProbe.testPartitionWalkSteps.set(0);
+        ScannedColumnTopProbe.isPartitionWalkCounterEnabled = true;
+        try {
+            before(reader, intervals);
+        } finally {
+            ScannedColumnTopProbe.isPartitionWalkCounterEnabled = false;
+        }
+        return ScannedColumnTopProbe.testPartitionWalkSteps.get();
+    }
+
+    /**
+     * Six daily partitions from 2024-01-01 with {@code sym} added on the last, then day one
+     * back-filled through an out-of-order write so it owns a zero-top record. The days between are
+     * the ones a filter pinned to day one must not make the walk read.
+     */
+    private static void createBackFilledFirstDayTable(String name) throws Exception {
+        execute("CREATE TABLE " + name + " (ts TIMESTAMP, val DOUBLE)"
+                + " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("""
+                INSERT INTO %s VALUES
+                ('2024-01-01T00:00:00', 10.0),
+                ('2024-01-02T00:00:00', 20.0),
+                ('2024-01-03T00:00:00', 30.0),
+                ('2024-01-04T00:00:00', 40.0),
+                ('2024-01-05T00:00:00', 50.0),
+                ('2024-01-06T00:00:00', 60.0)
+                """.formatted(name));
+        execute("ALTER TABLE " + name + " ADD COLUMN sym SYMBOL");
+        // Out of order, into the first day: the writer rewrites that partition with sym present
+        // throughout, which is a zero-top record on a partition that predates the add.
+        execute("INSERT INTO " + name + " VALUES ('2024-01-01T12:00:00', 11.0, 'A')");
+        execute("ALTER TABLE " + name + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+        releaseAll();
+    }
+
+    /**
+     * One partition, with {@code sym} added after its row, so the table's ONLY partition is also
+     * the one carrying the top.
+     */
+    private static void createTopOnLastPartitionTable(String name) throws Exception {
+        execute("CREATE TABLE " + name + " (ts TIMESTAMP, val DOUBLE)"
+                + " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO " + name + " VALUES ('2024-01-01T00:00:00', 10.0)");
+        execute("ALTER TABLE " + name + " ADD COLUMN sym SYMBOL");
+        execute("INSERT INTO " + name + " VALUES ('2024-01-01T06:00:00', 11.0, 'A')");
+        execute("ALTER TABLE " + name + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+        releaseAll();
+    }
+
 
     private static void assertProbe(TableReader reader, boolean expected, LongList intervals) {
         final int wi = writerIndexOf(reader, "sym");
@@ -601,9 +720,12 @@ public class ScannedColumnTopProbeTest extends AbstractCairoTest {
         final long addedAt = cv.getColumnTopPartitionTimestamp(writerIndex);
         for (int p = 0, n = tx.getPartitionCount(); p < n; p++) {
             final long lo = tx.getPartitionTimestampByIndex(p);
+            // The ceiling is the next logical partition's first timestamp, so it is one past what
+            // this one can hold -- the last partition included.
+            final long ceil = tx.getNextLogicalPartitionTimestamp(lo);
             final long hi = p + 1 < n
-                    ? Math.min(tx.getPartitionTimestampByIndex(p + 1), tx.getNextLogicalPartitionTimestamp(lo)) - 1
-                    : tx.getNextLogicalPartitionTimestamp(lo);
+                    ? Math.min(tx.getPartitionTimestampByIndex(p + 1), ceil) - 1
+                    : (ceil == Long.MAX_VALUE ? ceil : ceil - 1);
             if (!overlaps(intervals, lo, hi)) {
                 continue;
             }
