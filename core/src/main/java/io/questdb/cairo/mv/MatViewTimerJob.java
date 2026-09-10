@@ -71,7 +71,6 @@ public class MatViewTimerJob extends SynchronizedJob {
     private final CairoConfiguration configuration;
     private final ObjList<Timer> expired = new ObjList<>();
     private final Predicate<Timer> filterByDirName;
-    private final DependentViewGraph dependentViewGraph;
     private final MatViewStateStore matViewStateStore;
     // Pool of reusable retry heap entries, to avoid per-retry allocation during a retry storm.
     private final ObjList<RetryEntry> retryEntryPool = new ObjList<>();
@@ -94,9 +93,14 @@ public class MatViewTimerJob extends SynchronizedJob {
         this.configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
         this.timerTaskQueue = engine.getMatViewTimerQueue();
-        this.dependentViewGraph = engine.getDependentViewGraph();
         this.matViewStateStore = engine.getMatViewStateStore();
         this.filterByDirName = this::filterByDirName;
+    }
+
+    // Dropped views have no state left to expose their retained timers through materialized_views().
+    @TestOnly
+    public int getTimerCount() {
+        return timerQueue.size();
     }
 
     /**
@@ -139,11 +143,14 @@ public class MatViewTimerJob extends SynchronizedJob {
     }
 
     private void addTimers(TableToken viewToken, long nowUs) {
-        final MatViewDefinition viewDefinition = dependentViewGraph.getViewDefinition(viewToken);
-        if (viewDefinition == null) {
-            LOG.info().$("materialized view definition not found [view=").$(viewToken).I$();
+        // DROP removes state before publishing REMOVE. Reject stale ADD/UPDATE even while the
+        // graph still holds the definition. If DROP follows this check, its queued REMOVE will
+        // retire these timers after this serialized operation.
+        final MatViewState state = matViewStateStore.getViewState(viewToken);
+        if (state == null || state.isDropped()) {
             return;
         }
+        final MatViewDefinition viewDefinition = state.getViewDefinition();
 
         // Counts what this registration actually created, so a throw part way through publishes the
         // partial set rather than the intended one: materialized_views() then shows a timer view
@@ -357,7 +364,8 @@ public class MatViewTimerJob extends SynchronizedJob {
                         reportMissedFiring(timer, viewToken, state.isInvalid() ? "view is invalid" : "view is pending invalidation");
                     }
                 } else {
-                    LOG.info().$("state for materialized view not found [view=").$(viewToken).I$();
+                    // Missing state is terminal, just like dropped state; do not re-arm this timer.
+                    expired.remove(expired.size() - 1);
                 }
                 ran = true;
             }
