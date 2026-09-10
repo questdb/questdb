@@ -43,6 +43,7 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -208,7 +209,13 @@ public class WalEventCursor {
         final long storedOffset = checksumMem.getLong(entryOffset + WALE_CHECKSUM_ENTRY_OFFSET_OFFSET);
         final int storedLength = checksumMem.getInt(entryOffset + WALE_CHECKSUM_ENTRY_LENGTH_OFFSET);
         final long stored = checksumMem.getLong(entryOffset + WALE_CHECKSUM_ENTRY_VALUE_OFFSET);
-        final long actual = TableUtils.calculateCvAreaChecksum(eventMem.addressOf(recordStart), length);
+        // Acquire, pairing with the writer's release in WalEventWriter.finishRecord(): the length this
+        // cursor already read is the publishing store, so the sidecar entry that describes the record
+        // must not be loaded from before it.
+        Unsafe.loadFence();
+        // Body only -- the 4-byte length header is verified by the storedLength comparison below, because
+        // the writer cannot hash a length it has not written yet without publishing the record first.
+        final long actual = TableUtils.calculateCvAreaChecksum(eventMem.addressOf(recordStart) + Integer.BYTES, length - Integer.BYTES);
         if (storedOffset != recordStart || storedLength != length || stored == 0 || actual != stored) {
             throw CairoException.critical(CairoException.METADATA_VALIDATION)
                     .put("torn WAL event record [txn=").put(recordTxn)

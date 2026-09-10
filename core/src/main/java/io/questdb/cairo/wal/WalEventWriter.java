@@ -49,6 +49,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -245,13 +246,28 @@ class WalEventWriter implements Closeable {
     private void finishRecord() {
         final long bodyEnd = eventMem.getAppendOffset();
         final int length = (int) (bodyEnd - startOffset);
-        eventMem.putInt(startOffset, length);
-        final long checksum = TableUtils.calculateCvAreaChecksum(eventMem.addressOf(startOffset), length);
+        // DESCRIBE, THEN PUBLISH. The store of the length at startOffset is what flips the slot from the
+        // -1 end-of-events marker to a readable record, so it must come LAST: a reader following the tail
+        // of a segment the writer is still appending to sees whatever is there the instant it looks, and
+        // a record published ahead of its sidecar entry reads back with the entry's preallocated zeros --
+        // storedOffset=0, storedLen=0, expected=0 -- which verifyRecordChecksum() reports as TORN. That
+        // fault is not hypothetical: it suspended a table on arm64 mac CI while every x86 Linux leg stayed
+        // green, because the window is a couple of instructions on a strongly-ordered machine and an
+        // unordered pair of stores on a weakly-ordered one.
+        //
+        // The checksum therefore covers the record BODY only (everything after the 4-byte length header),
+        // since the length cannot be in memory before the entry that describes it is durable to a reader.
+        // The length stays fully verified: storedLength must equal the length the reader read, so a
+        // corrupt length header fails the entry comparison instead of the hash.
+        final long checksum = TableUtils.calculateCvAreaChecksum(eventMem.addressOf(startOffset) + Integer.BYTES, length - Integer.BYTES);
         eventChecksumMem.jumpTo(WALE_CHECKSUM_HEADER_SIZE + (long) txn * WALE_CHECKSUM_ENTRY_SIZE);
         eventChecksumMem.putLong(startOffset);
         eventChecksumMem.putInt(length);
         eventChecksumMem.putInt(0);
         eventChecksumMem.putLong(checksum);
+        // Release: the entry's stores must not sink past the publishing store below.
+        Unsafe.storeFence();
+        eventMem.putInt(startOffset, length);
         eventMem.putInt(-1);
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
