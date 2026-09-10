@@ -22,6 +22,17 @@ replayed rows, corrected output size and publication route are reported beside t
 and a run whose result oracle disagreed fails the cell whatever its timings say. The keyed
 cell has no baseline of its own - the baseline's keyed route is not a valid reference - so
 it is read against the baseline's whole-range control and marked as a route comparison.
+
+A churn cell (a shape named ``...-churn``) is a steady run whose account window slides across
+anchor buckets, so keys are added every bucket and the frontier sweep evicts the ones left
+behind. Its steady gates are read like any other steady cell's, and the seals a sweep
+preceded - the ones carrying one removal per evicted key - are gated separately as
+``swept_seal_ms_median``. The sweep's own cost, the keys it evicted and what the seal after
+it walked are reported beside the gates.
+
+A cold-restore cell (a shape named ``...-cold-restore``) is a steady run whose restart
+dropped the database's files from the page cache first. Only its restore figures are read;
+its steady batches are the same workload the steady cell already measured.
 """
 import os
 import re
@@ -76,6 +87,18 @@ LIMITS = {
 # Reported beside the gates, not gated: the route difference is what they describe.
 DIAGNOSTICS = ["repair_ms_p95", "replayed_rows_median", "corrected_rows_median"]
 
+# Churn cells only: the seal in a batch whose refresh ran a frontier sweep, which carries a
+# removal per evicted key on top of the keys it imaged. Gated like every other incremental
+# seal; the sweep itself and the eviction count are diagnostics.
+CHURN_LIMITS = {"swept_seal_ms_median": 1.05}
+CHURN_DIAGNOSTICS = ["sweep_ms_median", "evicted_per_sweep_median", "sweeps_total",
+                     "swept_win_visited_median", "swept_win_removed_median", "swept_win_inc_median"]
+
+# Cold-restore cells only: the restart is the reading, and the steady batches repeat the
+# steady cell's. restore_plus_reseal_ms is reported for every cell that restarted, since the
+# revised restore requirement is stated on the sum.
+RESTORE_ONLY_LIMITS = ("restore_ms", "first_reseal_ms")
+
 # A candidate cell with no baseline counterpart is read against this baseline cell.
 BASELINE_ALIAS = {"repair-closed-keyed": "repair-closed-whole"}
 
@@ -84,6 +107,14 @@ NAME = re.compile(r"^(?P<shape>.+?)__fusion-(?P<fusion>true|false)__keys-(?P<key
 
 def is_repair_shape(shape):
     return shape.startswith("repair-")
+
+
+def is_churn_shape(shape):
+    return shape.endswith("-churn")
+
+
+def is_cold_restore_shape(shape):
+    return shape.endswith("-cold-restore")
 
 
 def p95(values):
@@ -127,6 +158,15 @@ def parse_run(path, shape):
                     out["restore_ms"] = float(fields["read_back_ms"])
                 if "reseal_ms" in fields:
                     out["first_reseal_ms"] = float(fields["reseal_ms"])
+                if "read_back_ms" in fields and "reseal_ms" in fields:
+                    out["restore_plus_reseal_ms"] = float(fields["read_back_ms"]) + float(fields["reseal_ms"])
+                # What the restart's eviction advised, when it ran one. Absent on a warm
+                # restart and on the baseline harness before the knob existed.
+                if "evicted_mb" in fields:
+                    out["evicted_mb"] = float(fields["evicted_mb"])
+                cache = re.search(r"\bcache=(\w+)", line)
+                if cache:
+                    out["cache"] = cache.group(1)
             elif line.startswith("# window_state "):
                 out["window_state"] = line[len("# window_state "):]
             elif line.startswith("# oracle "):
@@ -160,6 +200,18 @@ def parse_run(path, shape):
                    "fn_roots", "fn_inc", "fn_visited", "fn_imaged", "map_rows", "faults"):
         values = [float(row[index[column]]) for row in measured]
         out[column] = statistics.median(values)
+    if is_churn_shape(shape):
+        # The batches whose refresh swept: their seal carries the evictions' removals, and
+        # their sweep_ms is the sweep itself. A run that never swept has no such seal and
+        # fails the cell - the regime it was meant to measure did not happen.
+        swept = [row for row in measured if float(row[index["sweeps"]]) > 0]
+        out["sweeps_total"] = float(sum(float(row[index["sweeps"]]) for row in measured))
+        if swept:
+            out["swept_seal_ms_median"] = statistics.median(float(row[index["checkpoint_ms"]]) for row in swept)
+            out["sweep_ms_median"] = statistics.median(float(row[index["sweep_ms"]]) for row in swept)
+            out["evicted_per_sweep_median"] = statistics.median(float(row[index["evicted"]]) for row in swept)
+            for column in ("win_visited", "win_removed", "win_inc", "win_imaged"):
+                out["swept_" + column + "_median"] = statistics.median(float(row[index[column]]) for row in swept)
     return out
 
 
@@ -216,12 +268,18 @@ def main():
                   f"{'MISSING' if not cand_runs else len(cand_runs)} runs | - | - | incomplete |")
             failures += 1
             continue
-        for metric in LIMITS:
+        if is_cold_restore_shape(shape):
+            limits = {metric: LIMITS[metric] for metric in RESTORE_ONLY_LIMITS}
+        elif is_churn_shape(shape):
+            limits = {**LIMITS, **CHURN_LIMITS}
+        else:
+            limits = LIMITS
+        for metric in limits:
             base = cell_value(base_runs, metric)
             cand = cell_value(cand_runs, metric)
             if base is None or cand is None:
                 continue
-            limit = LIMITS[metric]
+            limit = limits[metric]
             higher_is_better = RUN_METRICS.get(metric, (None, None, "lower"))[2] == "higher"
             if base == 0:
                 ratio = float("inf") if cand > 0 else 1.0
@@ -237,6 +295,36 @@ def main():
             if bad:
                 failures += 1
                 print(f"| {label} | {fusion} | {keys} | oracle ({side}) | - | - | - | - | FAIL ({bad} run(s) mismatched) |")
+        if is_churn_shape(shape):
+            unswept = [side for side, runs in (("baseline", base_runs), ("candidate", cand_runs))
+                       if any(run.get("sweeps_total", 0) == 0 for run in runs)]
+            if unswept:
+                failures += 1
+                print(f"| {label} | {fusion} | {keys} | sweeps | - | - | - | - | "
+                      f"FAIL (a run never swept: {', '.join(unswept)}) |")
+            for metric in CHURN_DIAGNOSTICS:
+                base = cell_value(base_runs, metric)
+                cand = cell_value(cand_runs, metric)
+                if base is None or cand is None:
+                    continue
+                diagnostics.append(f"{label} fusion={fusion} keys={keys} {metric}: "
+                                   f"baseline={base:.4g} candidate={cand:.4g}")
+        if is_cold_restore_shape(shape) or cell_value(cand_runs, "restore_plus_reseal_ms") is not None:
+            base = cell_value(base_runs, "restore_plus_reseal_ms")
+            cand = cell_value(cand_runs, "restore_plus_reseal_ms")
+            if base is not None and cand is not None:
+                diagnostics.append(f"{label} fusion={fusion} keys={keys} restore_plus_reseal_ms: "
+                                   f"baseline={base:.4g} candidate={cand:.4g} ratio={cand / base if base else float('inf'):.3f}")
+        if is_cold_restore_shape(shape):
+            for side, runs in (("baseline", base_runs), ("candidate", cand_runs)):
+                caches = Counter(run.get("cache", "absent") for run in runs)
+                if caches.get("cold", 0) != len(runs):
+                    failures += 1
+                    print(f"| {label} | {fusion} | {keys} | cache ({side}) | - | - | - | - | "
+                          f"FAIL (restart not cold in every run: {dict(caches)}) |")
+            diagnostics.append(f"{label} fusion={fusion} keys={keys} evicted_mb: "
+                               f"baseline={cell_value(base_runs, 'evicted_mb')} "
+                               f"candidate={cell_value(cand_runs, 'evicted_mb')}")
         if is_repair_shape(shape):
             for metric in DIAGNOSTICS:
                 base = cell_value(base_runs, metric)
@@ -254,7 +342,7 @@ def main():
                                f"baseline={Counter(run.get('oracle', 'absent') for run in base_runs)} "
                                f"candidate={Counter(run.get('oracle', 'absent') for run in cand_runs)}")
     if diagnostics:
-        print("\nRepair diagnostics (reported, not gated):")
+        print("\nDiagnostics (reported, not gated):")
         for line in diagnostics:
             print("  " + line)
     print(f"\n{failures} failed or incomplete gate(s)")

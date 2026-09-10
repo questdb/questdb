@@ -73,6 +73,56 @@ behind the frontier in between, but the default compaction thresholds are never 
 in 110 batches, so no key is evicted and the domain stays at 10,000 as well; lower
 `--compact-threshold` and `--compact-stale-percent` to make the sweep fire.
 
+## The churn cell
+
+`run-matrix.sh ... churn` is the add/remove-keys, cross-anchor-boundary run the matrix names
+beside the steady rows. The steady rows recycle `K` accounts forever, so nothing is ever added
+or evicted; the churn rows slide a `K`-account window (`--account-window=K`) over an anchor
+bucket of exactly `K` rows - a `K/1000`-minute anchor at 1000 rows per minute - so that half
+of a bucket's accounts recur from the bucket before it and half are new. The half left behind
+falls behind the frontier, and the sweep at the next bucket boundary evicts it: `K/2` keys
+added and `K/2` evicted per bucket, over a live domain that moves between `K` and `1.5 K`.
+The compaction thresholds are lowered (`--compact-threshold=1000
+--compact-stale-percent=25`) so that sweep fires at all; the shipped defaults need 100,000
+stale keys and never do at these sizes.
+
+A bucket is `K/1000` batches, so at 10,000 keys the sweep fires every 10 batches and at
+100,000 every 100. The run is `CHURN_BUCKETS` buckets long, six by default (110 batches at
+10,000 keys, 610 at 100,000), which leaves five measured sweeps at 100,000 keys once the
+first boundary after the seed has gone into the warm-up. The residual-heavy shape runs two
+buckets at 100,000 keys (`CHURN_BUCKETS=2`, 210 batches, one measured sweep per run): its
+ring-backed residual scans the whole map on every seal, so a bucket of 100 batches costs
+two minutes there. Every seal of the run is then one of three kinds, and all three are in
+the steady gates: over existing keys, over keys the batch just added, or - once per bucket -
+the seal after a sweep, which stays incremental but carries one removal per evicted key on top
+of the keys it imaged. The aggregator gates that last kind separately as `swept_seal_ms_median`
+and reports the sweep's own `sweep_ms`, the keys it evicted and what the seal after it walked
+(`win_visited` = `win_imaged` + `win_removed` on a correct incremental seal). Every churn run
+ends with the result oracle, since an eviction that dropped state the view still needed would
+show as wrong rows rather than as time.
+
+The warm-up seal after the first sweep is larger than the rest - the seed's rows straddle two
+buckets, so the first sweep evicts more than `K/2` - which is one more reason the first ten
+batches are dropped.
+
+## The cold-restore cell
+
+`run-matrix.sh ... cold-restore` repeats the steady rows with `--restart-cache=cold`. The
+run is the same; the restart at its end differs. A warm restart - every earlier cell - reads
+its checkpoint back on cold code (the JVM restores once) over a warm page cache (the pages its
+own seals just wrote). The cold one first releases the engine's pooled readers and writers,
+then fsyncs every file under the database root and advises it `POSIX_FADV_DONTNEED`, so the
+restore also pays the disk. `# restore` reports `cache=cold` and what was advised, and the
+aggregator fails a cold cell whose runs did not all report it.
+
+`posix_fadvise` is advice, so the eviction was checked once with [residency.py](residency.py)
+against a run paused after it: the checkpoint tree read 0 of 14.4 MB resident at 100,000 keys
+and the whole root 14%. What stays resident are the symbol-map files (`account_id.k/.v/.c/.o`)
+of the base and the view, about 12 MB at 100,000 keys, which the WAL writer pool keeps mapped
+and the eviction cannot reach; they are the same on both revisions and are not what the restore
+reads. Only the restore figures of a cold cell are read - its steady batches are the steady
+cell's workload again. Linux only.
+
 ## Structural evidence
 
 The candidate's per-batch output carries the capture ledger:
@@ -106,6 +156,9 @@ MATRIX_SHAPES=anchor-only-decimal,anchor-only-unfused-control,narrow-sum \
     ./run-matrix.sh benchmarks/target/benchmarks.jar /tmp/matrix/candidate "1000000" 5
 # the repair cell
 ./run-matrix.sh benchmarks/target/benchmarks.jar /tmp/matrix/candidate "1000 10000" 5 repair
+# the add/remove-keys cell and the cold-cache restore, both over every steady shape
+./run-matrix.sh benchmarks/target/benchmarks.jar /tmp/matrix/candidate "10000 100000" 5 churn
+./run-matrix.sh benchmarks/target/benchmarks.jar /tmp/matrix/candidate "10000 100000" 5 cold-restore
 
 # baseline: the same harness with the candidate-only pieces removed
 git clone --local --no-checkout . /tmp/baseline-repo
@@ -117,6 +170,8 @@ git -C /tmp/baseline-repo apply .../baseline-harness.patch
 ./run-matrix.sh /tmp/baseline-repo/benchmarks/target/benchmarks.jar /tmp/matrix/baseline "10000 100000" 5
 MATRIX_SHAPES=repair-closed-whole \
     ./run-matrix.sh /tmp/baseline-repo/benchmarks/target/benchmarks.jar /tmp/matrix/baseline "1000 10000" 5 repair
+./run-matrix.sh /tmp/baseline-repo/benchmarks/target/benchmarks.jar /tmp/matrix/baseline "10000 100000" 5 churn
+./run-matrix.sh /tmp/baseline-repo/benchmarks/target/benchmarks.jar /tmp/matrix/baseline "10000 100000" 5 cold-restore
 
 ./summarize-matrix.py /tmp/matrix/baseline /tmp/matrix/candidate --md
 ```
@@ -132,7 +187,25 @@ those except the machine.
 
 `run-matrix.sh` skips a run whose output file already exists, so calling it with `RUNS`
 equal to 1, 2, 3, ... alternately for the two jars interleaves the revisions run by run.
+`MATRIX_FUSION=true|false` restricts a call to one runtime mode, for re-measuring one cell.
+Each run's stderr goes to a `.err` file beside its output, and a run that fails keeps its
+partial output under `.failed.tsv`; the aggregator reads neither.
 The one-shot measurements - the complete seal after the seed, the restore and its first
 reseal - are read once per JVM on cold code, and a run-to-run spread of 20% on them is
 ordinary at 10,000 keys; the remaining cells were measured this way with 15 runs per cell
-so that a drift in the machine lands on both sides alike and the medians settle.
+so that a drift in the machine lands on both sides alike and the medians settle. The churn
+and cold-restore cells were measured the same way, with the load average logged before each
+revision's turn:
+
+```bash
+for run in 1 2 3 4 5; do
+  for mode in churn cold-restore; do
+    for rev in baseline candidate; do
+      jar=benchmarks/target/benchmarks.jar
+      [ "$rev" = baseline ] && jar=/tmp/baseline-repo/benchmarks/target/benchmarks.jar
+      echo "$(date +%T) loadavg=$(cut -d' ' -f1-3 /proc/loadavg) $rev $mode run=$run" >> /tmp/matrix/load.log
+      ./run-matrix.sh "$jar" "/tmp/matrix/$rev" "10000 100000" "$run" "$mode"
+    done
+  done
+done
+```

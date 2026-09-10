@@ -155,6 +155,14 @@ import java.util.Locale;
  * whole row set either way. The base column MUST be indexed ({@code --index=true}) or no
  * segment is priced and none takes the route.
  * <p>
+ * <b>The restart.</b> {@code --restart=true} ends the run by dropping the view's runtime
+ * and rebuilding it from its checkpoint, reported on the {@code # restore} line. That
+ * reading is one of cold code over a warm page cache: the JVM restores once, and the pages
+ * it reads are the ones its own seals just wrote. {@code --restart-cache=cold} fsyncs and
+ * drops every file under the database root first, after releasing the engine's pools, so
+ * the same restore also pays the disk - the cold-cache reading the acceptance matrix asks
+ * for beside the warm one. Linux only.
+ * <p>
  * Build and run:
  * <pre>
  * mvn -pl benchmarks -am package -o -DskipTests -Dmaven.test.skip=true
@@ -216,6 +224,13 @@ public class LiveViewSteadyStateBenchmark {
         long checkpointCompactionInterval = -1;
         boolean isIndexed = true;
         boolean isRestartMeasured = false;
+        // Whether the restart reads its checkpoint back from a cold page cache. The warm
+        // reading is the restart every earlier matrix cell measured: cold code, since the
+        // JVM restores exactly once, over pages the seals just wrote. The cold one fsyncs
+        // every file under the database root and asks the kernel to drop it before the
+        // view is rebuilt, so the restore pays the disk as well - the reading the matrix
+        // names as "cold-cache restore" beside the warm one.
+        boolean isRestartCacheCold = false;
         // Whether the run ends by comparing the view's rows with the independent oracle.
         // Off by default: it is a correctness check, not a measurement, and on a run with
         // millions of rows it costs seconds after the last measured line.
@@ -294,6 +309,15 @@ public class LiveViewSteadyStateBenchmark {
             }
             if (arg.startsWith("--oracle=")) {
                 isOracleChecked = Boolean.parseBoolean(arg.substring("--oracle=".length()));
+                continue;
+            }
+            if (arg.startsWith("--restart-cache=")) {
+                final String cache = arg.substring("--restart-cache=".length());
+                isRestartCacheCold = switch (cache) {
+                    case "cold" -> true;
+                    case "warm" -> false;
+                    default -> throw new IllegalArgumentException("--restart-cache must be warm or cold: " + cache);
+                };
                 continue;
             }
             if (arg.startsWith("--seed=")) {
@@ -385,6 +409,14 @@ public class LiveViewSteadyStateBenchmark {
         }
         if (accountWindow > 0 && recycleAccounts > 0) {
             throw new IllegalArgumentException("--account-window and --recycle-accounts both pick the account, use one");
+        }
+        if (isRestartCacheCold && !isRestartMeasured) {
+            throw new IllegalArgumentException("--restart-cache=cold needs --restart=true");
+        }
+        if (isRestartCacheCold && !Os.isLinux()) {
+            // posix_fadvise(DONTNEED) is the only way to drop a file's pages without root,
+            // and the harness only knows its value on Linux.
+            throw new IllegalArgumentException("--restart-cache=cold is supported on Linux only");
         }
         final Shape selectShape = Shape.of(shape);
         final KeyType partitionKeyType = KeyType.of(keyType);
@@ -626,7 +658,7 @@ public class LiveViewSteadyStateBenchmark {
                             + "hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
                             + "spanHours=%.2f baseDedup=%s lvDedup=%s repairMaxChainedBoundaries=%d repairPerSegment=%s "
                             + "repairIsolatedRuntime=%s repairSegmentYield=%s repairKeyedReplay=%s "
-                            + "openSegmentKeyedReplay=%s keyedScanIndexOpenRows=%d%n",
+                            + "openSegmentKeyedReplay=%s keyedScanIndexOpenRows=%d restartCache=%s%n",
                     seedRows, batchRows, batches, checkpointRows,
                     configuration.getLiveViewCheckpointPurgeInterval(),
                     configuration.getLiveViewCheckpointCompactionInterval(),
@@ -648,7 +680,8 @@ public class LiveViewSteadyStateBenchmark {
                     configuration.isLiveViewCheckpointRepairSegmentYieldEnabled(),
                     configuration.isLiveViewCheckpointRepairKeyedReplayEnabled(),
                     configuration.isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled(),
-                    configuration.getLiveViewCheckpointRepairKeyedScanIndexOpenRows()
+                    configuration.getLiveViewCheckpointRepairKeyedScanIndexOpenRows(),
+                    isRestartCacheCold ? "cold" : "warm"
             );
 
             engine = new CairoEngine(configuration);
@@ -1049,6 +1082,18 @@ public class LiveViewSteadyStateBenchmark {
                     // multi-million key restore.
                     final long stateRows = firstRow - 1;
                     engine.getLiveViewRegistry().clear();
+                    // Nothing below the registry maps a checkpoint page once the view is
+                    // gone, but the pooled readers and writers still map the base and the
+                    // view's own table. Releasing them first lets the eviction reach every
+                    // file: DONTNEED leaves a page alone while a mapping still holds it.
+                    long evictedFiles = 0;
+                    long evictedBytes = 0;
+                    if (isRestartCacheCold) {
+                        engine.releaseInactive();
+                        final long[] evicted = evictPageCache(dbRoot);
+                        evictedFiles = evicted[0];
+                        evictedBytes = evicted[1];
+                    }
                     engine.buildViewGraphs();
                     engine.execute(insertSql(rowShape, firstRow, RESTART_PROBE_ROWS, 0, 0, 1, false), sqlCtx);
                     drainWal(engine);
@@ -1077,7 +1122,8 @@ public class LiveViewSteadyStateBenchmark {
                         System.out.printf(
                                 Locale.ROOT,
                                 "# restore state_rows=%d window_ms=%.3f reseal_ms=%.3f read_back_ms=%.3f probe_rows=%d "
-                                        + "state_bytes=%d lookup_depth=%d faults=%d peak_mb=%.1f%n",
+                                        + "state_bytes=%d lookup_depth=%d faults=%d peak_mb=%.1f "
+                                        + "cache=%s evicted_files=%d evicted_mb=%.1f%n",
                                 stateRows,
                                 restoreNanos / 1e6,
                                 checkpointMs,
@@ -1086,7 +1132,10 @@ public class LiveViewSteadyStateBenchmark {
                                 restarted.getHeadCheckpointStateBytes(),
                                 restarted.getCheckpointLastLookupDepth(),
                                 restarted.getRefreshFaultCount(),
-                                restorePeakMb
+                                restorePeakMb,
+                                isRestartCacheCold ? "cold" : "warm",
+                                evictedFiles,
+                                evictedBytes / (1024.0 * 1024.0)
                         );
                     }
                 }
@@ -1574,6 +1623,53 @@ public class LiveViewSteadyStateBenchmark {
             }
         });
         return total[0];
+    }
+
+    /**
+     * Drops every file under {@code dir} from the page cache, so that the restart that
+     * follows reads its checkpoint back from disk rather than from the pages the seals
+     * just wrote. Each file is fsynced first - a dirty page cannot be dropped, and the
+     * default commit mode leaves the checkpoint's pages dirty - and then advised
+     * {@code POSIX_FADV_DONTNEED} over its whole length. Pages a live mapping still holds
+     * stay where they are, which is why the caller releases the engine's pools first.
+     * <p>
+     * Returns the number of files advised and their total length. Neither proves a page
+     * left the cache - {@code posix_fadvise} is advice - but the reading it produces is
+     * checked once against {@code mincore} in the matrix's README, and a cold restore
+     * that read like a warm one would show in the {@code read_back_ms} it reports.
+     */
+    private static long[] evictPageCache(Path dir) throws IOException {
+        // posix_fadvise's advice values are the same on every Linux ABI the harness runs
+        // on; io.questdb.std.Files only names the two it uses itself.
+        final int POSIX_FADV_DONTNEED = 4;
+        final long[] counts = new long[2];
+        try (io.questdb.std.str.Path nativePath = new io.questdb.std.str.Path()) {
+            Files.walkFileTree(dir, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    if (!attrs.isRegularFile()) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    final long fd = io.questdb.std.Files.openRONoCache(nativePath.of(file.toString()).$());
+                    if (fd < 0) {
+                        // A file the engine dropped between the walk's listing and the open;
+                        // nothing to evict.
+                        return FileVisitResult.CONTINUE;
+                    }
+                    try {
+                        final long length = io.questdb.std.Files.length(fd);
+                        io.questdb.std.Files.fsync(fd);
+                        io.questdb.std.Files.fadvise(fd, 0, length, POSIX_FADV_DONTNEED);
+                        counts[0]++;
+                        counts[1] += length;
+                    } finally {
+                        io.questdb.std.Files.close(fd);
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        }
+        return counts;
     }
 
     private static void deleteRecursively(Path dir) throws IOException {
