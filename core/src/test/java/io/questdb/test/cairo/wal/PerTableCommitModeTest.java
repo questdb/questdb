@@ -300,10 +300,25 @@ public class PerTableCommitModeTest extends AbstractCairoTest {
 
                 @Override
                 public void fsync(long fd) {
+                    failIfSnapshotFd(fd);
+                    super.fsync(fd);
+                }
+
+                // SnapshotMarker takes its anchor with fsyncDurable(), not fsync(). Off Darwin
+                // FilesFacadeImpl.fsyncDurable() delegates to the overridable fsync(), so overriding fsync
+                // alone happens to inject on Linux -- but on macOS fsyncDurable() calls Files.fsyncDurable()
+                // natively and never reaches this class, so the fault silently never fired and the test
+                // failed on mac CI only. Override the method the marker actually calls.
+                @Override
+                public void fsyncDurable(long fd) {
+                    failIfSnapshotFd(fd);
+                    super.fsyncDurable(fd);
+                }
+
+                private void failIfSnapshotFd(long fd) {
                     if (snapshotFd.get() == fd) {
                         throw CairoException.critical(5).put("injected adaptive baseline marker failure");
                     }
-                    super.fsync(fd);
                 }
             };
             final FilesFacade previous = AbstractCairoTest.ff;

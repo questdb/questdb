@@ -6,9 +6,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -21,6 +23,19 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
      * Run {@code body} with the crash facade installed as the engine's FilesFacade.
      */
     protected void runWithCrashFacade(TestUtils.LeakProneCode body) throws Exception {
+        // The harness simulates power loss by reading and rewriting files UNDER a live engine that still
+        // holds them open, mapped and locked. Both halves of that are POSIX-only:
+        //   - markDurableBaseline() reads every file; QuestDB's Windows lock is LockFile(h, 0, 0, 1, 0),
+        //     an exclusive lock on byte 0, so ReadFile fails with ERROR_LOCK_VIOLATION.
+        //   - crash() truncates files back to their durable prefix; Windows refuses to resize a file with
+        //     a user-mapped section open.
+        // Neither is a property of the code under test, and neither can be worked around without closing
+        // the mappings first -- which would destroy the very thing the harness models. Gate to POSIX; the
+        // durability logic itself stays covered by the Linux and macOS legs.
+        Assume.assumeFalse(
+                "crash-consistency harness rewrites files under a live engine, which Windows forbids",
+                Os.isWindows()
+        );
         crashFf = new CrashFaultFilesFacade();
         // Scope process-death fd reclamation to per-table files; engine-root files (tables.d, the table-id
         // generator, config) are owned by long-lived singletons that outlive releaseEngineHandles().

@@ -3254,8 +3254,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         final int segPathLen = path.size();
                         openColumnFiles(columnName, columnType, columnIndex, segPathLen);
                         if (walCommitMode() != CommitMode.NOSYNC) {
-                            final long segDirFd = TableUtils.openRONoCache(ff, path.trimTo(segPathLen).$(), LOG);
-                            ff.fsyncAndClose(segDirFd);
+                            // fsyncDirDurable, not a raw openRONoCache: a directory cannot be opened for
+                            // fsync on a restricted (Windows) file system, where the read-only handle fails
+                            // with ERROR_ACCESS_DENIED and takes the whole ALTER down.
+                            TableUtils.fsyncDirDurable(ff, path.trimTo(segPathLen).$());
                         }
                         metadata.switchTo(path.trimTo(segPathLen), segPathLen, isTruncateFilesOnClose());
                         path.trimTo(pathSize);
@@ -3376,8 +3378,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                     openColumnFiles(columnName, newType, newColumnIndex, segPathLen);
                                 }
                                 if (walCommitMode() != CommitMode.NOSYNC) {
-                                    final long segDirFd = TableUtils.openRONoCache(ff, path.trimTo(segPathLen).$(), LOG);
-                                    ff.fsyncAndClose(segDirFd);
+                                    // fsyncDirDurable: skips the barrier on a restricted (Windows) file
+                                    // system, which cannot open a directory for fsync.
+                                    TableUtils.fsyncDirDurable(ff, path.trimTo(segPathLen).$());
                                 }
                                 // this will close old _meta file and create the new one
                                 metadata.switchTo(path.trimTo(segPathLen), segPathLen, isTruncateFilesOnClose());
@@ -3523,8 +3526,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             final int segPathLen = path.size();
                             renameColumnFiles(columnType, columnName, newColumnName);
                             if (walCommitMode() != CommitMode.NOSYNC) {
-                                final long segDirFd = TableUtils.openRONoCache(ff, path.trimTo(segPathLen).$(), LOG);
-                                ff.fsyncAndClose(segDirFd);
+                                // fsyncDirDurable: skips the barrier on a restricted (Windows) file system,
+                                // which cannot open a directory for fsync.
+                                TableUtils.fsyncDirDurable(ff, path.trimTo(segPathLen).$());
                             }
                             metadata.switchTo(path.trimTo(segPathLen), segPathLen, isTruncateFilesOnClose());
                         }
