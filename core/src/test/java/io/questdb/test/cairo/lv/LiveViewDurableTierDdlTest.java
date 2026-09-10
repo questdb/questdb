@@ -83,8 +83,9 @@ import java.util.function.BooleanSupplier;
  * counter, the checkpoint-timeline retention it publishes, the durable retention marker, and the
  * in-memory tier rebuild over a Parquet partition the conversion left inside the view's
  * {@code IN MEMORY} window, the row positions an out-of-order repair reads back through a
- * converted partition, and what a removal taken while the view is still SEEDING does to the
- * sweep's resume. Replica propagation belongs to a later stage.
+ * converted partition, the rows such a repair brings back over a period a removal already took,
+ * and what a removal taken while the view is still SEEDING does to the sweep's resume. Replica
+ * propagation belongs to a later stage.
  */
 public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
@@ -1030,6 +1031,226 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
             restartAndAssertRestoredFromTimeline();
             assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n2\n4\n5\n");
             Assert.assertEquals(3, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
+    public void testTwoDropsDrainedTogetherCountTheirRemovalsOnce() throws Exception {
+        // Two DROP PARTITION statements sequenced back to back and drained in one apply. The
+        // writer publishes its committed events per transaction and the apply job accumulates
+        // them across the whole drain, so the drain hands the refresh worker two events at once -
+        // and each has to lower the lifetime counter and the ladder exactly once. Subtracting a
+        // batch twice would empty the view here, and subtracting it once for the batch rather
+        // than once per event would leave the counter one row high.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createBaseAndView("PARTITION BY DAY");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int day = 1; day <= 4; day++) {
+                    flushRow(job, "1970-01-0" + day, day, day);
+                }
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-01'");
+                execute("ALTER LIVE VIEW lv DROP PARTITION WHERE ts >= '1970-01-03' AND ts < '1970-01-04'");
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+                Assert.assertEquals(
+                        "both removals must still be unapplied, so one drain takes them together",
+                        2,
+                        tracker.getSeqTxn() - tracker.getWriterTxn()
+                );
+                driveLiveViewWalApply(job);
+
+                assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n2\n4\n");
+                Assert.assertEquals(2, instance.getLvRowsTotal());
+                assertTimelineExists(lvToken, true);
+                Assert.assertEquals("one retired root per removed partition", 2, readRetiredCheckpointCount(lvToken));
+                assertLadder(instance, ts("1970-01-02"), 1, ts("1970-01-04"), 2);
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT x FROM lv").noLeakCheck().expectSize().returns("x\n2\n4\n");
+            Assert.assertEquals(2, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
+    public void testRepairResurrectsOnlyTheDroppedPartitionItsIntervalCovers() throws Exception {
+        // The documented DROP PARTITION semantics: the removal takes durable rows now, and only
+        // now. A later out-of-order base commit whose repair interval overlaps a dropped period
+        // re-derives the rows inside it off the base, because the replay computes the stream
+        // again rather than reading what the view's table still holds. What must not travel with
+        // them is the rest of the removal: a dropped partition below the repair's anchor stays
+        // dropped, since the replay starts at the anchor and the replacement range never reaches
+        // down to it.
+        //
+        // Two separated hours go and the out-of-order row lands in the upper one, so the plan's
+        // anchor is the root in the surviving hour between them: hour 03 comes back, hour 01 does
+        // not. The resurrected row also comes back renumbered - the state that anchor carries
+        // counted the hour-01 row the drop removed, and the out-of-order row now sits ahead of
+        // hour 03 in the stream - which is the difference between re-deriving a row and restoring
+        // one, and the reason a user who wants retention that survives recovery needs TTL.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY HOUR START FROM NOW AS " +
+                    "(SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts " +
+                    "ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // One commit - and so one logical root - per row, one row per hour.
+                flushOneRow(job, "2026-01-01T01:00:10.000000Z", 1, 1);
+                flushOneRow(job, "2026-01-01T02:00:10.000000Z", 2, 2);
+                flushOneRow(job, "2026-01-01T03:00:10.000000Z", 3, 3);
+                flushOneRow(job, "2026-01-01T04:00:10.000000Z", 4, 4);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-01T01', '2026-01-01T03'");
+                driveLiveViewWalApply(job);
+
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                2026-01-01T02:00:10.000000Z\t2\t2
+                                2026-01-01T04:00:10.000000Z\t4\t4
+                                """);
+                assertLadder(instance, ts("2026-01-01T02:00:10.000000Z"), 1, ts("2026-01-01T04:00:10.000000Z"), 2);
+                Assert.assertEquals(2, instance.getLvRowsTotal());
+                assertRetentionMarker(lvToken, false);
+
+                // The out-of-order row lands inside dropped hour 03, above the surviving root at
+                // 02:00:10 that the plan anchors on.
+                execute("INSERT INTO base VALUES ('2026-01-01T03:00:05.000000Z', 'a', 100)");
+                driveUntil(
+                        job,
+                        () -> {
+                            try (TableReader reader = engine.getReader(lvToken)) {
+                                return reader.size() == 4;
+                            }
+                        },
+                        "the repair never re-emitted the dropped hour"
+                );
+                driveRefreshToQuiescence(job);
+
+                // Hour 03 is back, with the out-of-order row ahead of it, and both are numbered
+                // off the anchor's state - which had seen the hour-01 row too. Hour 01 itself is
+                // still gone: nothing in the repair's interval covers it.
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                2026-01-01T02:00:10.000000Z\t2\t2
+                                2026-01-01T03:00:05.000000Z\t100\t3
+                                2026-01-01T03:00:10.000000Z\t3\t4
+                                2026-01-01T04:00:10.000000Z\t4\t5
+                                """);
+                Assert.assertEquals(4, instance.getLvRowsTotal());
+                assertQuery("SELECT count() FROM lv WHERE ts < '2026-01-01T02:00:00.000000Z'")
+                        .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            // And the ladder the repair published is what a restart reads back, with hour 01 still
+            // missing and hour 03 still resurrected.
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT ts, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\trn
+                            2026-01-01T02:00:10.000000Z\t2
+                            2026-01-01T03:00:05.000000Z\t3
+                            2026-01-01T03:00:10.000000Z\t4
+                            2026-01-01T04:00:10.000000Z\t5
+                            """);
+            Assert.assertEquals(4, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
+    public void testRepairWithNoAnchorLeftResurrectsEveryDroppedRowBelowIt() throws Exception {
+        // The same semantics in their starkest form. Dropping the oldest partitions retires every
+        // root inside them, so an out-of-order row below the lowest surviving root leaves the plan
+        // no anchor at all and the replay runs from the view's own lower bound. The interval is
+        // then the whole view, and every dropped row inside it comes back off the base.
+        //
+        // The replay measures itself against a table the removal already shrank, so this is also
+        // the case where the reconciled counter has to be the one the proof uses: an unreconciled
+        // count would put the replacement's row-count proof two rows out and suspend the view.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY HOUR START FROM NOW AS " +
+                    "(SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts " +
+                    "ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushOneRow(job, "2026-01-01T01:00:10.000000Z", 1, 1);
+                flushOneRow(job, "2026-01-01T02:00:10.000000Z", 2, 2);
+                flushOneRow(job, "2026-01-01T03:00:10.000000Z", 3, 3);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+
+                execute("ALTER LIVE VIEW lv DROP PARTITION WHERE ts < '2026-01-01T03:00:00.000000Z'");
+                driveLiveViewWalApply(job);
+
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                2026-01-01T03:00:10.000000Z\t3\t3
+                                """);
+                assertLadder(instance, ts("2026-01-01T03:00:10.000000Z"), 1);
+                Assert.assertEquals(1, instance.getLvRowsTotal());
+
+                // Below every surviving root, so there is nothing to anchor on and the replay
+                // starts at the view's lower bound.
+                execute("INSERT INTO base VALUES ('2026-01-01T01:00:05.000000Z', 'a', 100)");
+                driveUntil(
+                        job,
+                        () -> {
+                            try (TableReader reader = engine.getReader(lvToken)) {
+                                return reader.size() == 4;
+                            }
+                        },
+                        "the replay never re-derived the dropped hours"
+                );
+                driveRefreshToQuiescence(job);
+
+                // Both dropped hours are back, renumbered around the out-of-order row, which is
+                // exactly a recompute of the base: the removal survived only until the first
+                // recovery that re-derived the period it covered.
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                2026-01-01T01:00:05.000000Z\t100\t1
+                                2026-01-01T01:00:10.000000Z\t1\t2
+                                2026-01-01T02:00:10.000000Z\t2\t3
+                                2026-01-01T03:00:10.000000Z\t3\t4
+                                """);
+                Assert.assertEquals(4, instance.getLvRowsTotal());
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
         });
     }
 
