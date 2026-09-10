@@ -745,9 +745,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
 
-
-
-
     @Override
     public int getO3CopyQueueCapacity() {
         return getDelegate().getO3CopyQueueCapacity();

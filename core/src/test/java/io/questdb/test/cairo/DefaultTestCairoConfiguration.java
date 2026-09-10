@@ -42,6 +42,7 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     public int getCommitMode() {
         return CommitMode.fromString(Overrides.TEST_COMMIT_MODE);
     }
+
     private final Metrics metrics = Metrics.ENABLED;
 
     public DefaultTestCairoConfiguration(CharSequence dbRoot, CharSequence installRoot) {
