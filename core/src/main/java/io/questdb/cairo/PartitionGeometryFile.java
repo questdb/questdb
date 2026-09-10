@@ -46,7 +46,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     // Below TxReader's PARTITION_GEOMETRY_OFFSET_MASK's own reach (24 bits of 8-byte units = 128MB), on purpose:
     // PartitionGeometry.publish rotates to a fresh generation once a record would cross this, leaving headroom under
     public static final long MAX_FILE_SIZE = 100L * 1024 * 1024;
-    public static final int PIECE_SIZE = 32;
+    public static final int PIECE_SIZE = 48;
     public static final int HEADER_OFFSET_CHECKSUM_64 = 32;
     public static final int HEADER_OFFSET_LAST_WRITE_MICROS_64 = 40;
     public static final int HEADER_OFFSET_LIVE_ROWS_64 = 24;
@@ -55,10 +55,12 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     public static final int HEADER_OFFSET_PIECE_COUNT_32 = 4;
     public static final int HEADER_OFFSET_SEQ_TXN_64 = 48;
     public static final int HEADER_OFFSET_WRITER_TXN_64 = 8;
+    public static final int PIECE_OFFSET_LAST_WRITE_MICROS_64 = 40;
     public static final int PIECE_OFFSET_ROW_COUNT_64 = 24;
     public static final int PIECE_OFFSET_ROW_OFFSET_64 = 16;
     public static final int PIECE_OFFSET_TS_HI_64 = 8;
     public static final int PIECE_OFFSET_TS_LO_64 = 0;
+    public static final int PIECE_OFFSET_WRITER_TXN_64 = 32;
     // A record can never be larger than this.
     private static final int MAX_PIECE_COUNT = 1 << 20;
     private static final Log LOG = LogFactory.getLog(PartitionGeometryFile.class);
@@ -107,13 +109,16 @@ public class PartitionGeometryFile implements Closeable, Mutable {
         Unsafe.putLong(buf + HEADER_OFFSET_LAST_WRITE_MICROS_64, 0);
     }
 
-    public void addPiece(long tsLo, long tsHi, long rowOffset, long rowCount) {
+    public void addPiece(long tsLo, long tsHi, long rowOffset, long rowCount, long writerTxn, long lastWriteMicros) {
         ensureCapacity(recordSize(pieceCount + 1));
         final long p = buf + HEADER_SIZE + (long) PIECE_SIZE * pieceCount;
         Unsafe.putLong(p + PIECE_OFFSET_TS_LO_64, tsLo);
         Unsafe.putLong(p + PIECE_OFFSET_TS_HI_64, tsHi);
         Unsafe.putLong(p + PIECE_OFFSET_ROW_OFFSET_64, rowOffset);
         Unsafe.putLong(p + PIECE_OFFSET_ROW_COUNT_64, rowCount);
+        // Which commit last moved this piece's bytes, and when. A KEEP carries the old pair forward.
+        Unsafe.putLong(p + PIECE_OFFSET_WRITER_TXN_64, writerTxn);
+        Unsafe.putLong(p + PIECE_OFFSET_LAST_WRITE_MICROS_64, lastWriteMicros);
         pieceCount++;
     }
 
@@ -185,8 +190,16 @@ public class PartitionGeometryFile implements Closeable, Mutable {
         return getPieceLong(index, PIECE_OFFSET_ROW_COUNT_64);
     }
 
+    public long getPieceLastWriteMicros(int index) {
+        return getPieceLong(index, PIECE_OFFSET_LAST_WRITE_MICROS_64);
+    }
+
     public long getPieceRowOffset(int index) {
         return getPieceLong(index, PIECE_OFFSET_ROW_OFFSET_64);
+    }
+
+    public long getPieceWriterTxn(int index) {
+        return getPieceLong(index, PIECE_OFFSET_WRITER_TXN_64);
     }
 
     public long getPieceTimestampHi(int index) {
