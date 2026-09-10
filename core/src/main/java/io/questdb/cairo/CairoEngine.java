@@ -2267,6 +2267,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.entries();
     }
 
+    public void getReaderPoolEntries(ConcurrentHashMap.EntryCursor<AbstractMultiTenantPool.Entry<ReaderPool.R>> cursor) {
+        readerPool.entries(cursor);
+    }
+
     public TableReader getReaderWithRepair(TableToken tableToken) {
         // todo: untested verification
         verifyTableToken(tableToken);
@@ -2631,6 +2635,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public Map<CharSequence, WriterPool.Entry> getWriterPoolEntries() {
         return writerPool.entries();
+    }
+
+    public void getWriterPoolEntries(ConcurrentHashMap.EntryCursor<WriterPool.Entry> cursor) {
+        writerPool.entries(cursor);
     }
 
     public TableWriter getWriterUnsafe(TableToken tableToken, @NotNull String lockReason) {

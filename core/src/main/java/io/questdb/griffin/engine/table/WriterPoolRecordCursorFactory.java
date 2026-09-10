@@ -39,10 +39,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Numbers;
-
-import java.util.Iterator;
-import java.util.Map;
 
 public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final int LAST_ACCESS_TIMESTAMP_COLUMN_INDEX = 2;
@@ -61,7 +59,7 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         WriterPoolCursor writerPoolCursor = new WriterPoolCursor();
-        writerPoolCursor.of(cairoEngine.getWriterPoolEntries());
+        cairoEngine.getWriterPoolEntries(writerPoolCursor);
         return writerPoolCursor;
     }
 
@@ -75,17 +73,18 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
         sink.type("writer_pool");
     }
 
-    private static class WriterPoolCursor implements NoRandomAccessRecordCursor {
+    private static class WriterPoolCursor extends ConcurrentHashMap.EntryCursor<WriterPool.Entry> implements NoRandomAccessRecordCursor {
         private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();
-        private Iterator<Map.Entry<CharSequence, WriterPool.Entry>> iterator;
         private long lastAccessTimestamp;
         private long ownerThread;
         private String ownershipReason;
         private TableToken tableToken;
-        private Map<CharSequence, WriterPool.Entry> writerPoolEntries;
 
         @Override
         public void close() {
+            clear();
+            ownershipReason = null;
+            tableToken = null;
         }
 
         @Override
@@ -95,9 +94,8 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
 
         @Override
         public boolean hasNext() {
-            if (iterator.hasNext()) {
-                Map.Entry<CharSequence, WriterPool.Entry> mapEntry = iterator.next();
-                final WriterPool.Entry poolEntry = mapEntry.getValue();
+            if (super.hasNext()) {
+                final WriterPool.Entry poolEntry = getValue();
                 ownerThread = poolEntry.getOwnerThread();
                 lastAccessTimestamp = poolEntry.getLastReleaseTime();
                 tableToken = poolEntry.getTableToken();
@@ -105,11 +103,6 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
                 return true;
             }
             return false;
-        }
-
-        public void of(Map<CharSequence, WriterPool.Entry> readerPoolEntries) {
-            this.writerPoolEntries = readerPoolEntries;
-            toTop();
         }
 
         @Override
@@ -120,11 +113,6 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
         @Override
         public long size() {
             return -1;
-        }
-
-        @Override
-        public void toTop() {
-            iterator = writerPoolEntries.entrySet().iterator();
         }
 
         private class ReaderPoolEntryRecord implements Record {
