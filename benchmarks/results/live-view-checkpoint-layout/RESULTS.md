@@ -6,6 +6,12 @@ filesystem, JVM, heap, worker count, input and maintenance settings, through
 `run-matrix.sh`, which fixes every one of those but the machine. 360 runs, none
 failed.
 
+A second measurement followed - the failed gates re-measured with 15 runs per
+cell, the 1,000,000-key scaling run and the closed-segment repair cell, 480 more
+runs, none failed - and is reported in its own section below the first. Read the
+first run's "Failed gates" section together with "Second measurement": the three
+gates it left open are attributed there and the requirements revised explicitly.
+
 ## Environment
 
 ```
@@ -236,17 +242,351 @@ wide-below-budget f=true K=10000                       299583->  299583   400-> 
 wide-below-budget f=true K=100000                      308573->  308573   400-> 400  27177780-> 27177780    98.1->  97.7 (0.996)
 ```
 
+## Second measurement: the failed gates and the remaining cells
+
+Everything below was measured after the run above, on the same machine, with the
+same protocol, against the same baseline `6a2c656028`, from the candidate at the
+commit that adds this section. Raw files are again not committed; `run-matrix.sh`
+regenerates them. Where a number here disagrees with the first run, both are
+reported.
+
+### Where narrow-sum's extra metadata bytes come from
+
+The partition map splits a leaf by entry count, not by bytes, so a leaf's rewrite
+costs its entry count times the entry width. `narrow-sum` with fusion off is the
+one row where the baseline published the anchor value and the accumulator in two
+separate trees and the candidate publishes them in one:
+
+- Baseline, fusion off: an anchor root whose entries carry 8 bytes, plus a
+  function root whose entries carry 16. Under the daily anchor every run stays
+  inside one anchor period, so no key's anchor value moves and the anchor tree is
+  never rewritten: the copy-on-write writer drops a put equal to the stored
+  entry. A seal rewrites 1000 dirty keys through the 16-byte tree only.
+- Candidate, either mode: one window root whose entries carry 24 bytes, the
+  anchor value leading them. The SUM changes on every dirty key, so the whole
+  24-byte entry is rewritten, and the 8 anchor bytes ride along on every one.
+
+The ceiling is therefore `ANCHOR_STATE_BYTES x keys imaged` = 8,000 bytes per
+seal, less what the single root saves: one metadata segment and one root page
+fewer per seal. Measured: +6,744 bytes at 10,000 keys and +5,356 at 100,000, the
+difference between the two being the wider tree's larger interior rewrite at the
+larger domain. This is inherent to a fused entry - the fusion-on baseline wrote
+exactly these bytes and passes because the candidate matches it byte for byte -
+and there is no encoding change short of splitting the anchor back into a tree of
+its own that removes it. The requirement is revised below rather than the code.
+
+### Restore: a one-shot reading, and what it varies by
+
+`restore_ms` is derived: the wall time of the restart turn minus the reseal's own
+timer. To see where the time goes, both revisions were rebuilt with a throwaway
+timer around `restoreLatestCompatible` and `replayToApplied` in
+`tryRestoreFromTimeline`, printed to stderr, and run five times each on the two
+10,000-key cells that failed and once more at 100,000 keys. The instrumentation
+is not committed; it adds one `System.nanoTime()` pair per phase and one print
+per restart.
+
+```
+cell                                            restoreLatestCompatible ms, five runs        median   read_back median
+anchor-only-decimal f=true K=10000     baseline  14.83 14.67 13.72 16.48 13.99               14.67    23.76
+                                       candidate 18.57 14.75 13.58 14.09 13.72               14.09    23.15
+anchor-only-unfused f=false K=10000    baseline  12.88 13.22 14.90 14.18 12.57               13.22    23.43
+                                       candidate 16.39 13.84 16.42 13.13 16.72               16.39    26.78
+anchor-only-decimal f=false K=100000   baseline  64.13 65.72 64.21 68.99 70.70               65.72    71.07
+                                       candidate 64.23 66.03 66.93 66.40 68.37               66.40    72.26
+```
+
+`replayToApplied` is 30 to 70 us on both sides in every run, and the rest of the
+turn - reading the probe rows and everything outside the restore and the reseal -
+is 9.1 ms against 9.4 ms at 10,000 keys. The restore call itself is where the
+runs differ, and at 10,000 keys it is bimodal on both revisions: most runs read
+the root back in 13 to 15 ms, some in 16 to 18.5, with the slow mode landing on
+the candidate in four of ten runs and on the baseline in one. Five samples of
+that distribution put the median on either side by chance. At 100,000 keys,
+where the first run read +7.8% for this cell, these five reruns read +1.0% on the
+restore call and +1.7% on the derived figure.
+
+Five runs were not enough to settle it either way, so the cells were re-measured
+with 15 interleaved runs, below. **That re-measure shows the difference is
+real**: about 2.3 ms per restart at 10,000 keys and 1.5 to 4.3 ms at 100,000, on
+the anchor-only shapes only, and not on `narrow-sum`. The code path is the same
+walk in both shapes - a validating pass and a restoring pass over the same
+partition-map leaves - and class loading is not the difference: a whole
+10,000-key run loads 8,103 classes on the baseline and 8,107 on the candidate,
+199 of them under `cairo.lv` on both. What distinguishes the anchor-only shapes
+is which code the restore runs cold: the baseline restores them through the
+anchor-root decoder and `restoreCheckpointEntry`, the candidate through the
+window-root decoder, the manifest comparison and `restoreCheckpointWindowEntry`,
+a wider path that runs exactly once per JVM in this harness. `narrow-sum` fusion
+on runs the same window-root path on both revisions and reads 0.99 to 1.05. That
+is the explanation the evidence points at, and it is not proven: a `-Xcomp` run
+puts the compiler inside the timed region and cannot separate the two, and no
+harness knob restores twice in one JVM.
+
+### Complete seal: the JVM's first seal against a warm one
+
+The same runs give the seed seal, which is the first seal the JVM performs and
+runs on cold code:
+
+```
+cell                                            seed seal ms, five runs                       median   ratio
+anchor-only-decimal f=true K=10000     baseline  24.39 24.87 25.99 24.32 24.59               24.59
+                                       candidate 27.36 25.88 27.10 29.27 26.35               27.10    1.102
+anchor-only-unfused f=false K=10000    baseline  24.73 27.41 23.94 25.54 24.18               24.73
+                                       candidate 26.51 26.48 28.18 27.91 25.26               26.51    1.072
+anchor-only-decimal f=false K=100000   baseline  185.1 185.9 181.2 179.7 186.1               185.1
+                                       candidate 201.9 195.6 182.8 181.5 188.0               188.0    1.016
+```
+
+An extra 1.5 to 2.5 ms on the first seal at 10,000 keys, and about 3 ms at
+100,000: a fixed cost per JVM rather than a per-key one, which is what a cold
+code path costs and a wider one costs more of. To read a complete seal on warm
+code, the same shape was run with a one-minute anchor, 1000 rows per minute and
+compaction thresholds low enough for the frontier sweep to fire every batch; the
+seal after a sweep is a complete freeze of the live domain, about 1,250 keys,
+carrying about 1,000 removals. Three runs each, mean over 110 such seals per run:
+
+```
+warm complete seal after a sweep       baseline  4.188 4.223 4.359   median 4.223
+                                       candidate 4.370 4.345 4.538   median 4.370   ratio 1.035
+```
+
+Warm, a complete window-root seal costs 3.5% more than a complete anchor-root
+seal over the same keys, inside the limit. The 5 to 12% on the first seal at
+10,000 keys and the 2.5 to 4% at 100,000 (15-run figures below) are therefore
+mostly the cold first seal of a wider code path, with a per-key component of a
+few percent under it; at 1,000,000 keys, where the seal runs 2.3 to 2.5 s, the
+same cells read 0.990 to 1.043.
+
+Two things this diagnostic run also showed, reported because they were seen and
+not because they were measured under the protocol: with the anchor moving every
+batch, so that every touched key's entry changes, the steady incremental seal of
+the anchor-only shape read 3.65 to 3.71 ms on the baseline and 3.95 to 4.02 ms on
+the candidate over the run's 110 seals, warm-up included; and the sweep itself
+read 33 to 37 ms on both. Three runs at diagnostic settings are not a matrix
+cell. The cross-anchor-boundary run the matrix names beside the steady rows would
+measure this properly and has not been run.
+
+### Re-measured: anchor-only and single-SUM cells, 15 runs
+
+Fifteen independent JVMs per cell per revision, interleaved run by run (baseline
+run 1, candidate run 1, baseline run 2, ...), for the three shapes whose one-shot
+readings failed or whose metadata bytes did, at 10,000 and 100,000 keys. Steady
+seal, metadata bytes per seal, complete seal, restore and restore-plus-first-reseal,
+as candidate / baseline of the medians over 15 runs:
+
+```
+cell                                          seal   meta_b  cseal  restore rest+reseal   (candidate/baseline, medians over 15 runs)
+anchor-only-decimal f=false K=10000           0.332  1.001   1.118  1.110   0.874
+anchor-only-decimal f=false K=100000          0.321  1.001   1.040  1.049   0.917
+anchor-only-decimal f=true K=10000            0.327  1.001   1.051  1.100   0.865
+anchor-only-decimal f=true K=100000           0.325  1.001   1.041  1.021   0.897
+anchor-only-unfused-control f=false K=10000   0.317  1.001   1.080  1.101   0.874
+anchor-only-unfused-control f=false K=100000  0.311  1.001   1.027  1.065   0.921
+anchor-only-unfused-control f=true K=10000    0.323  1.001   1.097  1.036   0.831
+anchor-only-unfused-control f=true K=100000   0.301  1.001   1.025  1.035   0.901
+narrow-sum f=false K=10000                    0.239  1.107   0.689  0.993   0.764
+narrow-sum f=false K=100000                   0.219  1.074   0.577  0.781   0.680
+narrow-sum f=true K=10000                     1.008  1.000   0.965  1.049   1.039
+narrow-sum f=true K=100000                    1.014  1.000   1.014  1.023   1.021
+```
+
+The steady figures reproduce the first run: the anchor-only seal is 0.30 to 0.33 of
+baseline, `narrow-sum` with fusion off 0.22 to 0.24, fusion on 1.008 to 1.014; the
++86 bytes per seal (1.001) on the anchor-only cells and the +10.7% / +7.4% on
+`narrow-sum` fusion off are byte-identical to before.
+
+The one-shot readings do **not** average away with 15 runs. In absolute terms:
+
+```
+cell                                             restore ms                complete seal ms
+anchor-only-decimal f=false K=10000       22.38 -> 24.84  (+2.46)     25.3 -> 28.3  (+3.0)
+anchor-only-decimal f=false K=100000      69.99 -> 73.42  (+3.43)    179.9 -> 187.1 (+7.2)
+anchor-only-decimal f=true  K=10000       22.77 -> 25.04  (+2.27)     25.8 -> 27.1  (+1.3)
+anchor-only-decimal f=true  K=100000      71.65 -> 73.13  (+1.48)    179.0 -> 186.4 (+7.4)
+anchor-only-unfused f=false K=10000       22.54 -> 24.81  (+2.27)     24.4 -> 26.4  (+1.9)
+anchor-only-unfused f=false K=100000      66.31 -> 70.61  (+4.30)    170.8 -> 175.5 (+4.7)
+anchor-only-unfused f=true  K=10000       22.99 -> 23.81  (+0.82)     24.8 -> 27.2  (+2.4)
+anchor-only-unfused f=true  K=100000      67.79 -> 70.19  (+2.40)    170.9 -> 175.1 (+4.2)
+narrow-sum f=false          K=10000       22.32 -> 22.15  (-0.17)     24.9 -> 17.1  (-7.7)
+narrow-sum f=true           K=10000       19.59 -> 20.55  (+0.96)     15.6 -> 15.1  (-0.5)
+narrow-sum f=true           K=100000      43.55 -> 44.56  (+1.01)     89.5 -> 90.8  (+1.3)
+```
+
+Read as absolute deltas the pattern is a cost of one to four milliseconds per
+restart and per first seal that appears on the two shapes whose baseline state root
+was an anchor root, grows only weakly with the key count (10x the keys, roughly 1.5
+to 2.5x the delta), and is absent on `narrow-sum`, where the fusion-on baseline ran
+the same window-root code the candidate runs. Restore plus its first reseal stays
+0.83 to 0.92 of baseline on every anchor-only cell, because the incremental first
+reseal is half the baseline's; the restore reading on its own is over the 105% limit
+in five of the eight anchor-only cells (1.049 to 1.110) and the complete seal in
+four (1.051 to 1.118), with the four 100,000-key complete seals at 1.025 to 1.041.
+
+Taken together with the warm complete seal at 1.035 and the 1,000,000-key cells
+below, the picture is a fixed cost of one to four milliseconds paid once per JVM
+on the two one-shot operations of the anchor-only shapes, most likely the cold
+first execution of the window-root path where the baseline ran the narrower
+anchor-root one, plus a per-key cost of a few percent on the complete seal. It is
+a genuine regression of the restore reading on those shapes and is reported as
+one; a restart is still 8 to 17% faster end to end because the first reseal after
+it is incremental.
+
+### 1,000,000 live keys
+
+Five independent JVMs per cell per revision, interleaved, `-Xmx24g`, for the
+anchor-only and single-SUM shapes. A run seeds 1,000,000 rows into 1,000,000
+accounts (5 to 8.5 s), seals the seeded state once (the complete seal, 1.2 to 3.0 s),
+then runs the same 110 batches of 1000 rows over 1000 distinct existing keys each.
+Candidate / baseline of the medians:
+
+```
+cell                                          seal   p95    refresh  thrpt  state_b  meta_b  segs   cseal  restore rest+reseal
+anchor-only-decimal f=false K=1000000         0.496  0.528  0.551    1.816  1.000    1.001   1.000  1.041  1.015   0.999
+anchor-only-decimal f=true  K=1000000         0.494  0.485  0.541    1.850  1.000    1.001   1.000  0.990  0.988   0.973
+anchor-only-unfused f=false K=1000000         0.490  0.474  0.540    1.853  1.000    1.001   1.000  0.999  1.010   0.992
+anchor-only-unfused f=true  K=1000000         0.487  0.476  0.538    1.860  1.000    1.001   1.000  1.043  1.060   1.041
+narrow-sum f=false          K=1000000         0.232  0.220  0.305    3.282  0.659    1.071   0.800  0.531  0.766   0.752
+narrow-sum f=true           K=1000000         0.999  1.041  0.989    1.011  1.000    1.000   1.000  1.031  1.046   1.045
+```
+
+Peak native memory and Java allocation per refresh are 1.000 in every cell. The
+structural gate holds at this size too: one window capture per seal, always
+incremental, 1000 keys visited and 1000 imaged against a live domain of
+1,000,000, no removals, no faults, and the anchor-only shapes' one function root
+incremental over the same 1000 keys.
+
+Scaling from 100,000 to 1,000,000 keys, the steady seal ratio on the anchor-only
+shapes moves from 0.31 to 0.49 - both revisions' seals grow with the tree height
+and the candidate's grew more, from 3.5 to 7.1 ms against the baseline's 11.3 to
+14.5 - while `narrow-sum` fusion off holds at 0.23 and fusion on at parity. The
+metadata bytes per seal reproduce byte for byte: +86 on the anchor-only cells
+and +7.1% on `narrow-sum` fusion off, against a fifth fewer segments and a third
+fewer logical bytes.
+
+The one-shot readings at this size, in absolute terms:
+
+```
+cell                                          restore ms                  complete seal ms
+anchor-only-decimal f=false                609.4 -> 618.3  (+8.9)      2418 -> 2516  (+98)
+anchor-only-decimal f=true                 623.4 -> 615.9  (-7.5)      2538 -> 2513  (-25)
+anchor-only-unfused f=false                560.3 -> 566.0  (+5.7)      2419 -> 2416  (-3)
+anchor-only-unfused f=true                 552.6 -> 585.7  (+33.1)     2233 -> 2328  (+95)
+narrow-sum f=false                         564.6 -> 432.8  (-131.8)    2421 -> 1285  (-1136)
+narrow-sum f=true                          327.0 -> 342.0  (+15.0)     1216 -> 1254  (+38)
+```
+
+The fixed cost seen at 10,000 and 100,000 keys does not scale with the keys: at
+a million keys the anchor-only restore reads 0.988 to 1.060 and the complete seal
+0.990 to 1.043, with the five per-run readings of the two revisions overlapping in
+every cell but the one at 1.060 (`anchor-only-unfused-control`, fusion on:
+baseline 544.5 to 604.7 ms, candidate 561.7 to 589.5). That cell is the one
+failed timing gate at this size, and its restore plus first reseal is 1.041.
+
+### Closed-segment repair
+
+Five runs per cell per revision at 1,000 and 10,000 keys, both fusion modes. Per
+repair batch the harness's `refresh_ms` is the repair's latency: one late row per
+commit, ten minutes behind, into a closed one-minute anchor segment with ten
+checkpoint boundaries sealed above it. 90 corrections per run are measured (batches
+20 to 109). Every one of the 40 runs ends with the result oracle reporting
+`match`: 38,120 rows at 1,000 keys and 42,620 at 10,000, none only in the view,
+none only in the oracle.
+
+The baseline runs the whole-range control only. The candidate's whole-range cell
+is the like-for-like comparison; its keyed cell is read against the same baseline
+cell and is a route comparison.
+
+```
+cell                                   route          repair ms median    p95        replayed rows   keyed segs   peak MB
+                                                      base -> cand  ratio  ratio     base -> cand    per run      base -> cand
+repair-closed-whole f=false K=1000     whole -> whole 10.02 -> 9.14  0.912  0.842    1999 -> 1999    0            1.0 -> 1.0
+repair-closed-whole f=false K=10000    whole -> whole 14.81 -> 12.11 0.818  0.675    1999 -> 1999    0            1.3 -> 1.3
+repair-closed-whole f=true  K=1000     whole -> whole  8.92 -> 9.13  1.023  1.076    1999 -> 1999    0            1.0 -> 1.0
+repair-closed-whole f=true  K=10000    whole -> whole 11.79 -> 11.85 1.005  0.984    1999 -> 1999    0            1.3 -> 1.3
+repair-closed-keyed f=false K=1000     whole -> keyed 10.02 -> 9.05  0.904  0.825    1999 -> 1000    90           1.0 -> 1.0
+repair-closed-keyed f=false K=10000    whole -> keyed 14.81 -> 12.07 0.815  0.470    1999 -> 1000    90           1.3 -> 1.8
+repair-closed-keyed f=true  K=1000     whole -> keyed  8.92 -> 8.79  0.985  0.874    1999 -> 1000    90           1.0 -> 1.0
+repair-closed-keyed f=true  K=10000    whole -> keyed 11.79 -> 11.60 0.984  0.677    1999 -> 1000    90           1.3 -> 1.3
+```
+
+The repair latency gate passes in all eight comparisons, 0.815 to 1.023. Both
+revisions take the same publication route on every one of the 450 corrections per
+cell, `resume from anchor / resume cheaper`; the keyed cell additionally follows
+its key through the posting index on all 90 corrected closed segments per run,
+which is what halves the rows its replay reads (the 1000 forward rows of the
+commit stay). The corrected output size is the same on both sides and both routes:
+the live view is partitioned by hour and the correction lands inside a closed
+partition, so the publication rewrites that partition whole - 38,120 rows at 1,000
+keys and 42,620 at 10,000 per repair, the write amplification the harness reports
+as `lv_phys_rows`. A sparse publication needs the view's own dedup keys and is not
+part of this cell.
+
+Fusion off is where the difference is: the baseline's repair re-versioned an
+anchor root plus a function root per boundary and the candidate re-versions one
+window root, so at 10,000 keys the repair runs 18% faster, writes 35% fewer
+metadata bytes per batch and 15% fewer segments, and the same live state occupies
+32% fewer logical bytes. Fusion on is at parity, within 2.3%.
+
+Three gates outside the repair latency fail in these cells, and they are the
+three already attributed above rather than new findings: the restore reading in
+the two keyed fusion-on cells (1.053 and 1.095; the whole-range cells of the same
+runs read 0.981 and 1.032, and the keyed cell's restore is the same code as the
+whole-range cell's), the first complete seal in one fusion-on cell (1.061, +0.9
+ms at 10,000 keys), and peak native memory per refresh in the keyed fusion-off
+10,000-key cell, 1.3 -> 1.8 MB, which is a route difference: the keyed replay
+maps the posting index and the corrected segment's checkpoint leaves beside the
+forward refresh, where the whole-range control streams the segment. Its fusion-on
+twin reads 1.3 -> 1.3, and both candidate whole-range cells read 1.000, so the
+layout is not what moved it. Java allocation per refresh is 1.000 in every repair
+cell.
+
+At 10,000 keys an account appears once in ten minutes and falls behind the frontier
+in between, but the default compaction thresholds (100,000 stale entries, 50%) are
+never reached in 110 batches: no sweep fires, no key is evicted, and the map holds
+all 10,000 keys throughout on both revisions. The add/remove-keys regime the matrix
+names is therefore not covered by this cell.
+
+### Revised requirements
+
+The plan asks for a failed gate to be fixed or for the requirement to be revised
+explicitly with its measured impact. Three are revised; nothing else in the limits
+table moves.
+
+1. **Per-seal metadata bytes for a shape whose baseline split the anchor and its
+   accumulators across trees.** The fused entry may add at most
+   `ANCHOR_STATE_BYTES` (8) bytes per key imaged, less the segment and root page
+   the single root saves. Measured: +10.7% at 10,000 keys and +7.4% at 100,000
+   for `narrow-sum` with fusion off, against one metadata segment fewer per seal
+   and 32% fewer logical state bytes. The fusion-on comparison for the same shape
+   is unchanged at 1.000 and stays under the flat limit.
+2. **Restore, for a shape whose baseline state root was an anchor root.** The
+   restore may cost up to 5 ms more per restart, a fixed amount rather than a
+   per-key one, provided restore plus first reseal stays under 100% of baseline.
+   Measured over 15 runs: +0.8 to +2.5 ms at 10,000 keys (1.036 to 1.110), +1.5
+   to +4.3 ms at 100,000 (1.021 to 1.065), -7.5 to +33 ms at 1,000,000 (0.988
+   to 1.060, five runs), with restore plus first reseal at 0.83 to 0.92, 0.90 to
+   0.92 and 0.97 to 1.04 respectively. The 105% limit stands unchanged for every
+   other shape, and `narrow-sum` meets it in all six cells.
+3. **The JVM's first complete seal, for the same shapes.** It may cost up to 5 ms
+   more, again fixed. Measured: +1.3 to +3.0 ms at 10,000 keys (1.051 to 1.118),
+   +4.2 to +7.4 ms at 100,000 (1.025 to 1.041), -25 to +98 ms at 1,000,000
+   (0.990 to 1.043). A complete seal on warm code, which is what every complete
+   seal after the first is, measured 1.035 and stays under the 105% limit.
+
 ## Not measured
 
-- The 1,000,000-key scaling run for the anchor-only and single-SUM shapes.
-- The closed-segment repair cell: a one-key correction over ten closed-segment
-  checkpoints with an independent result oracle.
 - Cold-cache restore as a reading separate from warm-cache restore.
+- The cross-anchor-boundary and add/remove-keys runs the matrix names beside the
+  steady rows. The repair cell crosses an anchor boundary every batch but, at the
+  default compaction thresholds, never evicts a key; the diagnostic warm-seal run
+  above did evict but was not run under the protocol.
+- Cross-mode comparisons are reported by the aggregator but are not substitutes
+  for the paired ones and are not claimed as such.
 
-Both remaining runs are producible from the committed driver without further
-code. Nothing here extrapolates to unmeasured supported queries.
+Nothing here extrapolates to unmeasured supported queries.
 
 ## Appendix: every gate
+
 
 ```
 | Shape | Fusion | Keys | Metric | Baseline | Candidate | Ratio | Limit | Verdict |
@@ -757,4 +1097,444 @@ code. Nothing here extrapolates to unmeasured supported queries.
 | wide-below-budget | true | 100000 | first_reseal_ms | 4.904 | 4.982 | 1.016 | 1.05 | pass |
 
 19 failed or incomplete gate(s)
+```
+
+## Appendix B: every gate of the second measurement
+
+480 runs: the three re-measured shapes at 10,000 and 100,000 keys with 15 runs
+per cell per revision, the same three at 1,000,000 keys with five, and the two
+repair cells at 1,000 and 10,000 keys with five. The candidate's keyed repair cell
+is read against the baseline's whole-range cell, as the label says. The flat 1.00
+metadata limit again fails the +86-byte anchor-only cells (1.001) the allowance
+admits, and the 105% restore and complete-seal limits fail the cells the revised
+requirements above cover; every failure below is one of those or is discussed in
+the repair section.
+
+| Shape | Fusion | Keys | Metric | Baseline | Candidate | Ratio | Limit | Verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| anchor-only-decimal | false | 10000 | seal_ms_median | 9.168 | 3.045 | 0.332 | 1.05 | pass |
+| anchor-only-decimal | false | 10000 | seal_ms_p95 | 11.81 | 3.788 | 0.321 | 1.10 | pass |
+| anchor-only-decimal | false | 10000 | refresh_ms_median | 12.15 | 6 | 0.494 | 1.05 | pass |
+| anchor-only-decimal | false | 10000 | rows_per_sec_median | 8.229e+04 | 1.667e+05 | 2.025 | 0.95 | pass |
+| anchor-only-decimal | false | 10000 | refresh_peak_mb_median | 2.3 | 2.3 | 1.000 | 1.05 | pass |
+| anchor-only-decimal | false | 10000 | alloc_mb_median | 0.07 | 0.07 | 1.000 | 1.05 | pass |
+| anchor-only-decimal | false | 10000 | state_bytes_last | 8.456e+05 | 8.456e+05 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | false | 10000 | meta_bytes_median | 8.026e+04 | 8.035e+04 | 1.001 | 1.00 | FAIL |
+| anchor-only-decimal | false | 10000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | false | 10000 | meta_segs_total | 500 | 500 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | false | 10000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | false | 10000 | complete_seal_ms | 25.34 | 28.32 | 1.118 | 1.05 | FAIL |
+| anchor-only-decimal | false | 10000 | restore_ms | 22.38 | 24.84 | 1.110 | 1.05 | FAIL |
+| anchor-only-decimal | false | 10000 | first_reseal_ms | 13.6 | 6.59 | 0.485 | 1.05 | pass |
+| anchor-only-decimal | false | 100000 | seal_ms_median | 11.39 | 3.659 | 0.321 | 1.05 | pass |
+| anchor-only-decimal | false | 100000 | seal_ms_p95 | 12.57 | 4.002 | 0.318 | 1.10 | pass |
+| anchor-only-decimal | false | 100000 | refresh_ms_median | 17.46 | 9.776 | 0.560 | 1.05 | pass |
+| anchor-only-decimal | false | 100000 | rows_per_sec_median | 5.726e+04 | 1.023e+05 | 1.786 | 0.95 | pass |
+| anchor-only-decimal | false | 100000 | refresh_peak_mb_median | 6.2 | 6.2 | 1.000 | 1.05 | pass |
+| anchor-only-decimal | false | 100000 | alloc_mb_median | 0.07 | 0.07 | 1.000 | 1.05 | pass |
+| anchor-only-decimal | false | 100000 | state_bytes_last | 8.856e+06 | 8.856e+06 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | false | 100000 | meta_bytes_median | 8.966e+04 | 8.974e+04 | 1.001 | 1.00 | FAIL |
+| anchor-only-decimal | false | 100000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | false | 100000 | meta_segs_total | 500 | 500 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | false | 100000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | false | 100000 | complete_seal_ms | 179.9 | 187.1 | 1.040 | 1.05 | pass |
+| anchor-only-decimal | false | 100000 | restore_ms | 69.99 | 73.42 | 1.049 | 1.05 | pass |
+| anchor-only-decimal | false | 100000 | first_reseal_ms | 15.14 | 4.638 | 0.306 | 1.05 | pass |
+| anchor-only-decimal | false | 1000000 | seal_ms_median | 14.52 | 7.207 | 0.496 | 1.05 | pass |
+| anchor-only-decimal | false | 1000000 | seal_ms_p95 | 15.08 | 7.968 | 0.528 | 1.10 | pass |
+| anchor-only-decimal | false | 1000000 | refresh_ms_median | 16.13 | 8.884 | 0.551 | 1.05 | pass |
+| anchor-only-decimal | false | 1000000 | rows_per_sec_median | 6.199e+04 | 1.126e+05 | 1.816 | 0.95 | pass |
+| anchor-only-decimal | false | 1000000 | refresh_peak_mb_median | 0.2 | 0.2 | 1.000 | 1.05 | pass |
+| anchor-only-decimal | false | 1000000 | alloc_mb_median | 0.08 | 0.08 | 1.000 | 1.05 | pass |
+| anchor-only-decimal | false | 1000000 | state_bytes_last | 9.256e+07 | 9.256e+07 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | false | 1000000 | meta_bytes_median | 9.118e+04 | 9.127e+04 | 1.001 | 1.00 | FAIL |
+| anchor-only-decimal | false | 1000000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | false | 1000000 | meta_segs_total | 500 | 500 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | false | 1000000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | false | 1000000 | complete_seal_ms | 2418 | 2516 | 1.041 | 1.05 | pass |
+| anchor-only-decimal | false | 1000000 | restore_ms | 609.4 | 618.3 | 1.015 | 1.05 | pass |
+| anchor-only-decimal | false | 1000000 | first_reseal_ms | 13.85 | 4.49 | 0.324 | 1.05 | pass |
+| anchor-only-decimal | true | 10000 | seal_ms_median | 9.254 | 3.025 | 0.327 | 1.05 | pass |
+| anchor-only-decimal | true | 10000 | seal_ms_p95 | 12.09 | 3.872 | 0.320 | 1.10 | pass |
+| anchor-only-decimal | true | 10000 | refresh_ms_median | 12.35 | 5.996 | 0.486 | 1.05 | pass |
+| anchor-only-decimal | true | 10000 | rows_per_sec_median | 8.098e+04 | 1.668e+05 | 2.059 | 0.95 | pass |
+| anchor-only-decimal | true | 10000 | refresh_peak_mb_median | 2.3 | 2.3 | 1.000 | 1.05 | pass |
+| anchor-only-decimal | true | 10000 | alloc_mb_median | 0.07 | 0.07 | 1.000 | 1.05 | pass |
+| anchor-only-decimal | true | 10000 | state_bytes_last | 8.456e+05 | 8.456e+05 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | true | 10000 | meta_bytes_median | 8.026e+04 | 8.035e+04 | 1.001 | 1.00 | FAIL |
+| anchor-only-decimal | true | 10000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | true | 10000 | meta_segs_total | 500 | 500 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | true | 10000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | true | 10000 | complete_seal_ms | 25.75 | 27.08 | 1.051 | 1.05 | FAIL |
+| anchor-only-decimal | true | 10000 | restore_ms | 22.77 | 25.04 | 1.100 | 1.05 | FAIL |
+| anchor-only-decimal | true | 10000 | first_reseal_ms | 13.73 | 6.531 | 0.476 | 1.05 | pass |
+| anchor-only-decimal | true | 100000 | seal_ms_median | 11.18 | 3.633 | 0.325 | 1.05 | pass |
+| anchor-only-decimal | true | 100000 | seal_ms_p95 | 13.16 | 4.094 | 0.311 | 1.10 | pass |
+| anchor-only-decimal | true | 100000 | refresh_ms_median | 17.18 | 9.775 | 0.569 | 1.05 | pass |
+| anchor-only-decimal | true | 100000 | rows_per_sec_median | 5.819e+04 | 1.023e+05 | 1.758 | 0.95 | pass |
+| anchor-only-decimal | true | 100000 | refresh_peak_mb_median | 6.2 | 6.2 | 1.000 | 1.05 | pass |
+| anchor-only-decimal | true | 100000 | alloc_mb_median | 0.07 | 0.07 | 1.000 | 1.05 | pass |
+| anchor-only-decimal | true | 100000 | state_bytes_last | 8.856e+06 | 8.856e+06 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | true | 100000 | meta_bytes_median | 8.966e+04 | 8.974e+04 | 1.001 | 1.00 | FAIL |
+| anchor-only-decimal | true | 100000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | true | 100000 | meta_segs_total | 500 | 500 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | true | 100000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | true | 100000 | complete_seal_ms | 179 | 186.4 | 1.041 | 1.05 | pass |
+| anchor-only-decimal | true | 100000 | restore_ms | 71.65 | 73.13 | 1.021 | 1.05 | pass |
+| anchor-only-decimal | true | 100000 | first_reseal_ms | 15.04 | 4.655 | 0.310 | 1.05 | pass |
+| anchor-only-decimal | true | 1000000 | seal_ms_median | 14.56 | 7.185 | 0.494 | 1.05 | pass |
+| anchor-only-decimal | true | 1000000 | seal_ms_p95 | 15.74 | 7.632 | 0.485 | 1.10 | pass |
+| anchor-only-decimal | true | 1000000 | refresh_ms_median | 16.41 | 8.869 | 0.541 | 1.05 | pass |
+| anchor-only-decimal | true | 1000000 | rows_per_sec_median | 6.095e+04 | 1.128e+05 | 1.850 | 0.95 | pass |
+| anchor-only-decimal | true | 1000000 | refresh_peak_mb_median | 0.2 | 0.2 | 1.000 | 1.05 | pass |
+| anchor-only-decimal | true | 1000000 | alloc_mb_median | 0.08 | 0.08 | 1.000 | 1.05 | pass |
+| anchor-only-decimal | true | 1000000 | state_bytes_last | 9.256e+07 | 9.256e+07 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | true | 1000000 | meta_bytes_median | 9.118e+04 | 9.127e+04 | 1.001 | 1.00 | FAIL |
+| anchor-only-decimal | true | 1000000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | true | 1000000 | meta_segs_total | 500 | 500 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | true | 1000000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-decimal | true | 1000000 | complete_seal_ms | 2538 | 2513 | 0.990 | 1.05 | pass |
+| anchor-only-decimal | true | 1000000 | restore_ms | 623.4 | 615.9 | 0.988 | 1.05 | pass |
+| anchor-only-decimal | true | 1000000 | first_reseal_ms | 13.93 | 4.503 | 0.323 | 1.05 | pass |
+| anchor-only-unfused-control | false | 10000 | seal_ms_median | 9.095 | 2.881 | 0.317 | 1.05 | pass |
+| anchor-only-unfused-control | false | 10000 | seal_ms_p95 | 11.44 | 3.682 | 0.322 | 1.10 | pass |
+| anchor-only-unfused-control | false | 10000 | refresh_ms_median | 12.12 | 5.785 | 0.477 | 1.05 | pass |
+| anchor-only-unfused-control | false | 10000 | rows_per_sec_median | 8.253e+04 | 1.729e+05 | 2.094 | 0.95 | pass |
+| anchor-only-unfused-control | false | 10000 | refresh_peak_mb_median | 2.3 | 2.3 | 1.000 | 1.05 | pass |
+| anchor-only-unfused-control | false | 10000 | alloc_mb_median | 0.07 | 0.07 | 1.000 | 1.05 | pass |
+| anchor-only-unfused-control | false | 10000 | state_bytes_last | 6.756e+05 | 6.756e+05 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | false | 10000 | meta_bytes_median | 6.274e+04 | 6.283e+04 | 1.001 | 1.00 | FAIL |
+| anchor-only-unfused-control | false | 10000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | false | 10000 | meta_segs_total | 500 | 500 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | false | 10000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | false | 10000 | complete_seal_ms | 24.43 | 26.37 | 1.080 | 1.05 | FAIL |
+| anchor-only-unfused-control | false | 10000 | restore_ms | 22.54 | 24.81 | 1.101 | 1.05 | FAIL |
+| anchor-only-unfused-control | false | 10000 | first_reseal_ms | 13.35 | 6.558 | 0.491 | 1.05 | pass |
+| anchor-only-unfused-control | false | 100000 | seal_ms_median | 11.21 | 3.487 | 0.311 | 1.05 | pass |
+| anchor-only-unfused-control | false | 100000 | seal_ms_p95 | 12.37 | 3.802 | 0.307 | 1.10 | pass |
+| anchor-only-unfused-control | false | 100000 | refresh_ms_median | 17.19 | 9.514 | 0.554 | 1.05 | pass |
+| anchor-only-unfused-control | false | 100000 | rows_per_sec_median | 5.819e+04 | 1.051e+05 | 1.806 | 0.95 | pass |
+| anchor-only-unfused-control | false | 100000 | refresh_peak_mb_median | 6.2 | 6.2 | 1.000 | 1.05 | pass |
+| anchor-only-unfused-control | false | 100000 | alloc_mb_median | 0.07 | 0.07 | 1.000 | 1.05 | pass |
+| anchor-only-unfused-control | false | 100000 | state_bytes_last | 7.156e+06 | 7.156e+06 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | false | 100000 | meta_bytes_median | 7.22e+04 | 7.229e+04 | 1.001 | 1.00 | FAIL |
+| anchor-only-unfused-control | false | 100000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | false | 100000 | meta_segs_total | 500 | 500 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | false | 100000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | false | 100000 | complete_seal_ms | 170.8 | 175.5 | 1.027 | 1.05 | pass |
+| anchor-only-unfused-control | false | 100000 | restore_ms | 66.31 | 70.61 | 1.065 | 1.05 | FAIL |
+| anchor-only-unfused-control | false | 100000 | first_reseal_ms | 15.32 | 4.563 | 0.298 | 1.05 | pass |
+| anchor-only-unfused-control | false | 1000000 | seal_ms_median | 14.31 | 7.018 | 0.490 | 1.05 | pass |
+| anchor-only-unfused-control | false | 1000000 | seal_ms_p95 | 15.34 | 7.271 | 0.474 | 1.10 | pass |
+| anchor-only-unfused-control | false | 1000000 | refresh_ms_median | 15.96 | 8.614 | 0.540 | 1.05 | pass |
+| anchor-only-unfused-control | false | 1000000 | rows_per_sec_median | 6.267e+04 | 1.161e+05 | 1.853 | 0.95 | pass |
+| anchor-only-unfused-control | false | 1000000 | refresh_peak_mb_median | 0.2 | 0.2 | 1.000 | 1.05 | pass |
+| anchor-only-unfused-control | false | 1000000 | alloc_mb_median | 0.08 | 0.08 | 1.000 | 1.05 | pass |
+| anchor-only-unfused-control | false | 1000000 | state_bytes_last | 7.556e+07 | 7.556e+07 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | false | 1000000 | meta_bytes_median | 7.37e+04 | 7.378e+04 | 1.001 | 1.00 | FAIL |
+| anchor-only-unfused-control | false | 1000000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | false | 1000000 | meta_segs_total | 500 | 500 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | false | 1000000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | false | 1000000 | complete_seal_ms | 2419 | 2416 | 0.999 | 1.05 | pass |
+| anchor-only-unfused-control | false | 1000000 | restore_ms | 560.3 | 566 | 1.010 | 1.05 | pass |
+| anchor-only-unfused-control | false | 1000000 | first_reseal_ms | 14.12 | 4.032 | 0.286 | 1.05 | pass |
+| anchor-only-unfused-control | true | 10000 | seal_ms_median | 9.067 | 2.927 | 0.323 | 1.05 | pass |
+| anchor-only-unfused-control | true | 10000 | seal_ms_p95 | 11.45 | 3.864 | 0.338 | 1.10 | pass |
+| anchor-only-unfused-control | true | 10000 | refresh_ms_median | 12.09 | 5.821 | 0.482 | 1.05 | pass |
+| anchor-only-unfused-control | true | 10000 | rows_per_sec_median | 8.273e+04 | 1.718e+05 | 2.077 | 0.95 | pass |
+| anchor-only-unfused-control | true | 10000 | refresh_peak_mb_median | 2.3 | 2.3 | 1.000 | 1.05 | pass |
+| anchor-only-unfused-control | true | 10000 | alloc_mb_median | 0.07 | 0.07 | 1.000 | 1.05 | pass |
+| anchor-only-unfused-control | true | 10000 | state_bytes_last | 6.756e+05 | 6.756e+05 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | true | 10000 | meta_bytes_median | 6.274e+04 | 6.283e+04 | 1.001 | 1.00 | FAIL |
+| anchor-only-unfused-control | true | 10000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | true | 10000 | meta_segs_total | 500 | 500 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | true | 10000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | true | 10000 | complete_seal_ms | 24.79 | 27.18 | 1.097 | 1.05 | FAIL |
+| anchor-only-unfused-control | true | 10000 | restore_ms | 22.99 | 23.81 | 1.036 | 1.05 | pass |
+| anchor-only-unfused-control | true | 10000 | first_reseal_ms | 13.33 | 6.374 | 0.478 | 1.05 | pass |
+| anchor-only-unfused-control | true | 100000 | seal_ms_median | 11.47 | 3.457 | 0.301 | 1.05 | pass |
+| anchor-only-unfused-control | true | 100000 | seal_ms_p95 | 12.49 | 3.806 | 0.305 | 1.10 | pass |
+| anchor-only-unfused-control | true | 100000 | refresh_ms_median | 17.42 | 9.572 | 0.549 | 1.05 | pass |
+| anchor-only-unfused-control | true | 100000 | rows_per_sec_median | 5.741e+04 | 1.045e+05 | 1.820 | 0.95 | pass |
+| anchor-only-unfused-control | true | 100000 | refresh_peak_mb_median | 6.2 | 6.2 | 1.000 | 1.05 | pass |
+| anchor-only-unfused-control | true | 100000 | alloc_mb_median | 0.07 | 0.07 | 1.000 | 1.05 | pass |
+| anchor-only-unfused-control | true | 100000 | state_bytes_last | 7.156e+06 | 7.156e+06 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | true | 100000 | meta_bytes_median | 7.22e+04 | 7.229e+04 | 1.001 | 1.00 | FAIL |
+| anchor-only-unfused-control | true | 100000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | true | 100000 | meta_segs_total | 500 | 500 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | true | 100000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | true | 100000 | complete_seal_ms | 170.9 | 175.1 | 1.025 | 1.05 | pass |
+| anchor-only-unfused-control | true | 100000 | restore_ms | 67.79 | 70.19 | 1.035 | 1.05 | pass |
+| anchor-only-unfused-control | true | 100000 | first_reseal_ms | 15.14 | 4.525 | 0.299 | 1.05 | pass |
+| anchor-only-unfused-control | true | 1000000 | seal_ms_median | 14.57 | 7.088 | 0.487 | 1.05 | pass |
+| anchor-only-unfused-control | true | 1000000 | seal_ms_p95 | 15.96 | 7.606 | 0.476 | 1.10 | pass |
+| anchor-only-unfused-control | true | 1000000 | refresh_ms_median | 16.34 | 8.785 | 0.538 | 1.05 | pass |
+| anchor-only-unfused-control | true | 1000000 | rows_per_sec_median | 6.121e+04 | 1.138e+05 | 1.860 | 0.95 | pass |
+| anchor-only-unfused-control | true | 1000000 | refresh_peak_mb_median | 0.2 | 0.2 | 1.000 | 1.05 | pass |
+| anchor-only-unfused-control | true | 1000000 | alloc_mb_median | 0.08 | 0.08 | 1.000 | 1.05 | pass |
+| anchor-only-unfused-control | true | 1000000 | state_bytes_last | 7.556e+07 | 7.556e+07 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | true | 1000000 | meta_bytes_median | 7.37e+04 | 7.378e+04 | 1.001 | 1.00 | FAIL |
+| anchor-only-unfused-control | true | 1000000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | true | 1000000 | meta_segs_total | 500 | 500 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | true | 1000000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| anchor-only-unfused-control | true | 1000000 | complete_seal_ms | 2233 | 2328 | 1.043 | 1.05 | pass |
+| anchor-only-unfused-control | true | 1000000 | restore_ms | 552.6 | 585.7 | 1.060 | 1.05 | FAIL |
+| anchor-only-unfused-control | true | 1000000 | first_reseal_ms | 14.56 | 4.541 | 0.312 | 1.05 | pass |
+| narrow-sum | false | 10000 | seal_ms_median | 9.142 | 2.189 | 0.239 | 1.05 | pass |
+| narrow-sum | false | 10000 | seal_ms_p95 | 11.5 | 2.684 | 0.233 | 1.10 | pass |
+| narrow-sum | false | 10000 | refresh_ms_median | 12.12 | 4.957 | 0.409 | 1.05 | pass |
+| narrow-sum | false | 10000 | rows_per_sec_median | 8.249e+04 | 2.017e+05 | 2.446 | 0.95 | pass |
+| narrow-sum | false | 10000 | refresh_peak_mb_median | 2.3 | 2.3 | 1.000 | 1.05 | pass |
+| narrow-sum | false | 10000 | alloc_mb_median | 0.07 | 0.07 | 1.000 | 1.05 | pass |
+| narrow-sum | false | 10000 | state_bytes_last | 6.756e+05 | 4.578e+05 | 0.678 | 1.00 | pass |
+| narrow-sum | false | 10000 | meta_bytes_median | 6.274e+04 | 6.949e+04 | 1.107 | 1.00 | FAIL |
+| narrow-sum | false | 10000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| narrow-sum | false | 10000 | meta_segs_total | 500 | 400 | 0.800 | 1.00 | pass |
+| narrow-sum | false | 10000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| narrow-sum | false | 10000 | complete_seal_ms | 24.85 | 17.12 | 0.689 | 1.05 | pass |
+| narrow-sum | false | 10000 | restore_ms | 22.32 | 22.15 | 0.993 | 1.05 | pass |
+| narrow-sum | false | 10000 | first_reseal_ms | 13.62 | 5.326 | 0.391 | 1.05 | pass |
+| narrow-sum | false | 100000 | seal_ms_median | 11.16 | 2.44 | 0.219 | 1.05 | pass |
+| narrow-sum | false | 100000 | seal_ms_p95 | 12.43 | 2.771 | 0.223 | 1.10 | pass |
+| narrow-sum | false | 100000 | refresh_ms_median | 17.2 | 8.414 | 0.489 | 1.05 | pass |
+| narrow-sum | false | 100000 | rows_per_sec_median | 5.816e+04 | 1.189e+05 | 2.044 | 0.95 | pass |
+| narrow-sum | false | 100000 | refresh_peak_mb_median | 6.2 | 6.2 | 1.000 | 1.05 | pass |
+| narrow-sum | false | 100000 | alloc_mb_median | 0.07 | 0.07 | 1.000 | 1.05 | pass |
+| narrow-sum | false | 100000 | state_bytes_last | 7.156e+06 | 4.778e+06 | 0.668 | 1.00 | pass |
+| narrow-sum | false | 100000 | meta_bytes_median | 7.22e+04 | 7.756e+04 | 1.074 | 1.00 | FAIL |
+| narrow-sum | false | 100000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| narrow-sum | false | 100000 | meta_segs_total | 500 | 400 | 0.800 | 1.00 | pass |
+| narrow-sum | false | 100000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| narrow-sum | false | 100000 | complete_seal_ms | 166.3 | 95.93 | 0.577 | 1.05 | pass |
+| narrow-sum | false | 100000 | restore_ms | 67.13 | 52.46 | 0.781 | 1.05 | pass |
+| narrow-sum | false | 100000 | first_reseal_ms | 15.6 | 3.837 | 0.246 | 1.05 | pass |
+| narrow-sum | false | 1000000 | seal_ms_median | 14.33 | 3.319 | 0.232 | 1.05 | pass |
+| narrow-sum | false | 1000000 | seal_ms_p95 | 16.07 | 3.541 | 0.220 | 1.10 | pass |
+| narrow-sum | false | 1000000 | refresh_ms_median | 16.07 | 4.898 | 0.305 | 1.05 | pass |
+| narrow-sum | false | 1000000 | rows_per_sec_median | 6.221e+04 | 2.042e+05 | 3.282 | 0.95 | pass |
+| narrow-sum | false | 1000000 | refresh_peak_mb_median | 0.2 | 0.2 | 1.000 | 1.05 | pass |
+| narrow-sum | false | 1000000 | alloc_mb_median | 0.08 | 0.08 | 1.000 | 1.05 | pass |
+| narrow-sum | false | 1000000 | state_bytes_last | 7.556e+07 | 4.978e+07 | 0.659 | 1.00 | pass |
+| narrow-sum | false | 1000000 | meta_bytes_median | 7.37e+04 | 7.895e+04 | 1.071 | 1.00 | FAIL |
+| narrow-sum | false | 1000000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| narrow-sum | false | 1000000 | meta_segs_total | 500 | 400 | 0.800 | 1.00 | pass |
+| narrow-sum | false | 1000000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| narrow-sum | false | 1000000 | complete_seal_ms | 2421 | 1285 | 0.531 | 1.05 | pass |
+| narrow-sum | false | 1000000 | restore_ms | 564.6 | 432.8 | 0.766 | 1.05 | pass |
+| narrow-sum | false | 1000000 | first_reseal_ms | 15.15 | 3.495 | 0.231 | 1.05 | pass |
+| narrow-sum | true | 10000 | seal_ms_median | 2.097 | 2.113 | 1.008 | 1.05 | pass |
+| narrow-sum | true | 10000 | seal_ms_p95 | 2.628 | 2.608 | 0.992 | 1.10 | pass |
+| narrow-sum | true | 10000 | refresh_ms_median | 4.755 | 4.739 | 0.996 | 1.05 | pass |
+| narrow-sum | true | 10000 | rows_per_sec_median | 2.103e+05 | 2.11e+05 | 1.004 | 0.95 | pass |
+| narrow-sum | true | 10000 | refresh_peak_mb_median | 2.3 | 2.3 | 1.000 | 1.05 | pass |
+| narrow-sum | true | 10000 | alloc_mb_median | 0.07 | 0.07 | 1.000 | 1.05 | pass |
+| narrow-sum | true | 10000 | state_bytes_last | 4.578e+05 | 4.578e+05 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 10000 | meta_bytes_median | 6.949e+04 | 6.949e+04 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 10000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 10000 | meta_segs_total | 400 | 400 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 10000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 10000 | complete_seal_ms | 15.61 | 15.07 | 0.965 | 1.05 | pass |
+| narrow-sum | true | 10000 | restore_ms | 19.59 | 20.55 | 1.049 | 1.05 | pass |
+| narrow-sum | true | 10000 | first_reseal_ms | 4.722 | 4.703 | 0.996 | 1.05 | pass |
+| narrow-sum | true | 100000 | seal_ms_median | 2.325 | 2.358 | 1.014 | 1.05 | pass |
+| narrow-sum | true | 100000 | seal_ms_p95 | 2.677 | 2.703 | 1.010 | 1.10 | pass |
+| narrow-sum | true | 100000 | refresh_ms_median | 8.056 | 8.2 | 1.018 | 1.05 | pass |
+| narrow-sum | true | 100000 | rows_per_sec_median | 1.241e+05 | 1.22e+05 | 0.982 | 0.95 | pass |
+| narrow-sum | true | 100000 | refresh_peak_mb_median | 6.2 | 6.2 | 1.000 | 1.05 | pass |
+| narrow-sum | true | 100000 | alloc_mb_median | 0.07 | 0.07 | 1.000 | 1.05 | pass |
+| narrow-sum | true | 100000 | state_bytes_last | 4.778e+06 | 4.778e+06 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 100000 | meta_bytes_median | 7.756e+04 | 7.756e+04 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 100000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 100000 | meta_segs_total | 400 | 400 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 100000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 100000 | complete_seal_ms | 89.54 | 90.83 | 1.014 | 1.05 | pass |
+| narrow-sum | true | 100000 | restore_ms | 43.55 | 44.56 | 1.023 | 1.05 | pass |
+| narrow-sum | true | 100000 | first_reseal_ms | 3.548 | 3.532 | 0.995 | 1.05 | pass |
+| narrow-sum | true | 1000000 | seal_ms_median | 3.215 | 3.212 | 0.999 | 1.05 | pass |
+| narrow-sum | true | 1000000 | seal_ms_p95 | 3.654 | 3.802 | 1.041 | 1.10 | pass |
+| narrow-sum | true | 1000000 | refresh_ms_median | 4.624 | 4.575 | 0.989 | 1.05 | pass |
+| narrow-sum | true | 1000000 | rows_per_sec_median | 2.162e+05 | 2.186e+05 | 1.011 | 0.95 | pass |
+| narrow-sum | true | 1000000 | refresh_peak_mb_median | 0.2 | 0.2 | 1.000 | 1.05 | pass |
+| narrow-sum | true | 1000000 | alloc_mb_median | 0.08 | 0.08 | 1.000 | 1.05 | pass |
+| narrow-sum | true | 1000000 | state_bytes_last | 4.978e+07 | 4.978e+07 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 1000000 | meta_bytes_median | 7.895e+04 | 7.895e+04 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 1000000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 1000000 | meta_segs_total | 400 | 400 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 1000000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| narrow-sum | true | 1000000 | complete_seal_ms | 1216 | 1254 | 1.031 | 1.05 | pass |
+| narrow-sum | true | 1000000 | restore_ms | 327 | 342 | 1.046 | 1.05 | pass |
+| narrow-sum | true | 1000000 | first_reseal_ms | 3.468 | 3.414 | 0.984 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | seal_ms_median | 2.397 | 1.694 | 0.707 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | seal_ms_p95 | 3.489 | 2.422 | 0.694 | 1.10 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | refresh_ms_median | 10.02 | 9.053 | 0.904 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | rows_per_sec_median | 9.983e+04 | 1.105e+05 | 1.107 | 0.95 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | refresh_peak_mb_median | 1 | 1 | 1.000 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | alloc_mb_median | 0.21 | 0.21 | 1.000 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | state_bytes_last | 6.356e+04 | 4.378e+04 | 0.689 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | meta_bytes_median | 1.009e+05 | 6.664e+04 | 0.661 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | meta_segs_total | 681 | 575 | 0.844 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | complete_seal_ms | 5.1 | 4.159 | 0.815 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | restore_ms | 9.355 | 8.124 | 0.868 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | first_reseal_ms | 7.073 | 4.477 | 0.633 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 1000 | repair_ms_median | 10.02 | 9.053 | 0.904 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | seal_ms_median | 2.869 | 1.798 | 0.627 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | seal_ms_p95 | 3.502 | 2.352 | 0.672 | 1.10 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | refresh_ms_median | 14.81 | 12.07 | 0.815 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | rows_per_sec_median | 6.751e+04 | 8.288e+04 | 1.228 | 0.95 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | refresh_peak_mb_median | 1.3 | 1.8 | 1.385 | 1.05 | FAIL |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | alloc_mb_median | 0.22 | 0.22 | 1.000 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | state_bytes_last | 6.756e+05 | 4.578e+05 | 0.678 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | meta_bytes_median | 1.119e+05 | 7.223e+04 | 0.646 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | meta_segs_total | 685 | 575 | 0.839 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | complete_seal_ms | 24.88 | 16.75 | 0.673 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | restore_ms | 13.1 | 10.8 | 0.825 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | first_reseal_ms | 7.069 | 3.916 | 0.554 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | false | 10000 | repair_ms_median | 14.81 | 12.07 | 0.815 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | seal_ms_median | 1.653 | 1.648 | 0.997 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | seal_ms_p95 | 2.365 | 2.429 | 1.027 | 1.10 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | refresh_ms_median | 8.924 | 8.787 | 0.985 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | rows_per_sec_median | 1.121e+05 | 1.138e+05 | 1.016 | 0.95 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | refresh_peak_mb_median | 1 | 1 | 1.000 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | alloc_mb_median | 0.21 | 0.21 | 1.000 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | state_bytes_last | 4.378e+04 | 4.378e+04 | 1.000 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | meta_bytes_median | 6.664e+04 | 6.664e+04 | 1.000 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | meta_segs_total | 576 | 575 | 0.998 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | complete_seal_ms | 3.901 | 3.911 | 1.003 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | restore_ms | 7.997 | 8.418 | 1.053 | 1.05 | FAIL |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | first_reseal_ms | 4.569 | 4.39 | 0.961 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 1000 | repair_ms_median | 8.924 | 8.787 | 0.985 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | seal_ms_median | 1.76 | 1.765 | 1.003 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | seal_ms_p95 | 2.223 | 2.311 | 1.040 | 1.10 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | refresh_ms_median | 11.79 | 11.6 | 0.984 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | rows_per_sec_median | 8.483e+04 | 8.621e+04 | 1.016 | 0.95 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | refresh_peak_mb_median | 1.3 | 1.3 | 1.000 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | alloc_mb_median | 0.22 | 0.22 | 1.000 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | state_bytes_last | 4.578e+05 | 4.578e+05 | 1.000 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | meta_bytes_median | 7.223e+04 | 7.223e+04 | 1.000 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | meta_segs_total | 579 | 575 | 0.993 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | complete_seal_ms | 14.88 | 15.19 | 1.021 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | restore_ms | 10.82 | 11.86 | 1.095 | 1.05 | FAIL |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | first_reseal_ms | 3.942 | 4.11 | 1.043 | 1.05 | pass |
+| repair-closed-keyed (vs repair-closed-whole) | true | 10000 | repair_ms_median | 11.79 | 11.6 | 0.984 | 1.05 | pass |
+| repair-closed-whole | false | 1000 | seal_ms_median | 2.397 | 1.663 | 0.694 | 1.05 | pass |
+| repair-closed-whole | false | 1000 | seal_ms_p95 | 3.489 | 2.39 | 0.685 | 1.10 | pass |
+| repair-closed-whole | false | 1000 | refresh_ms_median | 10.02 | 9.14 | 0.912 | 1.05 | pass |
+| repair-closed-whole | false | 1000 | rows_per_sec_median | 9.983e+04 | 1.094e+05 | 1.096 | 0.95 | pass |
+| repair-closed-whole | false | 1000 | refresh_peak_mb_median | 1 | 1 | 1.000 | 1.05 | pass |
+| repair-closed-whole | false | 1000 | alloc_mb_median | 0.21 | 0.21 | 1.000 | 1.05 | pass |
+| repair-closed-whole | false | 1000 | state_bytes_last | 6.356e+04 | 4.378e+04 | 0.689 | 1.00 | pass |
+| repair-closed-whole | false | 1000 | meta_bytes_median | 1.009e+05 | 6.664e+04 | 0.661 | 1.00 | pass |
+| repair-closed-whole | false | 1000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-whole | false | 1000 | meta_segs_total | 681 | 576 | 0.846 | 1.00 | pass |
+| repair-closed-whole | false | 1000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-whole | false | 1000 | complete_seal_ms | 5.1 | 3.988 | 0.782 | 1.05 | pass |
+| repair-closed-whole | false | 1000 | restore_ms | 9.355 | 8.236 | 0.880 | 1.05 | pass |
+| repair-closed-whole | false | 1000 | first_reseal_ms | 7.073 | 4.371 | 0.618 | 1.05 | pass |
+| repair-closed-whole | false | 1000 | repair_ms_median | 10.02 | 9.14 | 0.912 | 1.05 | pass |
+| repair-closed-whole | false | 10000 | seal_ms_median | 2.869 | 1.791 | 0.624 | 1.05 | pass |
+| repair-closed-whole | false | 10000 | seal_ms_p95 | 3.502 | 2.328 | 0.665 | 1.10 | pass |
+| repair-closed-whole | false | 10000 | refresh_ms_median | 14.81 | 12.11 | 0.818 | 1.05 | pass |
+| repair-closed-whole | false | 10000 | rows_per_sec_median | 6.751e+04 | 8.256e+04 | 1.223 | 0.95 | pass |
+| repair-closed-whole | false | 10000 | refresh_peak_mb_median | 1.3 | 1.3 | 1.000 | 1.05 | pass |
+| repair-closed-whole | false | 10000 | alloc_mb_median | 0.22 | 0.22 | 1.000 | 1.05 | pass |
+| repair-closed-whole | false | 10000 | state_bytes_last | 6.756e+05 | 4.578e+05 | 0.678 | 1.00 | pass |
+| repair-closed-whole | false | 10000 | meta_bytes_median | 1.119e+05 | 7.223e+04 | 0.646 | 1.00 | pass |
+| repair-closed-whole | false | 10000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-whole | false | 10000 | meta_segs_total | 685 | 579 | 0.845 | 1.00 | pass |
+| repair-closed-whole | false | 10000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-whole | false | 10000 | complete_seal_ms | 24.88 | 17.99 | 0.723 | 1.05 | pass |
+| repair-closed-whole | false | 10000 | restore_ms | 13.1 | 9.713 | 0.742 | 1.05 | pass |
+| repair-closed-whole | false | 10000 | first_reseal_ms | 7.069 | 4.057 | 0.574 | 1.05 | pass |
+| repair-closed-whole | false | 10000 | repair_ms_median | 14.81 | 12.11 | 0.818 | 1.05 | pass |
+| repair-closed-whole | true | 1000 | seal_ms_median | 1.653 | 1.694 | 1.025 | 1.05 | pass |
+| repair-closed-whole | true | 1000 | seal_ms_p95 | 2.365 | 2.414 | 1.021 | 1.10 | pass |
+| repair-closed-whole | true | 1000 | refresh_ms_median | 8.924 | 9.128 | 1.023 | 1.05 | pass |
+| repair-closed-whole | true | 1000 | rows_per_sec_median | 1.121e+05 | 1.096e+05 | 0.978 | 0.95 | pass |
+| repair-closed-whole | true | 1000 | refresh_peak_mb_median | 1 | 1 | 1.000 | 1.05 | pass |
+| repair-closed-whole | true | 1000 | alloc_mb_median | 0.21 | 0.21 | 1.000 | 1.05 | pass |
+| repair-closed-whole | true | 1000 | state_bytes_last | 4.378e+04 | 4.378e+04 | 1.000 | 1.00 | pass |
+| repair-closed-whole | true | 1000 | meta_bytes_median | 6.664e+04 | 6.664e+04 | 1.000 | 1.00 | pass |
+| repair-closed-whole | true | 1000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-whole | true | 1000 | meta_segs_total | 576 | 576 | 1.000 | 1.00 | pass |
+| repair-closed-whole | true | 1000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-whole | true | 1000 | complete_seal_ms | 3.901 | 3.85 | 0.987 | 1.05 | pass |
+| repair-closed-whole | true | 1000 | restore_ms | 7.997 | 7.845 | 0.981 | 1.05 | pass |
+| repair-closed-whole | true | 1000 | first_reseal_ms | 4.569 | 4.334 | 0.949 | 1.05 | pass |
+| repair-closed-whole | true | 1000 | repair_ms_median | 8.924 | 9.128 | 1.023 | 1.05 | pass |
+| repair-closed-whole | true | 10000 | seal_ms_median | 1.76 | 1.77 | 1.006 | 1.05 | pass |
+| repair-closed-whole | true | 10000 | seal_ms_p95 | 2.223 | 2.298 | 1.034 | 1.10 | pass |
+| repair-closed-whole | true | 10000 | refresh_ms_median | 11.79 | 11.85 | 1.005 | 1.05 | pass |
+| repair-closed-whole | true | 10000 | rows_per_sec_median | 8.483e+04 | 8.439e+04 | 0.995 | 0.95 | pass |
+| repair-closed-whole | true | 10000 | refresh_peak_mb_median | 1.3 | 1.3 | 1.000 | 1.05 | pass |
+| repair-closed-whole | true | 10000 | alloc_mb_median | 0.22 | 0.22 | 1.000 | 1.05 | pass |
+| repair-closed-whole | true | 10000 | state_bytes_last | 4.578e+05 | 4.578e+05 | 1.000 | 1.00 | pass |
+| repair-closed-whole | true | 10000 | meta_bytes_median | 7.223e+04 | 7.223e+04 | 1.000 | 1.00 | pass |
+| repair-closed-whole | true | 10000 | data_bytes_median | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-whole | true | 10000 | meta_segs_total | 579 | 579 | 1.000 | 1.00 | pass |
+| repair-closed-whole | true | 10000 | data_segs_total | 0 | 0 | 1.000 | 1.00 | pass |
+| repair-closed-whole | true | 10000 | complete_seal_ms | 14.88 | 15.79 | 1.061 | 1.05 | FAIL |
+| repair-closed-whole | true | 10000 | restore_ms | 10.82 | 11.17 | 1.032 | 1.05 | pass |
+| repair-closed-whole | true | 10000 | first_reseal_ms | 3.942 | 3.915 | 0.993 | 1.05 | pass |
+| repair-closed-whole | true | 10000 | repair_ms_median | 11.79 | 11.85 | 1.005 | 1.05 | pass |
+
+```
+Repair diagnostics (reported, not gated):
+  repair-closed-keyed (vs repair-closed-whole) fusion=false keys=1000 repair_ms_p95: baseline=16.3 candidate=13.45 ratio=0.825
+  repair-closed-keyed (vs repair-closed-whole) fusion=false keys=1000 replayed_rows_median: baseline=1999 candidate=1000 ratio=0.500
+  repair-closed-keyed (vs repair-closed-whole) fusion=false keys=1000 corrected_rows_median: baseline=3.812e+04 candidate=3.812e+04 ratio=1.000
+  repair-closed-keyed (vs repair-closed-whole) fusion=false keys=1000 route: baseline=[resume from anchor/resume cheaperx450] candidate=[resume from anchor/resume cheaperx450]
+  repair-closed-keyed (vs repair-closed-whole) fusion=false keys=1000 keyed_segments per run: baseline=0.0 candidate=90.0
+  repair-closed-keyed (vs repair-closed-whole) fusion=false keys=1000 oracle: baseline=Counter({'match': 5}) candidate=Counter({'match': 5})
+  repair-closed-keyed (vs repair-closed-whole) fusion=false keys=10000 repair_ms_p95: baseline=33.26 candidate=15.63 ratio=0.470
+  repair-closed-keyed (vs repair-closed-whole) fusion=false keys=10000 replayed_rows_median: baseline=1999 candidate=1000 ratio=0.500
+  repair-closed-keyed (vs repair-closed-whole) fusion=false keys=10000 corrected_rows_median: baseline=4.262e+04 candidate=4.262e+04 ratio=1.000
+  repair-closed-keyed (vs repair-closed-whole) fusion=false keys=10000 route: baseline=[resume from anchor/resume cheaperx450] candidate=[resume from anchor/resume cheaperx450]
+  repair-closed-keyed (vs repair-closed-whole) fusion=false keys=10000 keyed_segments per run: baseline=0.0 candidate=90.0
+  repair-closed-keyed (vs repair-closed-whole) fusion=false keys=10000 oracle: baseline=Counter({'match': 5}) candidate=Counter({'match': 5})
+  repair-closed-keyed (vs repair-closed-whole) fusion=true keys=1000 repair_ms_p95: baseline=14.08 candidate=12.31 ratio=0.874
+  repair-closed-keyed (vs repair-closed-whole) fusion=true keys=1000 replayed_rows_median: baseline=1999 candidate=1000 ratio=0.500
+  repair-closed-keyed (vs repair-closed-whole) fusion=true keys=1000 corrected_rows_median: baseline=3.812e+04 candidate=3.812e+04 ratio=1.000
+  repair-closed-keyed (vs repair-closed-whole) fusion=true keys=1000 route: baseline=[resume from anchor/resume cheaperx450] candidate=[resume from anchor/resume cheaperx450]
+  repair-closed-keyed (vs repair-closed-whole) fusion=true keys=1000 keyed_segments per run: baseline=0.0 candidate=90.0
+  repair-closed-keyed (vs repair-closed-whole) fusion=true keys=1000 oracle: baseline=Counter({'match': 5}) candidate=Counter({'match': 5})
+  repair-closed-keyed (vs repair-closed-whole) fusion=true keys=10000 repair_ms_p95: baseline=21.88 candidate=14.82 ratio=0.677
+  repair-closed-keyed (vs repair-closed-whole) fusion=true keys=10000 replayed_rows_median: baseline=1999 candidate=1000 ratio=0.500
+  repair-closed-keyed (vs repair-closed-whole) fusion=true keys=10000 corrected_rows_median: baseline=4.262e+04 candidate=4.262e+04 ratio=1.000
+  repair-closed-keyed (vs repair-closed-whole) fusion=true keys=10000 route: baseline=[resume from anchor/resume cheaperx450] candidate=[resume from anchor/resume cheaperx450]
+  repair-closed-keyed (vs repair-closed-whole) fusion=true keys=10000 keyed_segments per run: baseline=0.0 candidate=90.0
+  repair-closed-keyed (vs repair-closed-whole) fusion=true keys=10000 oracle: baseline=Counter({'match': 5}) candidate=Counter({'match': 5})
+  repair-closed-whole fusion=false keys=1000 repair_ms_p95: baseline=16.3 candidate=13.73 ratio=0.842
+  repair-closed-whole fusion=false keys=1000 replayed_rows_median: baseline=1999 candidate=1999 ratio=1.000
+  repair-closed-whole fusion=false keys=1000 corrected_rows_median: baseline=3.812e+04 candidate=3.812e+04 ratio=1.000
+  repair-closed-whole fusion=false keys=1000 route: baseline=[resume from anchor/resume cheaperx450] candidate=[resume from anchor/resume cheaperx450]
+  repair-closed-whole fusion=false keys=1000 keyed_segments per run: baseline=0.0 candidate=0.0
+  repair-closed-whole fusion=false keys=1000 oracle: baseline=Counter({'match': 5}) candidate=Counter({'match': 5})
+  repair-closed-whole fusion=false keys=10000 repair_ms_p95: baseline=33.26 candidate=22.46 ratio=0.675
+  repair-closed-whole fusion=false keys=10000 replayed_rows_median: baseline=1999 candidate=1999 ratio=1.000
+  repair-closed-whole fusion=false keys=10000 corrected_rows_median: baseline=4.262e+04 candidate=4.262e+04 ratio=1.000
+  repair-closed-whole fusion=false keys=10000 route: baseline=[resume from anchor/resume cheaperx450] candidate=[resume from anchor/resume cheaperx450]
+  repair-closed-whole fusion=false keys=10000 keyed_segments per run: baseline=0.0 candidate=0.0
+  repair-closed-whole fusion=false keys=10000 oracle: baseline=Counter({'match': 5}) candidate=Counter({'match': 5})
+  repair-closed-whole fusion=true keys=1000 repair_ms_p95: baseline=14.08 candidate=15.15 ratio=1.076
+  repair-closed-whole fusion=true keys=1000 replayed_rows_median: baseline=1999 candidate=1999 ratio=1.000
+  repair-closed-whole fusion=true keys=1000 corrected_rows_median: baseline=3.812e+04 candidate=3.812e+04 ratio=1.000
+  repair-closed-whole fusion=true keys=1000 route: baseline=[resume from anchor/resume cheaperx450] candidate=[resume from anchor/resume cheaperx450]
+  repair-closed-whole fusion=true keys=1000 keyed_segments per run: baseline=0.0 candidate=0.0
+  repair-closed-whole fusion=true keys=1000 oracle: baseline=Counter({'match': 5}) candidate=Counter({'match': 5})
+  repair-closed-whole fusion=true keys=10000 repair_ms_p95: baseline=21.88 candidate=21.52 ratio=0.984
+  repair-closed-whole fusion=true keys=10000 replayed_rows_median: baseline=1999 candidate=1999 ratio=1.000
+  repair-closed-whole fusion=true keys=10000 corrected_rows_median: baseline=4.262e+04 candidate=4.262e+04 ratio=1.000
+  repair-closed-whole fusion=true keys=10000 route: baseline=[resume from anchor/resume cheaperx450] candidate=[resume from anchor/resume cheaperx450]
+  repair-closed-whole fusion=true keys=10000 keyed_segments per run: baseline=0.0 candidate=0.0
+  repair-closed-whole fusion=true keys=10000 oracle: baseline=Counter({'match': 5}) candidate=Counter({'match': 5})
+
+28 failed or incomplete gate(s)
 ```

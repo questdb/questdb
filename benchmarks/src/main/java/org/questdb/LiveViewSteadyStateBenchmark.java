@@ -37,9 +37,12 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.MemoryTag;
@@ -186,6 +189,12 @@ public class LiveViewSteadyStateBenchmark {
     private static final String DAILY_ANCHOR_TIME = "12:00";
     private static final int MAX_SUM_COLUMNS = 24;
     private static final int RESTART_PROBE_ROWS = 1_000;
+    // The two bounded windows some shapes add beside the anchored one. Named once so the
+    // view's DDL and the oracle that checks it restate exactly the same frames.
+    private static final String BOUNDED_RANGE_WINDOW =
+            "partition by account_id order by created_at range between '30' second preceding and current row";
+    private static final String BOUNDED_ROWS_WINDOW =
+            "partition by account_id order by created_at rows between 63 preceding and current row";
     private static final long START_TS = 1_785_496_035_000_000L;
     // The default spacing of the generated stream. --ts-step-us widens it, which is what
     // lets a run of a few million rows span many base partitions and many anchor segments
@@ -207,6 +216,10 @@ public class LiveViewSteadyStateBenchmark {
         long checkpointCompactionInterval = -1;
         boolean isIndexed = true;
         boolean isRestartMeasured = false;
+        // Whether the run ends by comparing the view's rows with the independent oracle.
+        // Off by default: it is a correctness check, not a measurement, and on a run with
+        // millions of rows it costs seconds after the last measured line.
+        boolean isOracleChecked = false;
         boolean isSymbolPreSized = true;
         int recycleAccounts = 0; // 0 = every row a brand new account
         long accountWindow = 0; // 0 = no rolling window, so nothing ages out
@@ -277,6 +290,10 @@ public class LiveViewSteadyStateBenchmark {
         for (String arg : args) {
             if (arg.startsWith("--restart=")) {
                 isRestartMeasured = Boolean.parseBoolean(arg.substring(10));
+                continue;
+            }
+            if (arg.startsWith("--oracle=")) {
+                isOracleChecked = Boolean.parseBoolean(arg.substring("--oracle=".length()));
                 continue;
             }
             if (arg.startsWith("--seed=")) {
@@ -1074,6 +1091,12 @@ public class LiveViewSteadyStateBenchmark {
                     }
                 }
 
+                if (isOracleChecked) {
+                    // After the restart, when one is measured: the rows the oracle then checks
+                    // are the ones the restored runtime produced, so a restore that came back
+                    // with wrong state is caught here rather than only by its row count.
+                    reportOracle(engine, sqlCtx, selectShape, sumColumns, anchorPeriod, anchorZone);
+                }
                 reportFootprint(engine, dbRoot, partitionKeyType == KeyType.SYMBOL);
             }
         } finally {
@@ -1400,6 +1423,85 @@ public class LiveViewSteadyStateBenchmark {
             }
         }
         return count;
+    }
+
+    /**
+     * Compares the view's complete output with an independent query over the base table and
+     * reports the disagreement as row counts. A run whose rows are wrong is not a valid
+     * timing sample - a repair that read too little is faster for the wrong reason - and
+     * the {@code # oracle} line is where that verdict is read from.
+     * <p>
+     * The oracle states the anchored window as a plain window function partitioned by the
+     * account and the anchor bucket the row falls in, framed from the bucket's first row to
+     * the current one: the definition the live view maintains incrementally, written with
+     * none of its machinery. The DAILY sugar anchors at {@link #DAILY_ANCHOR_TIME}, so its
+     * bucket is the UTC day of the timestamp shifted back by that offset; an expression
+     * anchor floors to the epoch grid exactly as the view's own anchor expression does. The
+     * bounded ROWS and RANGE windows some shapes add do not reset at the anchor and are
+     * restated as they stand. A zoned anchor has no {@code timestamp_floor} the civil day
+     * maps onto and is skipped.
+     * <p>
+     * Both directions of EXCEPT are counted, so a missing row and a spurious row are both
+     * reported, and the two row counts beside them tell a disagreement in the rows from one
+     * in their values. Doubles are compared bit for bit: both sides add each key's
+     * contributions in timestamp order from zero, so a value that differs is a wrong value
+     * rather than a rounding artefact, and the repair routes in particular have to
+     * reproduce the forward result exactly.
+     */
+    private static void reportOracle(
+            CairoEngine engine,
+            SqlExecutionContext sqlCtx,
+            Shape shape,
+            int sumColumns,
+            String anchorPeriod,
+            String anchorZone
+    ) throws SqlException {
+        if (anchorZone != null) {
+            System.out.println("# oracle skipped=zoned_anchor");
+            return;
+        }
+        final long start = System.nanoTime();
+        final String bucket = DAILY_ANCHOR_PERIOD.equals(anchorPeriod)
+                ? "timestamp_floor('1d', dateadd('h', -" + DAILY_ANCHOR_OFFSET_MICROS / Micros.HOUR_MICROS + ", created_at))"
+                : "timestamp_floor('" + anchorPeriod + "', created_at)";
+        final String projections = shape.projections(sumColumns)
+                .replace(" over w ", " over (partition by account_id, bucket order by created_at "
+                        + "rows between unbounded preceding and current row) ")
+                .replace(" over r ", " over (" + BOUNDED_ROWS_WINDOW + ") ")
+                .replace(" over g ", " over (" + BOUNDED_RANGE_WINDOW + ") ");
+        final String oracle = "select created_at, account_id, " + projections
+                + " from (select *, " + bucket + " as bucket from payments)";
+        final String view = "select * from " + VIEW_NAME;
+        final long viewRows = scalarLong(engine, sqlCtx, "select count() from (" + view + ")");
+        final long oracleRows = scalarLong(engine, sqlCtx, "select count() from (" + oracle + ")");
+        final long viewOnly = scalarLong(engine, sqlCtx, "select count() from ((" + view + ") except (" + oracle + "))");
+        final long oracleOnly = scalarLong(engine, sqlCtx, "select count() from ((" + oracle + ") except (" + view + "))");
+        final boolean isMatch = viewRows == oracleRows && viewOnly == 0 && oracleOnly == 0;
+        System.out.printf(
+                Locale.ROOT,
+                "# oracle view_rows=%d oracle_rows=%d view_only=%d oracle_only=%d verdict=%s ms=%.1f%n",
+                viewRows,
+                oracleRows,
+                viewOnly,
+                oracleOnly,
+                isMatch ? "match" : "MISMATCH",
+                (System.nanoTime() - start) / 1e6
+        );
+    }
+
+    /**
+     * Runs one query that yields a single LONG and returns it.
+     */
+    private static long scalarLong(CairoEngine engine, SqlExecutionContext sqlCtx, String sql) throws SqlException {
+        try (
+                RecordCursorFactory factory = engine.select(sql, sqlCtx);
+                RecordCursor cursor = factory.getCursor(sqlCtx)
+        ) {
+            if (!cursor.hasNext()) {
+                throw new IllegalStateException("oracle query returned no rows: " + sql);
+            }
+            return cursor.getRecord().getLong(0);
+        }
     }
 
     /**
@@ -2098,12 +2200,8 @@ public class LiveViewSteadyStateBenchmark {
 
         String extraWindows() {
             return switch (this) {
-                case MIXED -> ", r as (partition by account_id order by created_at "
-                        + "rows between 63 preceding and current row)";
-                case RESIDUAL -> ", r as (partition by account_id order by created_at "
-                        + "rows between 63 preceding and current row)"
-                        + ", g as (partition by account_id order by created_at "
-                        + "range between '30' second preceding and current row)";
+                case MIXED -> ", r as (" + BOUNDED_ROWS_WINDOW + ")";
+                case RESIDUAL -> ", r as (" + BOUNDED_ROWS_WINDOW + "), g as (" + BOUNDED_RANGE_WINDOW + ")";
                 default -> "";
             };
         }

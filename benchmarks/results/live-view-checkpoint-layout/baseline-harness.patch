@@ -2,9 +2,9 @@
 # 6a2c656028, which has neither a separate storage plan nor the capture ledger.
 # Benchmarks module only: nothing here is on a measured code path.
 ---
---- a/benchmarks/src/main/java/org/questdb/LiveViewSteadyStateBenchmark.java	2026-09-09 23:42:33.377104498 +0300
+--- a/benchmarks/src/main/java/org/questdb/LiveViewSteadyStateBenchmark.java
 +++ b/benchmarks/src/main/java/org/questdb/LiveViewSteadyStateBenchmark.java
-@@ -715,7 +715,8 @@
+@@ -732,7 +732,8 @@
                  // incremental capture from a complete one, and neither does the seal's elapsed
                  // time, so a run that only timed its seals could not tell a steady incremental
                  // cadence from one silently walking the whole domain every batch.
@@ -14,7 +14,7 @@
                  final long o3ResumeRowsAtStart = o3ResumeRowsBefore;
                  final long o3BoundaryRowsAtStart = o3BoundaryRowsBefore;
                  long o3ScanRowsTotal = 0;
-@@ -893,19 +894,10 @@
+@@ -910,19 +911,10 @@
                              lvPhysRows,
                              lvRows > 0 ? (double) lvPhysRows / lvRows : 0.0,
                              partitionCount(engine, lvToken),
@@ -35,7 +35,7 @@
                      firstRow += batchRows;
                  }
                  if (o3EveryN > 0) {
-@@ -1354,12 +1346,11 @@
+@@ -1377,12 +1369,11 @@
       * only ever moves for the INT-keyed control.
       */
      private static void reportWindowState(LiveViewWindow window) {
@@ -53,7 +53,7 @@
          // The state-root kind and the root counts are the per-seal fixed cost the fusion is
          // about: a window root replaces the anchor root and every durable projection's root
          // at once, so a view whose whole SELECT list fuses publishes two metadata files per
-@@ -2143,78 +2134,6 @@
+@@ -2241,78 +2232,6 @@
          }
      }
  

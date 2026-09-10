@@ -21,6 +21,12 @@ one batch row of the output is one seal.
 `--restart=true` adds a restore and its first reseal at the tail of each run, from the
 state the steady batches left behind, reported on the `# restore` line.
 
+`--oracle=true` ends the run by comparing the view's complete output with an independent
+query over the base table - the anchored window restated as a plain window function
+partitioned by the account and its anchor bucket - and reports both directions of the
+disagreement on the `# oracle` line. A run whose rows are wrong is not a valid timing
+sample, which is why every repair run carries it.
+
 | Matrix row | Shape argument | What it holds |
 | --- | --- | --- |
 | Anchor-only | `--shape=decimal-sum` | An anchored DECIMAL SUM. DECIMAL is outside every inline family, so the plan carries zero components: an eight-byte window payload holding the anchor value, plus one function root. |
@@ -36,6 +42,36 @@ state the steady batches left behind, reported on the `# restore` line.
 Each row runs with `--fusion=true` and `--fusion=false`. The two are the paired columns
 the matrix is read in: the storage layout no longer follows the runtime binding, so the
 same shape must publish the same manifest and the same component images under both.
+
+## The repair cell
+
+`run-matrix.sh ... repair` runs the closed-segment repair cell instead of the steady rows.
+A one-minute anchor (`--anchor-period=1m`) with 1000 rows per minute (`--ts-step-us=60000`)
+makes every batch one closed anchor segment and one checkpoint boundary. From batch 20 on
+(`--o3-from-batch=20`) every commit carries exactly one late row - every 1000th row
+(`--o3-percent=0.1`), ten minutes behind its position (`--o3-lag=10m`) - so each measured
+batch is a one-key correction inside a closed segment with ten checkpoints sealed above
+it. The base column is indexed (`--index=true`) so the keyed route can be priced at all.
+
+| Cell | Route | Runs on |
+| --- | --- | --- |
+| `repair-closed-whole` | `--repair-keyed-replay=false`: the corrected segment is replayed whole | both revisions |
+| `repair-closed-keyed` | `--repair-keyed-replay=true`: the correction follows its key through the posting index | candidate only |
+
+The baseline runs only the whole-range control: its keyed route with fusion off is the
+defective one the layout removal fixed, and the handoff excludes it as a reference. The
+aggregator therefore reads the candidate's keyed cell against the baseline's whole-range
+cell and marks the row as a route comparison, and reads the candidate's whole-range cell
+against the same baseline cell for the like-for-like comparison. Per repair batch the
+harness's `refresh_ms` is the repair's latency, `o3_scan_rows` the base rows its replay
+read, `lv_phys_rows` the live-view rows its publication wrote and `repair` the route it
+took; the aggregator reports the last three beside the gates.
+
+At 1,000 keys every account appears in every minute, so nothing ages out and the live
+domain stays at 1,000. At 10,000 keys an account appears once in ten minutes and falls
+behind the frontier in between, but the default compaction thresholds are never reached
+in 110 batches, so no key is evicted and the domain stays at 10,000 as well; lower
+`--compact-threshold` and `--compact-stale-percent` to make the sweep fire.
 
 ## Structural evidence
 
@@ -65,6 +101,11 @@ all of them; see `baseline-harness.patch`.
 # candidate
 mvn -pl benchmarks -am package -o -DskipTests -Dmaven.test.skip=true
 ./run-matrix.sh benchmarks/target/benchmarks.jar /tmp/matrix/candidate "10000 100000" 5
+# the 1,000,000-key scaling run covers the anchor-only and single-SUM shapes only
+MATRIX_SHAPES=anchor-only-decimal,anchor-only-unfused-control,narrow-sum \
+    ./run-matrix.sh benchmarks/target/benchmarks.jar /tmp/matrix/candidate "1000000" 5
+# the repair cell
+./run-matrix.sh benchmarks/target/benchmarks.jar /tmp/matrix/candidate "1000 10000" 5 repair
 
 # baseline: the same harness with the candidate-only pieces removed
 git clone --local --no-checkout . /tmp/baseline-repo
@@ -74,6 +115,8 @@ cp benchmarks/src/main/java/org/questdb/LiveViewSteadyStateBenchmark.java \
 git -C /tmp/baseline-repo apply .../baseline-harness.patch
 (cd /tmp/baseline-repo && mvn -pl benchmarks -am package -o -DskipTests -Dmaven.test.skip=true)
 ./run-matrix.sh /tmp/baseline-repo/benchmarks/target/benchmarks.jar /tmp/matrix/baseline "10000 100000" 5
+MATRIX_SHAPES=repair-closed-whole \
+    ./run-matrix.sh /tmp/baseline-repo/benchmarks/target/benchmarks.jar /tmp/matrix/baseline "1000 10000" 5 repair
 
 ./summarize-matrix.py /tmp/matrix/baseline /tmp/matrix/candidate --md
 ```
@@ -86,3 +129,10 @@ output; the driver does this for you.
 Run the two revisions on the same machine and filesystem with the same JVM, heap, worker
 count, input, maintenance settings and cache policy. `run-matrix.sh` fixes every one of
 those except the machine.
+
+`run-matrix.sh` skips a run whose output file already exists, so calling it with `RUNS`
+equal to 1, 2, 3, ... alternately for the two jars interleaves the revisions run by run.
+The one-shot measurements - the complete seal after the seed, the restore and its first
+reseal - are read once per JVM on cold code, and a run-to-run spread of 20% on them is
+ordinary at 10,000 keys; the remaining cells were measured this way with 15 runs per cell
+so that a drift in the machine lands on both sides alike and the medians settle.
