@@ -26,9 +26,6 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.std.Unsafe;
-
-import static io.questdb.cairo.wal.seq.TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET;
 
 /**
  * The one place that decides whether a sequencer txnlog record is intact, legacy, or torn.
@@ -45,32 +42,19 @@ public final class TxnLogRecordVerifier {
     }
 
     /**
-     * Throws when the record is torn or absent; returns silently when it is intact or legitimately
-     * legacy.
+     * Throws when the record is torn or absent; returns silently when it is intact.
      * <p>
-     * {@code calculateCvAreaChecksum} never returns 0, so {@code storedCrc == 0} means "no CRC written
-     * here" -- but that has TWO possible causes the CRC alone cannot separate:
-     * <ol>
-     *   <li>a genuine LEGACY record written before the CRC existed. Its body is fully populated, so it
-     *       is read unverified for backward compatibility;</li>
-     *   <li>an ABSENT record: a slot never written back to the device that the cursor reached because
-     *       the header MAX_TXN was made durable AHEAD of this record. The ordered flush normally
-     *       prevents it, so it is only reachable on a device that reorders those flushes across a
-     *       crash -- narrow, but not provably impossible. Returning here would silently inject a
-     *       garbage all-zero txn.</li>
-     * </ol>
-     * Two cheap, independent discriminators separate them. The capability watermark
-     * ({@code firstCoveredTxn}) says a CRC was guaranteed at or beyond it. And no legitimate record --
-     * legacy or current -- ever carries {@code walId == 0}: real writers use {@code walId >= 1},
-     * {@code STRUCTURAL_CHANGE_WAL_ID = -1}, {@code DROP_TABLE_WAL_ID = -2}. So a zero CRC together
-     * with either signal is definitionally absent/torn.
+     * The caller decides whether a record was checksummed at all and only calls in when it was: V1
+     * because a sidecar entry's stamp named this txn, V2 because the reserved slot is non-zero. A
+     * legacy record written before the CRC existed therefore never reaches here, so a zero CRC that
+     * does reach here is not legacy -- it is a checksum that was written and has since gone, which is
+     * an absent or torn record rather than a backward-compatible read.
      *
-     * @param txn             the 1-based txn being read
-     * @param recordBaseAddr  address of the record
-     * @param bodySize        bytes covered by the CRC
-     * @param storedCrc       the CRC as stored (V2: reserved slot; V1: sidecar), 0 when absent
-     * @param firstCoveredTxn capability watermark; records below it predate the CRC
-     * @param txnOffset       record offset, for the error message
+     * @param txn            the 1-based txn being read
+     * @param recordBaseAddr address of the record
+     * @param bodySize       bytes covered by the CRC
+     * @param storedCrc      the CRC as stored (V2: reserved slot; V1: sidecar), 0 when absent
+     * @param txnOffset      record offset, for the error message
      */
     public static void verify(
             long txn,
