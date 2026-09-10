@@ -58,7 +58,9 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.LogCapture;
 import org.jetbrains.annotations.NotNull;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
@@ -104,6 +106,24 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     private static final byte[] DEFAULT_MASK_KEY = {0x12, 0x34, 0x56, 0x78};
     private static final int RECV_BUFFER_SIZE = 1024;
     private static final int SEND_BUFFER_SIZE = 1024;
+
+    @Before
+    @Override
+    public void setUp() {
+        // Protect both positive and negative INFO/ERROR assertions; the sentinel only drains queued records.
+        LogFactory.enableGuaranteedLogging(QwpIngressUpgradeProcessor.class);
+        super.setUp();
+    }
+
+    @After
+    @Override
+    public void tearDown() throws Exception {
+        try {
+            super.tearDown();
+        } finally {
+            LogFactory.disableGuaranteedLogging(QwpIngressUpgradeProcessor.class);
+        }
+    }
 
     /**
      * The finding's headline scenario, including the "already parked" variant:
