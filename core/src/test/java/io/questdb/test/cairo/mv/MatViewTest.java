@@ -8739,9 +8739,9 @@ public class MatViewTest extends AbstractCairoTest {
             final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
             capture.start();
             try {
-                // The first tick has no earlier one to measure against, so it reports nothing. The
-                // gap is real elapsed time, so the threshold, not the clock, is what the test moves.
-                timerJob.setTickGapStallThresholdForTesting(Long.MAX_VALUE);
+                // The first tick has no earlier one to measure against, so it reports nothing.
+                // Exercise the sentinel even when subtraction overflows to a negative gap.
+                timerJob.setTickGapStallThresholdForTesting(Long.MIN_VALUE);
                 timerJob.run();
                 capture.drain();
                 capture.assertNotLogged("materialized view timer job resumed after a long pause");
