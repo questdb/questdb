@@ -2256,6 +2256,19 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 't';
     }
 
+    public static boolean isSubsampleKeyword(CharSequence tok) {
+        return tok.length() == 9
+                && (tok.charAt(0) | 32) == 's'
+                && (tok.charAt(1) | 32) == 'u'
+                && (tok.charAt(2) | 32) == 'b'
+                && (tok.charAt(3) | 32) == 's'
+                && (tok.charAt(4) | 32) == 'a'
+                && (tok.charAt(5) | 32) == 'm'
+                && (tok.charAt(6) | 32) == 'p'
+                && (tok.charAt(7) | 32) == 'l'
+                && (tok.charAt(8) | 32) == 'e';
+    }
+
     public static boolean isStatsKeyword(CharSequence tok) {
         return tok.length() == 5
                 && (tok.charAt(0) | 32) == 's'
@@ -2788,6 +2801,7 @@ public class SqlKeywords {
         KEYWORDS.add("select");
         KEYWORDS.add("set");
         KEYWORDS.add("squash");
+        KEYWORDS.add("subsample");
         KEYWORDS.add("table");
         KEYWORDS.add("to");
         KEYWORDS.add("true");

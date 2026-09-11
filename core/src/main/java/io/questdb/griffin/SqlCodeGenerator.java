@@ -4697,7 +4697,56 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateFilter(RecordCursorFactory factory, IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return model.getWhereClause() == null ? factory : generateFilter0(factory, model, executionContext);
+        final ExpressionNode where = model.getWhereClause();
+        if (where == null) {
+            return factory;
+        }
+        // Keep-flag filter fusion: when the desugared SUBSAMPLE shape produces exactly
+        //   WHERE <keepBool>  over a CachedWindowLight whose sole window function is a row-selecting
+        // keep flag and <keepBool> is exactly that function's BOOLEAN output column, run a fused
+        // cursor that emits only the kept rows - no per-row boolean materialization, no Filter pass.
+        if (tryFuseKeepFlagFilter(factory, where, model)) {
+            return factory;
+        }
+        return generateFilter0(factory, model, executionContext);
+    }
+
+    // Conservative pattern match for the single-keep-flag fusion. Fuses ONLY when:
+    //  - the WHERE clause is exactly one column literal (no AND/OR/other terms),
+    //  - the input factory is a CachedWindowLightRecordCursorFactory with EXACTLY one window
+    //    function and that function is the desugared SUBSAMPLE keep flag - both row-selecting
+    //    (WindowFunction.isRowSelecting()) AND marked internal (isSubsampleKeepFlag), enforced by
+    //    getSingleRowSelectingFunction(),
+    //  - the literal resolves to that function's own BOOLEAN output column (not a base column).
+    // Anything else (multiple window fns, extra filter terms, the boolean referenced elsewhere, a
+    // non-row-selecting fn, an UNMARKED hand-written row-selecting keep boolean that a user could also
+    // PROJECT, PARTITION BY, a non-light window factory) leaves the untouched CachedWindowLight +
+    // Filter path in place. On a match, the factory is switched into row-selecting mode and the WHERE
+    // clause is consumed.
+    // Why the marker matters: the fused cursor skips writing the per-row boolean. If a hand-written
+    // query both filters on AND projects the keep boolean, the projected copy would read the unwritten
+    // slot (false for every kept row). Gating on the desugar-only marker guarantees the boolean is
+    // dropped by the outer projection before it can surface, so fusion stays correct.
+    private boolean tryFuseKeepFlagFilter(RecordCursorFactory factory, ExpressionNode where, IQueryModel model) {
+        if (where.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        if (!(factory instanceof CachedWindowLightRecordCursorFactory windowFactory)) {
+            return false;
+        }
+        final WindowFunction fn = windowFactory.getSingleRowSelectingFunction();
+        if (fn == null) {
+            return false;
+        }
+        final RecordMetadata metadata = windowFactory.getMetadata();
+        final int colIdx = metadata.getColumnIndexQuiet(where.token);
+        // The literal must reference exactly the keep-flag function's own boolean output column.
+        if (colIdx < 0 || colIdx != fn.getColumnIndex() || metadata.getColumnType(colIdx) != ColumnType.BOOLEAN) {
+            return false;
+        }
+        windowFactory.enableRowSelecting(fn);
+        model.setWhereClause(null);
+        return true;
     }
 
     @NotNull
@@ -10613,6 +10662,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // the traversal that drives it.
         CachedWindowMapGroups cachedWindowMapGroups = null;
         try {
+            // Generate the input once and validate against its actual completed metadata. Neither
+            // validation nor either executable parser pass may mutate the stored bound recipe.
+            ObjList<ExpressionNode> subsampleCalls = null;
+            for (int i = 0; i < columnCount; i++) {
+                if (!(columns.getQuick(i) instanceof WindowExpression window) || window.getPendingSubsample() == null) {
+                    continue;
+                }
+                final ExpressionNode raw = window.getPendingSubsample();
+                final ExpressionNode bound = window.getAst();
+                if (window.isSubsampleProjectionPending() || !window.isSubsampleKeepFlag() || bound.paramCount != 2) {
+                    throw SqlException.$(raw.position, "internal error: unbound SUBSAMPLE projection");
+                }
+                final int valueIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, bound.rhs.token);
+                if (valueIndex < 0) {
+                    throw SqlException.$(raw.position, "internal error: missing bound SUBSAMPLE value");
+                }
+                SubsampleValidator.validateNumericType(baseMetadata.getColumnType(valueIndex), raw.args.getQuick(0).position);
+                // V belongs solely to validation, which can reassociate before success or failure.
+                final ExpressionNode validationTarget = deepClone(expressionNodePool, raw.args.getQuick(1));
+                SubsampleValidator.validatePositionTargetOrThrow(validationTarget, false, functionParser, executionContext);
+                // G must pass the raw syntax check before FunctionParser can fold it.
+                final ExpressionNode gap = raw.paramCount == 3 ? deepClone(expressionNodePool, raw.args.getQuick(2)) : null;
+                if (gap != null) {
+                    SubsampleValidator.validateLttbGapOrThrow(gap);
+                }
+                // E has fresh references and a fresh original target, never V's parsed tree.
+                final ExpressionNode call = expressionNodePool.next().of(FUNCTION, bound.token, bound.precedence, bound.position);
+                call.windowExpression = window;
+                call.paramCount = gap != null ? 4 : 3;
+                if (gap != null) {
+                    call.args.add(gap);
+                }
+                call.args.add(deepClone(expressionNodePool, raw.args.getQuick(1)));
+                call.args.add(deepClone(expressionNodePool, bound.rhs));
+                call.args.add(deepClone(expressionNodePool, bound.lhs));
+                if (subsampleCalls == null) {
+                    subsampleCalls = new ObjList<>(columnCount);
+                    subsampleCalls.setPos(columnCount);
+                }
+                subsampleCalls.setQuick(i, call);
+            }
             // if all window function don't require sorting or more than one pass then use streaming factory
             boolean isFastPath = true;
 
@@ -10620,7 +10710,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final QueryColumn qc = columns.getQuick(i);
                 if (qc.isWindowExpression()) {
                     final WindowExpression ac = (WindowExpression) qc;
-                    final ExpressionNode ast = qc.getAst();
+                    final ExpressionNode ast = subsampleCalls != null && subsampleCalls.getQuick(i) != null
+                            ? subsampleCalls.getQuick(i) : qc.getAst();
                     if (executionContext.isLiveViewCompile()) {
                         LiveViewCheckpointFunctionCompiler.validateRange(ac, ast.token, baseMetadata);
                     }
@@ -11009,7 +11100,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final QueryColumn qc = columns.getQuick(i);
                 if (qc.isWindowExpression()) {
                     final WindowExpression ac = (WindowExpression) qc;
-                    final ExpressionNode ast = qc.getAst();
+                    final ExpressionNode ast = subsampleCalls != null && subsampleCalls.getQuick(i) != null
+                            ? subsampleCalls.getQuick(i) : qc.getAst();
 
                     partitionByFunctions = null;
                     int psz = ac.getPartitionBy().size();
@@ -11137,6 +11229,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     WindowFunction windowFunction = (WindowFunction) f;
+                    // Carry the desugared SUBSAMPLE keep-flag marker from the WindowExpression onto the
+                    // function so the keep-flag filter fusion (getSingleRowSelectingFunction) can fuse
+                    // ONLY the internal __keep_subsample column, never a hand-written projected keep boolean.
+                    if (ac.isSubsampleKeepFlag()) {
+                        windowFunction.markSubsampleKeepFlag();
+                    }
                     // Until windowFunction is added to groupedWindow or naturalOrderFunctions,
                     // the outer catch cannot find it. toOrderIndices and initRecordComparator
                     // both throw, and some functions (e.g. cume_dist over partition by) own
@@ -11158,7 +11256,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                             funcs.add(windowFunction);
                             windowFunctionOwned = false;
-                            windowFunction.initRecordComparator(this, chainMetadata, chainTypes, order, ac.getOrderBy(), null);
+                            // Pass the pass1 traversal directions (flipped above for BACKWARD-pass1
+                            // functions), so order-direction-sensitive functions (the SUBSAMPLE
+                            // downsampling family) can validate how their pass1 will traverse.
+                            windowFunction.initRecordComparator(this, chainMetadata, chainTypes, order, ac.getOrderBy(), ac.getOrderByDirection());
                         } else {
                             if (naturalOrderFunctions == null) {
                                 naturalOrderFunctions = new ObjList<>();

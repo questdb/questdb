@@ -1,0 +1,383 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin.engine.window;
+
+import io.questdb.griffin.engine.functions.window.SwingingDoor;
+import org.junit.Assert;
+import org.junit.Test;
+
+public class SwingingDoorTest {
+
+    // Drives SDT over the given series and returns the final keep flags.
+    private static boolean[] run(long[] ts, double[] value, boolean[] isNull, double compdev, boolean ignoreNulls) {
+        boolean[] keep = new boolean[ts.length];
+        SwingingDoor sd = new SwingingDoor();
+        sd.configure(compdev);
+        sd.reset();
+        SwingingDoor.Sink sink = (index, k) -> keep[(int) index] = k;
+        for (int i = 0; i < ts.length; i++) {
+            sd.accept(i, ts[i], value[i], isNull != null && isNull[i], ignoreNulls, sink);
+        }
+        return keep;
+    }
+
+    private static boolean[] run(long[] ts, double[] value, double compdev) {
+        return run(ts, value, null, compdev, false);
+    }
+
+    @Test
+    public void testSinglePointKept() {
+        Assert.assertArrayEquals(new boolean[]{true}, run(new long[]{1}, new double[]{5}, 0.5));
+    }
+
+    @Test
+    public void testTwoPointsBothKept() {
+        Assert.assertArrayEquals(new boolean[]{true, true}, run(new long[]{1, 2}, new double[]{1, 2}, 0.5));
+    }
+
+    @Test
+    public void testMonotonicRampKeepsOnlyEndpoints() {
+        // perfectly linear 1..5 -> keep first and last only
+        boolean[] k = run(new long[]{1, 2, 3, 4, 5}, new double[]{1, 2, 3, 4, 5}, 0.5);
+        Assert.assertArrayEquals(new boolean[]{true, false, false, false, true}, k);
+    }
+
+    @Test
+    public void testWithinBandNoiseKeepsOnlyEndpoints() {
+        // small wiggle within +/-0.5 of a flat line -> keep endpoints only
+        boolean[] k = run(new long[]{1, 2, 3, 4, 5}, new double[]{0, 0.1, 0, 0.1, 0}, 0.5);
+        Assert.assertArrayEquals(new boolean[]{true, false, false, false, true}, k);
+    }
+
+    @Test
+    public void testBreakpointKeepsInteriorPoint() {
+        // 0,1,2 then jump to 10,11 with compdev 0.5 -> keep 1,3,4,5 (index 2 dropped)
+        boolean[] k = run(new long[]{1, 2, 3, 4, 5}, new double[]{0, 1, 2, 10, 11}, 0.5);
+        Assert.assertArrayEquals(new boolean[]{true, false, true, true, true}, k);
+    }
+
+    @Test
+    public void testCompdevZeroKeepsNonCollinear() {
+        // zero tolerance: collinear middle dropped, bend kept
+        // 0,1,2 collinear (slope 1); then 2->2 flat: bend at index 2
+        boolean[] k = run(new long[]{1, 2, 3, 4}, new double[]{0, 1, 2, 2}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, false, true, true}, k);
+    }
+
+    @Test
+    public void testRespectNullsFlushesLastPointBeforeGap() {
+        // RESPECT NULLS: a null forces a kept boundary and resets the series.
+        // The last real sample before the gap is flushed (kept); interior points drop.
+        boolean[] k = run(new long[]{1, 2, 3, 4, 5, 6},
+                new double[]{0, 0, 0, Double.NaN, 5, 5},
+                new boolean[]{false, false, false, true, false, false},
+                0.5, false);
+        // idx0 anchor(T), idx1 interior(F), idx2 last-before-gap flushed(T),
+        // idx3 null boundary(T), idx4 new anchor(T), idx5 last pending(T)
+        Assert.assertArrayEquals(new boolean[]{true, false, true, true, true, true}, k);
+    }
+
+    @Test
+    public void testIgnoreNullsSkipsNull() {
+        // IGNORE NULLS: index 2 dropped and does not affect the door; series is 0,0,_,0,0 flat
+        boolean[] k = run(new long[]{1, 2, 3, 4, 5},
+                new double[]{0, 0, Double.NaN, 0, 0},
+                new boolean[]{false, false, true, false, false},
+                0.5, true);
+        // flat line, null skipped -> keep first and last non-null only
+        Assert.assertArrayEquals(new boolean[]{true, false, false, false, true}, k);
+    }
+
+    @Test
+    public void testResetStartsNewSeries() {
+        SwingingDoor sd = new SwingingDoor();
+        sd.configure(0.5);
+        sd.reset();
+        boolean[] keep = new boolean[6];
+        SwingingDoor.Sink sink = (index, k) -> keep[(int) index] = k;
+        long[] ts = {1, 2, 3};
+        double[] v = {1, 2, 3};
+        for (int i = 0; i < 3; i++) sd.accept(i, ts[i], v[i], false, false, sink);
+        sd.reset();
+        for (int i = 3; i < 6; i++) sd.accept(i, ts[i - 3], v[i - 3], false, false, sink);
+        // each 3-point ramp keeps its endpoints
+        Assert.assertArrayEquals(new boolean[]{true, false, true, true, false, true}, keep);
+    }
+
+    @Test
+    public void testBackwardSpanWiderThanLongMaxIsABoundary() {
+        // A backward jump wider than Long.MAX wraps ts - anchorTs POSITIVE, so it reads as a
+        // forward step unless the guard compares the timestamps themselves. Reachable with
+        // valid nanosecond timestamps, which span only 292 years: 2100 -> 1700 -> 2150.
+        // Without the ordering test the middle point is folded into the corridor and dropped.
+        boolean[] k = run(new long[]{4_102_444_800_000_000_000L, -8_520_336_000_000_000_000L, 5_681_318_400_000_000_000L},
+                new double[]{0, 0, 0}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testForwardSpanWiderThanLongMaxIsABoundary() {
+        // The opposite wrap: a forward span over Long.MAX always wraps negative, so dt <= 0
+        // already sees it. The corridor cannot represent such a span, so the points stay put
+        // rather than being reconstructed from a wrapped denominator - keeping data is the
+        // safe direction for a lossy filter. Collinear points would otherwise drop the middle.
+        boolean[] k = run(new long[]{-9_000_000_000_000_000_000L, 0, 9_000_000_000_000_000_000L},
+                new double[]{0, 50, 100}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testNullSentinelTimestampIsABoundary() {
+        // Long.MIN_VALUE is the NULL timestamp sentinel. SdtWindowFunctionFactory folds a NULL
+        // timestamp into the isNull flag before it reaches accept(), but the state machine is
+        // engine-independent and must not mistake the sentinel for a forward step on its own.
+        boolean[] k = run(new long[]{1_704_067_200_000_000L, Long.MIN_VALUE, 1_704_067_202_000_000L},
+                new double[]{0, 0, 0}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testEqualTimestampsKeptAndReset() {
+        // duplicate timestamp against the anchor -> dt<=0 branch: point is kept
+        // and re-anchors, without dividing by zero.
+        boolean[] k = run(new long[]{1, 1, 2}, new double[]{0, 9, 9}, 0.5);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testBackwardStepAboveAnchorIsABoundary() {
+        // 5M -> 3M steps backward but stays above the 0 anchor, so an anchor-only guard reads
+        // it as forward and, with a flat corridor that never crosses, discards the pending
+        // endpoint at 5M as interior. It is a series boundary: 5M ends the first segment and
+        // stays flushed, 3M re-anchors, 4M is the last pending point. All four are endpoints.
+        boolean[] k = run(new long[]{0, 5_000_000, 3_000_000, 4_000_000}, new double[]{0, 0, 0, 0}, 0.5);
+        Assert.assertArrayEquals(new boolean[]{true, true, true, true}, k);
+    }
+
+    @Test
+    public void testBackwardStepAboveAnchorAgreesAcrossValueShapes() {
+        // Same timestamps with values that cross the doors: pre-fix this shape was already kept
+        // whole via the dt2 degenerate branch while the flat shape above lost two endpoints.
+        // Whether a step is a boundary must depend on the timestamps alone, never the values.
+        boolean[] k = run(new long[]{0, 5_000_000, 3_000_000, 4_000_000}, new double[]{0, 0, 10, 10}, 0.5);
+        Assert.assertArrayEquals(new boolean[]{true, true, true, true}, k);
+    }
+
+    @Test
+    public void testEqualTimestampAgainstPendingIsABoundary() {
+        // duplicate timestamp against a NON-anchor pending: same series-reset contract as the
+        // duplicate-against-anchor case above (and as SubsampleFuzzTest documents). Two samples
+        // at one timestamp cannot lie on one corridor, so both stay kept regardless of value.
+        boolean[] k = run(new long[]{1, 5, 5}, new double[]{0, 0, 0}, 0.5);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    // ---- F3-SDT-OVERFLOW: corridor slope terms overflowing to +/-Inf on finite input ----
+
+    @Test
+    public void testOverflowingPositiveSlopeDoesNotDropChangedPoint() {
+        // (value + compdev) - anchorValue = 1e308 - (-1e308) overflows to +Inf, so both sU and sL
+        // read +Inf for idx1 AND idx2. The true slopes differ (2e308 at dt=1 vs 1e308 at dt=2), so
+        // with compdev=0 the doors must cross at idx2 and idx1 must be kept. Instead nHi == nLo ==
+        // +Inf reads as "no cross" and the no-cross branch unmarks idx1 as interior: the
+        // reconstruction idx0->idx2 then misses the actual idx1 value by 1e308 despite the
+        // documented 2*compdev = 0 bound.
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{-1e308, 1e308, 1e308}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testOverflowingNegativeSlopeDoesNotDropChangedPoint() {
+        // mirror of the positive case: both slope terms overflow to -Inf and compare as equal
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{1e308, -1e308, -1e308}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testOverflowingSlopeWithPositiveCompdev() {
+        // the same overflow with a small non-zero tolerance: the corridor around slope ~2e308
+        // mathematically excludes the ~1e308 slope of idx2, so idx1 must still be kept
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{-1e308, 1e308, 1e308}, 1.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testOverflowInDoorsCrossedRecompute() {
+        // idx2 legitimately crosses the doors and re-anchors at idx1 (-1e308); the dt2 recompute
+        // (1e308 - (-1e308)) / 1 then overflows slopeHi/slopeLo to +Inf, and idx3's +Inf slope
+        // reads as collinear, wrongly unmarking idx2. True slopes from the new anchor differ
+        // (2e308 vs 1e308), so with compdev=0 idx2 must stay kept.
+        boolean[] k = run(new long[]{0, 1, 2, 3}, new double[]{0, -1e308, 1e308, 1e308}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true, true}, k);
+    }
+
+    @Test
+    public void testCompdevOverflowKeepsPoint() {
+        // class-2 pin (approved behavior change): (value + compdev) overflows while the other
+        // slope term stays finite. Pre-fix the Inf-widened corridor happened to drop idx1
+        // (bound-compliant there); post-fix the guard fires on ANY non-finite slope term and
+        // retains conservatively. Keeping more points can never violate the 2*compdev bound.
+        // idx1: sU = (1e308 + 1.7e308 - 0) / 1 -> +Inf (guard fires, idx1 kept, re-anchor);
+        // idx2: sL = (-1e308 - 1.7e308 - 1e308) / 1 -> -Inf (guard fires, idx2 kept).
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{0, 1e308, -1e308}, 1.7e308);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testMixedInfSlopeTermsWithMaxValueCompdev() {
+        // class-5 mixed terms, reachable in IEEE evaluation order with compdev = Double.MAX_VALUE
+        // (finite, so the factory accepts it): (1e308 + MAX) overflows to +Inf while
+        // (1e308 - MAX) - 1.7e308 underflows past -MAX to -Inf, so sU = +Inf and sL = -Inf
+        // from a single point. The guard keys off the computed sU/sL and covers this too.
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{1.7e308, 1e308, 1e308}, Double.MAX_VALUE);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testStoredPositiveInfinityValueIsKept() {
+        // DOUBLE columns can store +/-Infinity (only NaN is the NULL sentinel), so a non-finite
+        // VALUE reaches the corridor math via SQL. idx1's sU = (+Inf + 0 - 0) / 1 = +Inf fires
+        // the guard (kept, re-anchor at +Inf); idx2's sU = (0 + 0 - (+Inf)) / 1 = -Inf fires it
+        // again. Defense-in-depth: no Inf/NaN can poison slopeHi/slopeLo while hasInterval is set.
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{0, Double.POSITIVE_INFINITY, 0}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testScaledProbeSeriesKeepsAllPoints() {
+        // preservation control (green pre-fix): the same shape scaled by 1e-308 has finite
+        // slopes (2 then 1), the doors cross at idx2 and all three points are kept
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{-1, 1, 1}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testNearMaxFiniteSlopesCrossDoors() {
+        // preservation control (green pre-fix): the largest same-shape series whose slope terms
+        // stay finite (1.6e308 < Double.MAX_VALUE); decisions must be identical pre- and post-fix
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{-8e307, 8e307, 8e307}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testNearMaxFiniteCollinearStillDropsInterior() {
+        // preservation control (green pre-fix): large-but-finite COLLINEAR series - every slope
+        // term is finite (8e307), so the middle point is interior and must STILL be dropped
+        // after any overflow guard; pins that a conservative fallback does not inflate the
+        // keep-rate for non-overflowing series
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{0, 8e307, 1.6e308}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, false, true}, k);
+    }
+
+    @Test
+    public void testAsymmetricStepReconstructionExceedsCompdev() {
+        // Keep-flag SDT selects original rows: the discarded point stays within
+        // compdev of the door ENVELOPE, but the piecewise-linear reconstruction
+        // between kept points can exceed compdev on a step. Here idx1 is dropped
+        // yet the line idx0->idx2 gives 1.25 at t=1 vs actual 2.5 (err 1.25 > 1.0).
+        // This matches PI/IoTDB; the test pins it so the behavior can't silently change.
+        boolean[] k = run(new long[]{0, 1, 2, 3}, new double[]{0, 2.5, 2.5, 2.5}, 1.0);
+        Assert.assertArrayEquals(new boolean[]{true, false, true, true}, k);
+    }
+
+    // ---- slope underflow: corridor width flushed away on finite input ----
+
+    @Test
+    public void testUnderflowCollapsedSlopesKeepSubnormalPeak() {
+        // (1e-320 +/- 1e-322) / 1e6 both flush to 0.0: finite, but the corridor width
+        // 2 * compdev / dt fell below the subnormal ULP, so the doors could never cross and
+        // the peak would be dropped at ~50x the 2 * compdev reconstruction bound. The
+        // collapse guard keeps the point and restarts instead.
+        boolean[] k = run(new long[]{0, 1_000_000, 2_000_000}, new double[]{0, 1e-320, 0}, 1e-322);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testUnderflowShorterSpacingStillResolvesCorridor() {
+        // control: at dt=1 the same peak's slopes are representable and distinct subnormals,
+        // the doors genuinely cross, and all points survive without the collapse guard firing
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{0, 1e-320, 0}, 1e-322);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testUnderflowCollapseInDoorsCrossedRecompute() {
+        // engineered for the post-cross recompute site: the pre-cross slope pairs stay
+        // distinct (2044u/2004u at dt=1, then 40u/39u at dt=51, u = min subnormal), the doors
+        // cross, but the flat step's +/-compdev numerators flush to +/-0.0 over dt2=50
+        // against the promoted anchor. Pins the conservative restart on that branch.
+        boolean[] k = run(new long[]{0, 1, 51}, new double[]{0, 1e-320, 1e-320}, 1e-322);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testSubUlpCompdevKeepsAllPoints() {
+        // compdev = 1e-20 sits below the ULP of values ~O(1), so BOTH tolerance numerators
+        // collapse to the same double (nU == nL == 0.0). A sub-ULP positive compdev means
+        // the arithmetic cannot certify the 2 * compdev reconstruction bound, so sdt keeps
+        // every point instead of dropping at uncertifiable error (F1-SDT-CANCEL: nU == nL no
+        // longer exempts the collapse restart, because equal numerators can equally come
+        // from cancellation against a large anchor gap where the stored doubles are exact
+        // and NOT collinear - see testCancellationCollapsedNumeratorsKeepMidSeriesPoint).
+        // Exact-collinearity dropping remains available via compdev == 0, pinned by
+        // testCompdevZeroKeepsNonCollinear and the compdev == 0 SQL pins.
+        boolean[] k = run(new long[]{1, 2, 3, 4}, new double[]{1, 1, 1, 1}, 1e-20);
+        Assert.assertArrayEquals(new boolean[]{true, true, true, true}, k);
+    }
+
+    // ---- tolerance-numerator cancellation: corridor width erased by the SUBTRACTION ----
+
+    @Test
+    public void testCancellationCollapsedNumeratorsKeepMidSeriesPoint() {
+        // F1-SDT-CANCEL red test: against anchor -1e20, BOTH tolerance numerators of the middle
+        // point - (1000 +/- 1.0) - (-1e20) - round to exactly 1e20: the half-ULP at 1e20 is
+        // 8192, so the subtraction absorbs deviation 1000 and compdev 1.0 alike. Equal
+        // numerators must not exempt the collapse restart: the corridor did NOT degrade to
+        // exact-collinearity of the stored doubles (all three are exactly representable and
+        // not collinear); compdev merely fell below the ULP of the ANCHOR GAP. Dropping the
+        // middle point puts the reconstruction at 0.0 vs the stored 1000.0 - 500x the
+        // 2 * compdev bound, and the ratio is unbounded in the anchor gap.
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{-1e20, 1000.0, 1e20}, 1.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testCancellationCollapseInDoorsCrossedRecompute() {
+        // F1-SDT-CANCEL red test for the post-cross recompute site: compdev 2e8 survives the
+        // pre-cross numerators at magnitude 2^80 (half-ULP 2^27 ~ 1.34e8), the doors cross at
+        // idx2, but against the promoted anchor -2^80 the re-derived numerators 2^81 +/- 2e8
+        // BOTH round to the same double (half-ULP at 2^81 is 2^28 ~ 2.68e8 > 2e8). The
+        // zero-width corridor must restart rather than survive; pre-fix idx3 slides along it
+        // and drops idx2. (No shape can hinge on the post-cross exemption ALONE: any later
+        // no-cross point against a cancellation-collapsed corridor has itself-collapsed
+        // numerators, so this pins the post-cross restart jointly with the main site.)
+        boolean[] k = run(
+                new long[]{0, 1, 2, 3},
+                new double[]{0, -1.2089258196146292e24, 1.2089258196146292e24, 3.626777458843888e24}, // 0, -2^80, 2^80, 3*2^80 + 2^29
+                2e8
+        );
+        Assert.assertArrayEquals(new boolean[]{true, true, true, true}, k);
+    }
+}
