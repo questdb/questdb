@@ -908,6 +908,67 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
     }
 
     /**
+     * A fresh rewrite whose first action is a MERGE that reaches BELOW the piece it merges with. The batch
+     * straddles the piece: its head sorts under the piece's own tsLo, its tail above the piece's tsHi and
+     * becomes a NEW_PIECE. The rewrite publishes one timestamp as the partition's floor, and that floor
+     * becomes the table's {@code _txn} min for the first partition - so taking the piece's tsLo alone loses
+     * every merged row underneath it, and {@code min(ts)}, which reads {@code _txn}, disagrees with the rows.
+     */
+    @Test
+    public void testFreshRewriteMergeTakesItsFloorFromTheO3Side() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // Any plan that ends up with more than one piece breaches, so the commit below takes the fresh
+            // rewrite rather than the in-place composite write.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, "1");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 1_000_000);
+
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later day, so 2020-02-03 is never the active partition and the write takes the O3 path.
+            execute("INSERT INTO x SELECT 90000, '2020-02-06T00:00:00.000000'::TIMESTAMP ts FROM long_sequence(1)");
+            // 2020-02-03 holds 02:00:00..03:39:00, one piece, and it is the table's FIRST partition.
+            execute("INSERT INTO x SELECT x::INT, timestamp_sequence('2020-02-03T02:00', 60*1000000L) ts" +
+                    " FROM long_sequence(100)");
+            drainWalQueue();
+
+            // Merges the piece and relocates it to the tail, which is what leaves the partition COMPOSITE -
+            // the gate the fresh rewrite sits behind.
+            execute("INSERT INTO x SELECT 80000 + x::INT, timestamp_sequence('2020-02-03T02:30:30', 60*1000000L) ts" +
+                    " FROM long_sequence(5)");
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("x")) {
+                Assert.assertTrue("the partition has to be composite for the fresh rewrite to be considered",
+                        reader.getTxFile().isPartitionComposite(0));
+            }
+
+            // Straddles the piece on BOTH sides: 01:30:00..01:55:00 sorts under its tsLo, 03:40:00..05:00:00
+            // over its tsHi. The first lands in the MERGE, the second founds a NEW_PIECE.
+            execute("INSERT INTO x SELECT 70000 + x::INT, timestamp_sequence('2020-02-03T01:30', 5*60*1000000L) ts" +
+                    " FROM long_sequence(43)");
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("the composite write suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertEquals(
+                        "the table's _txn min timestamp lost the rows merged below the piece",
+                        MicrosTimestampDriver.floor("2020-02-03T01:30:00.000000"),
+                        reader.getMinTimestamp()
+                );
+            }
+
+            // min(ts) answers off _txn, the ordered read off the rows; both have to name the same row.
+            assertQuery("SELECT min(ts) lo FROM x")
+                    .timestamp("lo").expectSize()
+                    .returns("lo\n2020-02-03T01:30:00.000000Z\n");
+            assertQuery("SELECT ts FROM x ORDER BY ts LIMIT 1")
+                    .timestamp("ts").expectSize()
+                    .returns("ts\n2020-02-03T01:30:00.000000Z\n");
+        });
+    }
+
+    /**
      * A merge whose DATA side carries a column top. A column added part way through a partition's life has
      * no entry in its file for the rows written before it, so a merge that reaches below that top cannot
      * read them - they are NULL, and nothing on disk says so.

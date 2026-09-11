@@ -1068,7 +1068,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             final long pieceLo = O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex);
                             final long pieceHi = pieceLo + pieceRows;
                             if (firstTsLo == Numbers.LONG_NULL) {
-                                firstTsLo = O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex);
+                                // The merged image spans both sides, so the o3 slice can start below the piece.
+                                firstTsLo = Math.min(
+                                        O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex),
+                                        getTimestampIndexValue(sortedTimestampsAddr, action.o3Lo)
+                                );
                             }
                             final long maxMergeRows = pieceRows + o3Rows;
                             long mergeRows = maxMergeRows;
