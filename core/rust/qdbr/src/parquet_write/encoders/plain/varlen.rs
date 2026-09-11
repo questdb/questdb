@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::encoders::helpers::{
-    collect_varlen_segments, rows_per_primitive_page, slice_varlen_segments, FlatValidity,
-    VarlenChunkSegment,
+    collect_varlen_segments, rows_per_primitive_page, slice_varlen_segments,
+    write_utf8_from_utf16_iter, FlatValidity, VarlenChunkSegment,
 };
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
@@ -211,7 +211,17 @@ fn string_segments_to_page(
                 let len_offset = buffer.len();
                 buffer.extend_from_slice(&[0; 4]);
                 let utf8_start = buffer.len();
-                let utf8_len = append_utf8_from_utf16(&mut buffer, utf16)?;
+                // Fused write: in strict mode the helper returns Err mid-value
+                // on an unpaired surrogate, so bytes for earlier chars of this
+                // value may already sit in the buffer. That is safe because the
+                // caller drops the entire page buffer on Err; no partial page
+                // is ever built from it.
+                let utf8_len = write_utf8_from_utf16_iter(
+                    &mut buffer,
+                    utf16.iter().copied(),
+                    options.strict_utf16,
+                )
+                .map_err(|e| fmt_err!(Layout, "invalid UTF-16 data in string column: {e}"))?;
                 buffer[len_offset..utf8_start].copy_from_slice(&(utf8_len as u32).to_le_bytes());
                 let value = &buffer[utf8_start..utf8_start + utf8_len];
                 stats.update(value);
@@ -544,6 +554,7 @@ pub fn string_slices_to_page(
                 &mut buffer,
                 &mut stats,
                 bloom_hashes.as_deref_mut(),
+                options.strict_utf16,
             )?;
         }
         Encoding::DeltaLengthByteArray => {
@@ -553,6 +564,7 @@ pub fn string_slices_to_page(
                 &mut buffer,
                 &mut stats,
                 bloom_hashes,
+                options.strict_utf16,
             )?;
         }
         _ => {
@@ -598,12 +610,17 @@ fn encode_string_plain(
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
+    strict_utf16: bool,
 ) -> ParquetResult<()> {
     for utf16 in utf16_slices.iter().filter_map(|&option| option) {
         let len_offset = buffer.len();
         buffer.extend_from_slice(&[0; 4]);
         let utf8_start = buffer.len();
-        let utf8_len = append_utf8_from_utf16(buffer, utf16)?;
+        // Fused write: in strict mode this returns Err mid-value, so bytes
+        // for earlier chars of this value may already sit in the buffer.
+        // Safe because the caller drops the entire page buffer on Err.
+        let utf8_len = write_utf8_from_utf16_iter(buffer, utf16.iter().copied(), strict_utf16)
+            .map_err(|e| fmt_err!(Layout, "invalid UTF-16 data in string column: {e}"))?;
         buffer[len_offset..utf8_start].copy_from_slice(&(utf8_len as u32).to_le_bytes());
         let value = &buffer[utf8_start..utf8_start + utf8_len];
         stats.update(value);
@@ -620,7 +637,12 @@ fn encode_string_delta(
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
+    strict_utf16: bool,
 ) -> ParquetResult<()> {
+    // Two passes: lengths first (delta-length encoding needs them up front),
+    // then the bytes. The length pass uses compute_utf8_length which is
+    // infallible (lossy substitution); the byte pass is where strict mode
+    // surfaces an error. The caller drops the buffer on error.
     let lengths = utf16_slices
         .iter()
         .filter_map(|&option| option)
@@ -629,7 +651,8 @@ fn encode_string_delta(
     delta_bitpacked::encode(lengths, buffer);
     for utf16 in utf16_slices.iter().filter_map(|&option| option) {
         let utf8_start = buffer.len();
-        let utf8_len = append_utf8_from_utf16(buffer, utf16)?;
+        let utf8_len = write_utf8_from_utf16_iter(buffer, utf16.iter().copied(), strict_utf16)
+            .map_err(|e| fmt_err!(Layout, "invalid UTF-16 data in string column: {e}"))?;
         let value = &buffer[utf8_start..utf8_start + utf8_len];
         stats.update(value);
         if let Some(ref mut h) = bloom_hashes {
@@ -637,16 +660,6 @@ fn encode_string_delta(
         }
     }
     Ok(())
-}
-
-fn append_utf8_from_utf16(buffer: &mut Vec<u8>, utf16: &[u16]) -> ParquetResult<usize> {
-    let start = buffer.len();
-    for c in char::decode_utf16(utf16.iter().copied()) {
-        let c = c.map_err(|e| fmt_err!(Layout, "invalid UTF-16 data in string column: {e}"))?;
-        let mut tmp = [0; 4];
-        buffer.extend_from_slice(c.encode_utf8(&mut tmp).as_bytes());
-    }
-    Ok(buffer.len() - start)
 }
 
 fn string_get_utf16_at_offset(data: &[u8], offset: i64) -> ParquetResult<Option<&[u16]>> {
@@ -693,21 +706,49 @@ fn string_get_utf16(entry_tail: &[u8]) -> ParquetResult<Option<&[u16]>> {
     Ok(Some(chars))
 }
 
+/// Predict the number of UTF-8 bytes that the lossy write path will produce
+/// for `utf16`. The delta-length encoding path (`encode_string_delta`) relies
+/// on this equality: any drift would write a corrupt parquet file.
+///
+/// This is a manual scan that stays branch-predictor-friendly on the hot
+/// ASCII path. The default STRING write path (DeltaLengthByteArray) calls
+/// this once per value, so the length predictor lives on the inner loop. It
+/// preserves the exact lossy substitution rules:
+///   * lone surrogate (high or low) -> 3 bytes (UTF-8 of U+FFFD)
+///   * valid surrogate pair -> 4 bytes (supplementary plane)
+///   * BMP non-surrogate < 0x80 -> 1, < 0x800 -> 2, else 3.
 fn compute_utf8_length(utf16: &[u16]) -> usize {
-    utf16
-        .iter()
-        .filter(|&char| !(0xDC00..=0xDFFF).contains(char))
-        .fold(0, |len, &char| {
-            len + if char <= 0x7F {
-                1
-            } else if char <= 0x7FF {
-                2
-            } else if !(0xD800..=0xDBFF).contains(&char) {
-                3
+    let mut total: usize = 0;
+    let mut i: usize = 0;
+    let n = utf16.len();
+    while i < n {
+        let c = utf16[i];
+        if c < 0x80 {
+            total += 1;
+            i += 1;
+        } else if c < 0x800 {
+            total += 2;
+            i += 1;
+        } else if (0xD800..=0xDBFF).contains(&c) {
+            // High surrogate: pair with the following low surrogate if any.
+            let next_is_low = i + 1 < n && (0xDC00..=0xDFFF).contains(&utf16[i + 1]);
+            if next_is_low {
+                total += 4;
+                i += 2;
             } else {
-                4
+                // Lone high surrogate -> U+FFFD (3 bytes).
+                total += 3;
+                i += 1;
             }
-        })
+        } else {
+            // Either a lone low surrogate (0xDC00..=0xDFFF) which is lossy
+            // substituted to U+FFFD (3 bytes), or any other BMP code point
+            // >= 0x800 (also 3 bytes).
+            total += 3;
+            i += 1;
+        }
+    }
+    total
 }
 
 const VARCHAR_HEADER_FLAG_INLINED: u8 = 1 << 0;
@@ -916,6 +957,182 @@ fn encode_varchar_delta(
         stats.update(utf8);
         if let Some(ref mut h) = bloom_hashes {
             h.insert(hash_byte(utf8));
+        }
+    }
+}
+
+#[cfg(test)]
+mod utf16_helper_tests {
+    use super::*;
+
+    /// Edge-case inputs that exercise the corners of `char::decode_utf16`:
+    /// empty, ASCII, 2-byte, 3-byte BMP, valid surrogate pair (U+1F600), and
+    /// every shape of unpaired surrogate. Used by both the differential test
+    /// (helpers must agree byte-for-byte) and the stdlib oracle test.
+    fn utf16_edge_cases() -> [&'static [u16]; 11] {
+        [
+            &[],                                                 // empty
+            &[b'h' as u16, b'i' as u16],                         // ASCII
+            &[0x00E9],                                           // 'e' acute, 2-byte UTF-8
+            &[0x20AC],                                           // euro sign, 3-byte UTF-8
+            &[0xD83D, 0xDE00],                                   // valid pair U+1F600, 4-byte UTF-8
+            &[0xD800],                                           // lone high surrogate
+            &[0xDFDA],                                           // lone low surrogate (issue #7079)
+            &[0xD800, b'a' as u16],                              // orphan high + ASCII
+            &[0xDFDA, b'a' as u16],                              // orphan low + ASCII
+            &[0xD800, 0xD801, 0xD802],                           // back-to-back orphans
+            &[b'h' as u16, 0xDFDA, 0xD83D, 0xDE00, b'!' as u16], // mixed valid + invalid
+        ]
+    }
+
+    /// M2 - seeded deterministic fuzz over random `Vec<u16>` guarding the
+    /// same three-way invariant as the differential test below, but across
+    /// hundreds of arbitrary inputs instead of 11 hand-picked ones:
+    ///
+    ///   compute_utf8_length(x)
+    ///     == bytes written by write_utf8_from_utf16_iter(x, strict=false)
+    ///     == String::from_utf16_lossy(x).len()
+    ///
+    /// A fixed-seed xorshift generator keeps the sequence identical on every
+    /// run (reproducible failures, no flakes, no new dev-dependency). Code
+    /// units are drawn with a bias toward the surrogate range so unpaired
+    /// and paired surrogates appear frequently.
+    #[test]
+    fn compute_utf8_length_fuzz_matches_lossy_writer_and_stdlib() {
+        use crate::parquet_write::encoders::helpers::write_utf8_from_utf16_iter;
+
+        // xorshift64* - tiny deterministic PRNG, fixed seed.
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = move || {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            state = state.wrapping_mul(0x2545_F491_4F6C_DD1D);
+            state
+        };
+
+        for case in 0..500 {
+            let len = (next() % 33) as usize; // 0..=32 code units
+            let mut utf16: Vec<u16> = Vec::with_capacity(len);
+            for _ in 0..len {
+                let r = next();
+                let cu = match r % 4 {
+                    // 50%: anywhere in the BMP including surrogates
+                    0 | 1 => (r >> 8) as u16,
+                    // 25%: force the surrogate range D800-DFFF
+                    2 => 0xD800u16 + ((r >> 8) % 0x800) as u16,
+                    // 25%: plain ASCII
+                    _ => (0x20 + ((r >> 8) % 0x5F)) as u16,
+                };
+                utf16.push(cu);
+            }
+
+            let predicted = compute_utf8_length(&utf16);
+            let mut buf = Vec::new();
+            let written =
+                write_utf8_from_utf16_iter(&mut buf, utf16.iter().copied(), false).unwrap();
+            let oracle = String::from_utf16_lossy(&utf16);
+
+            assert_eq!(
+                predicted, written,
+                "case {case}: compute_utf8_length disagrees with lossy writer for {utf16:X?}"
+            );
+            assert_eq!(
+                written,
+                oracle.len(),
+                "case {case}: lossy writer disagrees with stdlib for {utf16:X?}"
+            );
+            assert_eq!(
+                buf,
+                oracle.as_bytes(),
+                "case {case}: lossy bytes differ from stdlib for {utf16:X?}"
+            );
+        }
+    }
+
+    /// T3 - differential test guarding the critical invariant.
+    /// `compute_utf8_length(x)` must equal the bytes written by the lossy
+    /// path for every input, because `encode_string_delta` pre-writes the
+    /// lengths into the delta-bitpacked stream and then appends the bytes.
+    /// A one-byte drift between the two would produce a parquet file that
+    /// no consumer can read.
+    #[test]
+    fn compute_utf8_length_matches_append_for_all_inputs() {
+        use crate::parquet_write::encoders::helpers::write_utf8_from_utf16_iter;
+        for utf16 in utf16_edge_cases() {
+            let mut buf = Vec::new();
+            let written =
+                write_utf8_from_utf16_iter(&mut buf, utf16.iter().copied(), false).unwrap();
+            let predicted = compute_utf8_length(utf16);
+            assert_eq!(
+                predicted, written,
+                "compute vs write length disagree for {utf16:?}: compute={predicted} write={written}"
+            );
+            assert_eq!(
+                buf.len(),
+                written,
+                "buffer growth disagrees with return value for {utf16:?}"
+            );
+        }
+    }
+
+    /// T4 - independent oracle test using Rust stdlib's `from_utf16_lossy`.
+    /// If our lossy helpers ever drift from stdlib's well-tested semantics
+    /// (e.g., wrong replacement char, miscounting bytes), this test catches
+    /// it. Also asserts the output is valid UTF-8 as required by the parquet
+    /// STRING logical type.
+    #[test]
+    fn lossy_output_matches_stdlib_from_utf16_lossy() {
+        use crate::parquet_write::encoders::helpers::write_utf8_from_utf16_iter;
+        for utf16 in utf16_edge_cases() {
+            let oracle = String::from_utf16_lossy(utf16);
+
+            let mut buf = Vec::new();
+            write_utf8_from_utf16_iter(&mut buf, utf16.iter().copied(), false).unwrap();
+            assert_eq!(
+                buf,
+                oracle.as_bytes(),
+                "lossy byte output differs from stdlib for {utf16:?}"
+            );
+
+            let len = compute_utf8_length(utf16);
+            assert_eq!(
+                len,
+                oracle.len(),
+                "lossy length differs from stdlib for {utf16:?}"
+            );
+
+            assert!(
+                std::str::from_utf8(&buf).is_ok(),
+                "produced invalid UTF-8 for {utf16:?}"
+            );
+        }
+    }
+
+    /// Fused write rejects every shape of unpaired surrogate AND surfaces an
+    /// error message that the export layer can show to the user (the message
+    /// format is part of the public-ish contract). Replaces the deleted
+    /// validate_utf16_strict-specific tests now that the strict check is
+    /// done in-line by `write_utf8_from_utf16_iter`.
+    #[test]
+    fn write_utf8_from_utf16_iter_strict_rejects_lone_surrogates() {
+        use crate::parquet_write::encoders::helpers::write_utf8_from_utf16_iter;
+        let invalid: &[&[u16]] = &[
+            &[0xD800],
+            &[0xDFDA],
+            &[0xD800, b'a' as u16],
+            &[b'a' as u16, 0xDFDA],
+            &[0xD800, 0xD801, 0xD802],
+        ];
+        for utf16 in invalid {
+            let mut buf = Vec::new();
+            let result = write_utf8_from_utf16_iter(&mut buf, utf16.iter().copied(), true);
+            assert!(result.is_err(), "lone surrogate must error: {utf16:?}");
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("unpaired surrogate"),
+                "error message for {utf16:?} must mention 'unpaired surrogate', got: {msg}"
+            );
         }
     }
 }

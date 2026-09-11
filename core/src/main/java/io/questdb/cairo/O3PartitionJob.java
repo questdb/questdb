@@ -356,6 +356,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         dataPageSize,
                         bloomFilterFpp,
                         minCompressionRatio,
+                        cairoConfiguration.isPartitionEncoderParquetFailOnInvalidUtf16(),
                         parquetMetaFdOs,
                         updaterParquetMetaFileSize, // parse anchor (committed head from _txn)
                         parquetMetaReader.getFileSize(), // append base (_pm header at offset 0)
@@ -3879,6 +3880,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     bloomFilterColumnCount,
                     configuration.getPartitionEncoderParquetBloomFilterFpp(),
                     minCompressionRatio,
+                    configuration.isPartitionEncoderParquetFailOnInvalidUtf16(),
                     Files.toOsFd(parquetMetaFd),
                     -1L,
                     seqTxn

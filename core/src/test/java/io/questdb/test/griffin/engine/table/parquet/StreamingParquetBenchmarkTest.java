@@ -359,7 +359,8 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                         0,
                         0,
                         0,
-                        0.0
+                        0.0,
+                        false // failOnInvalidUtf16
                 );
 
                 try {

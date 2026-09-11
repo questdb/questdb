@@ -180,6 +180,7 @@ fn write_options() -> WriteOptions {
         raw_array_encoding: true,
         bloom_filter_fpp: 0.01,
         min_compression_ratio: 0.0,
+        strict_utf16: false,
     }
 }
 
