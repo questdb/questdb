@@ -516,18 +516,25 @@ public class WorkerPoolManagerTest {
         );
         p0.assign(slowCountUpJob(count));
         p1.assign(fastCountDownJob(endLatch));
+        final WorkerMetrics metrics = Metrics.ENABLED.workerMetrics();
+        metrics.clear();
+        final long startNanos = System.nanoTime();
         workerPoolManager.start(null);
         if (!endLatch.await(TimeUnit.SECONDS.toNanos(60L))) {
             Assert.fail("timeout");
         }
         workerPoolManager.halt();
+        final long wallMicros = (System.nanoTime() - startNanos) / 1000;
 
         Assert.assertEquals(0, endLatch.getCount());
-        WorkerMetrics metrics = Metrics.ENABLED.workerMetrics();
         long min = metrics.getMinElapsedMicros();
         long max = metrics.getMaxElapsedMicros();
         Assert.assertTrue(min > 0L);
         Assert.assertTrue(max > min);
+        Assert.assertTrue(
+                "job start age is not in microseconds [max=" + max + ", wall=" + wallMicros + ']',
+                max <= wallMicros
+        );
         String metricsAsStr = sink.get().toString();
         TestUtils.assertContains(metricsAsStr, "questdb_workers_job_start_micros_min");
         TestUtils.assertContains(metricsAsStr, "questdb_workers_job_start_micros_max");
