@@ -46,9 +46,8 @@ import java.util.List;
  * The MIRROR of {@link AdaptiveRecoveryRollForwardCrashTest}: what happens to a table that crashed while
  * ADAPTIVE when the operator turns adaptive OFF and restarts.
  *
- * <p>{@code RecoveryCoordinator.recover()} decides whether to roll a table forward from its
- * {@code effective} commit mode — the table's {@code _meta} override resolved against the CURRENT global
- * {@code cairo.commit.mode}. That is a statement about how the table will be written NEXT, not about how
+ * <p>{@code RecoveryCoordinator.recover()} cannot decide whether to roll a table forward from the CURRENT
+ * global {@code cairo.commit.mode} alone. That is a statement about how the table will be written NEXT, not about how
  * its materialized state was left. A table whose columns were applied lazily under adaptive and whose
  * process then died is torn ahead of its durable epoch regardless of what the config file says on the way
  * back up; skipping the roll-forward serves that torn state.

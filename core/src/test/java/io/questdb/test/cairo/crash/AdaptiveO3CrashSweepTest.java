@@ -243,8 +243,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
                 crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
                 final String table = "o3_lazy_gap";
                 execute("drop table if exists " + table);
-                execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal "
-                        + "with commit_mode='adaptive'");
+                execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal");
                 final TableToken tt = engine.verifyTableName(table);
 
                 // LAZY_K rows, out-of-order among themselves -> apply -> durable epoch at seqTxn=LAZY_K
@@ -400,8 +399,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
             table = "sweep_o3";
             execute("drop table if exists " + table);
             drainWalQueue();
-            execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal "
-                    + "with commit_mode='adaptive'");
+            execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal");
             tt = engine.verifyTableName(table);
             return new TableToken[]{tt};
         }

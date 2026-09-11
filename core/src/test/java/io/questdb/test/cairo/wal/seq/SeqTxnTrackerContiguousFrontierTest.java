@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.wal.seq;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -150,17 +149,6 @@ public class SeqTxnTrackerContiguousFrontierTest {
         assertEquals("an orphan finalised before the mark must be reaped", 0, tracker.getOrphanedWriterPinCount());
         assertEquals("no pin may remain", 0, tracker.getPendingWriterPinCount());
         assertEquals("the frontier is freed to the committed seqTxn", 30, tracker.getLocalDurableSeqTxn());
-    }
-
-    @Test
-    public void testCommitModePublicationRejectsOlderAppliedAlter() {
-        final SeqTxnTracker tracker = newTracker();
-        tracker.setCommitModeAtSeqTxn(CommitMode.ADAPTIVE, 12);
-        tracker.setCommitModeAtSeqTxn(CommitMode.NOSYNC, 11);
-        assertEquals("older asynchronous apply must not overwrite the newer sequenced mode",
-                CommitMode.ADAPTIVE, tracker.getCommitMode());
-        tracker.setCommitModeAtSeqTxn(CommitMode.SYNC, 13);
-        assertEquals(CommitMode.SYNC, tracker.getCommitMode());
     }
 
     /**

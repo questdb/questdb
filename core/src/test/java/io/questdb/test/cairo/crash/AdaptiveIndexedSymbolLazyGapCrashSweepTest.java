@@ -266,7 +266,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                 execute("drop table if exists " + table);
                 drainWalQueue();
                 execute("create table " + table + " (ts timestamp, s symbol index, v long) timestamp(ts) "
-                        + "partition by day wal with commit_mode='adaptive'");
+                        + "partition by day wal");
                 final TableToken tt = engine.verifyTableName(table);
 
                 // LAZY_K rows -> apply -> durable epoch at seqTxn=LAZY_K (interval=0 fires on this batch).
@@ -491,7 +491,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
             execute("drop table if exists " + table);
             drainWalQueue();
             execute("create table " + table + " (ts timestamp, s symbol index, v long) timestamp(ts) "
-                    + "partition by day wal with commit_mode='adaptive'");
+                    + "partition by day wal");
             tt = engine.verifyTableName(table);
 
             // LAZY_K rows -> apply -> durable epoch at seqTxn=LAZY_K. Plain ascending timestamps (pure

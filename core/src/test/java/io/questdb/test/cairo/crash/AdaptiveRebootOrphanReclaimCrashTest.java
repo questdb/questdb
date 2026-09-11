@@ -224,7 +224,7 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
         execute("drop table if exists " + name);
         drainWalQueue();
         execute("create table " + name + " (id long, v long, s symbol index, ts timestamp) timestamp(ts) "
-                + "partition by day wal with commit_mode='adaptive'");
+                + "partition by day wal");
         final TableToken tt = engine.verifyTableName(name);
         drainWalQueue();
         final TableToken[] tokens = {tt};

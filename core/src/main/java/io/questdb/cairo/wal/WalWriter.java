@@ -130,9 +130,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final MetadataValidatorService metaValidatorSvc = new MetadataValidatorService();
     private final MetadataService metaWriterSvc = new MetadataWriterService();
     private final WalWriterMetadata metadata;
-    // The per-table SeqTxnTracker, cached once (stable per table). Carries the table's EFFECTIVE commit
-    // mode, read live on each commit via walCommitMode() so an ALTER ... SET PARAM commit_mode that
-    // republishes the tracker is picked up without reopening this WAL writer. See Deferred 1.
+    // The per-table SeqTxnTracker, cached once (stable per table).
     private final io.questdb.cairo.wal.seq.SeqTxnTracker seqTxnTracker;
     private final Metrics metrics;
     private final ObjList<Runnable> nullSetters;
@@ -217,8 +215,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             sequencer.getTableMetadata(tableToken, metadata);
             timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
             this.tableToken = metadata.getTableToken();
-            // Cache the per-table tracker; the effective commit mode is read live from it on each commit
-            // (walCommitMode), so an ALTER ... SET PARAM commit_mode is picked up without reopening.
             this.seqTxnTracker = sequencer.getTxnTracker(this.tableToken);
 
             columnCount = metadata.getColumnCount();
@@ -316,29 +312,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         // pending backlog FIRST so every prior commit is on disk before this txn sequences.
         flushPendingDurable();
 
-        // The sequencer tracker is the durability-mode authority for every WAL writer of this table.
-        // TableWriter applies this ALTER asynchronously, so waiting for setMetaCommitMode() there leaves a
-        // window in which subsequently acknowledged WAL commits still use the old grade. Publish transitions
-        // TO adaptive before sequencing (stronger durability is safe if sequencing later fails), and publish
-        // transitions AWAY only after the ALTER is sequenced (never weaken commits that can precede it).
-        final boolean commitModeChange = alterOp.getCommand() == AlterOperation.SET_PARAM_COMMIT_MODE;
-        final int newEffectiveCommitMode = commitModeChange
-                ? CommitMode.effectiveCommitMode(alterOp.getSetCommitModeValue(), configuration.getCommitMode())
-                : CommitMode.UNSET;
-        if (commitModeChange && newEffectiveCommitMode == CommitMode.ADAPTIVE) {
-            seqTxnTracker.strengthenCommitModeToAdaptive();
-        }
-
-        final long seqTxn;
         if (alterOp.isStructural()) {
-            seqTxn = applyStructural(alterOp);
-        } else {
-            seqTxn = applyNonStructural(alterOp, false);
+            return applyStructural(alterOp);
         }
-        if (commitModeChange && newEffectiveCommitMode == CommitMode.ADAPTIVE) {
-            seqTxnTracker.setCommitModeAtSeqTxn(newEffectiveCommitMode, seqTxn);
-        }
-        return seqTxn;
+        return applyNonStructural(alterOp, false);
     }
 
     // Returns table transaction number
@@ -1015,13 +992,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Syncs this txn's private event files ahead of sequencing, and returns THE MODE IT ACTED ON.
-     * <p>
-     * The return value is the point. The caller has to decide whether to record a pending durable frontier,
-     * and that decision must be made on the mode this method barriered under, not on a fresh read: a flip
-     * landing in between makes the two disagree, so a frontier is recorded over an {@code _event} nothing
-     * made durable, the batched flush advances the ack watermark over it, and a client is told data is
-     * durable when it is not. {@code commit0} carries the same rule as {@code adaptiveBarriersTaken}.
+     * Syncs this txn's private event files ahead of sequencing, and returns the mode it acted on so the
+     * caller takes the matching pending-durable-frontier decision from the same read.
      */
     private int syncAdaptiveEventsBeforeSequencing() {
         final int commitMode = walCommitMode();
@@ -1032,10 +1004,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // device-durable before any writer can flush the shared sequencer.
                 events.barrierFsync();
             }
-        }
-        final DeferredCommitInterceptor commitInterceptor = deferredCommitInterceptor;
-        if (commitInterceptor != null) {
-            commitInterceptor.onStructuralSyncDecidedBeforeSequencing(walId);
         }
         return commitMode;
     }
@@ -1216,33 +1184,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      */
     @TestOnly
     public interface DeferredCommitInterceptor {
-        /**
-         * Fires between {@code syncIfRequired()} (which has just decided whether to DEFER the device
-         * flush) and {@code getSequencerTxn()} (which decides whether to REGISTER the durable-ack pin).
-         * Lets a test republish the table's commit mode inside that window to drive the mode-flip race.
-         * Default no-op so existing interceptors are unaffected.
-         */
-        default void onDeferDecidedBeforeSequencing(int walId) {
-        }
-
-        /**
-         * Fires AFTER the strengthen decision and BEFORE sequencing. A flip landing here is missed by
-         * the strengthen (which has already read the mode) but seen by the post-sequencing read, which
-         * is the narrow window the {@code adaptiveBarriersTaken} guard exists to make safe.
-         */
-        default void onStrengthenDecidedBeforeSequencing(int walId) {
-        }
-
-        /**
-         * Fires on the NON-{@code commit0} paths (ALTER/UPDATE, mat-view invalidate, mat-view seed,
-         * truncateSoft), between the barrier decision in
-         * {@code syncAdaptiveEventsBeforeSequencing()} and the separate decision to record a pending
-         * frontier. A flip landing here makes the second decision disagree with the first.
-         * Default no-op, so interceptors written for the commit0 window are unaffected.
-         */
-        default void onStructuralSyncDecidedBeforeSequencing(int walId) {
-        }
-
         void onSequencedBeforePin(int walId, long seqTxn);
     }
 
@@ -1298,58 +1239,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // flush disk before getting next txn. Under ADAPTIVE+W=0 syncIfRequired/getSequencerTxn
                 // fdatasync data→events→seq synchronously; under ADAPTIVE+W>0 they do the SYNC-grade msync
                 // (page-cache, ordered) and DEFER the device flush to the batched flushPendingDurable below.
-                // ONE snapshot for the whole commit. walCommitMode() reads a volatile that a PEER
-                // WalWriter republishes when it sequences a SET PARAM commit_mode, so reading it
-                // separately for the sync decision and for the durable-frontier decision lets the two
-                // disagree within a single commit. The NOSYNC -> ADAPTIVE direction is a durability
-                // lie: syncIfRequired skips every barrier under NOSYNC, then the flipped read records
-                // a pending frontier whose flush makes the SEQUENCER RECORD durable over data that was
-                // never fsynced. Pinned by AdaptiveCommitModeFlipRaceTest.
-                final int commitModeSnapshot = walCommitMode();
+                final int commitMode = walCommitMode();
                 // ONE read of the test seam for the whole commit. It is a static volatile on the
-                // hottest path in the system and is null in production; three separate reads bought
-                // nothing.
+                // hottest path in the system and is null in production.
                 final DeferredCommitInterceptor commitInterceptor = deferredCommitInterceptor;
-                syncIfRequired(commitModeSnapshot);
-                if (commitInterceptor != null) {
-                    commitInterceptor.onDeferDecidedBeforeSequencing(walId);
-                }
-                // SYNC on the STRONGEST mode observed, and do it BEFORE sequencing. If a peer
-                // sequenced a SET PARAM commit_mode='adaptive' inside this commit, the snapshot above
-                // skipped the barriers; take them now so a flip UP can never leave the data unsynced.
-                //
-                // The placement is load-bearing, not tidiness. Under W=0 the sequencer's sync0 makes
-                // the record DEVICE-DURABLE inside getSequencerTxn (deferDeviceFlush is false, so it
-                // fdatasyncs rather than deferring). Strengthening after that call would durably
-                // publish a record naming still-volatile data -- inverting the data->sequencer
-                // ordering this design rests on, in exactly the case the fail-safe protocol forbids.
-                // Under W>0 the flush is deferred and either placement works; W=0 is what forces this.
-                // Tracks whether this commit's WAL data actually took the ADAPTIVE column barriers.
-                // Only syncIfRequired(ADAPTIVE) does; NOSYNC skips everything and ASYNC only msyncs.
-                boolean adaptiveBarriersTaken = commitModeSnapshot == CommitMode.ADAPTIVE;
-                if (commitModeSnapshot != CommitMode.ADAPTIVE
-                        && walCommitMode() == CommitMode.ADAPTIVE) {
-                    syncIfRequired(CommitMode.ADAPTIVE);
-                    adaptiveBarriersTaken = true;
-                }
-                if (commitInterceptor != null) {
-                    commitInterceptor.onStrengthenDecidedBeforeSequencing(walId);
-                }
+                syncIfRequired(commitMode);
                 final long seqTxn = getSequencerTxn();
-                // RECORD/ADVANCE on the CURRENT mode -- see below. The two decisions deliberately take
-                // DIFFERENT modes; that asymmetry is the point.
-                final int commitModeNow = walCommitMode();
-                // RECORD/ADVANCE: the CURRENT mode, so a flip DOWN cannot advance the frontier on a
-                // table that is no longer adaptive. markWriterDurable treats an empty pin map as
-                // "everything committed is durable", which holds only while every non-durable txn is
-                // pinned -- and peer writers committing under NOSYNC are sequenced WITHOUT a pin, so
-                // advancing here would claim their unsynced txns too.
-                // ... AND only if the barriers were actually taken. A flip landing between the
-                // strengthen decision above and this read is missed by the strengthen but seen here,
-                // which would otherwise record a frontier over data no barrier ever covered -- the
-                // original lie through a narrower window. Declining to record is the safe side: it can
-                // only withhold a durable-ack, never grant a false one.
-                if (commitModeNow == CommitMode.ADAPTIVE && adaptiveBarriersTaken) {
+                if (commitMode == CommitMode.ADAPTIVE) {
                     if (deferDeviceFlush()) {
                         // TEST-ONLY seam (Task 1b): the mid-flight window — the txn is now sequenced (the shared
                         // tracker's seqTxn has advanced to it) but its durable-ack pin was registered ATOMICALLY
@@ -2553,20 +2449,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * The EFFECTIVE commit mode for THIS table's WAL durability (Deferred 1): the per-table override
-     * published on the tracker resolved against the global {@code cairo.commit.mode}. Read live so an
-     * {@code ALTER ... SET PARAM commit_mode} (which republishes the tracker) takes effect on the next
-     * commit without reopening this writer.
+     * The commit mode governing WAL durability. Instance-wide and fixed for the life of the process:
+     * {@code cairo.commit.mode} is a final field read once at construction, so every WAL writer of every
+     * table answers the same grade and no commit can straddle a change.
      */
     private int walCommitMode() {
-        int mode = seqTxnTracker.getCommitMode();
-        if (mode == CommitMode.UNSET) {
-            // Tracker not yet published (e.g. a post-restart WAL commit that precedes the first apply for
-            // this table). Resolve from _meta once; this publishes the effective mode onto the tracker so
-            // subsequent commits take the cheap volatile-read path above.
-            return sequencer.resolveEffectiveCommitMode(tableToken);
-        }
-        return CommitMode.effectiveCommitMode(mode, configuration.getCommitMode());
+        return configuration.getCommitMode();
     }
 
     private void syncIfRequired(int commitMode) {

@@ -641,10 +641,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 //
                 // isSync, NOT the instance-global mode master passed here: _pm is
                 // a STRUCTURAL site, so it stays eager under ADAPTIVE (never the
-                // apply-path lazy gate), but the mode it reads must still be the
-                // TABLE's effective one. Reading the global mode is the inverted
-                // polarity fixed across this branch -- it would skip the barrier
-                // for a `commit_mode='sync'` table on a nosync instance.
+                // apply-path lazy gate), but the mode it reads must be the writer's
+                // own grade -- a table held at SYNC pending adaptive enrolment still
+                // has to take the barrier here.
                 partitionUpdater.commitParquetMeta(isSync);
             } catch (Throwable e) {
                 if (isRewrite) {

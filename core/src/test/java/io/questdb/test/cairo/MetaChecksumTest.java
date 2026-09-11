@@ -145,15 +145,16 @@ public class MetaChecksumTest extends AbstractCairoTest {
     }
 
     private void downgradeMinorVersion(TableToken token) {
-        // Rewrite the minor-version high short to 4, i.e. the format before the checksum field, keeping
-        // the low-short checksum intact so every OTHER gated field still reads.
+        // Rewrite the minor-version high short to the format immediately before the checksum field was
+        // added, keeping the low-short checksum intact so every OTHER gated field still reads.
         withMetaFd(token, true, (ff, fd) -> {
             final long buf = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
             try {
                 ff.read(fd, buf, Integer.BYTES, TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
                 final int field = Unsafe.getUnsafe().getInt(buf);
                 final short low = (short) (field & 0xFFFF);
-                Unsafe.getUnsafe().putInt(buf, (low & 0xFFFF) | (4 << 16));
+                final int preChecksum = TableUtils.META_FORMAT_MINOR_VERSION_BODY_CHECKSUM - 1;
+                Unsafe.getUnsafe().putInt(buf, (low & 0xFFFF) | (preChecksum << 16));
                 ff.write(fd, buf, Integer.BYTES, TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
             } finally {
                 Unsafe.free(buf, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);

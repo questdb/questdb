@@ -3236,6 +3236,14 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isCheckpointRecoveryEnabled());
 
         Assert.assertEquals(CommitMode.ASYNC, configuration.getCommitMode());
+        // Adaptive settings, checked here so the CairoConfigurationWrapper arm proves the wrapper delegates
+        // them: every one of these is a default method on CairoConfiguration, so a missed delegation compiles.
+        Assert.assertEquals(12345, configuration.getAdaptiveEpochIntervalMs());
+        Assert.assertEquals(123456, configuration.getAdaptiveEpochMaxRows());
+        Assert.assertEquals(7777, configuration.getAdaptiveCommitGroupWindowUs());
+        Assert.assertFalse(configuration.isAdaptiveRecoveryRollForwardEnabled());
+        Assert.assertFalse(configuration.isAdaptiveEpochFlushOnClose());
+        Assert.assertFalse(configuration.isAdaptiveEpochColumnSyncBatched());
         Assert.assertEquals(12, configuration.getCreateAsSelectRetryCount());
         Assert.assertEquals(16, configuration.getViewLexerPoolCapacity());
         Assert.assertFalse(configuration.isMatViewEnabled());

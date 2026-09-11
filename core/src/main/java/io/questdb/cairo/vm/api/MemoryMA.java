@@ -67,14 +67,12 @@ public interface MemoryMA extends MemoryM, MemoryA {
     }
 
     /**
-     * Threads the per-table EFFECTIVE commit mode ({@link io.questdb.cairo.CommitMode}, already resolved
-     * against the instance-global {@code cairo.commit.mode} via
-     * {@link io.questdb.cairo.CommitMode#effectiveCommitMode(int, int)}) into this memory so that the
-     * page-release / close durability decision uses the TABLE's mode, not the instance-global one. Without
-     * it a {@code WITH commit_mode='sync'} column on a {@code nosync} instance would skip its completed-page
-     * {@code msync} on release and crash-lose committed rows. {@link io.questdb.cairo.CommitMode#UNSET} (the
-     * default) means "defer to the global mode", so every memory that is never threaded a mode stays
-     * byte-identical to the original global-mode behavior. Mirrors {@link #setApplyLazy(boolean)}.
+     * Threads the owning writer's commit mode ({@link io.questdb.cairo.CommitMode}) into this memory so the
+     * page-release / close durability decision matches the grade that writer commits under. A table that is
+     * not yet enrolled in adaptive runs at SYNC while the instance runs ADAPTIVE, and its completed pages
+     * must be msync'd on release accordingly. {@link io.questdb.cairo.CommitMode#UNSET} (the default) means
+     * "never threaded", so the memory falls back to the instance-global mode. Mirrors
+     * {@link #setApplyLazy(boolean)}.
      */
     default void setCommitMode(int commitMode) {
     }

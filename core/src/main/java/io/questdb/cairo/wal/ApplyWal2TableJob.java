@@ -707,9 +707,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      *                    counter before the interval/row-cap gate is evaluated.
      */
     private void maybeAdvanceDurableEpoch(TableToken tableToken, TableWriter writer, long rowsApplied) {
-        // Per-table EFFECTIVE mode (Deferred 1): the epoch lifecycle is driven by THIS table's mode, so a
-        // WITH commit_mode='adaptive' table fires epochs even under a NOSYNC instance default, while a
-        // sibling NOSYNC table never does (fastest path).
+        // The writer's own grade, not the raw global mode: a table that has not yet published its adaptive
+        // enrolment baseline runs at SYNC and must not fire an epoch until it has.
         if (writer.getEffectiveCommitMode() != CommitMode.ADAPTIVE) {
             return;
         }

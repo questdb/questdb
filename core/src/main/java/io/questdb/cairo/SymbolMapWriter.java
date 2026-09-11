@@ -500,9 +500,9 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
     /**
      * Re-applies the CHAR memory's append-only narrowing (see the ctor's {@code charMemAppendOnly}
-     * javadoc). Called by {@code TableWriter.setMetaCommitMode} when an {@code ALTER TABLE ... SET
-     * PARAM commit_mode} flips an already-open writer between {@link CommitMode#ADAPTIVE} and a
-     * legacy mode, so the flag doesn't stay stale until this symbol writer is next reopened.
+     * javadoc). Called by {@code TableWriter.reapplyColumnCommitMode} when adaptive enrolment moves an
+     * already-open writer to {@link CommitMode#ADAPTIVE}, so the flag doesn't stay stale until this
+     * symbol writer is next reopened.
      */
     @Override
     public void setAppendOnly(boolean appendOnly) {

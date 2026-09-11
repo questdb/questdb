@@ -47,7 +47,7 @@ import java.util.Map;
  * ({@code _mv.s} refresh state, {@code _mv} definition) are role-aware — a replica
  * ({@link LocalDurabilityPolicy#REPLICA_SKIP}) skips their fsync (they are a rebuildable cache of
  * object-store truth), while a primary / single-node (default {@link LocalDurabilityPolicy#ALWAYS_ON})
- * keeps it. {@code commit_mode=adaptive} is kept on throughout so the writes are otherwise
+ * keeps it. {@code cairo.commit.mode=adaptive} is kept on throughout so the writes are otherwise
  * sync-eligible — exactly like {@code AdaptiveReplicaEpochSkipTest} — so the ONLY thing that can
  * suppress the sync is the new {@code LocalDurabilityPolicy.resolveCommitMode} gate at each site, not
  * the commit-mode cadence.
@@ -195,7 +195,7 @@ public class AdaptiveReplicaBlockFileSkipTest extends AbstractCairoTest {
      * {@code LocalDurabilityPolicy.resolveCommitMode} the way the apply-side sites in (a)/(b) are. A view
      * definition is structural DDL (not the lazily-applied column data the durable epoch protects), so it
      * must stay durable under {@code commitMode != NOSYNC} REGARDLESS of role. This test pins that: even with
-     * {@link LocalDurabilityPolicy#REPLICA_SKIP} installed and {@code commit_mode=adaptive} (the ONLY mode
+     * {@link LocalDurabilityPolicy#REPLICA_SKIP} installed and {@code cairo.commit.mode=adaptive} (the ONLY mode
      * {@code resolveCommitMode} would downgrade to NOSYNC on a replica), {@code CREATE MATERIALIZED VIEW}
      * still fsyncs the sequencer's {@code _mv} definition. If a future change wrongly routed this site through
      * the policy, the sync would vanish under REPLICA_SKIP and this test would fail.

@@ -7970,9 +7970,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
-                            base_price\tfalse\t2\t0\t2\t\t\t0\tadaptive\t1\t0\t2\t2024-01-01T01:01:01.842000Z
-                            price_1h\ttrue\t1\t0\t3\t\t\t0\tadaptive\t1\t0\t3\t2024-01-01T01:01:01.842000Z
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t2\t0\t2\t\t\t0\t1\t0\t2\t2024-01-01T01:01:01.842000Z
+                            price_1h\ttrue\t1\t0\t3\t\t\t0\t1\t0\t3\t2024-01-01T01:01:01.842000Z
                             """);
 
             // resume mat view
@@ -7995,9 +7995,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
-                            base_price\tfalse\t2\t0\t2\t\t\t0\tadaptive\t1\t0\t2\t2024-01-01T01:01:01.842000Z
-                            price_1h\tfalse\t3\t0\t3\t\t\t0\tadaptive\t1\t0\t3\t2024-01-01T01:01:01.842000Z
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t2\t0\t2\t\t\t0\t1\t0\t2\t2024-01-01T01:01:01.842000Z
+                            price_1h\tfalse\t3\t0\t3\t\t\t0\t1\t0\t3\t2024-01-01T01:01:01.842000Z
                             """);
 
             // suspend mat view again
@@ -8022,9 +8022,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
-                            base_price\tfalse\t3\t0\t3\t\t\t0\tadaptive\t1\t0\t3\t2024-01-01T01:01:01.842000Z
-                            price_1h\ttrue\t3\t0\t5\t\t\t0\tadaptive\t1\t0\t5\t2024-01-01T01:01:01.842000Z
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t3\t0\t3\t\t\t0\t1\t0\t3\t2024-01-01T01:01:01.842000Z
+                            price_1h\ttrue\t3\t0\t5\t\t\t0\t1\t0\t5\t2024-01-01T01:01:01.842000Z
                             """);
 
             // resume mat view from txn
@@ -8047,9 +8047,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
-                            base_price\tfalse\t3\t0\t3\t\t\t0\tadaptive\t1\t0\t3\t2024-01-01T01:01:01.842000Z
-                            price_1h\tfalse\t5\t0\t5\t\t\t0\tadaptive\t1\t0\t5\t2024-01-01T01:01:01.842000Z
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t3\t0\t3\t\t\t0\t1\t0\t3\t2024-01-01T01:01:01.842000Z
+                            price_1h\tfalse\t5\t0\t5\t\t\t0\t1\t0\t5\t2024-01-01T01:01:01.842000Z
                             """);
         });
     }

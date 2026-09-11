@@ -281,9 +281,9 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean isPoisoned;
     private int keyCapacity;
     private int keyCount;
-    // The owning table's PER-TABLE EFFECTIVE commit mode; CommitMode.UNSET (default) => defer to the global
-    // cairo.commit.mode, so a transient writer that is never threaded a mode is byte-identical to before.
-    private int tableCommitMode = CommitMode.UNSET;
+    // The commit mode this indexer flushes under. Seeded from the instance-global cairo.commit.mode and
+    // overridden via setCommitMode() while the owning table is not yet enrolled in adaptive.
+    private int indexCommitMode;
     // In-memory mirror of the head entry's MAX_VALUE field. setMaxValue
     // updates it directly; flush/seal callsites read it back without going
     // to mmap. Persisted to the head entry on every chain publish (or via
@@ -344,6 +344,7 @@ public class PostingIndexWriter implements IndexWriter {
     public PostingIndexWriter(CairoConfiguration configuration, byte rowIdEncoding) {
         this.alignedBitWidthThreshold = configuration.getPostingIndexAlignedBitWidthThreshold();
         this.configuration = configuration;
+        this.indexCommitMode = configuration.getCommitMode();
         this.ff = configuration.getFilesFacade();
         this.indexerSpillBytesMax = configuration.getPostingIndexerSpillBytesMax();
         this.rowIdEncoding = rowIdEncoding;
@@ -699,10 +700,10 @@ public class PostingIndexWriter implements IndexWriter {
         // into the memory-mapped .pk/.pv files. Only the DURABILITY flush below is mode-gated -- without the
         // publish, readers would see keyCount=0 until the writer is closed.
         flushAllPending();
-        // Per-table EFFECTIVE mode + appliesColumnSync (SYNC/ASYNC only). See IndexWriter.setCommitMode:
-        // under ADAPTIVE the posting index is re-derivable from the durable WAL like the column it indexes,
-        // and the durable epoch forces sync(false) on every indexer before its filesystem-wide syncfs.
-        final int commitMode = CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
+        // appliesColumnSync (SYNC/ASYNC only). See IndexWriter.setCommitMode: under ADAPTIVE the posting
+        // index is re-derivable from the durable WAL like the column it indexes, and the durable epoch
+        // forces sync(false) on every indexer before its filesystem-wide syncfs.
+        final int commitMode = indexCommitMode;
         if (CommitMode.appliesColumnSync(commitMode)) {
             sync(commitMode == CommitMode.ASYNC);
         }
@@ -710,7 +711,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void setCommitMode(int commitMode) {
-        this.tableCommitMode = commitMode;
+        this.indexCommitMode = commitMode;
     }
 
     // Sync order is .pv and covering sidecars before .pk: a torn write must
@@ -750,12 +751,11 @@ public class PostingIndexWriter implements IndexWriter {
         } else {
             flushAllPendingDense();
         }
-        // Same gate as commit(): per-table EFFECTIVE mode + appliesColumnSync (SYNC/ASYNC only). The seal
-        // this method performs is index DATA, re-derived from the column it indexes, so under ADAPTIVE it
-        // stays lazy and is made durable by the epoch (which calls sync(false) on every indexer explicitly
-        // before its filesystem-wide syncfs). Keeping this on the global mode while commit() used the
-        // table's would have left the two halves of one writer disagreeing.
-        final int commitMode = CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
+        // Same gate as commit(): appliesColumnSync (SYNC/ASYNC only). The seal this method performs is
+        // index DATA, re-derived from the column it indexes, so under ADAPTIVE it stays lazy and is made
+        // durable by the epoch (which calls sync(false) on every indexer explicitly before its
+        // filesystem-wide syncfs).
+        final int commitMode = indexCommitMode;
         if (CommitMode.appliesColumnSync(commitMode)) {
             boolean async = commitMode == CommitMode.ASYNC;
             if (valueMem.isOpen()) {

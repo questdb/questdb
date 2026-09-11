@@ -46,16 +46,6 @@ public class SeqTxnTracker {
     private final FiberWalWaitQueue fiberWaiters = new FiberWalWaitQueue();
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
-    // The table's PER-TABLE EFFECTIVE commit mode (already resolved against the global cairo.commit.mode
-    // via CommitMode.effectiveCommitMode). CommitMode.UNSET means "not yet published" — every consumer
-    // (WalWriter durability, the apply lazy gate, the epoch trigger, the WAL-purge floor, recovery,
-    // wal_tables()) must fall back to the global mode while this is UNSET. Published from the table's
-    // _meta: at CREATE (registerTable, from the TableStructure), at writer open (TableWriter), and lazily
-    // by TableSequencerAPI.resolveEffectiveCommitMode for any WAL-side reader that needs it before either.
-    // volatile: written by a writer/apply thread, read by WalWriter/purge/observability threads.
-    private volatile int commitMode = io.questdb.cairo.CommitMode.UNSET;
-    // Sequencer transaction that last changed commitMode. -1 denotes metadata/registration initialization.
-    private long commitModeSeqTxn = -1;
     // The last seqTxn that has been made durable as an adaptive epoch.
     // Default 0 means "no epoch committed yet — retain all WAL" (safe conservative default for a
     // fresh adaptive table; the epoch job advances this as epochs are confirmed durable).
@@ -184,15 +174,6 @@ public class SeqTxnTracker {
 
     public TableWriterPressureControl getMemPressureControl() {
         return pressureControl;
-    }
-
-    /**
-     * The PER-TABLE EFFECTIVE commit mode (already resolved against the global mode), or
-     * {@link io.questdb.cairo.CommitMode#UNSET} if it has not been published yet (callers must then fall
-     * back to the global {@code cairo.commit.mode}).
-     */
-    public int getCommitMode() {
-        return commitMode;
     }
 
     public long getDurableEpochSeqTxn() {
@@ -410,35 +391,6 @@ public class SeqTxnTracker {
 
         metrics.tableWriterMetrics().incSuspendedTables();
         fireWaiters();
-    }
-
-    /**
-     * Publishes the table's EFFECTIVE commit mode (must already be resolved against the global mode via
-     * {@link io.questdb.cairo.CommitMode#effectiveCommitMode(int, int)} — never pass a raw UNSET from
-     * {@code _meta} unless the table genuinely defers to the global, in which case pass the resolved
-     * global value). Idempotent; safe to call repeatedly from the writer/apply path.
-     */
-    public synchronized void setCommitMode(int commitMode) {
-        if (commitModeSeqTxn < 0) {
-            this.commitMode = commitMode;
-        }
-    }
-
-    public synchronized void setCommitModeAtSeqTxn(int commitMode, long seqTxn) {
-        if (seqTxn >= commitModeSeqTxn) {
-            this.commitMode = commitMode;
-            this.commitModeSeqTxn = seqTxn;
-        }
-    }
-
-    public synchronized void setCommitModeIfUnset(int commitMode) {
-        if (this.commitMode == io.questdb.cairo.CommitMode.UNSET && commitModeSeqTxn < 0) {
-            this.commitMode = commitMode;
-        }
-    }
-
-    public synchronized void strengthenCommitModeToAdaptive() {
-        this.commitMode = io.questdb.cairo.CommitMode.ADAPTIVE;
     }
 
     public void setDurableEpochSeqTxn(long durableEpochSeqTxn) {
