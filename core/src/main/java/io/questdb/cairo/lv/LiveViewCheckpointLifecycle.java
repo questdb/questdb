@@ -83,6 +83,15 @@ import org.jetbrains.annotations.Nullable;
  * base rows available today is what they want; see
  * {@link LiveViewCheckpointRecoveryPhase}.</p>
  *
+ * <p>Neither disposition takes a {@code _timeline} whose one foreign-looking slot
+ * is damaged beside an intact one. A slot declares a format by naming its version
+ * twice, in the version field and in the magic's nibble; a slot where the two
+ * disagree is what one flipped bit leaves behind. While the other slot is one this
+ * build can select, reconciliation adopts that slot's generation exactly as it
+ * would after a torn write, and the next publication overwrites the damaged slot.
+ * See {@link LiveViewCheckpointSuperblock#foreignFormatVersion} and
+ * {@link LiveViewCheckpointSuperblock#isForeignFormat}.</p>
+ *
  * <p>Callers serialize reconciliation, epoch replacement, and retirement with
  * timeline publication, repair descriptor writes, and pin acquisition. The
  * live-view integration does so with the refresh latch (and fences DROP before

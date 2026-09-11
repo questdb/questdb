@@ -34,6 +34,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Zip;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -114,6 +115,9 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * <p>
      * The nibble tracks {@link #SLOT_FORMAT_VERSION}, so a slot whose two disagree was
      * written by neither build and is damage rather than another build's generation.
+     * That makes the pair, not either field, what declares a slot's format: every build
+     * has to keep stamping its version into both, and {@link #foreignFormatVersion} reads
+     * a slot that names one version twice as another build's and anything else as damage.
      */
     public static final long SLOT_MAGIC = 0x4C56_544D_4C4E_0002L;
     /**
@@ -261,19 +265,36 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * a layout this one has no decoder for, and the only thing this build knows
      * about it is the number.
      * <p>
-     * Narrower than {@link #isForeignFormat} on purpose, and the two are not
-     * interchangeable. This answers only for a slot in this magic family whose
-     * version field is well formed and names a version this build does not
-     * implement. A version field a truncated file cannot supply, a magic outside
-     * the family, and a magic whose trailing nibble disagrees with a version field
-     * that reads native all report {@link #NO_FOREIGN_FORMAT} here while
-     * {@code isForeignFormat} still classifies them. The two dispositions differ:
-     * a declared version is evidence another build owns the directory and must be
-     * preserved, while the rest is damage a rebuild of derived state clears.
+     * A slot declares a version only when both fields that carry it agree: the
+     * version field and the magic's trailing nibble. Every build stamps its
+     * version into both - {@link #SLOT_MAGIC} tracks {@link #SLOT_FORMAT_VERSION},
+     * and the released version 1 did the same - so another build's slot names one
+     * version twice. One field alone names nothing. A version field that reads
+     * foreign under this build's own nibble is what a single flipped bit in that
+     * field looks like, and blocking on it would cost the operator a DROP and
+     * re-CREATE for damage the other slot recovers from. Such a slot is left to
+     * {@link #isForeignFormat} and to ordinary A/B selection, which rejects it on
+     * the magic, the version or the checksum and falls back.
      * <p>
-     * The version field alone decides, in both directions: a build one version
-     * back stamps a lower version, a build one version on a higher one, and
-     * neither is a layout this one can read.
+     * A declaration beside an intact slot of this build's own format still
+     * answers for the whole file. That pair is what a newer build leaves after one
+     * publication over this build's directory. Falling back to the native slot
+     * there would hand the newer generation's files to this build's orphan sweep
+     * and its slot to this build's next publication, destroying the state a return
+     * to that build needs - which is what the block exists to preserve.
+     * <p>
+     * Narrower than {@link #isForeignFormat} on purpose, and the two are not
+     * interchangeable. A version field a truncated file cannot supply, a magic
+     * outside the family, and a slot whose two version carriers disagree all
+     * report {@link #NO_FOREIGN_FORMAT} here while {@code isForeignFormat} may
+     * still classify them. The two dispositions differ: a declared version is
+     * evidence another build owns the directory and must be preserved, while the
+     * rest is damage, which an intact slot beside it recovers from and a rebuild
+     * of derived state otherwise clears.
+     * <p>
+     * Either direction blocks: a build one version back declares a lower version,
+     * a build one version on a higher one, and neither is a layout this one can
+     * read.
      *
      * @return the foreign format version the first such slot declares, or
      * {@link #NO_FOREIGN_FORMAT} when neither slot declares one
@@ -290,11 +311,10 @@ public class LiveViewCheckpointSuperblock implements Closeable {
                 if ((magic & SLOT_MAGIC_FAMILY_MASK) != SLOT_MAGIC_FAMILY) {
                     continue;
                 }
-                // A short or failed read returns -1, which is a file this build
-                // cannot read a version out of rather than a version it does not
-                // implement.
+                // A short or failed read returns -1, which names no version, so
+                // it matches no nibble and declares nothing.
                 final int formatVersion = ff.readNonNegativeInt(fd, base + SLOT_FORMAT_VERSION_OFFSET);
-                if (formatVersion >= 0 && formatVersion != SLOT_FORMAT_VERSION) {
+                if (formatVersion != SLOT_FORMAT_VERSION && isDeclaredFormat(magic, formatVersion)) {
                     return formatVersion;
                 }
             }
@@ -310,16 +330,28 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * across layout versions - the magic and the format version - so each build
      * can recognize the other's file without agreeing on anything else.
      * <p>
-     * It deliberately validates no checksum. {@link #storeSlot} writes the magic
-     * and the version ahead of the CRC, so a slot torn by a crash still carries
-     * this build's pair and reads as native; ordinary A/B selection then rejects
-     * it on the checksum and falls back. A slot outside the magic family -
-     * zeroed, unwritten, short, or unrelated - is not classified either way.
-     * Bit rot inside the version field reads as foreign, which costs a rebuild
-     * of derived state and nothing else.
+     * It validates no checksum on the slot it classifies. {@link #storeSlot}
+     * writes the magic and the version ahead of the CRC, so a slot torn by a
+     * crash still carries this build's pair and reads as native; ordinary A/B
+     * selection then rejects it on the checksum and falls back. A slot outside
+     * the magic family - zeroed, unwritten, short, or unrelated - is not
+     * classified either way.
+     * <p>
+     * A slot that declares another format (see {@link #foreignFormatVersion})
+     * classifies the file whatever the other slot holds. A slot whose magic or
+     * version this build does not write, but whose two version carriers disagree,
+     * declares nothing and is damage. It classifies the file only when neither
+     * slot is one {@link #select()} would choose: magic, version and checksum
+     * intact and every field in range. Beside such a slot the damage is one
+     * slot's, the same as a flipped bit anywhere else in it, and A/B selection
+     * steps over it; resetting would discard the generation the intact slot
+     * names and rebuild the view's whole output from whatever base rows survive
+     * today. With no such slot there is no generation left to protect, and the
+     * reset clears what cannot be read.
      *
-     * @return true when either slot carries the timeline magic family with a
-     * magic or format version this build does not write
+     * @return true when either slot declares a format this build does not
+     * implement, or when a slot carries a magic or format version this build does
+     * not write and neither slot is one this build can select
      */
     public static boolean isForeignFormat(@NotNull FilesFacade ff, @NotNull LPSZ timelinePath) {
         final long fd = ff.openRO(timelinePath);
@@ -327,6 +359,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
             return false;
         }
         try {
+            boolean hasDamagedSlot = false;
             for (int slot = 0; slot < 2; slot++) {
                 final long base = (long) slot * SLOT_SIZE;
                 // A short or failed read returns -1, whose masked form cannot
@@ -335,12 +368,16 @@ public class LiveViewCheckpointSuperblock implements Closeable {
                 if ((magic & SLOT_MAGIC_FAMILY_MASK) != SLOT_MAGIC_FAMILY) {
                     continue;
                 }
-                if (magic != SLOT_MAGIC
-                        || ff.readNonNegativeInt(fd, base + SLOT_FORMAT_VERSION_OFFSET) != SLOT_FORMAT_VERSION) {
+                final int formatVersion = ff.readNonNegativeInt(fd, base + SLOT_FORMAT_VERSION_OFFSET);
+                if (magic == SLOT_MAGIC && formatVersion == SLOT_FORMAT_VERSION) {
+                    continue;
+                }
+                if (isDeclaredFormat(magic, formatVersion)) {
                     return true;
                 }
+                hasDamagedSlot = true;
             }
-            return false;
+            return hasDamagedSlot && !hasSelectableSlot(ff, fd);
         } finally {
             ff.close(fd);
         }
@@ -582,40 +619,71 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         resetFields();
     }
 
-    private void ensureOpen() {
-        if (!isOpen) {
-            throw CairoException.critical(0)
-                    .put("live view checkpoint superblock is not open");
+    /**
+     * Reports whether either slot of the open {@code _timeline} is one
+     * {@link #select()} would choose. Reads each slot through the descriptor
+     * rather than mapping the file, because the probes that ask run ahead of
+     * anything allowed to create or extend it; a slot the file is too short to
+     * hold whole is not selectable.
+     */
+    private static boolean hasSelectableSlot(FilesFacade ff, long fd) {
+        final long slotAddr = Unsafe.malloc(SLOT_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int slot = 0; slot < 2; slot++) {
+                if (ff.read(fd, slotAddr, SLOT_SIZE, (long) slot * SLOT_SIZE) == SLOT_SIZE
+                        && isSlotImageValid(slotAddr)) {
+                    return true;
+                }
+            }
+            return false;
+        } finally {
+            Unsafe.free(slotAddr, SLOT_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
-    private boolean isSlotValid(long base) {
-        final long magic = mem.getLong(base + SLOT_MAGIC_OFFSET);
+    /**
+     * Reports whether a slot in the magic family names {@code formatVersion} in
+     * both places a build stamps it: the version field and the magic's trailing
+     * nibble. See {@link #foreignFormatVersion} for why one of them is not enough.
+     * A short read's {@code -1} matches no nibble.
+     */
+    private static boolean isDeclaredFormat(long magic, int formatVersion) {
+        return (magic & ~SLOT_MAGIC_FAMILY_MASK) == formatVersion;
+    }
+
+    /**
+     * The one slot validity rule: {@link #select()} chooses from the slots it
+     * accepts, and {@link #isForeignFormat} spares a directory holding one.
+     *
+     * @param slotAddr address of a whole {@link #SLOT_SIZE}-byte slot image
+     */
+    private static boolean isSlotImageValid(long slotAddr) {
+        final long magic = Unsafe.getLong(slotAddr + SLOT_MAGIC_OFFSET);
         if (magic != SLOT_MAGIC) {
             return false;
         }
-        final int computedCrc = Zip.crc32(0, mem.addressOf(base), SLOT_CRC_COVERAGE);
-        final int storedCrc = mem.getInt(base + SLOT_CRC_OFFSET);
+        final int computedCrc = Zip.crc32(0, slotAddr, SLOT_CRC_COVERAGE);
+        final int storedCrc = Unsafe.getInt(slotAddr + SLOT_CRC_OFFSET);
         if (computedCrc != storedCrc) {
             return false;
         }
-        final int formatVersion = mem.getInt(base + SLOT_FORMAT_VERSION_OFFSET);
+        final int formatVersion = Unsafe.getInt(slotAddr + SLOT_FORMAT_VERSION_OFFSET);
         if (formatVersion != SLOT_FORMAT_VERSION) {
             return false;
         }
         // The seed cursor is either a real row offset or the "not a mid-sweep
         // generation" sentinel. Any other negative value would make a resume
         // skip backwards through the base cursor.
-        final long seedCursorOffset = mem.getLong(base + SLOT_SEED_CURSOR_OFFSET_OFFSET);
+        final long seedCursorOffset = Unsafe.getLong(slotAddr + SLOT_SEED_CURSOR_OFFSET_OFFSET);
         if (seedCursorOffset < 0 && seedCursorOffset != Numbers.LONG_NULL) {
             return false;
         }
         // The deferred directory registration is either absent outright or fully
         // described. A half-set triple would make the next publication catalogue a
         // segment with a length or page count that names nothing.
-        final long pendingDirectorySegmentId = mem.getLong(base + SLOT_PENDING_DIRECTORY_SEGMENT_ID_OFFSET);
-        final long pendingDirectorySegmentBytes = mem.getLong(base + SLOT_PENDING_DIRECTORY_SEGMENT_BYTES_OFFSET);
-        final long pendingDirectorySegmentPages = mem.getLong(base + SLOT_PENDING_DIRECTORY_SEGMENT_PAGES_OFFSET);
+        final long pendingDirectorySegmentId = Unsafe.getLong(slotAddr + SLOT_PENDING_DIRECTORY_SEGMENT_ID_OFFSET);
+        final long pendingDirectorySegmentBytes = Unsafe.getLong(slotAddr + SLOT_PENDING_DIRECTORY_SEGMENT_BYTES_OFFSET);
+        final long pendingDirectorySegmentPages = Unsafe.getLong(slotAddr + SLOT_PENDING_DIRECTORY_SEGMENT_PAGES_OFFSET);
         if (pendingDirectorySegmentId == Numbers.LONG_NULL) {
             if (pendingDirectorySegmentBytes != 0 || pendingDirectorySegmentPages != 0) {
                 return false;
@@ -627,16 +695,27 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         }
         // A retirement count cannot exceed the ids the epoch ever allocated, or
         // the live entry count derived from the pair goes negative.
-        final long retiredCheckpointCount = mem.getLong(base + SLOT_RETIRED_CHECKPOINT_COUNT_OFFSET);
-        if (retiredCheckpointCount < 0 || retiredCheckpointCount > mem.getLong(base + SLOT_NEXT_CHECKPOINT_ID_OFFSET)) {
+        final long retiredCheckpointCount = Unsafe.getLong(slotAddr + SLOT_RETIRED_CHECKPOINT_COUNT_OFFSET);
+        if (retiredCheckpointCount < 0 || retiredCheckpointCount > Unsafe.getLong(slotAddr + SLOT_NEXT_CHECKPOINT_ID_OFFSET)) {
             return false;
         }
         // These are authoritative publication coordinates. Reject impossible
         // values during bounded slot validation rather than allowing a
         // valid-CRC corrupt slot to release WAL by looking like "no floor".
-        return mem.getLong(base + SLOT_GENERATION_OFFSET) >= 0
-                && mem.getLong(base + SLOT_NORMALIZED_BASE_SEQTXN_OFFSET) >= 0
-                && mem.getLong(base + SLOT_COVERED_LV_SEQTXN_OFFSET) >= 0;
+        return Unsafe.getLong(slotAddr + SLOT_GENERATION_OFFSET) >= 0
+                && Unsafe.getLong(slotAddr + SLOT_NORMALIZED_BASE_SEQTXN_OFFSET) >= 0
+                && Unsafe.getLong(slotAddr + SLOT_COVERED_LV_SEQTXN_OFFSET) >= 0;
+    }
+
+    private void ensureOpen() {
+        if (!isOpen) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint superblock is not open");
+        }
+    }
+
+    private boolean isSlotValid(long base) {
+        return isSlotImageValid(mem.addressOf(base));
     }
 
     private void loadSlot(long base) {

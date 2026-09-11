@@ -76,8 +76,10 @@ import java.util.zip.CRC32;
  * <p>
  * Three gates decide the outcome, in this order, and the cases below cover all three:
  * <ol>
- *     <li>the superblock's magic and layout version - {@code isForeignFormat} resets the whole
- *     directory;</li>
+ *     <li>the superblock's magic and layout version - a version declared in both fields that
+ *     carry one blocks the view and keeps the directory, a slot whose two disagree is damage the
+ *     other slot recovers from, and a directory holding neither a declaration nor a readable slot
+ *     is reset whole;</li>
  *     <li>an unrecognized top-level entry in {@code _checkpoints/} - the same reset, which is
  *     the gate {@code _retirements} would have tripped on a 10.0.x binary;</li>
  *     <li>neither of those moved, but the metadata pages inside are newer. Nothing at the
@@ -121,6 +123,16 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setCurrentMicros(0);
         capture.start();
+    }
+
+    @Test
+    public void testAFlippedBitInTheNewestSlotsFormatVersionFallsBackToTheOtherSlot() throws Exception {
+        assertMemoryLeak(() -> assertAFlippedFormatBitFallsBack(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET));
+    }
+
+    @Test
+    public void testAFlippedBitInTheNewestSlotsMagicNibbleFallsBackToTheOtherSlot() throws Exception {
+        assertMemoryLeak(() -> assertAFlippedFormatBitFallsBack(LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET));
     }
 
     @Test
@@ -299,8 +311,9 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
             shutdown();
 
             // The gate that does announce itself. Both slots, which is what a build that
-            // owned this directory would have left: one declaring slot is enough to block,
-            // by the same rule that lets one foreign slot condemn the file.
+            // owned this directory would have left, though one declaring slot is enough to
+            // block. Declaring takes both fields that carry a version - see
+            // assertAFlippedFormatBitFallsBack for what one of them alone gets.
             setSuperblockFormatVersion(checkpointsRoot, LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1);
 
             restart();
@@ -463,6 +476,10 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
                 | ((bytes[offset + 3] & 0xff) << 24);
     }
 
+    private static long leLong(byte[] bytes, int offset) {
+        return (leInt(bytes, offset) & 0xffff_ffffL) | ((long) leInt(bytes, offset + 4) << 32);
+    }
+
     private static void putLeInt(byte[] bytes, int offset, int value) {
         bytes[offset] = (byte) value;
         bytes[offset + 1] = (byte) (value >>> 8);
@@ -470,8 +487,106 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
         bytes[offset + 3] = (byte) (value >>> 24);
     }
 
+    private static void putLeLong(byte[] bytes, int offset, long value) {
+        putLeInt(bytes, offset, (int) value);
+        putLeInt(bytes, offset + 4, (int) (value >>> 32));
+    }
+
     private static String timestamp(int secondOfDay) {
         return DAILY_ANCHOR + String.format("09:%02d:%02d.000000Z", secondOfDay / 60, secondOfDay % 60);
+    }
+
+    /**
+     * Flips one bit of one format field in the newest superblock slot - rot rather than a write,
+     * so the checksum is left stale - and asserts the view neither blocks nor rebuilds: it
+     * restores off the generation the other slot names, replays the commit the damaged slot
+     * covered, and a later seal overwrites the damage.
+     * <p>
+     * Bit 0 of the field's low byte turns this build's 2 into 3, which read alone is the next
+     * format version. A flip in the version field used to block the view on exactly that reading,
+     * costing a DROP and re-CREATE; one in the magic's nibble used to reset the directory and
+     * rebuild the view from the base rows that survive today.
+     */
+    private void assertAFlippedFormatBitFallsBack(int fieldOffset) throws Exception {
+        seedFiveBoundaries();
+        final File checkpointsRoot = checkpointsRoot();
+        shutdown();
+
+        final File timeline = new File(checkpointsRoot, LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
+        final byte[] bytes = Files.readAllBytes(timeline.toPath());
+        final int generationOffset = LiveViewCheckpointSuperblock.SLOT_GENERATION_OFFSET;
+        final long generation0 = leLong(bytes, generationOffset);
+        final long generation1 = leLong(bytes, LiveViewCheckpointSuperblock.SLOT_SIZE + generationOffset);
+        final int newestSlot = generation1 > generation0 ? 1 : 0;
+        final long intactGeneration = Math.min(generation0, generation1);
+        bytes[newestSlot * LiveViewCheckpointSuperblock.SLOT_SIZE + fieldOffset] ^= 1;
+        Files.write(timeline.toPath(), bytes);
+
+        restart();
+        capture.drain();
+        capture.assertNotLogged("live view checkpoint timeline declares an unsupported format version");
+        capture.assertNotLogged("live view checkpoint timeline carries a foreign layout version");
+        capture.assertNotLogged("live view checkpoint directory was written by another format");
+        capture.assertNotLogged("live view restart rebuilding from applied base");
+
+        final LiveViewInstance instance = instance("lv");
+        Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+        Assert.assertFalse(instance.isInvalid());
+        assertRestoredFromTimeline("lv");
+        Assert.assertEquals(
+                "the restore must come back on the generation the intact slot names",
+                intactGeneration,
+                instance.getCheckpointRestoreGeneration()
+        );
+        assertNoRefreshFaults("lv");
+        assertViewMatchesRecompute();
+
+        // A commit seals over the slot selection passed over, and a restart comes back on the
+        // generation that seal published.
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("INSERT INTO tx VALUES ('" + timestamp(50) + "', 'acct-1', 100.0)");
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        }
+        shutdown();
+        restart();
+        assertRestoredFromTimeline("lv");
+        Assert.assertTrue(
+                "the restart must restore off a generation sealed after the damage",
+                instance("lv").getCheckpointRestoreGeneration() > intactGeneration
+        );
+        assertNoRefreshFaults("lv");
+        assertViewMatchesRecompute();
+        assertQuery("SELECT created_at, account_id, cumulative_sum, cumulative_count FROM lv")
+                .noLeakCheck()
+                .timestamp("created_at")
+                .expectSize()
+                .returns("created_at\taccount_id\tcumulative_sum\tcumulative_count\n" +
+                        "2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1\n" +
+                        "2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1\n" +
+                        "2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2\n" +
+                        "2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2\n" +
+                        "2026-01-01T09:00:40.000000Z\tacct-1\t63.0\t3\n" +
+                        "2026-01-01T09:00:50.000000Z\tacct-1\t163.0\t4\n");
+        final byte[] healed = Files.readAllBytes(timeline.toPath());
+        for (int slot = 0; slot < 2; slot++) {
+            final int base = slot * LiveViewCheckpointSuperblock.SLOT_SIZE;
+            Assert.assertEquals(
+                    "slot " + slot + " must carry this build's magic again",
+                    LiveViewCheckpointSuperblock.SLOT_MAGIC,
+                    leLong(healed, base + LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET)
+            );
+            Assert.assertEquals(
+                    "slot " + slot + " must carry this build's version again",
+                    LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION,
+                    leInt(healed, base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET)
+            );
+            Assert.assertEquals(
+                    "slot " + slot + " must checksum again",
+                    crc32(healed, base, LiveViewCheckpointSuperblock.SLOT_CRC_COVERAGE),
+                    leInt(healed, base + LiveViewCheckpointSuperblock.SLOT_CRC_OFFSET)
+            );
+        }
     }
 
     /**
@@ -661,17 +776,23 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
     }
 
     /**
-     * Rewrites both superblock slots to name {@code formatVersion}, checksum and all, so the
-     * slots are a real generation of that format rather than a torn write. Both slots, and both
-     * directions: the same helper stamps a version this build does not implement and stamps its
-     * own back, which is how a case can show that the block held the directory intact for the
-     * build that does read it.
+     * Rewrites both superblock slots to name {@code formatVersion} the way a build of that
+     * version stamps one - in the version field and in the magic's trailing nibble, checksum and
+     * all - so the slots are a real generation of that format rather than a torn write or a
+     * flipped field. Both slots, and both directions: the same helper stamps a version this build
+     * does not implement and stamps its own back, which is how a case can show that the block
+     * held the directory intact for the build that does read it.
      */
     private void setSuperblockFormatVersion(File checkpointsRoot, int formatVersion) throws IOException {
         final File file = new File(checkpointsRoot, LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
         final byte[] bytes = Files.readAllBytes(file.toPath());
         for (int slot = 0; slot < 2; slot++) {
             final int base = slot * LiveViewCheckpointSuperblock.SLOT_SIZE;
+            putLeLong(
+                    bytes,
+                    base + LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET,
+                    LiveViewCheckpointSuperblock.SLOT_MAGIC_FAMILY | formatVersion
+            );
             putLeInt(
                     bytes,
                     base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET,

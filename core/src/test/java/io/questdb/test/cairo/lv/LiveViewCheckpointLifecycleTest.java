@@ -62,6 +62,49 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
     private static final String LV_DIR = "lv_checkpoint_lifecycle";
 
     @Test
+    public void testADamagedMagicNibbleInOneSlotFallsBackToTheOther() throws Exception {
+        assertMemoryLeak(() -> assertOneDamagedFormatFieldFallsBack(LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET));
+    }
+
+    @Test
+    public void testADamagedVersionFieldInOneSlotFallsBackToTheOther() throws Exception {
+        assertMemoryLeak(() -> assertOneDamagedFormatFieldFallsBack(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET));
+    }
+
+    @Test
+    public void testADeclaredVersionBesideAnIntactSlotStillBlocks() throws Exception {
+        assertMemoryLeak(() -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 10); // slot 0
+            publish(2, 2, 7, 0, 20); // slot 1
+
+            // What a newer build leaves after one publication over this build's directory:
+            // its own slot, naming its version in both fields that carry one, beside this
+            // build's older slot. The intact slot is no licence to fall back. Adopting it
+            // would hand the newer generation's files to the orphan sweep and its slot to
+            // the next publication, destroying what a return to that build needs.
+            bumpTimelineFormatVersion(1);
+
+            final LiveViewCheckpointLifecycle.ReconcileResult result;
+            try (Path dir = checkpointsDir()) {
+                result = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+            }
+            Assert.assertTrue(result.isFormatBlocked());
+            Assert.assertFalse(result.isFormatReset());
+            Assert.assertEquals(
+                    LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1,
+                    result.getForeignFormatVersion()
+            );
+            Assert.assertNull("the intact slot's generation must not be adopted either", result.getStats());
+            Assert.assertTrue(segmentExists(true, 1, false));
+            Assert.assertTrue(
+                    "the newer generation's segment is the newer build's to explain",
+                    segmentExists(true, 2, false)
+            );
+        });
+    }
+
+    @Test
     public void testDefinitionAndHistoryChangeRetiresOldEpoch() throws Exception {
         assertMemoryLeak(() -> {
             ensureDirs();
@@ -176,12 +219,12 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
             }
             Assert.assertTrue(timelineExists());
 
-            // A slot whose checksum agrees with its body but whose layout version
-            // this build does not write: a real generation another build owns, not
-            // a torn write. It announces itself, which is what separates it from
-            // damage - and what this build cannot do is prove that rebuilding the
-            // view from today's surviving source rows reproduces the output those
-            // roots stand for.
+            // A slot naming a layout version this build does not write, in both
+            // fields that carry one and under a checksum that agrees with its body: a
+            // real generation another build owns, not a torn write or a flipped bit.
+            // It announces itself, which is what separates it from damage - and what
+            // this build cannot do is prove that rebuilding the view from today's
+            // surviving source rows reproduces the output those roots stand for.
             bumpTimelineFormatVersion(0);
 
             final LiveViewCheckpointLifecycle.ReconcileResult result;
@@ -534,9 +577,65 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
         return new Path().of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
     }
 
+    /**
+     * Drives reconciliation over a timeline whose newest slot took one flipped bit in
+     * {@code fieldOffset}, and asserts the disposition a torn write gets: the intact slot's
+     * generation is adopted, and the next publication overwrites the damaged slot.
+     */
+    private void assertOneDamagedFormatFieldFallsBack(long fieldOffset) {
+        ensureDirs();
+        publish(1, 1, 7, 0, 10); // slot 0
+        publish(2, 2, 7, 0, 20); // slot 1, the newest
+
+        // One bit and no checksum repair: rot rather than a write. Bit 0 of the field's low
+        // byte turns this build's 2 into 3, the value a newer build would stamp - into both
+        // fields, which is the whole difference.
+        withTimelineMemory(mem -> {
+            final long offset = LiveViewCheckpointSuperblock.SLOT_SIZE + fieldOffset;
+            mem.putByte(offset, (byte) (mem.getByte(offset) ^ 1));
+        });
+
+        final LiveViewCheckpointLifecycle.ReconcileResult result;
+        try (Path dir = checkpointsDir()) {
+            result = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+        }
+        Assert.assertFalse("one damaged field declares no format to block on", result.isFormatBlocked());
+        Assert.assertFalse(
+                "resetting would discard the generation the intact slot names",
+                result.isFormatReset()
+        );
+        Assert.assertFalse(result.isEpochReplaced());
+        Assert.assertTrue(timelineExists());
+        Assert.assertNotNull("the intact slot's generation is adopted", result.getStats());
+        Assert.assertEquals(1, result.getWalPurgeFloor());
+        Assert.assertEquals(1, result.getNormalizedBaseSeqTxn());
+
+        // The next publication targets the slot selection passed over, so one seal clears
+        // the damage and both slots are this build's again.
+        publish(2, 3, 7, 0, 30);
+        try (LiveViewCheckpointMetaStore store = openStore()) {
+            final LiveViewCheckpointSuperblock superblock = store.getSuperblock();
+            Assert.assertEquals(1, superblock.getSelectedSlot());
+            Assert.assertEquals(2, superblock.generation);
+            Assert.assertEquals("both slots must validate again", 1, superblock.getOldestValidGeneration());
+        }
+        try (Path dir = checkpointsDir()) {
+            Assert.assertFalse(LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true).isFormatReset());
+        }
+    }
+
+    /**
+     * Stamps the magic and layout version a later build writes into {@code slot}.
+     * The magic's trailing nibble tracks the version, so a build one version on
+     * carries both one higher.
+     */
     private void bumpTimelineFormatVersion(int slot) {
         withTimelineMemory(mem -> {
             final long base = (long) slot * LiveViewCheckpointSuperblock.SLOT_SIZE;
+            mem.putLong(
+                    base + LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET,
+                    LiveViewCheckpointSuperblock.SLOT_MAGIC + 1
+            );
             mem.putInt(
                     base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET,
                     LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1
