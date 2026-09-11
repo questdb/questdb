@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHandler;
@@ -42,6 +43,11 @@ public class HealthCheckProcessor implements HttpRequestProcessor, HttpRequestHa
     public HealthCheckProcessor(HttpServerConfiguration configuration) {
         this.pessimisticMode = configuration.isPessimisticHealthCheckEnabled();
         this.requiredAuthType = configuration.getRequiredAuthType();
+    }
+
+    @Override
+    public void authorize(SecurityContext securityContext) {
+        securityContext.authorizeHealthCheck();
     }
 
     @Override
