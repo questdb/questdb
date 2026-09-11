@@ -235,10 +235,12 @@ public class SqlOptimiser implements Mutable {
     // Second stack, separate from sqlNodeStack because some operations
     // call methods that clear and reuse sqlNodeStack.
     private final ArrayDeque<ExpressionNode> sqlNodeStack2 = new ArrayDeque<>();
-    // Scratch structures for chooseSubsampleKeepAlias: reserved output names of a wildcard
-    // SUBSAMPLE projection, mirrored ahead of rewriteSelectClause's wildcard expansion.
-    private final LowerCaseCharSequenceIntHashMap subsampleReservedAliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
-    private final LowerCaseCharSequenceHashSet subsampleReservedAliases = new LowerCaseCharSequenceHashSet();
+    // Depth-indexed pool of reservation namespaces for the SUBSAMPLE wildcard mirror
+    // (chooseSubsampleKeepAlias / resolveWildcardSubsampleTimestampAlias): scope 0 is the projection
+    // being desugared, scope d+1 is the isolated namespace of the subquery/CTE wrapper nested d+1
+    // levels below it, mirrored ahead of rewriteSelectClause's wildcard expansion. The list grows
+    // lazily to the deepest wrapper nesting seen and is never shrunk.
+    private final ObjList<SubsampleNameScope> subsampleNameScopes = new ObjList<>();
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
@@ -266,6 +268,8 @@ public class SqlOptimiser implements Mutable {
     private final IntObjHashMap<ObjList<QueryColumn>> windowFunctionHashMap = new IntObjHashMap<>();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
+    // Index of the SUBSAMPLE mirror scope currently reserving names; 0 outside a wrapper walk.
+    private int subsampleNameScopeDepth;
     // True when the current join level contains a non-equi RIGHT/FULL OUTER join that
     // homogenizeCrossJoins turns into a CROSS_RIGHT/CROSS_FULL and reorderTables appends last. Such a
     // join NULL-extends tables that execute before it, but masterNullingJoinIndex (model order) cannot
@@ -431,8 +435,10 @@ public class SqlOptimiser implements Mutable {
         tempCharSequenceHashSet.clear();
         pivotAliasMap.clear();
         pivotAliasSequenceMap.clear();
-        subsampleReservedAliases.clear();
-        subsampleReservedAliasSequenceMap.clear();
+        subsampleNameScopeDepth = 0;
+        for (int i = 0, n = subsampleNameScopes.size(); i < n; i++) {
+            subsampleNameScopes.getQuick(i).clear();
+        }
         tmpStringSink.clear();
         clearWindowFunctionHashMap();
         lateralJoinRewriter.clear();
@@ -11039,18 +11045,21 @@ public class SqlOptimiser implements Mutable {
      * __keep_subsample becomes __keep_subsample1) are reserved exactly as the expansion will assign
      * them. Reserving a name the expansion never assigns only escapes the helper further, which is
      * harmless; the reserved set can never miss a name the expansion assigns in the __keep_subsample*
-     * family.
+     * family. A subquery/CTE wrapper source contributes only the names its projection exports into a
+     * wildcard (see {@link #reserveSubsampleSourceNames}): an inner keep column excluded from wildcard
+     * expansion is reserved inside its own projection scope but never exported, so the outer helper
+     * sees FEWER reserved names than a flat walk would produce, which is exactly right because the
+     * expansion never imports that column either.
      */
     private CharSequence chooseSubsampleKeepAlias(IQueryModel model, IQueryModel nested) {
-        subsampleReservedAliases.clear();
-        subsampleReservedAliasSequenceMap.clear();
+        final SubsampleNameScope scope = resetSubsampleNameScope(0);
         reserveSubsampleProjectionNames(model.getBottomUpColumns(), nested, null);
         return SqlUtil.createColumnAlias(
                 characterStore,
                 "__keep_subsample",
                 -1,
-                subsampleReservedAliases,
-                subsampleReservedAliasSequenceMap,
+                scope.reservedAliases,
+                scope.aliasSequenceMap,
                 false
         );
     }
@@ -11062,6 +11071,9 @@ public class SqlOptimiser implements Mutable {
      * assigned to the column of that name imported from the primary FROM model (capture mode, used
      * by {@link #resolveWildcardSubsampleTimestampAlias}); with a null {@code designatedName} it
      * only reserves and returns null (keep-alias mode, byte-identical to the historical behavior).
+     * Explicit aliases that the expansion would import into an enclosing wildcard
+     * ({@link QueryColumn#isIncludeIntoWildcard()}, the filter createSelectColumnsForWildcard0
+     * applies) are also exported to the current scope so an enclosing wrapper can feed them upward.
      */
     private CharSequence reserveSubsampleProjectionNames(ObjList<QueryColumn> cols, IQueryModel fromModel, CharSequence designatedName) {
         for (int i = 0, n = cols.size(); i < n; i++) {
@@ -11074,6 +11086,9 @@ public class SqlOptimiser implements Mutable {
                 }
             } else {
                 final CharSequence reserved = reserveSubsampleOutputName(qc.getAlias());
+                if (qc.isIncludeIntoWildcard()) {
+                    exportSubsampleName(reserved);
+                }
                 if (designatedName != null && Chars.equalsIgnoreCase(qc.getAlias(), designatedName)) {
                     return reserved;
                 }
@@ -11087,14 +11102,15 @@ public class SqlOptimiser implements Mutable {
      * mirroring the expansion's in-order alias dedup (the {@link #chooseSubsampleKeepAlias}
      * technique). An explicit literal column that references the designated timestamp (qualified
      * against the primary FROM model, same rule as {@link #findDesignatedTimestampProjection})
-     * carries designation under its parse-final alias; otherwise the wildcard importing the primary
-     * model carries it under the first free variant of its name at that point of the expansion.
+     * carries designation under the first free variant of its alias at that point of the expansion
+     * (an earlier wildcard over another join branch may already own the bare name: SELECT b.*, a.ts
+     * exposes a.ts as ts1); otherwise the wildcard importing the primary model carries it under the
+     * first free variant of its name at that point of the expansion.
      * Returns null when no projection column exposes the designated timestamp - the caller reports
      * the documented hidden-timestamp error, matching the explicit-projection contract.
      */
     private CharSequence resolveWildcardSubsampleTimestampAlias(IQueryModel model, IQueryModel fromModel, CharSequence sourceTimestamp) {
-        subsampleReservedAliases.clear();
-        subsampleReservedAliasSequenceMap.clear();
+        resetSubsampleNameScope(0);
         final ObjList<QueryColumn> bottomUp = model.getBottomUpColumns();
         final ObjList<QueryColumn> cols = bottomUp.size() > 0 ? bottomUp : model.getColumns();
         for (int i = 0, n = cols.size(); i < n; i++) {
@@ -11106,7 +11122,7 @@ public class SqlOptimiser implements Mutable {
                     return captured;
                 }
             } else if (ast != null && ast.type == LITERAL && isDesignatedTimestampReference(ast.token, sourceTimestamp, fromModel)) {
-                return qc.getAlias();
+                return reserveSubsampleOutputName(qc.getAlias());
             } else {
                 reserveSubsampleOutputName(qc.getAlias());
             }
@@ -11119,7 +11135,10 @@ public class SqlOptimiser implements Mutable {
      * only the alias-resolved join model for 't.*' (mirroring createSelectColumnsForWildcard). The
      * model-alias indexes the expansion consults are populated by resolveJoinColumns, which runs
      * AFTER rewriteSubsample, so the 't.*' prefix is matched against each join model's alias/table
-     * name directly - the same values collectModelAlias will register. An unresolvable prefix
+     * name - the same values collectModelAlias will register. {@code fromModel} must be the FROM
+     * target the wildcard's projection selects from, never the projection model itself: the
+     * expansion resolves the prefix against that model's join list, and a projection model carries
+     * neither the table name nor (for an unaliased FROM) the alias. An unresolvable prefix
      * reserves nothing: the expansion throws "invalid table alias" before any helper collision
      * could matter.
      */
@@ -11157,10 +11176,31 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Reserves the output names of one wildcard source model. A subquery projection contributes its
-     * explicit aliases and re-expands its own nested wildcards; an enumerated leaf table (or unnest)
-     * contributes its wildcard column names; an empty pass-through wrapper delegates to its nested
-     * model, exactly as the recursive rewriteSelectClause expansion resolves it.
+     * Reserves the output names of one wildcard source model, exactly as the recursive
+     * rewriteSelectClause expansion resolves it. The branches are checked in this order:
+     * <ol>
+     * <li>a projection (bottom-up columns present) contributes its explicit aliases and re-expands
+     * its own nested wildcards against its own FROM model;</li>
+     * <li>a column-less subquery/CTE wrapper whose nested model is a projection (the NONE model
+     * SqlParser.parseFromClause, the WITH clause and view inlining build, plus the synthetic
+     * wrappers of wrapInSubQuery, createWrapperModel and the artificial-star subquery - every
+     * producer places the projection directly under the NONE model) contributes that projection's
+     * post-dedup output names in order: the projection is walked in an isolated scope one level
+     * deeper (so an inner 't.*' resolves against the inner FROM and inner collisions dedup only
+     * against each other, as the depth-first expansion refreshes the wrapper from the rewritten
+     * projection), and the names it exports into a wildcard are then fed through the current scope,
+     * where the one equal to the boundary-visible {@code designatedName} yields the outer alias;</li>
+     * <li>an enumerated leaf table or unnest (no nested model) contributes its wildcard column
+     * names. A model with a nested model never takes this branch: its field maps are copies derived
+     * by rewriteTopLevelLiteralsToFunctions, and the copied entries include the raw wildcard
+     * literals a leaf never holds;</li>
+     * <li>any other column-less pass-through wrapper delegates to its nested model.</li>
+     * </ol>
+     * Each wrapper level re-walks its whole subtree, and findVisibleSubsampleTimestamp already
+     * re-walks once per level, so a chain of k wrappers (a desugared inner SUBSAMPLE alone adds
+     * three synthetic levels) costs O(k^2) reservations. The nesting depth is bounded by the parsed
+     * query, so the cost is accepted; caching per-level results would have to re-derive the
+     * isolation invariant above and is deliberately not done.
      */
     private CharSequence reserveSubsampleSourceNames(IQueryModel srcModel, CharSequence designatedName) {
         if (srcModel == null) {
@@ -11173,20 +11213,15 @@ public class SqlOptimiser implements Mutable {
             // already resolved the boundary-visible name, including any rename inside the subquery
             return reserveSubsampleProjectionNames(cols, srcModel.getNestedModel(), designatedName);
         }
-        final ObjList<CharSequence> wildcardNames = srcModel.getWildcardColumnNames();
-        if (wildcardNames.size() > 0) {
+        final IQueryModel nested = srcModel.getNestedModel();
+        if (nested == null) {
+            final ObjList<CharSequence> wildcardNames = srcModel.getWildcardColumnNames();
             for (int j = 0, z = wildcardNames.size(); j < z; j++) {
                 final CharSequence name = wildcardNames.getQuick(j);
                 final QueryColumn qc = srcModel.getAliasToColumnMap().get(name);
-                if (qc != null && qc.getAst() != null && qc.getAst().isWildcard()) {
-                    // a field-registered star (subquery/CTE wrapper): its names come from the
-                    // wrapper's own FROM, exactly as the recursive rewrite will expand it
-                    final CharSequence captured = reserveSubsampleWildcardNames(qc.getAst().token, srcModel.getNestedModel(), designatedName);
-                    if (captured != null) {
-                        return captured;
-                    }
-                } else if (qc == null || qc.isIncludeIntoWildcard()) {
+                if (qc == null || qc.isIncludeIntoWildcard()) {
                     final CharSequence reserved = reserveSubsampleOutputName(name);
+                    exportSubsampleName(reserved);
                     if (designatedName != null && Chars.equalsIgnoreCase(name, designatedName)) {
                         return reserved;
                     }
@@ -11194,24 +11229,68 @@ public class SqlOptimiser implements Mutable {
             }
             return null;
         }
-        return reserveSubsampleSourceNames(srcModel.getNestedModel(), designatedName);
+        if (nested.getBottomUpColumns().size() > 0) {
+            final int depth = subsampleNameScopeDepth;
+            final SubsampleNameScope innerScope = resetSubsampleNameScope(depth + 1);
+            reserveSubsampleSourceNames(nested, null);
+            subsampleNameScopeDepth = depth;
+            // Feed the child's export list to completion before anything can push depth + 1 again:
+            // sibling wrappers (join branches) are walked sequentially, so the pooled scope at
+            // depth + 1 is not reused until this loop has finished reading it.
+            final ObjList<CharSequence> exportedNames = innerScope.exportedNames;
+            for (int j = 0, z = exportedNames.size(); j < z; j++) {
+                final CharSequence name = exportedNames.getQuick(j);
+                final CharSequence reserved = reserveSubsampleOutputName(name);
+                exportSubsampleName(reserved);
+                if (designatedName != null && Chars.equalsIgnoreCase(name, designatedName)) {
+                    return reserved;
+                }
+            }
+            return null;
+        }
+        return reserveSubsampleSourceNames(nested, designatedName);
     }
 
     /**
-     * Feeds one output name through the expansion's dedup algorithm and records the assigned alias,
-     * so later duplicates chain to the same suffixed variants the real expansion will pick.
+     * Feeds one output name through the expansion's dedup algorithm and records the assigned alias
+     * in the current scope, so later duplicates chain to the same suffixed variants the real
+     * expansion will pick.
      */
     private CharSequence reserveSubsampleOutputName(CharSequence name) {
+        final SubsampleNameScope scope = subsampleNameScopes.getQuick(subsampleNameScopeDepth);
         final CharSequence alias = SqlUtil.createColumnAlias(
                 characterStore,
                 name,
                 Chars.indexOfLastUnquoted(name, '.'),
-                subsampleReservedAliases,
-                subsampleReservedAliasSequenceMap,
+                scope.reservedAliases,
+                scope.aliasSequenceMap,
                 false
         );
-        subsampleReservedAliases.add(alias);
+        scope.reservedAliases.add(alias);
         return alias;
+    }
+
+    /**
+     * Records an alias the current projection level exposes to an enclosing wildcard. Scope 0 has
+     * no enclosing wrapper reading its list; the entries are simply discarded on the next reset.
+     */
+    private void exportSubsampleName(CharSequence alias) {
+        subsampleNameScopes.getQuick(subsampleNameScopeDepth).exportedNames.add(alias);
+    }
+
+    /**
+     * Makes {@code depth} the current mirror scope with an empty namespace, growing the pool on
+     * first use of a nesting level. Both mirror entry points reset to depth 0 so a scope left dirty
+     * by an earlier compilation can never leak into the next one.
+     */
+    private SubsampleNameScope resetSubsampleNameScope(int depth) {
+        while (subsampleNameScopes.size() <= depth) {
+            subsampleNameScopes.add(new SubsampleNameScope());
+        }
+        final SubsampleNameScope scope = subsampleNameScopes.getQuick(depth);
+        scope.clear();
+        subsampleNameScopeDepth = depth;
+        return scope;
     }
 
     /**
@@ -14870,6 +14949,25 @@ public class SqlOptimiser implements Mutable {
 
     private static class NonLiteralException extends RuntimeException {
         private static final NonLiteralException INSTANCE = new NonLiteralException();
+    }
+
+    /**
+     * One reservation namespace of the SUBSAMPLE wildcard mirror: the aliases already assigned at
+     * this projection level, the dedup sequence counters that go with them, and the aliases this
+     * level exports into an enclosing wildcard, in expansion order. Pooled per nesting depth in
+     * {@link #subsampleNameScopes}.
+     */
+    private static final class SubsampleNameScope implements Mutable {
+        private final LowerCaseCharSequenceIntHashMap aliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
+        private final ObjList<CharSequence> exportedNames = new ObjList<>();
+        private final LowerCaseCharSequenceHashSet reservedAliases = new LowerCaseCharSequenceHashSet();
+
+        @Override
+        public void clear() {
+            aliasSequenceMap.clear();
+            exportedNames.clear();
+            reservedAliases.clear();
+        }
     }
 
     /**

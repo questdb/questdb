@@ -324,6 +324,301 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedWrapperUnaliasedQualifiedWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // oracle: the wrapper without SUBSAMPLE exposes the designated timestamp unchanged
+            assertQuery("SELECT * FROM (SELECT ca.* FROM ca) q").timestamp("ts").expectSize().returns(allPrimaryRows());
+            // oracle: the same projection with enumerated columns, and with an aliased table, already compile
+            assertQuery("SELECT * FROM (SELECT ts, x FROM ca) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+            assertQuery("SELECT * FROM (SELECT a.* FROM ca a) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+            // an unaliased table.* inside the wrapper must resolve exactly like the aliased form
+            assertQuery("SELECT * FROM (SELECT ca.* FROM ca) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+            assertQuery("SELECT q.* FROM (SELECT ca.* FROM ca) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+            assertQuery("SELECT * FROM (SELECT ca.* FROM ca) q SUBSAMPLE minmax(x, 2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+            assertQuery("SELECT * FROM (SELECT ca.* FROM ca) q SUBSAMPLE lttb(x, 2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+            // two wrapper levels: the inner wrapper's names are re-derived once per level
+            assertQuery("SELECT * FROM (SELECT * FROM (SELECT ca.* FROM ca) q) r SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+        });
+    }
+
+    @Test
+    public void testNestedCteQualifiedWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("WITH q AS (SELECT ca.* FROM ca) SELECT * FROM q").timestamp("ts").expectSize().returns(allPrimaryRows());
+            assertQuery("WITH q AS (SELECT ts, x FROM ca) SELECT * FROM q SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+            assertQuery("WITH q AS (SELECT ca.* FROM ca) SELECT * FROM q SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+            assertQuery("WITH q AS (SELECT ca.* FROM ca) SELECT * FROM q SUBSAMPLE lttb(x, 2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+        });
+    }
+
+    @Test
+    public void testNestedWrapperRenamedDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // b.ts claims "ts" first, so the designated a.ts leaves the wrapper as ts1
+            final String renamedSource = " FROM (SELECT b.ts, a.*" + JOIN + ") q";
+            assertQuery("SELECT *" + renamedSource).timestamp("ts1").noRandomAccess().expectSize().returns("""
+                    ts\tts1\tx
+                    1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1
+                    1970-01-01T00:00:00.000015Z\t1970-01-01T00:00:00.000020Z\t2
+                    1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000030Z\t3
+                    1970-01-01T00:00:00.000035Z\t1970-01-01T00:00:00.000040Z\t4
+                    """);
+            final String renamedRows = """
+                    ts\tts1\tx
+                    1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1
+                    1970-01-01T00:00:00.000035Z\t1970-01-01T00:00:00.000040Z\t4
+                    """;
+            // oracle: the explicit projection samples by ts1
+            assertQuery("SELECT ts, ts1, x" + renamedSource + " SUBSAMPLE uniform(2)")
+                    .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns(renamedRows);
+            assertQuery("SELECT *" + renamedSource + " SUBSAMPLE uniform(2)")
+                    .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns(renamedRows);
+            assertQuery("SELECT q.*" + renamedSource + " SUBSAMPLE uniform(2)")
+                    .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns(renamedRows);
+            assertQuery("SELECT *" + renamedSource + " SUBSAMPLE minmax(x, 2)")
+                    .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns(renamedRows);
+
+            // both branches through wildcards: b.* then a.*
+            final String reversedSource = " FROM (SELECT b.*, a.*" + JOIN + ") q";
+            final String reversedRows = """
+                    ts\ty\tts1\tx
+                    1970-01-01T00:00:00.000005Z\t10\t1970-01-01T00:00:00.000010Z\t1
+                    1970-01-01T00:00:00.000035Z\t30\t1970-01-01T00:00:00.000040Z\t4
+                    """;
+            assertQuery("SELECT ts, y, ts1, x" + reversedSource + " SUBSAMPLE uniform(2)")
+                    .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns(reversedRows);
+            assertQuery("SELECT *" + reversedSource + " SUBSAMPLE uniform(2)")
+                    .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns(reversedRows);
+
+            // an outer collision on top of the inner rename: ts (constant), ts1 (b.ts), ts11 (a.ts)
+            assertQuery("SELECT 1 AS ts, *" + renamedSource).timestamp("ts11").noRandomAccess().expectSize().returns("""
+                    ts\tts1\tts11\tx
+                    1\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1
+                    1\t1970-01-01T00:00:00.000015Z\t1970-01-01T00:00:00.000020Z\t2
+                    1\t1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000030Z\t3
+                    1\t1970-01-01T00:00:00.000035Z\t1970-01-01T00:00:00.000040Z\t4
+                    """);
+            assertQuery("SELECT 1 AS ts, *" + renamedSource + " SUBSAMPLE uniform(2)")
+                    .timestamp("ts11").withPlanContaining("over (order by [ts11])").returns("""
+                    ts\tts1\tts11\tx
+                    1\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1
+                    1\t1970-01-01T00:00:00.000035Z\t1970-01-01T00:00:00.000040Z\t4
+                    """);
+        });
+    }
+
+    @Test
+    public void testNestedWrapperConstantTimestampCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String rows = """
+                    ts\tts1\tx
+                    1\t1970-01-01T00:00:00.000010Z\t1
+                    1\t1970-01-01T00:00:00.000040Z\t4
+                    """;
+            // oracles: the explicit projection over the wrapper, and the collision placed on the outer projection
+            assertQuery("SELECT ts, ts1, x FROM (SELECT 1 AS ts, * FROM ca) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns(rows);
+            assertQuery("SELECT 1 AS ts, * FROM (SELECT * FROM ca) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns(rows);
+            assertQuery("SELECT * FROM (SELECT 1 AS ts, * FROM ca) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns(rows);
+            assertQuery("SELECT * FROM (SELECT 1 AS ts, ca.* FROM ca) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns(rows);
+        });
+    }
+
+    @Test
+    public void testNestedWrapperTrailingRenameControl() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // a.* first: the designated a.ts keeps "ts" and the trailing b.ts becomes ts1
+            final String rows = """
+                    ts\tx\tts1
+                    1970-01-01T00:00:00.000010Z\t1\t1970-01-01T00:00:00.000005Z
+                    1970-01-01T00:00:00.000040Z\t4\t1970-01-01T00:00:00.000035Z
+                    """;
+            assertQuery("SELECT * FROM (SELECT a.*, b.ts" + JOIN + ") q SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(rows);
+            assertQuery("SELECT * FROM (SELECT ca.*, cb.ts FROM ca ASOF JOIN cb) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(rows);
+        });
+    }
+
+    @Test
+    public void testNestedWrapperHiddenTimestampControls() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String hidden = "SUBSAMPLE requires a designated timestamp column; the SELECT list must include it unchanged";
+            // the primary branch's timestamp never leaves the wrapper
+            assertMarkedError("SELECT * FROM (SELECT b.*" + JOIN + ") q ^SUBSAMPLE uniform(2)", hidden);
+            assertMarkedError("WITH q AS (SELECT b.*" + JOIN + ") SELECT * FROM q ^SUBSAMPLE uniform(2)", hidden);
+            // an explicit outer projection that drops ts1 hides it, one that keeps it samples by it
+            assertMarkedError("SELECT ts, x FROM (SELECT b.*, a.*" + JOIN + ") q ^SUBSAMPLE uniform(2)", hidden);
+            assertQuery("SELECT ts, ts1, x FROM (SELECT b.*, a.*" + JOIN + ") q SUBSAMPLE uniform(2)")
+                    .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns("""
+                    ts\tts1\tx
+                    1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1
+                    1970-01-01T00:00:00.000035Z\t1970-01-01T00:00:00.000040Z\t4
+                    """);
+            // an unresolvable prefix reserves nothing; the mirror reports the hidden timestamp for both forms.
+            // These two pins document PRE-EXISTING error precedence (the mirror runs before the expansion
+            // that would report "invalid table alias"), not a designed contract; a later change may
+            // legitimately switch them to the expansion's message.
+            assertMarkedError("SELECT zz.* FROM ca ^SUBSAMPLE uniform(2)", hidden);
+            assertMarkedError("SELECT * FROM (SELECT zz.* FROM ca) q ^SUBSAMPLE uniform(2)", hidden);
+            assertMarkedError("SELECT * FROM (SELECT ^zz.* FROM ca) q", "invalid table alias");
+        });
+    }
+
+    @Test
+    public void testWildcardBeforeExplicitDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // b.* claims "ts" first, so the explicit designated a.ts leaves the projection as ts1
+            assertQuery("SELECT b.*, a.ts" + JOIN).timestamp("ts1").noRandomAccess().expectSize().returns("""
+                    ts\ty\tts1
+                    1970-01-01T00:00:00.000005Z\t10\t1970-01-01T00:00:00.000010Z
+                    1970-01-01T00:00:00.000015Z\t90\t1970-01-01T00:00:00.000020Z
+                    1970-01-01T00:00:00.000025Z\t20\t1970-01-01T00:00:00.000030Z
+                    1970-01-01T00:00:00.000035Z\t30\t1970-01-01T00:00:00.000040Z
+                    """);
+            final String rows = """
+                    ts\ty\tts1
+                    1970-01-01T00:00:00.000005Z\t10\t1970-01-01T00:00:00.000010Z
+                    1970-01-01T00:00:00.000035Z\t30\t1970-01-01T00:00:00.000040Z
+                    """;
+            // oracle: the fully explicit projection (the parser dedups a.ts to ts1) samples by ts1
+            assertQuery("SELECT b.ts, b.y, a.ts" + JOIN + " SUBSAMPLE uniform(2)")
+                    .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns(rows);
+            assertQuery("SELECT b.*, a.ts" + JOIN + " SUBSAMPLE uniform(2)")
+                    .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns(rows);
+            assertQuery("SELECT * FROM (SELECT b.*, a.ts" + JOIN + ") q SUBSAMPLE uniform(2)")
+                    .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns(rows);
+        });
+    }
+
+    @Test
+    public void testNestedWrapperShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // inner SUBSAMPLE already desugared under the wrapper (three synthetic wrapper levels)
+            assertQuery("SELECT * FROM (SELECT ts, x FROM ca SUBSAMPLE uniform(4)) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+            assertQuery("SELECT * FROM (SELECT ca.* FROM ca SUBSAMPLE uniform(4)) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+            // UNION ALL wrapper with an explicit TIMESTAMP(ts): the first branch's projection names it
+            assertQuery("SELECT * FROM (SELECT ts, x FROM ca UNION ALL SELECT ts, x FROM ca WHERE x < 0) TIMESTAMP(ts) SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+            assertQuery("SELECT * FROM (SELECT ca.* FROM ca UNION ALL SELECT ca.* FROM ca WHERE x < 0) TIMESTAMP(ts) SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+            // wrapper over a JOIN whose primary branch is an unaliased-star subquery
+            final String joinRows = """
+                    ts\tx\tts1\ty
+                    1970-01-01T00:00:00.000010Z\t1\t1970-01-01T00:00:00.000005Z\t10
+                    1970-01-01T00:00:00.000040Z\t4\t1970-01-01T00:00:00.000035Z\t30
+                    """;
+            assertQuery("SELECT * FROM (SELECT * FROM (SELECT ts, x FROM ca) a ASOF JOIN cb b) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(joinRows);
+            assertQuery("SELECT * FROM (SELECT * FROM (SELECT ca.* FROM ca) a ASOF JOIN cb b) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(joinRows);
+            // the wrapper is the primary join model and SUBSAMPLE sits on the join level
+            assertQuery("SELECT * FROM (SELECT ts, x FROM ca) a ASOF JOIN cb b SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(joinRows);
+            assertQuery("SELECT * FROM (SELECT ca.* FROM ca) a ASOF JOIN cb b SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(joinRows);
+            // a user column named after the keep helper inside the wrapper: the helper escapes to __keep_subsample1
+            final String keepRows = """
+                    ts\tx\t__keep_subsample
+                    1970-01-01T00:00:00.000010Z\t1\ttrue
+                    1970-01-01T00:00:00.000040Z\t4\ttrue
+                    """;
+            assertQuery("SELECT * FROM (SELECT ts, x, true AS __keep_subsample FROM ca) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(keepRows);
+            assertQuery("SELECT * FROM (SELECT ca.*, true AS __keep_subsample FROM ca) q SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(keepRows);
+        });
+    }
+
+    @Test
+    public void testNestedViewQualifiedWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v AS (SELECT ca.* FROM ca)");
+            drainViewQueue();
+            // noLeakCheck: the per-query leak battery clears the engine, which empties the view graph
+            assertQuery("SELECT * FROM v").noLeakCheck().timestamp("ts").expectSize().returns(allPrimaryRows());
+            assertQuery("SELECT ts, x FROM v SUBSAMPLE uniform(2)")
+                    .noLeakCheck().timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+            assertQuery("SELECT * FROM v SUBSAMPLE uniform(2)")
+                    .noLeakCheck().timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+            assertQuery("SELECT * FROM v SUBSAMPLE lttb(x, 2)")
+                    .noLeakCheck().timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+        });
+    }
+
+    @Test
+    public void testNestedSampleByWrapper() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String allRows = """
+                    ts\ta
+                    1970-01-01T00:00:00.000010Z\t1.0
+                    1970-01-01T00:00:00.000020Z\t2.0
+                    1970-01-01T00:00:00.000030Z\t3.0
+                    1970-01-01T00:00:00.000040Z\t4.0
+                    """;
+            final String rows = """
+                    ts\ta
+                    1970-01-01T00:00:00.000010Z\t1.0
+                    1970-01-01T00:00:00.000040Z\t4.0
+                    """;
+            assertQuery("SELECT * FROM (SELECT ts, avg(x) a FROM ca SAMPLE BY 10U) TIMESTAMP(ts)")
+                    .timestamp("ts").expectSize().returns(allRows);
+            assertQuery("SELECT * FROM (SELECT ts, avg(x) a FROM ca SAMPLE BY 10U) TIMESTAMP(ts) SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(rows);
+            // the time zone forces rewriteSampleBy to wrap the aggregation in an explicit projection;
+            // 10U buckets keep the same UTC boundaries, so the no-SUBSAMPLE twin reports the same rows
+            assertQuery("SELECT * FROM (SELECT ts, avg(x) a FROM ca SAMPLE BY 10U ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin') TIMESTAMP(ts)")
+                    .timestamp("ts").expectSize().returns(allRows);
+            assertQuery("SELECT * FROM (SELECT ts, avg(x) a FROM ca SAMPLE BY 10U ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin') TIMESTAMP(ts) SUBSAMPLE uniform(2)")
+                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(rows);
+        });
+    }
+
+    @Test
+    public void testNestedWrapperFailureThenReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // the value argument fails after the mirror already ran for the wrapper shape; the same
+            // compiler must then resolve a wrapper query with a clean reservation namespace
+            assertCompileErrorThenReuse(
+                    "SELECT * FROM (SELECT ca.* FROM ca) q SUBSAMPLE minmax(^missing, 2)",
+                    "column not found in SELECT list: missing",
+                    "SELECT * FROM (SELECT ca.* FROM ca) q SUBSAMPLE minmax(x, 2)"
+            );
+            assertCompileErrorThenReuse(
+                    "SELECT * FROM (SELECT b.ts, a.*" + JOIN + ") q SUBSAMPLE minmax(^missing, 2)",
+                    "column not found in SELECT list: missing",
+                    "SELECT * FROM (SELECT ca.* FROM ca) q SUBSAMPLE minmax(x, 2)"
+            );
+        });
+    }
+
+    @Test
     public void testNullComputedValueControl() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -1464,6 +1759,10 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
     }
 
     private void assertCompileErrorThenReuse(String markedSql, String message) throws Exception {
+        assertCompileErrorThenReuse(markedSql, message, "SELECT * FROM ca SUBSAMPLE minmax(x, 2)");
+    }
+
+    private void assertCompileErrorThenReuse(String markedSql, String message, String reuseSql) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             try {
                 final RecordCursorFactory factory = compiler.compile(markedSql.replace("^", ""), sqlExecutionContext).getRecordCursorFactory();
@@ -1475,7 +1774,7 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
                 Assert.assertEquals(markedSql.indexOf('^'), e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), message);
             }
-            try (RecordCursorFactory factory = compiler.compile("SELECT * FROM ca SUBSAMPLE minmax(x, 2)", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = compiler.compile(reuseSql, sqlExecutionContext).getRecordCursorFactory()) {
                 assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").returns(primaryRows());
             }
         }
