@@ -18,6 +18,21 @@ public class HttpCookieHandlerImpl implements HttpCookieHandler {
     protected static final CarrierLocal<StringSink> tlSink2 = new CarrierLocal<>(StringSink::new);
 
     @Override
+    public CharSequence getSessionCookieValue(CharSequence sessionId) {
+        final StringSink cookieValueSink = tlSink1.get();
+        cookieValueSink.clear();
+
+        if (sessionId != null) {
+            cookieValueSink.put(sessionId);
+            appendSessionCookieAttributes(cookieValueSink);
+        } else {
+            cookieValueSink.put(DELETED_COOKIE);
+        }
+
+        return cookieValueSink;
+    }
+
+    @Override
     public boolean parseCookies(HttpConnectionContext context) {
         final CharSequenceObjHashMap<CharSequence> parsedCookies = context.getParsedCookiesMap();
         parsedCookies.clear();
@@ -58,17 +73,7 @@ public class HttpCookieHandlerImpl implements HttpCookieHandler {
 
     @Override
     public void setSessionCookie(HttpResponseHeader header, CharSequence sessionId) {
-        final StringSink cookieValueSink = tlSink1.get();
-        cookieValueSink.clear();
-
-        if (sessionId != null) {
-            cookieValueSink.put(sessionId);
-            appendSessionCookieAttributes(cookieValueSink);
-        } else {
-            cookieValueSink.put(DELETED_COOKIE);
-        }
-
-        header.setCookie(SESSION_COOKIE_NAME, cookieValueSink);
+        header.setCookie(SESSION_COOKIE_NAME, getSessionCookieValue(sessionId));
     }
 
     private void parseCookie(@NotNull CharSequence cookie, CharSequenceObjHashMap<CharSequence> parsedCookies) {

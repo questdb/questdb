@@ -29,7 +29,9 @@ import io.questdb.client.cutlass.qwp.client.QwpEgressMsgKind;
 import io.questdb.client.cutlass.qwp.client.QwpServerInfo;
 import io.questdb.client.cutlass.qwp.client.QwpServerInfoDecoder;
 import io.questdb.cutlass.qwp.codec.QwpEgressFrameWriter;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
@@ -210,6 +212,174 @@ public class QwpServerInfoFrameTest {
         Assert.assertEquals(nodeId, info.getNodeId());
     }
 
+    @Test
+    public void testUpgradeFrameClearsCompressionBitWhenNotAdvertised() throws Exception {
+        // writeServerInfoFrame rewrites the provider's capability mask. A
+        // provider that already reports bit 0x04 must not leave CAP_COMPRESSION
+        // set on a frame carrying no codec/level trailer, or a client would
+        // expect two bytes the server never wrote.
+        QwpServerInfo info = decodeUpgradeFrame(
+                new FixedServerInfoProvider(
+                        io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_FLAGS
+                                | io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_COMPRESSION
+                ),
+                false,
+                (byte) 0,
+                (byte) 0
+        );
+        Assert.assertEquals(
+                "CAP_COMPRESSION must be clear on a frame with no trailer",
+                0,
+                info.getCapabilities() & io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_COMPRESSION
+        );
+        Assert.assertNotEquals(
+                "the provider's other capability bits must survive the rewrite",
+                0,
+                info.getCapabilities() & io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_FLAGS
+        );
+        Assert.assertEquals(QwpEgressMsgKind.ROLE_STANDALONE, info.getRole());
+        Assert.assertEquals(7L, info.getEpoch());
+        Assert.assertEquals("questdb", info.getClusterId());
+        Assert.assertEquals("node-a", info.getNodeId());
+        Assert.assertNull(info.getZoneId());
+    }
+
+    @Test
+    public void testUpgradeFrameCompressionTrailerIsIgnoredByClient() throws Exception {
+        // The browser-only codec/level trailer follows node_id. The client
+        // stops decoding after node_id (or zone_id), so the two extra bytes
+        // must not disturb any field it reads, nor make decode() throw.
+        QwpServerInfo info = decodeUpgradeFrame(
+                new FixedServerInfoProvider(io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_FLAGS),
+                true,
+                (byte) 1,
+                (byte) 3
+        );
+        Assert.assertNotEquals(
+                0,
+                info.getCapabilities() & io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_COMPRESSION
+        );
+        Assert.assertEquals(QwpEgressMsgKind.ROLE_STANDALONE, info.getRole());
+        Assert.assertEquals(7L, info.getEpoch());
+        Assert.assertEquals("questdb", info.getClusterId());
+        Assert.assertEquals("node-a", info.getNodeId());
+        Assert.assertNull(info.getZoneId());
+    }
+
+    /**
+     * The writer must never touch a byte past the size it was handed, at any
+     * size. {@code writeServerInfo} truncates the cluster and node ids to fill
+     * exactly the body cap it is given, so the two-byte codec/level trailer
+     * lands on the last two bytes of the buffer -- and only because the caller
+     * subtracts the trailer from that cap before handing it over. Dropping
+     * either the {@code minSize} or the {@code bodyCap} term writes past the
+     * end of the egress send buffer, which no round-trip assertion can see.
+     * <p>
+     * Sweeping the whole range from below the minimum to past the natural
+     * frame size covers the reject arm, the truncating middle where the cap is
+     * filled exactly, and the untruncated case, with a guard region behind the
+     * declared size that must come back untouched.
+     */
+    @Test
+    public void testUpgradeFrameCompressionTrailerStaysInsideBuffer() {
+        final byte guard = (byte) 0x5A;
+        final int alloc = 512;
+        final int guardBytes = 32;
+        final QwpServerInfoProvider provider = new FixedServerInfoProvider(
+                io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_FLAGS);
+        long buf = Unsafe.allocateMemory(alloc);
+        try {
+            int naturalSize = QwpEgressUpgradeProcessor.writeServerInfoFrame(
+                    buf, alloc - guardBytes, QwpConstants.VERSION, provider,
+                    1_700_000_000_000_000_000L, true, QwpConstants.COMPRESSION_ZSTD, (byte) 3);
+            Assert.assertTrue("writeServerInfoFrame returned " + naturalSize, naturalSize > 0);
+
+            boolean sawReject = false;
+            boolean sawTruncation = false;
+            for (int bufSize = 8; bufSize <= naturalSize + 4; bufSize++) {
+                for (int i = 0; i < alloc; i++) {
+                    Unsafe.putByte(buf + i, guard);
+                }
+                int written = QwpEgressUpgradeProcessor.writeServerInfoFrame(
+                        buf, bufSize, QwpConstants.VERSION, provider,
+                        1_700_000_000_000_000_000L, true, QwpConstants.COMPRESSION_ZSTD, (byte) 3);
+                for (int i = bufSize; i < alloc; i++) {
+                    Assert.assertEquals(
+                            "writeServerInfoFrame wrote past bufSize=" + bufSize + " at offset " + i,
+                            guard,
+                            Unsafe.getByte(buf + i)
+                    );
+                }
+                if (written < 0) {
+                    sawReject = true;
+                    continue;
+                }
+                Assert.assertTrue(
+                        "written=" + written + " exceeds bufSize=" + bufSize,
+                        written <= bufSize
+                );
+                Assert.assertEquals(
+                        "the trailer must end the frame at bufSize=" + bufSize,
+                        QwpConstants.COMPRESSION_ZSTD,
+                        Unsafe.getByte(buf + written - 2)
+                );
+                Assert.assertEquals(
+                        "the trailer must end the frame at bufSize=" + bufSize,
+                        (byte) 3,
+                        Unsafe.getByte(buf + written - 1)
+                );
+                if (written < naturalSize) {
+                    sawTruncation = true;
+                }
+            }
+            Assert.assertTrue("the sweep must cover the too-small reject arm", sawReject);
+            Assert.assertTrue("the sweep must cover the truncating middle", sawTruncation);
+        } finally {
+            Unsafe.freeMemory(buf);
+        }
+    }
+
+    /**
+     * Runs the egress upgrade's own SERVER_INFO writer and decodes the result
+     * with the client, skipping the WebSocket header the writer prepends.
+     */
+    private static QwpServerInfo decodeUpgradeFrame(
+            QwpServerInfoProvider provider,
+            boolean advertiseCompression,
+            byte compressionCodec,
+            byte compressionLevel
+    ) throws Exception {
+        final int cap = 256;
+        long buf = Unsafe.allocateMemory(cap);
+        try {
+            int written = QwpEgressUpgradeProcessor.writeServerInfoFrame(
+                    buf,
+                    cap,
+                    QwpConstants.VERSION,
+                    provider,
+                    1_700_000_000_000_000_000L,
+                    advertiseCompression,
+                    compressionCodec,
+                    compressionLevel
+            );
+            Assert.assertTrue("writeServerInfoFrame returned " + written, written > 0);
+            Assert.assertEquals(
+                    "server frames must be unfragmented binary",
+                    (byte) 0x82,
+                    Unsafe.getByte(buf)
+            );
+            int wsPayloadLen = Unsafe.getByte(buf + 1) & 0x7f;
+            Assert.assertTrue(
+                    "SERVER_INFO must still fit a 2-byte WebSocket header",
+                    wsPayloadLen <= 125
+            );
+            Assert.assertEquals("WebSocket length must cover the QWP message", written - 2, wsPayloadLen);
+            return QwpServerInfoDecoder.decode(buf + 2, written - 2);
+        } finally {
+            Unsafe.freeMemory(buf);
+        }
+    }
+
     private static QwpServerInfo encodeAndDecode(
             byte role,
             long epoch,
@@ -253,5 +423,42 @@ public class QwpServerInfoFrameTest {
         char[] buf = new char[n];
         java.util.Arrays.fill(buf, c);
         return new String(buf);
+    }
+
+    /**
+     * Reports a caller-chosen capability mask so the upgrade writer's mask
+     * rewrite is observable; every other field is a fixed, recognisable value.
+     */
+    private static final class FixedServerInfoProvider implements QwpServerInfoProvider {
+        private final int capabilities;
+
+        private FixedServerInfoProvider(int capabilities) {
+            this.capabilities = capabilities;
+        }
+
+        @Override
+        public int getCapabilities() {
+            return capabilities;
+        }
+
+        @Override
+        public CharSequence getClusterId() {
+            return "questdb";
+        }
+
+        @Override
+        public long getEpoch() {
+            return 7L;
+        }
+
+        @Override
+        public CharSequence getNodeId() {
+            return "node-a";
+        }
+
+        @Override
+        public byte role() {
+            return io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.ROLE_STANDALONE;
+        }
     }
 }

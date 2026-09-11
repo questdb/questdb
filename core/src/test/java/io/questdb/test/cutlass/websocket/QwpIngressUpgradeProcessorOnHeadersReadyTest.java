@@ -61,6 +61,97 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     private static final int TINY_BUFFER_SIZE = 64;
 
     @Test
+    public void testBrowserHandshakeAppendsIngressServerInfo() throws Exception {
+        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo("v1", true));
+    }
+
+    @Test
+    public void testBrowserHandshakeOmitsIngressServerInfoWhenParamAbsent() throws Exception {
+        // Guards the `browserHandshake != null` term: appending the frame to
+        // every 101 would put six unsolicited bytes in front of a native
+        // client's first frame, and unreserved, since requiredHandshakeSize
+        // only accounts for them under the same flag.
+        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo(null, false));
+    }
+
+    @Test
+    public void testBrowserSubprotocolAlonePullsIngressServerInfo() throws Exception {
+        // The subprotocol offer is a browser carrier in its own right, and the
+        // capability byte is the only place a browser can read the durable-ACK
+        // verdict. A client that wants durable ACK must not also have to pass
+        // qwp_browser_handshake=v1 to find out whether it got it.
+        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo(
+                null,
+                "questdb.qwp.durable-ack.v1",
+                true,
+                false));
+    }
+
+    @Test
+    public void testBrowserSubprotocolServerInfoReportsDurableAckOn() throws Exception {
+        // The only assertion that pins the capability bit SET through
+        // onHeadersReady. Without it, hard-coding the durableAckEnabled
+        // argument of writeBrowserServerInfoFrame to false leaves every other
+        // browser test green while every browser is told durable ACK is
+        // unavailable and silently never enters durable mode -- the frame is
+        // the browser's only carrier for that verdict.
+        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo(
+                null,
+                "questdb.qwp.durable-ack.v1",
+                new FakeEnabledDurableAckRegistry(),
+                true,
+                true));
+    }
+
+    @Test
+    public void testBrowserHandshakeOmitsIngressServerInfoWhenParamVersionUnknown() throws Exception {
+        // Guards the equalsAscii("v1", ...) term. A future browser handshake
+        // revision must not be answered with a v1 frame.
+        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo("v2", false));
+    }
+
+    @Test
+    public void testBrowserHandshakeFailsHardWhenServerInfoDoesNotFitBuffer() throws Exception {
+        // The browser frame is appended to the raw send buffer AFTER the 101,
+        // so a buffer that fits the 101 alone must fail the handshake rather
+        // than write the frame past the end of it. Sized one byte short of the
+        // eight the frame needs, measured off a real 101 so the boundary stays
+        // correct as the response grows.
+        assertMemoryLeak(() -> {
+            int handshakeSize = measureHandshakeResponseSize();
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            LocalValue<QwpIngressProcessorState> lv = getLV();
+
+            int bufferSize = handshakeSize + 7;
+            long bufferAddr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    MockHttpRequestHeader header = new MockHttpRequestHeader();
+                    TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, bufferSize))
+            ) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
+                header.setUrlParam("qwp_browser_handshake", "v1");
+
+                assertBufferTooSmallFailure(processor, context, "101 handshake response");
+
+                Assert.assertEquals(0, context.getMockRawSocket().sentSize);
+                Assert.assertFalse(context.isSwitchProtocolCalled());
+                Assert.assertNull(lv.get(context));
+            } finally {
+                Unsafe.free(bufferAddr, bufferSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testBrowserHandshakeOmitsIngressServerInfoWhenParamEmpty() throws Exception {
+        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo("", false));
+    }
+
+    @Test
     public void testOnHeadersReadyAcceptsPrimaryRole() throws Exception {
         assertMemoryLeak(() -> assertHandshakeAcceptedForRole(QwpEgressMsgKind.ROLE_PRIMARY, "PRIMARY"));
     }
@@ -228,12 +319,51 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
 
     @Test
     public void testOnHeadersReadyDoesNotEnableDurableAckWhenHeaderAbsent() throws Exception {
-        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, new FakeEnabledDurableAckRegistry(), false));
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, null, new FakeEnabledDurableAckRegistry(), false, false));
     }
 
     @Test
     public void testOnHeadersReadyEnablesDurableAckWhenHeaderTrueAndRegistryEnabled() throws Exception {
-        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake("true", new FakeEnabledDurableAckRegistry(), true));
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, "true", new FakeEnabledDurableAckRegistry(), true, false));
+    }
+
+    @Test
+    public void testOnHeadersReadyDoesNotConfirmSubprotocolForHeaderOnlyDurableAck() throws Exception {
+        // A native client opts in through X-QWP-Request-Durable-Ack and offers
+        // no subprotocol. RFC 6455 s4.1 makes a client fail the connection when
+        // the server names a subprotocol the client did not offer, so the
+        // confirmation must stay off even though durable ack is on.
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(
+                null,
+                "true",
+                new FakeEnabledDurableAckRegistry(),
+                true,
+                false));
+    }
+
+    @Test
+    public void testOnHeadersReadyEchoesBrowserSubprotocolWhenRegistryDisabled() throws Exception {
+        // The echo confirms the browser negotiation dialect, not the
+        // capability. A browser fails the whole connection when it offered a
+        // subprotocol and the 101 names none, so withholding the echo here
+        // would hand the client an opaque handshake failure instead of a
+        // connection that can carry the SERVER_INFO verdict.
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(
+                "questdb.qwp.durable-ack.v1",
+                null,
+                DefaultDurableAckRegistry.INSTANCE,
+                false,
+                true));
+    }
+
+    @Test
+    public void testOnHeadersReadyEnablesDurableAckThroughBrowserSubprotocol() throws Exception {
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(
+                "application.v1, questdb.qwp.durable-ack.v1",
+                null,
+                new FakeEnabledDurableAckRegistry(),
+                true,
+                true));
     }
 
     @Test
@@ -351,8 +481,8 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     @Test
     public void testOnHeadersReadyHeaderValueIsCaseInsensitive() throws Exception {
         assertMemoryLeak(() -> {
-            assertDurableAckStateAfterHandshake("TRUE", new FakeEnabledDurableAckRegistry(), true);
-            assertDurableAckStateAfterHandshake("TrUe", new FakeEnabledDurableAckRegistry(), true);
+            assertDurableAckStateAfterHandshake(null, "TRUE", new FakeEnabledDurableAckRegistry(), true, false);
+            assertDurableAckStateAfterHandshake(null, "TrUe", new FakeEnabledDurableAckRegistry(), true, false);
         });
     }
 
@@ -360,15 +490,15 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     public void testOnHeadersReadyIgnoresDurableAckWhenRegistryDisabled() throws Exception {
         // Default OSS behavior: DefaultDurableAckRegistry.isEnabled() returns false,
         // so even when the client requests durable ack, the state stays disabled.
-        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake("true", DefaultDurableAckRegistry.INSTANCE, false));
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, "true", DefaultDurableAckRegistry.INSTANCE, false, false));
     }
 
     @Test
     public void testOnHeadersReadyIgnoresNonTrueHeaderValue() throws Exception {
         assertMemoryLeak(() -> {
-            assertDurableAckStateAfterHandshake("false", new FakeEnabledDurableAckRegistry(), false);
-            assertDurableAckStateAfterHandshake("", new FakeEnabledDurableAckRegistry(), false);
-            assertDurableAckStateAfterHandshake("yes", new FakeEnabledDurableAckRegistry(), false);
+            assertDurableAckStateAfterHandshake(null, "false", new FakeEnabledDurableAckRegistry(), false, false);
+            assertDurableAckStateAfterHandshake(null, "", new FakeEnabledDurableAckRegistry(), false, false);
+            assertDurableAckStateAfterHandshake(null, "yes", new FakeEnabledDurableAckRegistry(), false, false);
         });
     }
 
@@ -409,6 +539,125 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         });
     }
 
+    private static int advertisedMaxBatchSize(String response) {
+        String prefix = "\r\nX-QWP-Max-Batch-Size: ";
+        int start = response.indexOf(prefix);
+        Assert.assertTrue("101 response must advertise X-QWP-Max-Batch-Size: " + response, start >= 0);
+        start += prefix.length();
+        int end = response.indexOf('\r', start);
+        Assert.assertTrue("unterminated X-QWP-Max-Batch-Size: " + response, end > start);
+        return Integer.parseInt(response.substring(start, end));
+    }
+
+    /**
+     * Drives a handshake with the given {@code qwp_browser_handshake} value
+     * (null omits the parameter) and pins whether the 101 is followed by the
+     * browser SERVER_INFO frame. The advertised cap is checked against the
+     * {@code X-QWP-Max-Batch-Size} response header rather than a literal: the
+     * browser cannot read that header, so the whole point of the frame is to
+     * carry the same number.
+     */
+    private static void assertBrowserHandshakeServerInfo(String browserHandshakeParam, boolean expectFrame) throws Exception {
+        assertBrowserHandshakeServerInfo(browserHandshakeParam, null, expectFrame, false);
+    }
+
+    private static void assertBrowserHandshakeServerInfo(
+            String browserHandshakeParam,
+            String protocols,
+            boolean expectFrame,
+            boolean expectDurableAck
+    ) throws Exception {
+        assertBrowserHandshakeServerInfo(browserHandshakeParam, protocols, null, expectFrame, expectDurableAck);
+    }
+
+    /**
+     * Drives a handshake with the given {@code qwp_browser_handshake} value and
+     * optional {@code Sec-WebSocket-Protocol} offer (null omits either), then
+     * pins whether the 101 is followed by the browser SERVER_INFO frame and
+     * what its capability byte says.
+     * <p>
+     * The advertised cap is checked against the {@code X-QWP-Max-Batch-Size}
+     * response header rather than a literal: the browser cannot read that
+     * header, so the whole point of the frame is to carry the same number.
+     * The capability byte is checked for the same reason -- since the
+     * subprotocol echo is unconditional, this byte is the only thing that
+     * tells a browser whether durable ACK is actually on.
+     */
+    private static void assertBrowserHandshakeServerInfo(
+            String browserHandshakeParam,
+            String protocols,
+            DurableAckRegistry registry,
+            boolean expectFrame,
+            boolean expectDurableAck
+    ) throws Exception {
+        DurableAckRegistry previous = engine.getDurableAckRegistry();
+        if (registry != null) {
+            engine.setDurableAckRegistry(registry);
+        }
+        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (
+                MockHttpRequestHeader header = new MockHttpRequestHeader();
+                TestableContext context = new TestableContext(
+                        httpConfig,
+                        header,
+                        new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE)
+                )
+        ) {
+            header.setHeader("Upgrade", "websocket");
+            header.setHeader("Connection", "Upgrade");
+            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+            header.setHeader("Sec-WebSocket-Version", "13");
+            if (browserHandshakeParam != null) {
+                header.setUrlParam("qwp_browser_handshake", browserHandshakeParam);
+            }
+            if (protocols != null) {
+                header.setHeader("Sec-WebSocket-Protocol", protocols);
+            }
+
+            processor.onHeadersReady(context);
+            processor.onRequestComplete(context);
+
+            int sentSize = context.getMockRawSocket().sentSize;
+            int frameOffset = findHttpHeaderEnd(bufferAddr, sentSize);
+            Assert.assertTrue("HTTP header terminator missing", frameOffset >= 0);
+            if (!expectFrame) {
+                Assert.assertEquals(
+                        "101 response must not be followed by any frame: "
+                                + readResponse(bufferAddr, sentSize),
+                        frameOffset,
+                        sentSize
+                );
+                return;
+            }
+            Assert.assertEquals(
+                    "SERVER_INFO must be the only post-upgrade frame",
+                    8,
+                    sentSize - frameOffset
+            );
+            Assert.assertEquals((byte) 0x82, Unsafe.getByte(bufferAddr + frameOffset));
+            Assert.assertEquals(6, Unsafe.getByte(bufferAddr + frameOffset + 1));
+            Assert.assertEquals(
+                    QwpConstants.STATUS_SERVER_INFO,
+                    Unsafe.getByte(bufferAddr + frameOffset + 2)
+            );
+            Assert.assertEquals(
+                    "the frame must advertise the same cap as X-QWP-Max-Batch-Size",
+                    advertisedMaxBatchSize(readResponse(bufferAddr, frameOffset)),
+                    Unsafe.getInt(bufferAddr + frameOffset + 3)
+            );
+            Assert.assertEquals(
+                    "the capability byte is the browser's only durable-ACK verdict",
+                    expectDurableAck ? QwpConstants.SERVER_INFO_CAP_DURABLE_ACK : 0,
+                    Unsafe.getByte(bufferAddr + frameOffset + 7)
+            );
+        } finally {
+            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            engine.setDurableAckRegistry(previous);
+        }
+    }
+
     private static void assertBufferTooSmallFailure(
             QwpIngressUpgradeProcessor processor,
             TestableContext context,
@@ -424,10 +673,19 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         }
     }
 
+    /**
+     * Drives a handshake through either durable-ack carrier and pins both the
+     * negotiated state and whether the 101 confirms the browser subprotocol.
+     * The two are separate expectations on purpose, and no longer track each
+     * other: the confirmation follows the client's offer alone, while
+     * enablement follows the registry. Every caller states both.
+     */
     private static void assertDurableAckStateAfterHandshake(
-            String headerValue,
+            String protocols,
+            String durableAckHeaderValue,
             DurableAckRegistry registry,
-            boolean expectedEnabled
+            boolean expectedEnabled,
+            boolean expectedSubprotocolConfirmed
     ) throws Exception {
         DurableAckRegistry previous = engine.getDurableAckRegistry();
         engine.setDurableAckRegistry(registry);
@@ -444,19 +702,27 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             header.setHeader("Connection", "Upgrade");
             header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
             header.setHeader("Sec-WebSocket-Version", "13");
-            if (headerValue != null) {
-                header.setHeader("X-QWP-Request-Durable-Ack", headerValue);
+            if (protocols != null) {
+                header.setHeader("Sec-WebSocket-Protocol", protocols);
+            }
+            if (durableAckHeaderValue != null) {
+                header.setHeader("X-QWP-Request-Durable-Ack", durableAckHeaderValue);
             }
 
             processor.onHeadersReady(context);
-            // onHeadersReady stages the 101 bytes; onRequestComplete performs
-            // the rawSocket.send and finalises the protocol switch.
             processor.onRequestComplete(context);
 
             Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
             QwpIngressProcessorState state = lv.get(context);
             Assert.assertNotNull("state must be populated after successful handshake", state);
             Assert.assertEquals(expectedEnabled, state.isDurableAckEnabled());
+
+            String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
+            String confirmation = "\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n";
+            Assert.assertEquals(
+                    "subprotocol confirmation must track the client's offer, not just enablement: " + response,
+                    expectedSubprotocolConfirmed,
+                    response.contains(confirmation));
         } finally {
             Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             engine.setDurableAckRegistry(previous);
@@ -539,11 +805,54 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         }
     }
 
+    private static int findHttpHeaderEnd(long bufferAddr, int size) {
+        for (int i = 0; i <= size - 4; i++) {
+            if (Unsafe.getByte(bufferAddr + i) == '\r'
+                    && Unsafe.getByte(bufferAddr + i + 1) == '\n'
+                    && Unsafe.getByte(bufferAddr + i + 2) == '\r'
+                    && Unsafe.getByte(bufferAddr + i + 3) == '\n') {
+                return i + 4;
+            }
+        }
+        return -1;
+    }
+
     @SuppressWarnings("unchecked")
     private static LocalValue<QwpIngressProcessorState> getLV() throws Exception {
         Field lvField = QwpIngressUpgradeProcessor.class.getDeclaredField("LV");
         lvField.setAccessible(true);
         return (LocalValue<QwpIngressProcessorState>) lvField.get(null);
+    }
+
+    /**
+     * Drives one plain (non-browser) handshake on a generous buffer and returns
+     * the exact 101 length. The browser URL parameter does not change the 101
+     * itself -- only what is appended after it -- so this is the boundary the
+     * SERVER_INFO reservation has to clear.
+     */
+    private static int measureHandshakeResponseSize() throws Exception {
+        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (
+                MockHttpRequestHeader header = new MockHttpRequestHeader();
+                TestableContext context = new TestableContext(
+                        httpConfig,
+                        header,
+                        new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE)
+                )
+        ) {
+            header.setHeader("Upgrade", "websocket");
+            header.setHeader("Connection", "Upgrade");
+            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+            header.setHeader("Sec-WebSocket-Version", "13");
+
+            processor.onHeadersReady(context);
+            processor.onRequestComplete(context);
+            return context.getMockRawSocket().sentSize;
+        } finally {
+            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private static String readResponse(long bufferAddr, int size) {
@@ -593,6 +902,8 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         private final ObjList<Long> allocatedMemory = new ObjList<>();
         private final ObjList<Utf8String> headerNames = new ObjList<>();
         private final ObjList<DirectUtf8String> headerValues = new ObjList<>();
+        private final ObjList<Utf8String> urlParamNames = new ObjList<>();
+        private final ObjList<DirectUtf8String> urlParamValues = new ObjList<>();
 
         @Override
         public void close() {
@@ -604,6 +915,8 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             allocatedMemory.clear();
             headerNames.clear();
             headerValues.clear();
+            urlParamNames.clear();
+            urlParamValues.clear();
         }
 
         @Override
@@ -683,6 +996,11 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
 
         @Override
         public DirectUtf8Sequence getUrlParam(Utf8Sequence name) {
+            for (int i = 0; i < urlParamNames.size(); i++) {
+                if (name.toString().equals(urlParamNames.get(i).toString())) {
+                    return urlParamValues.get(i);
+                }
+            }
             return null;
         }
 
@@ -702,15 +1020,7 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         }
 
         void setHeader(String name, String value) {
-            byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-            long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
-            for (int i = 0; i < bytes.length; i++) {
-                Unsafe.putByte(ptr + i, bytes[i]);
-            }
-            allocatedMemory.add(ptr);
-            allocatedMemory.add((long) bytes.length);
-
-            DirectUtf8String directValue = new DirectUtf8String().of(ptr, ptr + bytes.length);
+            DirectUtf8String directValue = allocate(value);
             for (int i = 0; i < headerNames.size(); i++) {
                 if (name.equalsIgnoreCase(headerNames.get(i).toString())) {
                     headerValues.set(i, directValue);
@@ -719,6 +1029,29 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             }
             headerNames.add(new Utf8String(name));
             headerValues.add(directValue);
+        }
+
+        void setUrlParam(String name, String value) {
+            DirectUtf8String directValue = allocate(value);
+            for (int i = 0; i < urlParamNames.size(); i++) {
+                if (name.equals(urlParamNames.get(i).toString())) {
+                    urlParamValues.set(i, directValue);
+                    return;
+                }
+            }
+            urlParamNames.add(new Utf8String(name));
+            urlParamValues.add(directValue);
+        }
+
+        private DirectUtf8String allocate(String value) {
+            byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+            long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.putByte(ptr + i, bytes[i]);
+            }
+            allocatedMemory.add(ptr);
+            allocatedMemory.add((long) bytes.length);
+            return new DirectUtf8String().of(ptr, ptr + bytes.length);
         }
     }
 

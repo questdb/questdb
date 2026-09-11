@@ -47,6 +47,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -54,6 +55,7 @@ import org.junit.Test;
 
 import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Regression test for the cumulative-ACK leapfrog over a silently gate-rejected
@@ -399,6 +401,365 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDurableAckPollAdvancesAckOnCleanConnection() throws Exception {
+        // Counterpart to the deferred-group case below. With nothing deferred,
+        // the poll consumes its own message sequence and the cumulative OK ack
+        // must name it. Without that advance a client's acked watermark falls
+        // one behind the sequence it issued for every keepalive poll it sends,
+        // and its store-and-forward records never retire.
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            byte[] first = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
+            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage());
+            byte[] second = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L));
+            byte[] wire = concat(first, poll, second);
+
+            PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = new QwpIngressProcessorState(
+                        RECV_BUFFER_SIZE,
+                        httpConfig.getSendBufferSize(),
+                        engine,
+                        httpConfig.getLineHttpProcessorConfiguration()
+                );
+                state.of(-1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+                getLV().set(context, state);
+
+                drive(processor, context, nf, first.length);
+                Assert.assertEquals("the first data frame must be acknowledged", 0,
+                        maxCumulativeOkAck(rawSocket.sentFrames));
+
+                drive(processor, context, nf, poll.length);
+                Assert.assertEquals(
+                        "a poll on a clean connection must advance the cumulative ack over its own sequence",
+                        1,
+                        maxCumulativeOkAck(rawSocket.sentFrames)
+                );
+
+                drive(processor, context, nf, second.length);
+                Assert.assertEquals("the trailing data frame must be acknowledged", 2,
+                        maxCumulativeOkAck(rawSocket.sentFrames));
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("tab")) {
+                Assert.assertEquals("the poll must neither add nor drop rows", 2, reader.size());
+            }
+        });
+    }
+
+    /**
+     * The poll exists so a browser that cannot send WebSocket PINGs can still
+     * pull durable progress. The registry is armed only after the data frame's
+     * own flush has gone out, so the poll is the sole flush point able to carry
+     * the new watermark.
+     */
+    @Test
+    public void testDurableAckPollFlushesDurableProgress() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine durableEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                private final DurableAckRegistry uploadingRegistry = new DurableAckRegistry() {
+                    @Override
+                    public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+                        return durableWatermark.get();
+                    }
+
+                    @Override
+                    public boolean isEnabled() {
+                        return true;
+                    }
+                };
+
+                @Override
+                public @NotNull DurableAckRegistry getDurableAckRegistry() {
+                    return uploadingRegistry;
+                }
+            }) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(durableEngine, httpConfig);
+
+                byte[] data = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
+                byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage());
+                byte[] wire = concat(data, poll);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = new QwpIngressProcessorState(
+                            RECV_BUFFER_SIZE,
+                            httpConfig.getSendBufferSize(),
+                            durableEngine,
+                            httpConfig.getLineHttpProcessorConfiguration()
+                    );
+                    state.of(-1, AllowAllSecurityContext.INSTANCE);
+                    state.setDurableAckEnabled(true);
+                    getLV().set(context, state);
+
+                    // Uploads still lag: the commit is acknowledged, but no
+                    // durable watermark exists to report.
+                    drive(processor, context, nf, data.length);
+                    Assert.assertEquals("the data frame must be acknowledged", 0,
+                            maxCumulativeOkAck(rawSocket.sentFrames));
+                    Assert.assertFalse(
+                            "nothing is durably uploaded yet, so no durable ACK may be sent",
+                            hasDurableAckFrame(rawSocket.sentFrames)
+                    );
+
+                    // The upload completes between the two frames.
+                    durableWatermark.set(1L);
+                    drive(processor, context, nf, poll.length);
+                    Assert.assertTrue(
+                            "a durable ACK poll must flush the durable watermark that landed since the last frame",
+                            hasDurableAckFrame(rawSocket.sentFrames)
+                    );
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+
+                drainWalQueue(durableEngine);
+                try (TableReader reader = durableEngine.getReader("tab")) {
+                    Assert.assertEquals("the poll must neither add nor drop rows", 1, reader.size());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDurableAckPollMustNotCommitDeferredGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            byte[] deferred = createMaskedFrame(
+                    WebSocketOpcode.BINARY,
+                    deferred(oneRowMessage(100L, 1_000_000L))
+            );
+            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage());
+            byte[] commit = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L));
+            byte[] wire = concat(deferred, poll, commit);
+
+            PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                // The observable ack is identical whether the poll arm's
+                // hasUncommittedDeferredRows() guard withholds the advance or
+                // the last-resort clamp inside setHighestProcessedSequence
+                // refuses it: both leave the watermark untouched, and the clamp
+                // only differs by a LOG.critical() line. Count the calls so the
+                // guard itself is what this test holds -- the clamp is
+                // documented as containment for a regression of exactly this
+                // path, so a green test that leans on it proves nothing.
+                AtomicLong watermarkAdvanceAttempts = new AtomicLong();
+                QwpIngressProcessorState state = new QwpIngressProcessorState(
+                        RECV_BUFFER_SIZE,
+                        httpConfig.getSendBufferSize(),
+                        engine,
+                        httpConfig.getLineHttpProcessorConfiguration()
+                ) {
+                    @Override
+                    public void setHighestProcessedSequence(long highestProcessedSequence) {
+                        watermarkAdvanceAttempts.incrementAndGet();
+                        super.setHighestProcessedSequence(highestProcessedSequence);
+                    }
+                };
+                state.of(-1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+                getLV().set(context, state);
+
+                drive(processor, context, nf, deferred.length);
+                Assert.assertEquals("deferred rows must remain unacknowledged", -1, maxCumulativeOkAck(rawSocket.sentFrames));
+
+                long attemptsBeforePoll = watermarkAdvanceAttempts.get();
+                drive(processor, context, nf, poll.length);
+                Assert.assertEquals(
+                        "a durable ACK poll must not even ask the watermark to advance while a deferred group is open",
+                        attemptsBeforePoll,
+                        watermarkAdvanceAttempts.get()
+                );
+                Assert.assertEquals(
+                        "a durable ACK poll must not commit or acknowledge an in-progress deferred group",
+                        -1,
+                        maxCumulativeOkAck(rawSocket.sentFrames)
+                );
+
+                drive(processor, context, nf, commit.length);
+                Assert.assertEquals("the real commit frame must cover the deferred group and poll", 2,
+                        maxCumulativeOkAck(rawSocket.sentFrames));
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("tab")) {
+                Assert.assertEquals("both real data frames must commit exactly once", 2, reader.size());
+            }
+        });
+    }
+
+    @Test
+    public void testDurableAckPollRequiresNegotiation() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+
+            ObjList<byte[]> sent = ingestOnFreshConnection(
+                    processor,
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage())
+            );
+
+            Assert.assertTrue(
+                    "an unnegotiated durable ACK poll must receive STATUS_PARSE_ERROR",
+                    indexOfBinaryFrame(sent, QwpConstants.STATUS_PARSE_ERROR, 0) >= 0
+            );
+        });
+    }
+
+    /**
+     * The reject arm must also clamp the pipelined tail. A refused poll is
+     * consumed without an ack of its own, so {@code markSequenceUnresolved}
+     * has to run before the flush: without it a frame pipelined behind the
+     * refused poll commits and the cumulative OK ack jumps over the refused
+     * sequence. A store-and-forward sender that treats STATUS_PARSE_ERROR as
+     * terminal tears down before reading that ack, replays from its old
+     * watermark, and duplicates the tail frame's rows.
+     */
+    @Test
+    public void testDurableAckPollRejectClampsPipelinedTail() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            byte[] data = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
+            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage());
+            byte[] tail = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L));
+            byte[] wire = concat(data, poll, tail);
+
+            PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = new QwpIngressProcessorState(
+                        RECV_BUFFER_SIZE,
+                        httpConfig.getSendBufferSize(),
+                        engine,
+                        httpConfig.getLineHttpProcessorConfiguration()
+                );
+                state.of(-1, AllowAllSecurityContext.INSTANCE);
+                // Durable ack deliberately left off: this is the reject arm.
+                getLV().set(context, state);
+
+                // All three frames in one pass, so the tail is already buffered
+                // when the poll at seq=1 is refused.
+                drive(processor, context, nf, wire.length);
+
+                Assert.assertTrue(
+                        "the refused poll must receive STATUS_PARSE_ERROR",
+                        indexOfBinaryFrame(rawSocket.sentFrames, QwpConstants.STATUS_PARSE_ERROR, 1) >= 0
+                );
+                Assert.assertEquals(
+                        "the cumulative ack must stop at the frame before the refused poll",
+                        0,
+                        maxCumulativeOkAck(rawSocket.sentFrames)
+                );
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("tab")) {
+                Assert.assertEquals(
+                        "the frame pipelined behind the refused poll must not commit",
+                        1,
+                        reader.size()
+                );
+            }
+        });
+    }
+
+    /**
+     * The reject arm must flush the pending cumulative ack before the error,
+     * exactly like the error arm at the tail of {@code handleBinaryMessage}.
+     * Both frames go out either way, but a store-and-forward sender that treats
+     * the error as terminal tears the connection down on reading it; anything
+     * still behind the error on the wire is never read, so those frames stay in
+     * its replay queue and reconnect duplicates their rows.
+     */
+    @Test
+    public void testDurableAckPollRejectFlushesPendingAckFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            byte[] data = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
+            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage());
+            byte[] wire = concat(data, poll);
+
+            PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = new QwpIngressProcessorState(
+                        RECV_BUFFER_SIZE,
+                        httpConfig.getSendBufferSize(),
+                        engine,
+                        httpConfig.getLineHttpProcessorConfiguration()
+                );
+                state.of(-1, AllowAllSecurityContext.INSTANCE);
+                // Durable ack deliberately left off: this is the reject arm.
+                getLV().set(context, state);
+
+                // Both frames in one pass, so the data frame's ack is still
+                // pending (ACK_BATCH_SIZE is 8) when the poll is refused.
+                drive(processor, context, nf, wire.length);
+
+                int ackIndex = indexOfBinaryFrame(rawSocket.sentFrames, QwpConstants.STATUS_OK, 0);
+                int errorIndex = indexOfBinaryFrame(rawSocket.sentFrames, QwpConstants.STATUS_PARSE_ERROR, 1);
+                Assert.assertTrue("the committed data frame must be acknowledged", ackIndex >= 0);
+                Assert.assertTrue("the refused poll must receive STATUS_PARSE_ERROR", errorIndex >= 0);
+                Assert.assertTrue(
+                        "the cumulative ack must precede the error on the wire, got ack at "
+                                + ackIndex + " and error at " + errorIndex,
+                        ackIndex < errorIndex
+                );
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("tab")) {
+                Assert.assertEquals("the refused poll must neither add nor drop rows", 1, reader.size());
+            }
+        });
+    }
+
     private static void drive(
             QwpIngressUpgradeProcessor processor,
             HttpConnectionContext context,
@@ -421,6 +782,21 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     }
 
     /**
+     * True if any server-to-client BINARY frame is a STATUS_DURABLE_ACK frame.
+     * Durable acks carry per-table watermarks rather than a sequence, so there
+     * is nothing to match on beyond the status byte.
+     */
+    private static boolean hasDurableAckFrame(ObjList<byte[]> frames) {
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            if (isBinaryFrame(f) && f[2] == QwpConstants.STATUS_DURABLE_ACK) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * True if any server-to-client BINARY frame is an error response
      * (status != OK) carrying the given sequence. Error frames share the
      * ACK's [status][seq LE] payload prefix.
@@ -436,6 +812,21 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             }
         }
         return false;
+    }
+
+    /**
+     * Position of the first server-to-client BINARY frame carrying the given
+     * status and sequence, or -1 when none was sent. Order matters where an ack
+     * and an error leave in the same pass.
+     */
+    private static int indexOfBinaryFrame(ObjList<byte[]> frames, byte status, long seq) {
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            if (isBinaryFrame(f) && f[2] == status && readLeLong(f, 3) == seq) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static boolean isBinaryFrame(byte[] frame) {

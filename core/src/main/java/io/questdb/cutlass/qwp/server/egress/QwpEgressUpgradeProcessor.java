@@ -27,6 +27,7 @@ package io.questdb.cutlass.qwp.server.egress;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ReaderScanProfile;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
@@ -155,11 +156,20 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     // flags instead and never touch this LocalValue.
     private static final LocalValue<RejectFlushTracker> REJECT_FLUSH = new LocalValue<>();
     /**
-     * Upper bound for the SERVER_INFO body: 26 bytes fixed fields plus 65535
-     * bytes for each of cluster_id and node_id. The frame writer truncates each
-     * id at the u16 wire cap, so the bound is tight rather than defensive.
+     * Space the handshake send buffer must have left for the SERVER_INFO frame
+     * after the 101 response: 26 bytes of fixed body fields, 2 bytes for the
+     * CAP_ZONE length prefix, 2 bytes for the browser compression trailer, and
+     * 65535 bytes -- the u16 wire cap -- for each of cluster_id and node_id.
+     * <p>
+     * A configured zone_id shares that same reservation instead of extending
+     * it: {@link QwpEgressFrameWriter#writeServerInfo} gives each id whatever
+     * is left of the cap it was handed and truncates the rest, so the frame
+     * cannot overrun the buffer even with all three ids at their wire maximum.
+     * Sizing the check for two full-length ids keeps the required buffer at
+     * ~128 KB rather than ~192 KB while still rejecting one too small to carry
+     * a realistic SERVER_INFO.
      */
-    private static final int SERVER_INFO_BODY_MAX_BYTES = 26 + 0xFFFF + 0xFFFF;
+    private static final int SERVER_INFO_BODY_MAX_BYTES = 26 + 2 + 2 + 0xFFFF + 0xFFFF;
     /**
      * Largest WebSocket frame header the server emits for its own frames:
      * 2-byte base + 8-byte extended length (no masking on server-to-client).
@@ -207,6 +217,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
     private final int maxSqlRecompileAttempts;
     private final QwpEgressMetrics metrics;
+    private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
     /**
      * Per-worker cache of compiled {@link RecordCursorFactory} keyed by SQL text.
@@ -228,6 +239,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
                 .getForceRecvFragmentationChunkSize();
         this.metrics = engine.getMetrics().qwpEgressMetrics();
+        this.qwpBrowserTlsTerminationEnabled = httpConfiguration.isQwpBrowserTlsTerminationEnabled();
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.sharedWorkerCount = sharedWorkerCount;
@@ -277,6 +289,126 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         return QwpConstants.STATUS_INTERNAL_ERROR;
     }
 
+    /**
+     * Resolves the optional client compression preference. Native clients use
+     * the upgrade header; browsers use the URL parameter because the browser
+     * WebSocket API cannot set custom headers. When both are present the URL
+     * parameter wins: it can only have come from the client's own connect URL,
+     * so a reverse proxy cannot override the browser's choice by injecting a
+     * header -- the same threat {@link #negotiateMaxBatchRows} guards against
+     * by taking the stricter of its two carriers.
+     * <p>
+     * Which carrier the client used also decides how it learns the result, so
+     * the caller keys {@code CAP_COMPRESSION} off the URL parameter's presence
+     * rather than off which value won. Doing it the other way round would let
+     * an injected header compress the wire while the browser was told nothing,
+     * leaving it to decode compressed frames as raw.
+     * <p>
+     * <b>The URL carrier must be percent-encoded.</b> The two carriers share a
+     * value grammar ({@code zstd;level=1}), but only the header is delivered
+     * verbatim: the query string goes through
+     * {@code HttpHeaderParser.urlDecode}, which re-keys the parameter on every
+     * unescaped {@code '='}. So {@code ?qwp_accept_encoding=zstd;level=5}
+     * parses as the parameter {@code zstd;level} with value {@code 5} and the
+     * {@code qwp_accept_encoding} key is not present at all -- the request is
+     * silently read as "no preference" and the wire stays raw. Clients must
+     * send {@code ?qwp_accept_encoding=zstd%3Blevel%3D5}, which every
+     * {@code URLSearchParams}/{@code encodeURIComponent}-based URL builder
+     * produces already. The bare {@code ?qwp_accept_encoding=zstd} form carries
+     * no {@code '='} and is unaffected either way.
+     */
+    public static Utf8Sequence negotiateAcceptEncoding(Utf8Sequence headerValue, Utf8Sequence urlParamValue) {
+        return urlParamValue != null ? urlParamValue : headerValue;
+    }
+
+    /**
+     * Resolves the optional client batch-row preference. Native clients use
+     * the upgrade header; browsers use the URL parameter because the browser
+     * WebSocket API cannot set custom headers. When both are present, both
+     * limits apply and the lower valid value wins. This prevents a reverse
+     * proxy from widening the browser client's URL-bound limit by injecting a
+     * header.
+     */
+    public static int negotiateMaxBatchRows(Utf8Sequence headerValue, Utf8Sequence urlParamValue) {
+        return Math.min(parseMaxBatchRows(headerValue), parseMaxBatchRows(urlParamValue));
+    }
+
+    /**
+     * Writes a self-contained {@code SERVER_INFO} WebSocket frame into the given
+     * buffer region and returns the total number of bytes written (WS header +
+     * QWP message). The frame has the shape {@code [WS header][QWP header][body]};
+     * the body layout is defined on {@link QwpEgressMsgKind#SERVER_INFO}.
+     * <p>
+     * Unlike {@link #sendFrame}, this helper builds the frame in place without
+     * the {@code WS_HEADER_RESERVATION} trick: the QWP payload is written at
+     * offset {@code +2} (the common-case WS header size for payloads below 126
+     * bytes), and on the rare path where a larger header is required the
+     * payload is memmoved to make room. SERVER_INFO with default cluster + node
+     * ids sits comfortably below 126 bytes, so the memmove is cold.
+     *
+     * @return total bytes written, or -1 if {@code bufSize} is too small
+     */
+    public static int writeServerInfoFrame(
+            long bufAddr,
+            int bufSize,
+            byte qwpVersion,
+            QwpServerInfoProvider provider,
+            long serverWallNs,
+            boolean advertiseCompression,
+            byte compressionCodec,
+            byte compressionLevel
+    ) {
+        // 26 bytes covers the fixed body; CAP_ZONE adds another 2 bytes for the
+        // zone_id length prefix, and browser compression adds its 2-byte trailer.
+        // Size for the worst case unconditionally (a few bytes are negligible
+        // against the egress send buffer).
+        int compressionTrailerSize = advertiseCompression ? 2 : 0;
+        int minSize = 2 + QwpConstants.HEADER_SIZE + 28 + compressionTrailerSize;
+        if (bufSize < minSize) {
+            return -1;
+        }
+        // Optimistic 2-byte WS header; fix up after measuring the QWP payload.
+        long qwpStart = bufAddr + 2;
+        long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
+                qwpStart, qwpVersion, (byte) 0, 0, 0);
+        int bodyCap = bufSize - 2 - QwpConstants.HEADER_SIZE - compressionTrailerSize;
+        int capabilities = (provider.getCapabilities() & ~QwpEgressMsgKind.CAP_COMPRESSION)
+                | (advertiseCompression ? QwpEgressMsgKind.CAP_COMPRESSION : 0);
+        long bodyEnd = QwpEgressFrameWriter.writeServerInfo(
+                bodyStart,
+                bodyCap,
+                provider.role(),
+                provider.getEpoch(),
+                capabilities,
+                serverWallNs,
+                provider.getClusterId(),
+                provider.getNodeId(),
+                provider.getZoneId()
+        );
+        if (bodyEnd < 0) {
+            return -1;
+        }
+        if (advertiseCompression) {
+            Unsafe.putByte(bodyEnd++, compressionCodec);
+            Unsafe.putByte(bodyEnd++, compressionLevel);
+        }
+        int qwpSize = (int) (bodyEnd - qwpStart);
+        int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
+        QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
+
+        int wsHeaderSize = WebSocketFrameWriter.headerSize(qwpSize, false);
+        if (wsHeaderSize != 2) {
+            // Rare branch: SERVER_INFO body grew past the 2-byte-header threshold.
+            // Shift the QWP bytes to make room for the longer WS header.
+            if (bufSize < wsHeaderSize + qwpSize) {
+                return -1;
+            }
+            Unsafe.copyMemory(qwpStart, bufAddr + wsHeaderSize, qwpSize);
+        }
+        WebSocketFrameWriter.writeBinaryFrameHeader(bufAddr, qwpSize);
+        return wsHeaderSize + qwpSize;
+    }
+
     @Override
     public void close() {
         Misc.free(selectCache);
@@ -311,7 +443,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         long bufferAddr = rawSocket.getBufferAddress();
         int bufferSize = rawSocket.getBufferSize();
 
-        String validationError = QwpIngressHttpProcessor.validateHandshake(context.getRequestHeader());
+        String validationError = QwpIngressHttpProcessor.validateHandshake(
+                context.getRequestHeader(),
+                context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled
+        );
         if (validationError != null) {
             LOG.error().$("Egress WebSocket handshake validation failed [fd=").$(context.getFd())
                     .$(", error=").$(validationError).I$();
@@ -341,8 +476,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // optional X-QWP-Content-Encoding header. The negotiator returns
         // RESULT_NONE when the header is absent or no supported codec is
         // listed, which leaves the wire raw and omits the response header.
-        Utf8Sequence acceptEncoding = requestHeader.getHeader(
+        Utf8Sequence acceptEncodingHeader = requestHeader.getHeader(
                 QwpIngressHttpProcessor.HEADER_X_QWP_ACCEPT_ENCODING);
+        Utf8Sequence acceptEncodingUrlParam = requestHeader.getUrlParam(
+                QwpIngressHttpProcessor.URL_PARAM_QWP_ACCEPT_ENCODING);
+        // Keyed off the carrier the client used, not off which value won: a
+        // client that asked through the URL cannot read the Content-Encoding
+        // response header and needs the codec in the SERVER_INFO frame.
+        boolean browserCompressionNegotiation = acceptEncodingUrlParam != null;
+        Utf8Sequence acceptEncoding = negotiateAcceptEncoding(acceptEncodingHeader, acceptEncodingUrlParam);
         long negotiatedCompression = QwpEgressCompressionNegotiator.negotiate(acceptEncoding);
         byte negotiatedCodec = QwpEgressCompressionNegotiator.codec(negotiatedCompression);
         byte negotiatedLevel = QwpEgressCompressionNegotiator.level(negotiatedCompression);
@@ -358,8 +500,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 negotiatedCodec, effectiveLevel);
 
         byte[] acceptKey = QwpIngressHttpProcessor.computeAcceptKey(wsKey);
+        byte[] sessionCookieValueBytes = QwpIngressHttpProcessor.getSessionCookieValueBytes(context);
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
-                acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null);
+                acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null, null,
+                sessionCookieValueBytes);
         // The server appends a SERVER_INFO WebSocket frame right after the 101
         // response bytes, in the same send buffer. Reserve an upper-bound for the
         // frame so a tiny send buffer that would fit the 101 response alone but
@@ -382,23 +526,20 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         state.of(context.getFd(), context.getSecurityContext());
         state.setNegotiatedVersion((byte) negotiatedVersion);
         state.setCompression(negotiatedCodec, effectiveLevel);
-        // Optional client preference for per-batch row cap. Absent or malformed
-        // header falls back to the server's hard cap. Values outside [1, MAX]
-        // are clamped rather than rejected so one buggy client doesn't break
-        // the handshake -- the server-authoritative cap is always applied.
+        // Optional client preference for per-batch row cap. Browsers cannot
+        // set the header, so they carry the same preference in the URL. Read
+        // both carriers because a proxy may add the header; the stricter valid
+        // value wins. Absent or malformed values fall back to the hard cap.
         Utf8Sequence maxBatchRowsHeader = requestHeader.getHeader(
                 QwpIngressHttpProcessor.HEADER_X_QWP_MAX_BATCH_ROWS);
-        int effectiveMaxBatchRows = MAX_ROWS_PER_BATCH;
-        if (maxBatchRowsHeader != null) {
-            int clientRequested = Numbers.parseNonNegativeIntQuiet(maxBatchRowsHeader);
-            if (clientRequested > 0) {
-                effectiveMaxBatchRows = Math.min(clientRequested, MAX_ROWS_PER_BATCH);
-            }
-        }
+        Utf8Sequence maxBatchRowsUrlParam = requestHeader.getUrlParam(
+                QwpIngressHttpProcessor.URL_PARAM_QWP_MAX_BATCH_ROWS);
+        int effectiveMaxBatchRows = negotiateMaxBatchRows(maxBatchRowsHeader, maxBatchRowsUrlParam);
         state.setMaxBatchRows(effectiveMaxBatchRows);
 
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
-                bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null);
+                bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null, null,
+                sessionCookieValueBytes);
         // Append an unsolicited SERVER_INFO WebSocket frame to the same send
         // buffer. The client reads it as the first frame after the upgrade
         // handshake completes, which lets it route reads to primary vs replica
@@ -414,7 +555,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 bufferSize - bytesWritten,
                 (byte) negotiatedVersion,
                 engine.getQwpServerInfoProvider(),
-                serverWallNs
+                serverWallNs,
+                browserCompressionNegotiation,
+                negotiatedCodec,
+                effectiveLevel
         );
         if (frameBytes < 0) {
             throw HttpException.instance("egress SERVER_INFO frame does not fit send buffer");
@@ -465,6 +609,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // rest of the handshake bytes flush.
         rawSocket.send(state.getPendingHandshakeBytes());
         finalizeHandshake(context, state);
+    }
+
+    @Override
+    public boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) {
+        return context.getCookieHandler().processServiceAccountCookie(context, securityContext);
     }
 
     @Override
@@ -640,6 +789,16 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         return parsed >= QwpConstants.VERSION ? parsed : QwpConstants.VERSION;
     }
 
+    private static int parseMaxBatchRows(Utf8Sequence value) {
+        if (value != null) {
+            int clientRequested = Numbers.parseNonNegativeIntQuiet(value);
+            if (clientRequested > 0) {
+                return Math.min(clientRequested, MAX_ROWS_PER_BATCH);
+            }
+        }
+        return MAX_ROWS_PER_BATCH;
+    }
+
     /**
      * Patches the WebSocket frame header into the reserved 10-byte prefix and
      * memmoves the QWP payload left if the actual header is shorter. Flushes
@@ -664,71 +823,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             REJECT_FLUSH.set(context, tracker);
         }
         tracker.pendingBytes = bytesWritten;
-    }
-
-    /**
-     * Writes a self-contained {@code SERVER_INFO} WebSocket frame into the given
-     * buffer region and returns the total number of bytes written (WS header +
-     * QWP message). The frame has the shape {@code [WS header][QWP header][body]};
-     * the body layout is defined on {@link QwpEgressMsgKind#SERVER_INFO}.
-     * <p>
-     * Unlike {@link #sendFrame}, this helper builds the frame in place without
-     * the {@code WS_HEADER_RESERVATION} trick: the QWP payload is written at
-     * offset {@code +2} (the common-case WS header size for payloads below 126
-     * bytes), and on the rare path where a larger header is required the
-     * payload is memmoved to make room. SERVER_INFO with default cluster + node
-     * ids sits comfortably below 126 bytes, so the memmove is cold.
-     *
-     * @return total bytes written, or -1 if {@code bufSize} is too small
-     */
-    private static int writeServerInfoFrame(
-            long bufAddr,
-            int bufSize,
-            byte qwpVersion,
-            QwpServerInfoProvider provider,
-            long serverWallNs
-    ) {
-        // 26 bytes covers the fixed body; CAP_ZONE adds another 2 bytes
-        // for the zone_id length prefix, so size for the worst case unconditionally
-        // (a couple of bytes is negligible against the egress send buffer).
-        int minSize = 2 + QwpConstants.HEADER_SIZE + 28;
-        if (bufSize < minSize) {
-            return -1;
-        }
-        // Optimistic 2-byte WS header; fix up after measuring the QWP payload.
-        long qwpStart = bufAddr + 2;
-        long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
-                qwpStart, qwpVersion, (byte) 0, 0, 0);
-        int bodyCap = bufSize - 2 - QwpConstants.HEADER_SIZE;
-        long bodyEnd = QwpEgressFrameWriter.writeServerInfo(
-                bodyStart,
-                bodyCap,
-                provider.role(),
-                provider.getEpoch(),
-                provider.getCapabilities(),
-                serverWallNs,
-                provider.getClusterId(),
-                provider.getNodeId(),
-                provider.getZoneId()
-        );
-        if (bodyEnd < 0) {
-            return -1;
-        }
-        int qwpSize = (int) (bodyEnd - qwpStart);
-        int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
-        QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
-
-        int wsHeaderSize = WebSocketFrameWriter.headerSize(qwpSize, false);
-        if (wsHeaderSize != 2) {
-            // Rare branch: SERVER_INFO body grew past the 2-byte-header threshold.
-            // Shift the QWP bytes to make room for the longer WS header.
-            if (bufSize < wsHeaderSize + qwpSize) {
-                return -1;
-            }
-            Unsafe.copyMemory(qwpStart, bufAddr + wsHeaderSize, qwpSize);
-        }
-        WebSocketFrameWriter.writeBinaryFrameHeader(bufAddr, qwpSize);
-        return wsHeaderSize + qwpSize;
     }
 
     /**

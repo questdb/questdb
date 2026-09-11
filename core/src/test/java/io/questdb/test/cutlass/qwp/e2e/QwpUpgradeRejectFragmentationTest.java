@@ -41,6 +41,7 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -78,21 +79,23 @@ import java.nio.charset.StandardCharsets;
 public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(QwpUpgradeRejectFragmentationTest.class);
-    // Server defaults from DefaultIODispatcherConfiguration. These tests do
-    // not override the recv / send buffer sizes, so the actual buffers are
-    // this size; the fuzzed chunk sizes must not exceed them.
+    // Server defaults from DefaultIODispatcherConfiguration. The egress
+    // fixture uses a larger response buffer because its successful upgrade
+    // reserves space for the maximum SERVER_INFO frame, but fragmentation is
+    // deliberately fuzzed only across this default-sized range.
     private static final int RECV_BUFFER_SIZE = 131_072;
     private static final int SEND_BUFFER_SIZE = 131_072;
-    // Canonical 400 Bad Request body written when the Origin header is
-    // present. Hardcoded so the test asserts on exact wire bytes; the
-    // server-side templates are package-private.
+    private static final int EGRESS_SEND_BUFFER_SIZE = 262_144;
+    // Canonical 400 Bad Request body written when the Origin header is not
+    // same-origin with Host. Hardcoded so the test asserts on exact wire
+    // bytes; the server-side templates are package-private.
     private static final byte[] EXPECTED_400_ORIGIN_REJECT = (
             """
                     HTTP/1.1 400 Bad Request\r
                     Content-Type: text/plain\r
-                    Content-Length: 42\r
+                    Content-Length: 52\r
                     \r
-                    Origin header not allowed on QWP WebSocket"""
+                    Origin is not same-origin with Host on QWP WebSocket"""
     ).getBytes(StandardCharsets.US_ASCII);
     // Canonical 421 Misdirected Request body written when the server role is
     // REPLICA. The X-QuestDB-Role header tells the client where to retry, so
@@ -223,6 +226,64 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testEgressSameAuthorityCrossSchemeBrowserUpgradeIsRejected() throws Exception {
+        runWithFragmentedSendEgress(port -> assertCrossSchemeUpgradeRejected(port, "/read/v1"));
+    }
+
+    @Test
+    public void testEgressSameOriginBrowserUpgradeIsAccepted() throws Exception {
+        runWithFragmentedSendEgress(port -> assertSameOriginUpgradeAccepted(port, "/read/v1"));
+    }
+
+    @Test
+    public void testEgressTlsTerminatedProxyRejectsPlaintextOrigin() throws Exception {
+        // Fourth cell of the scheme matrix. With the proxy flag on, the
+        // connection counts as secure, so an http:// Origin is cross-scheme and
+        // must be rejected -- otherwise the flag would widen the gate to accept
+        // either scheme and re-open plaintext-origin CSWSH.
+        runWithFragmentedSendEgress(true, port -> assertCrossSchemeUpgradeRejected(port, "/read/v1", "http"));
+    }
+
+    @Test
+    public void testEgressTlsTerminatedProxySameOriginBrowserUpgradeIsAccepted() throws Exception {
+        runWithFragmentedSendEgress(true, port -> assertSameOriginUpgradeAccepted(port, "/read/v1", "https"));
+    }
+
+    @Test
+    public void testIngressSameAuthorityCrossSchemeBrowserUpgradeIsRejected() throws Exception {
+        runWithFragmentedSend(port -> assertCrossSchemeUpgradeRejected(port, "/write/v4"));
+    }
+
+    @Test
+    public void testIngressSameOriginBrowserUpgradeIsAccepted() throws Exception {
+        runWithFragmentedSend(port -> assertSameOriginUpgradeAccepted(port, "/write/v4"));
+    }
+
+    @Test
+    public void testIngressTlsTerminatedProxyRejectsPlaintextOrigin() throws Exception {
+        // Ingress counterpart of the egress case: the proxy flag must not make
+        // the gate scheme-agnostic.
+        runWithFragmentedSend(true, port -> assertCrossSchemeUpgradeRejected(port, "/write/v4", "http"));
+    }
+
+    @Test
+    public void testIngressTlsTerminatedProxySameOriginBrowserUpgradeIsAccepted() throws Exception {
+        runWithFragmentedSend(true, port -> assertSameOriginUpgradeAccepted(port, "/write/v4", "https"));
+    }
+
+    private static void assertCrossSchemeUpgradeRejected(int port, String path) throws Exception {
+        assertCrossSchemeUpgradeRejected(port, path, "https");
+    }
+
+    private static void assertCrossSchemeUpgradeRejected(int port, String path, String scheme) throws Exception {
+        assertFullRejectDelivered(
+                port,
+                QwpWireTestFixtures.browserUpgradeRequest(path, "localhost:" + port, scheme, ""),
+                EXPECTED_400_ORIGIN_REJECT
+        );
+    }
+
     private static void assertFullRejectDelivered(int port, String request, byte[] expected) throws Exception {
         try (Socket socket = new Socket("localhost", port)) {
             socket.setSoTimeout(5_000);
@@ -242,6 +303,24 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
                     expected,
                     received
             );
+        }
+    }
+
+    private static void assertSameOriginUpgradeAccepted(int port, String path) throws Exception {
+        assertSameOriginUpgradeAccepted(port, path, "http");
+    }
+
+    private static void assertSameOriginUpgradeAccepted(int port, String path, String scheme) throws Exception {
+        try (Socket socket = new Socket("localhost", port)) {
+            socket.setSoTimeout(5_000);
+            String request = QwpWireTestFixtures.browserUpgradeRequest(path, "localhost:" + port, scheme, "");
+            OutputStream out = socket.getOutputStream();
+            out.write(request.getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+
+            String headers = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
+            Assert.assertTrue("expected WebSocket 101 response, got: " + headers,
+                    headers.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
         }
     }
 
@@ -275,6 +354,10 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     private void runWithFragmentedSend(PortTest test) throws Exception {
+        runWithFragmentedSend(false, test);
+    }
+
+    private void runWithFragmentedSend(boolean tlsTerminationEnabled, PortTest test) throws Exception {
         final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
                 configuration,
                 new DefaultHttpContextConfiguration() {
@@ -292,6 +375,11 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
             @Override
             public int getBindPort() {
                 return 0;
+            }
+
+            @Override
+            public boolean isQwpBrowserTlsTerminationEnabled() {
+                return tlsTerminationEnabled;
             }
         };
 
@@ -324,6 +412,10 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     private void runWithFragmentedSendEgress(PortTest test) throws Exception {
+        runWithFragmentedSendEgress(false, test);
+    }
+
+    private void runWithFragmentedSendEgress(boolean tlsTerminationEnabled, PortTest test) throws Exception {
         final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
                 configuration,
                 new DefaultHttpContextConfiguration() {
@@ -341,6 +433,16 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
             @Override
             public int getBindPort() {
                 return 0;
+            }
+
+            @Override
+            public int getSendBufferSize() {
+                return EGRESS_SEND_BUFFER_SIZE;
+            }
+
+            @Override
+            public boolean isQwpBrowserTlsTerminationEnabled() {
+                return tlsTerminationEnabled;
             }
         };
 

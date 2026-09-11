@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -34,6 +35,7 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpMessageHeader;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameParser;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
@@ -138,6 +140,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // probe / attack traffic does not produce GC pressure on the connect path.
     private static final byte[] BAD_REQUEST_RESPONSE_CONNECTION_MUST_CONTAIN_UPGRADE =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_CONNECTION_MUST_CONTAIN_UPGRADE);
+    private static final byte[] BAD_REQUEST_RESPONSE_CROSS_ORIGIN_NOT_ALLOWED =
+            precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_CROSS_ORIGIN_NOT_ALLOWED);
     private static final byte[] BAD_REQUEST_RESPONSE_INVALID_SEC_WEBSOCKET_KEY =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_INVALID_SEC_WEBSOCKET_KEY);
     private static final byte[] BAD_REQUEST_RESPONSE_INVALID_UPGRADE_HEADER_VALUE =
@@ -148,8 +152,15 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER);
     private static final byte[] BAD_REQUEST_RESPONSE_MISSING_UPGRADE_HEADER =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_MISSING_UPGRADE_HEADER);
-    private static final byte[] BAD_REQUEST_RESPONSE_ORIGIN_HEADER_NOT_ALLOWED =
-            precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_ORIGIN_HEADER_NOT_ALLOWED);
+    // Browser-only ingress SERVER_INFO frame: status byte, u32 effective batch
+    // cap, capability mask. Named so onHeadersReady's send-buffer reservation
+    // and writeBrowserServerInfoFrame cannot drift apart -- an under-reservation
+    // is an out-of-bounds write on the raw send buffer.
+    private static final int BROWSER_SERVER_INFO_PAYLOAD_BYTES = 6;
+    private static final int BROWSER_SERVER_INFO_WS_FRAME_BYTES =
+            WebSocketFrameWriter.headerSize(BROWSER_SERVER_INFO_PAYLOAD_BYTES, false)
+                    + BROWSER_SERVER_INFO_PAYLOAD_BYTES;
+    private static final String ERROR_DURABLE_ACK_POLL_NOT_NEGOTIATED = "durable ACK poll was not negotiated";
     private static final Log LOG = LogFactory.getLog(QwpIngressUpgradeProcessor.class);
     private static final LocalValue<QwpIngressProcessorState> LV = new LocalValue<>();
     // Worst-case WebSocket frame header size (2-byte base + 8-byte 64-bit
@@ -175,6 +186,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     \r
                     """).getBytes(StandardCharsets.US_ASCII);
     // Dependencies for ILP processing (safe as instance fields — config only)
+    // Effective ingest payload cap in bytes: the recv buffer minus the
+    // worst-case WebSocket frame header, floored at the QWP protocol ceiling.
+    // Zero when the recv buffer cannot fit a frame header at all, which
+    // suppresses both carriers below.
+    private final int effectiveMaxBatchSize;
     // Precomputed X-QWP-Max-Batch-Size header bytes, cached because the
     // effective cap is derived from recvBufferSize (config-fixed for the
     // lifetime of this processor) and would otherwise allocate a String and
@@ -195,6 +211,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
     private final HttpFullFatServerConfiguration httpConfiguration;
     private final int maxResponseContentLength;
+    private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
 
     public QwpIngressUpgradeProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
@@ -202,6 +219,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
                 .getForceRecvFragmentationChunkSize();
         this.httpConfiguration = httpConfiguration;
+        this.qwpBrowserTlsTerminationEnabled = httpConfiguration.isQwpBrowserTlsTerminationEnabled();
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         // Advertise the effective batch cap, not the QWP protocol ceiling. The
         // HTTP recv buffer is the actual binding constraint on inbound
@@ -209,7 +227,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // sees the payload -- a frame larger than recv-buffer minus the
         // worst-case WebSocket frame header gets closed with code 1009 long
         // before STATUS_PARSE_ERROR can fire.
-        int effectiveMaxBatchSize = Math.min(
+        this.effectiveMaxBatchSize = Math.min(
                 Math.max(0, recvBufferSize - MAX_WS_FRAME_HEADER_BYTES),
                 QwpConstants.DEFAULT_MAX_BATCH_SIZE);
         this.effectiveMaxBatchSizeBytes = effectiveMaxBatchSize > 0
@@ -273,6 +291,38 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
 
         return offset;
+    }
+
+    /**
+     * Writes the browser-only ingress SERVER_INFO WebSocket frame into the
+     * space left after the 101 response.
+     * <p>
+     * Takes {@code bufferSize} and answers {@code -1} when the frame does not
+     * fit, matching {@link QwpIngressHttpProcessor#writeMisdirectedRequestWithRole}
+     * and {@link io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor#writeServerInfoFrame}.
+     * The caller's {@code requiredHandshakeSize} reservation already covers
+     * these bytes, so this check is unreachable today -- it exists so the
+     * reservation cannot be dropped or mis-sized into an out-of-bounds write
+     * on the raw send buffer, which is the one failure mode this helper could
+     * not otherwise report.
+     *
+     * @return total bytes written, or -1 if {@code bufferSize} is too small
+     */
+    public static int writeBrowserServerInfoFrame(
+            long bufferAddress,
+            int bufferSize,
+            int maxBatchSizeBytes,
+            boolean durableAckEnabled
+    ) {
+        if (BROWSER_SERVER_INFO_WS_FRAME_BYTES > bufferSize) {
+            return -1;
+        }
+        int headerSize = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddress, BROWSER_SERVER_INFO_PAYLOAD_BYTES);
+        long payloadAddress = bufferAddress + headerSize;
+        Unsafe.putByte(payloadAddress, QwpConstants.STATUS_SERVER_INFO);
+        Unsafe.putInt(payloadAddress + 1, maxBatchSizeBytes);
+        Unsafe.putByte(payloadAddress + 5, durableAckEnabled ? QwpConstants.SERVER_INFO_CAP_DURABLE_ACK : (byte) 0);
+        return headerSize + BROWSER_SERVER_INFO_PAYLOAD_BYTES;
     }
 
     /**
@@ -351,7 +401,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         long bufferAddr = rawSocket.getBufferAddress();
         int bufferSize = rawSocket.getBufferSize();
 
-        String validationError = QwpIngressHttpProcessor.validateHandshake(context.getRequestHeader());
+        String validationError = QwpIngressHttpProcessor.validateHandshake(
+                context.getRequestHeader(),
+                context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled
+        );
         if (validationError != null) {
             LOG.error().$("WebSocket handshake validation failed [fd=").$(context.getFd())
                     .$(", error=").$(validationError).I$();
@@ -379,14 +432,24 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             return;
         }
 
+        // Authentication may rotate qdb_session before the upgrade processor
+        // runs. Preserve that cookie even when this node rejects ingress due
+        // to its role, otherwise the client keeps using the expiring id while
+        // following the 421 redirect/retry path.
+        byte[] sessionCookieValueBytes = QwpIngressHttpProcessor.getSessionCookieValueBytes(context);
         byte role = engine.getQwpServerInfoProvider().role();
         byte[] roleBytes = QwpEgressMsgKind.roleNameBytes(role);
         if (role == QwpEgressMsgKind.ROLE_REPLICA || role == QwpEgressMsgKind.ROLE_PRIMARY_CATCHUP) {
-            int rejectSize = QwpIngressHttpProcessor.misdirectedRequestWithRoleSize(roleBytes);
+            int rejectSize = QwpIngressHttpProcessor.misdirectedRequestWithRoleSize(roleBytes, sessionCookieValueBytes);
             if (rejectSize > bufferSize) {
                 throw responseDoesNotFitSendBuffer(context.getFd(), "421 ingress role-reject response", bufferSize, rejectSize);
             }
-            int rejectBytes = QwpIngressHttpProcessor.writeMisdirectedRequestWithRole(bufferAddr, bufferSize, roleBytes);
+            int rejectBytes = QwpIngressHttpProcessor.writeMisdirectedRequestWithRole(
+                    bufferAddr,
+                    bufferSize,
+                    roleBytes,
+                    sessionCookieValueBytes
+            );
             if (rejectBytes <= 0) {
                 throw responseDoesNotFitSendBuffer(context.getFd(), "421 ingress role-reject response", bufferSize, rejectSize);
             }
@@ -416,13 +479,40 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // and fail at the client side.
         Utf8Sequence durableAckHeader = requestHeader.getHeader(
                 QwpIngressHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
-        boolean durableAckRequested = durableAckHeader != null
+        boolean durableAckHeaderRequested = durableAckHeader != null
                 && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpIngressHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
+        boolean durableAckWebSocketProtocolRequested = QwpIngressHttpProcessor.containsWebSocketProtocol(
+                requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL),
+                QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK);
+        boolean durableAckRequested = durableAckHeaderRequested || durableAckWebSocketProtocolRequested;
         boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
-
+        // Echo the subprotocol whenever it was offered, enabled or not. The
+        // token confirms the browser negotiation dialect, NOT the capability:
+        // a browser fails the whole connection when it offered a subprotocol
+        // and the 101 names none, so gating the echo on durableAckEnabled
+        // would destroy the connection the client needs in order to be told
+        // that durable ACK is unavailable. The verdict rides the SERVER_INFO
+        // frame below as SERVER_INFO_CAP_DURABLE_ACK instead. RFC 6455 is
+        // satisfied either way -- we still never name a token the client did
+        // not offer.
+        Utf8Sequence browserHandshake = requestHeader.getUrlParam(
+                QwpIngressHttpProcessor.URL_PARAM_QWP_BROWSER_HANDSHAKE);
+        // Either browser carrier pulls the frame: a client that only wants
+        // durable ACK must not also have to pass qwp_browser_handshake=v1 to
+        // learn whether it got it.
+        boolean browserServerInfoRequested = effectiveMaxBatchSize > 0
+                && ((browserHandshake != null && Utf8s.equalsAscii("v1", browserHandshake))
+                || durableAckWebSocketProtocolRequested);
+        if (durableAckWebSocketProtocolRequested && !durableAckEnabled) {
+            LOG.info().$("QWP durable ACK requested over the browser subprotocol but the registry is disabled [fd=")
+                    .$(context.getFd()).I$();
+        }
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
-                effectiveMaxBatchSizeBytes);
+                effectiveMaxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocolRequested);
+        if (browserServerInfoRequested) {
+            requiredHandshakeSize += BROWSER_SERVER_INFO_WS_FRAME_BYTES;
+        }
         if (requiredHandshakeSize > bufferSize) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
@@ -448,9 +538,21 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
-                effectiveMaxBatchSizeBytes);
+                effectiveMaxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocolRequested);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
+        }
+        if (browserServerInfoRequested) {
+            int serverInfoBytes = writeBrowserServerInfoFrame(
+                    bufferAddr + bytesWritten,
+                    bufferSize - bytesWritten,
+                    effectiveMaxBatchSize,
+                    durableAckEnabled
+            );
+            if (serverInfoBytes < 0) {
+                throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
+            }
+            bytesWritten += serverInfoBytes;
         }
         // The HttpRequestProcessor contract forbids PeerIsSlowToReadException
         // from onHeadersReady, so we defer the raw-socket send to
@@ -507,6 +609,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     @Override
     public void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
         // WebSocket connections don't park like normal HTTP requests
+    }
+
+    @Override
+    public boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) {
+        return context.getCookieHandler().processServiceAccountCookie(context, securityContext);
     }
 
     /**
@@ -893,6 +1000,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         return switch (validationError) {
             case QwpIngressHttpProcessor.ERROR_CONNECTION_MUST_CONTAIN_UPGRADE ->
                     BAD_REQUEST_RESPONSE_CONNECTION_MUST_CONTAIN_UPGRADE;
+            case QwpIngressHttpProcessor.ERROR_CROSS_ORIGIN_NOT_ALLOWED ->
+                    BAD_REQUEST_RESPONSE_CROSS_ORIGIN_NOT_ALLOWED;
             case QwpIngressHttpProcessor.ERROR_INVALID_SEC_WEBSOCKET_KEY ->
                     BAD_REQUEST_RESPONSE_INVALID_SEC_WEBSOCKET_KEY;
             case QwpIngressHttpProcessor.ERROR_INVALID_UPGRADE_HEADER_VALUE ->
@@ -902,8 +1011,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             case QwpIngressHttpProcessor.ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER ->
                     BAD_REQUEST_RESPONSE_MISSING_SEC_WEBSOCKET_KEY_HEADER;
             case QwpIngressHttpProcessor.ERROR_MISSING_UPGRADE_HEADER -> BAD_REQUEST_RESPONSE_MISSING_UPGRADE_HEADER;
-            case QwpIngressHttpProcessor.ERROR_ORIGIN_HEADER_NOT_ALLOWED ->
-                    BAD_REQUEST_RESPONSE_ORIGIN_HEADER_NOT_ALLOWED;
             default -> null;
         };
     }
@@ -1408,6 +1515,46 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             LOG.debug().$("WebSocket frame refused, connection pipeline broken by a prior error [fd=").$(context.getFd())
                     .$(", seq=").$(seq).I$();
             state.markSequenceUnresolved(seq);
+            return;
+        }
+
+        if (QwpMessageHeader.isDurableAckPoll(payload, length)) {
+            if (!state.isDurableAckEnabled()) {
+                // Before any flush that may defer, so a blocked error frame still
+                // clamps the watermark and refuses the pipelined tail.
+                state.markSequenceUnresolved(seq);
+                // Same ordering as the error arm at the tail of this method, and
+                // for the same reason: up to ACK_BATCH_SIZE - 1 frames can sit
+                // committed but unacked when this fires. Letting the error reach
+                // the client first lets a sender that treats it as terminal tear
+                // the connection down before reading the ack that covers them,
+                // and replay duplicates those rows on reconnect.
+                if (state.hasPendingAck()) {
+                    try {
+                        trySendAck(context, state);
+                    } catch (PeerIsSlowToReadException e) {
+                        state.onErrorBlocked(STATUS_PARSE_ERROR, seq, ERROR_DURABLE_ACK_POLL_NOT_NEGOTIATED);
+                        throw e;
+                    }
+                }
+                sendErrorResponse(
+                        context,
+                        state,
+                        seq,
+                        STATUS_PARSE_ERROR,
+                        ERROR_DURABLE_ACK_POLL_NOT_NEGOTIATED
+                );
+                return;
+            }
+            // A poll must never close an in-progress FLAG_DEFER_COMMIT group.
+            // Withhold its cumulative OK ACK until a later real commit covers
+            // both the deferred rows and this sequence. Durable progress for
+            // earlier committed work can still be flushed immediately.
+            if (!state.hasUncommittedDeferredRows()) {
+                state.setHighestProcessedSequence(seq);
+            }
+            // The receive-loop tail performs the normal ACK/durable-ACK flush
+            // once for this event, just as it does for a regular binary frame.
             return;
         }
 
