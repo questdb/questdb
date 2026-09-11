@@ -171,7 +171,7 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
                         cases.add(cast == 0
                                 ? BindVarTuple.fails("malformed timestamp", "inconvertible value", malformed)
                                 : BindVarTuple.ok("explicit malformed timestamp is NULL",
-                                        "x\tkeep\n1\tfalse\n2\tfalse\n3\tfalse\n4\tfalse\n", malformed));
+                                "x\tkeep\n1\tfalse\n2\tfalse\n3\tfalse\n4\tfalse\n", malformed));
                         cases.add(BindVarTuple.ok("valid after failure", expected, binds -> setTimestampBind(binds, bindType, false)));
                         cases.add(BindVarTuple.ok("NULL after failure", "x\tkeep\n1\tfalse\n2\tfalse\n3\tfalse\n4\tfalse\n",
                                 binds -> setTimestampBind(binds, bindType, true)));
@@ -285,7 +285,8 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
             case 2 -> binds.setTimestamp(0, value);
             case 3 -> binds.setTimestampNano(0, value);
             case 4 -> binds.setStr(0, isNull ? null : "1970-01-01T00:00:00.000000001Z");
-            case 5 -> binds.setVarchar(0, isNull ? null : new io.questdb.std.str.Utf8String("1970-01-01T00:00:00.000000001Z"));
+            case 5 ->
+                    binds.setVarchar(0, isNull ? null : new io.questdb.std.str.Utf8String("1970-01-01T00:00:00.000000001Z"));
             default -> throw new AssertionError(type);
         }
     }

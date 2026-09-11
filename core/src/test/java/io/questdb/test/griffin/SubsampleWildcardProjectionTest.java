@@ -413,10 +413,10 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
                     """);
             assertQuery("SELECT 1 AS ts, *" + renamedSource + " SUBSAMPLE uniform(2)")
                     .timestamp("ts11").withPlanContaining("over (order by [ts11])").returns("""
-                    ts\tts1\tts11\tx
-                    1\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1
-                    1\t1970-01-01T00:00:00.000035Z\t1970-01-01T00:00:00.000040Z\t4
-                    """);
+                            ts\tts1\tts11\tx
+                            1\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1
+                            1\t1970-01-01T00:00:00.000035Z\t1970-01-01T00:00:00.000040Z\t4
+                            """);
         });
     }
 
@@ -470,10 +470,10 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
             assertMarkedError("SELECT ts, x FROM (SELECT b.*, a.*" + JOIN + ") q ^SUBSAMPLE uniform(2)", hidden);
             assertQuery("SELECT ts, ts1, x FROM (SELECT b.*, a.*" + JOIN + ") q SUBSAMPLE uniform(2)")
                     .timestamp("ts1").withPlanContaining("over (order by [ts1])").returns("""
-                    ts\tts1\tx
-                    1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1
-                    1970-01-01T00:00:00.000035Z\t1970-01-01T00:00:00.000040Z\t4
-                    """);
+                            ts\tts1\tx
+                            1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1
+                            1970-01-01T00:00:00.000035Z\t1970-01-01T00:00:00.000040Z\t4
+                            """);
             // an unresolvable prefix reserves nothing; the mirror reports the hidden timestamp for both forms.
             // These two pins document PRE-EXISTING error precedence (the mirror runs before the expansion
             // that would report "invalid table alias"), not a designed contract; a later change may
