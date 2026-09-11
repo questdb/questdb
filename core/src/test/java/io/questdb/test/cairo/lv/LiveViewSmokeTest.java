@@ -73,10 +73,8 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -7982,10 +7980,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // again. That branch used to rebuild the tier from the STILL-STALE disk right after,
         // stamping the slot with that stale seqTxn and clearing the stale marking; it now waits
         // for a table that holds every committed block, so the test runs the same rebuild through
-        // rebuildInMemoryTierForTest. That is the state any rebuild over the backlog leaves, and
-        // the part-way retry still reaches it on its own. The slot is a correct tail of the disk
-        // it was staged from - but the LV WAL still carries two unapplied blocks, and the marking
-        // that would have told the next applier to rebuild is gone.
+        // rebuildInMemoryTierForTest. That is the state any rebuild over the backlog leaves; a
+        // part-way retry used to reach it too, and now leaves the tier stale instead. The slot is
+        // a correct tail of the disk it was staged from - but the LV WAL still carries two
+        // unapplied blocks, and the marking that would have told the next applier to rebuild is
+        // gone.
         //
         // Releasing the writer lets scanForLaggingViews / retryPendingLiveViewApply land the
         // whole backlog, which makes the disk tier completely correct. The slot is not: it holds
@@ -23491,34 +23490,5 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             assertShowCreateLiveViewRoundTrips("lv");
             execute("DROP LIVE VIEW lv");
         });
-    }
-
-    /**
-     * Reads like the default test clock - frozen on {@code currentMicros} - until
-     * {@link #startDrifting()} arms it, after which every read returns one microsecond later than
-     * the last. The WAL apply loop computes its deadline from one clock read and tests every later
-     * iteration against another, so an armed drift plus a zero
-     * {@code cairo.wal.apply.table.time.quota} stops the apply after the transaction its firstRun
-     * guard forces through. That is the part-way apply
-     * {@link #testFlushLeadPartialApplyLeavingOwnBlockPendingDoesNotRestampSlot} is about; nothing
-     * else in the suite needs it, and a frozen clock leaves even a zero quota unbounded.
-     */
-    private static final class DriftingMicrosClock implements MicrosecondClock {
-        private long drift;
-        private boolean isDrifting;
-
-        @Override
-        public long getTicks() {
-            final long base = currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-            return isDrifting ? base + drift++ : base;
-        }
-
-        private void startDrifting() {
-            isDrifting = true;
-        }
-
-        private void stopDrifting() {
-            isDrifting = false;
-        }
     }
 }

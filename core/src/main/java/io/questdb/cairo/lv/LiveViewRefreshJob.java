@@ -816,19 +816,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test-only: drives {@link #retryPendingLiveViewApply(LiveViewInstance)} directly so a test can
-     * assert its {@code finally} frees the runtime state of a view invalidated while the helper held
-     * the refresh latch (the invalidator's own free lost the CAS). Production reaches the helper only
-     * through {@link #scanForLaggingViews()}, which skips already-invalid views.
-     */
-    /**
      * Test-only: rebuilds the view's in-memory tier from its table under the refresh latch, the
-     * way {@link #retryPendingLiveViewApply} does, whatever the view's own WAL still holds. A
-     * rebuild over committed but unapplied blocks leaves a slot that is not stale and is stamped
-     * with a seqTxn the next apply moves past - the state {@link #flushLead}'s backlog branches and
-     * {@link #retryPendingLiveViewApply}'s unconditional rebuild are there for. The stale flush in
-     * {@link #finishLeadRefresh} no longer produces it, so a test pinning those guards builds it
-     * with this rather than depend on which production path still does.
+     * way {@link #retryPendingLiveViewApply} does once the table is current, whatever the view's
+     * own WAL still holds. A rebuild over committed but unapplied blocks leaves a slot that is not
+     * stale and is stamped with a seqTxn the next apply moves past - the state {@link #flushLead}'s
+     * backlog branches and {@link #retryPendingLiveViewApply}'s rebuild-never-re-stamp rule are
+     * there for. Neither the stale flush in {@link #finishLeadRefresh} nor a part-way retry
+     * produces it any more, so a test pinning those guards builds it with this rather than depend
+     * on which production path still does.
      */
     @TestOnly
     public void rebuildInMemoryTierForTest(LiveViewInstance instance) {
@@ -846,6 +841,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    /**
+     * Test-only: drives {@link #retryPendingLiveViewApply(LiveViewInstance)} directly so a test can
+     * assert its {@code finally} frees the runtime state of a view invalidated while the helper held
+     * the refresh latch (the invalidator's own free lost the CAS). Production reaches the helper only
+     * through {@link #scanForLaggingViews()}, which skips already-invalid views.
+     */
     @TestOnly
     public boolean retryPendingLiveViewApplyForTest(LiveViewInstance instance) {
         return retryPendingLiveViewApply(instance);
@@ -4323,7 +4324,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // right away (below) - this is where a DROP PARTITION sequenced against an
                 // un-flushed lead lands, and an idle view would otherwise serve disk-only until
                 // the next base commit. A part-way apply leaves blocks outstanding; the rebuild
-                // waits for retryPendingLiveViewApply to land them, since it rebuilds itself.
+                // waits for retryPendingLiveViewApply to land them, which rebuilds once they all
+                // have.
                 isTierRebuildDue = lvCommittedSeqTxn == lvAppliedSeqTxn;
             } else if (removedRows > 0) {
                 // The apply landed exactly this flush's block, but the commit's own
@@ -4415,7 +4417,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     commit's own housekeeping: un-stamped, and rebuilt from the surviving table.</li>
      * </ul>
      * A part-way apply leaves the rebuild to {@link #retryPendingLiveViewApply}, which rebuilds
-     * when it lands the rest - a coupled view never carries an un-flushed lead, so
+     * once it has landed the rest - a coupled view never carries an un-flushed lead, so
      * {@link #hasPendingLiveViewApply} picks it up.
      *
      * @return true when the caller must rebuild the tier from the table, after it has
@@ -5211,8 +5213,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Fails closed: any read failure reports {@code false}. Every caller acts on a
      * {@code true}: the ACTIVE restart reconcile clamps a base-WAL purge floor on it, the
      * seed sweep's resume setup derives its skip-write floor off the table's row count, and
-     * the lead path's stale flush rebuilds the in-memory tier from the table. So "cannot
-     * tell" has to mean "not yet".
+     * the lead path's stale flush and the lagging scan's apply retry rebuild the in-memory
+     * tier from the table. So "cannot tell" has to mean "not yet".
      */
     private boolean isLiveViewWalFullyApplied(LiveViewInstance instance) {
         final TableToken token = instance.getLiveViewToken();
@@ -14965,11 +14967,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Re-drives the live view's own WAL apply for a block {@code flushLead} committed but could
-     * not apply inline, then repairs the in-mem tier's stamp so reads regain seam routing
-     * instead of staying disk-only. Runs under the refresh latch: the apply advances the LV's
-     * on-disk tier, which neither a concurrent refresh cycle nor the checkpoint agent's freeze
-     * may race. Returns {@code true} only when the applied seqTxn actually advanced, so a retry
-     * that no-ops again reports no work and lets the worker idle rather than spin.
+     * not apply inline, then rebuilds the in-mem tier from the table so reads regain seam routing
+     * instead of staying disk-only - once the table holds every block the view committed. An
+     * apply that stopped part-way leaves the tier un-stamped and stale for the next retry or the
+     * next cycle's straight-through flush. Runs under the refresh latch: the apply advances the
+     * LV's on-disk tier, which neither a concurrent refresh cycle nor the checkpoint agent's
+     * freeze may race. Returns {@code true} only when the applied seqTxn actually advanced, so a
+     * retry that no-ops again reports no work and lets the worker idle rather than spin.
      */
     private boolean retryPendingLiveViewApply(LiveViewInstance instance) {
         if (!instance.tryLockForRefresh()) {
@@ -15001,7 +15005,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // waits for the operator; hasPendingLiveViewApply skips it meanwhile.
                 return false;
             }
-            // Always rebuild the slot from the now-current disk; never re-stamp it.
+            // An idle DROP PARTITION lands through this path. Dispose of the timeline now
+            // rather than at the next seal: an idle view may not seal for a long time, and
+            // the old roots must not outlive the rows they count. The helper defers itself
+            // while a block is still outstanding.
+            reconcilePendingPartitionRemovals(instance);
+            if (!isLiveViewWalFullyApplied(instance)) {
+                // The apply stopped part-way - it spent its per-table time quota, or a shutdown
+                // ended it - and blocks the view committed are still off its table, which is the
+                // shape a long SUSPEND WAL leaves for RESUME WAL to land. A rebuild here would
+                // stage the slot from that table and clear the stale marking, and the next base
+                // commit would then publish its lead on top of the slot, above rows no read can
+                // reach: the view would serve its applied rows and the lead with the outstanding
+                // blocks missing between them until a flush landed them. Skipping the rebuild is
+                // not enough on its own. A backlog of DDL reaches here with a clean tier, and a
+                // DROP PARTITION this apply landed may have taken rows out of its band, so a lead
+                // published on top would re-stamp that band with the seqTxn the DROP left. So
+                // leave the tier stale - the rule finishLeadRefresh's stale branch keeps for its
+                // own rebuild - and un-stamped, as flushLead's part-way branch leaves it, although
+                // the table's advance has already disengaged the fence. Reads stay on the applied
+                // table, behind and never wrong; the next cycle flushes straight through and lands
+                // the rest under its own block, and on an idle view the next scan retries here and
+                // rebuilds once the table is current.
+                // See LiveViewDurableTierDdlTest.testPartWayRetryAfterResumeWalKeepsTheNextLeadOffTheBlockStillOutstanding
+                // and testPartWayRetryOverADropInsideTheBandKeepsTheNextLeadOffIt.
+                restampSlot(instance, Numbers.LONG_NULL, 0);
+                instance.setTierStale(true);
+                return true;
+            }
+            // Rebuild the slot from the now-current disk; never re-stamp it.
             // A re-stamp asserts the seam's identity - that the slot's band IS the LV table's
             // trailing rows at appliedAfter - and this site cannot establish it. It knows only
             // that the applied seqTxn advanced; it does not know which disk image staged the
@@ -15015,10 +15047,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // pending. A rebuild re-establishes the identity by construction, and it costs nothing
             // on the common path - this site runs only when an apply that had failed finally lands.
             // See LiveViewSmokeTest.testFlushLeadMultiCycleUnappliedBacklogDoesNotStrandStaleTierRows.
-            // An idle DROP PARTITION lands through this path. Dispose of the timeline now
-            // rather than at the next seal: an idle view may not seal for a long time, and
-            // the old roots must not outlive the rows they count.
-            reconcilePendingPartitionRemovals(instance);
             rebuildInMemoryTier(instance);
             return true;
         } catch (Throwable t) {

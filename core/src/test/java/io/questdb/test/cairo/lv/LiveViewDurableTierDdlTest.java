@@ -93,8 +93,9 @@ import java.util.function.BooleanSupplier;
  * taken while the view is still SEEDING does to the sweep's resume, including a failure at each
  * step of the reset that resume falls back to, and what the in-memory tier and a restart's restore
  * do over a block the view's own WAL holds and its table does not - including the block an
- * operator's {@code SUSPEND WAL} withholds until {@code RESUME WAL}, and the replacement of an
- * out-of-order repair that did not land. Replica propagation belongs to a later stage.
+ * operator's {@code SUSPEND WAL} withholds until {@code RESUME WAL}, the blocks an apply retry
+ * leaves behind when its time quota stops it part-way, and the replacement of an out-of-order
+ * repair that did not land. Replica propagation belongs to a later stage.
  */
 public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
@@ -4405,6 +4406,268 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testPartWayRetryAfterResumeWalKeepsTheNextLeadOffTheBlockStillOutstanding() throws Exception {
+        // RESUME WAL hands a suspended view's backlog to the lagging scan's retryPendingLiveViewApply,
+        // and that retry's apply is the one a per-table time quota cuts short: a long suspension leaves
+        // one block per base commit behind it. The retry rebuilt the in-memory tier after any advance,
+        // a part-way one included, which staged a slot from a table still missing the block the quota
+        // left behind and cleared the stale marking. The next base commit then took the lead path and
+        // published its row on top of that slot, and the view served its applied rows and the lead
+        // with the outstanding block missing between them - rn 1, 2, 3, then 5 - until the next FLUSH
+        // EVERY tick landed it. The retry now rebuilds only over a table that holds every block the
+        // view committed, and otherwise leaves the tier stale, so the next cycle flushes straight
+        // through, as it does over any other outstanding block.
+        final DriftingMicrosClock clock = new DriftingMicrosClock();
+        testMicrosClock = clock;
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // a root per flush
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 10s PARTITION BY DAY START FROM NOW AS "
+                    + "(SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = resumeWithOneOfTwoHeldBlocksApplied(job, clock);
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+
+                // A row at the same clock, so no cadence flush comes round to write it. It finds the
+                // tier stale and goes straight through, and that flush's apply lands the block the
+                // retry left behind under its own.
+                execute("INSERT INTO base VALUES ('1970-01-03T00:00:02.000000Z', 'a', 5)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-02T00:00:00.000000Z\t2\t2
+                                1970-01-03T00:00:00.000000Z\t3\t3
+                                1970-01-03T00:00:01.000000Z\t4\t4
+                                1970-01-03T00:00:02.000000Z\t5\t5
+                                """);
+                Assert.assertEquals("no row may wait in RAM above the outstanding block", 0, instance.getLeadRowCount());
+                Assert.assertEquals(tracker.getSeqTxn(), tracker.getWriterTxn());
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertFalse(instance.isTierStale());
+                Assert.assertEquals(5, instance.getLvRowsTotal());
+                // The two flushes the suspension held sealed nothing over their outstanding blocks; the
+                // flush that landed them seals the frontier.
+                assertLadder(instance, ts("1970-01-01"), 1, ts("1970-01-02"), 2, ts("1970-01-03T00:00:02.000000Z"), 5);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT ts, x, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn
+                            1970-01-01T00:00:00.000000Z\t1\t1
+                            1970-01-02T00:00:00.000000Z\t2\t2
+                            1970-01-03T00:00:00.000000Z\t3\t3
+                            1970-01-03T00:00:01.000000Z\t4\t4
+                            1970-01-03T00:00:02.000000Z\t5\t5
+                            """);
+        });
+    }
+
+    @Test
+    public void testPartWayRetryOverADropInsideTheBandKeepsTheNextLeadOffIt() throws Exception {
+        // The part-way retry over DDL rather than rows, which is why that retry marks the tier stale
+        // rather than only skipping its rebuild. An idle view with a clean tier takes a DROP
+        // PARTITION and a conversion back to back, and the retry lands the DROP before the quota
+        // stops it. The DROP takes a row out from under the band, and the band is otherwise clean:
+        // nothing marked it stale before the retry ran. Left that way, the next base commit would
+        // publish its lead on top of the band and stamp it with the seqTxn the DROP left, and the
+        // seam would serve the dropped row in place of one the table holds, at an unchanged count.
+        // Marked stale, that commit goes straight through to disk and the tier is rebuilt behind it.
+        // The rebuild this retry used to run was harmless here: the conversion still outstanding
+        // moves no row a lead could sit above.
+        final DriftingMicrosClock clock = new DriftingMicrosClock();
+        testMicrosClock = clock;
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // a root per flush
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 10s IN MEMORY 1h PARTITION BY HOUR START FROM NOW AS "
+                    + "(SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushOneRow(job, "1970-01-01T00:00:00.000000Z", 1, 1);
+                flushOneRow(job, "1970-01-01T00:10:00.000000Z", 2, 2);
+                flushOneRow(job, "1970-01-01T01:59:50.000000Z", 3, 3);
+                flushOneRow(job, "1970-01-01T02:00:05.000000Z", 4, 4);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+
+                // Compacting the oldest hour is an idle DDL the retry lands whole, so it rebuilds the
+                // tier from the table: the band is the hour below 02:00:05, and the hour-00 rows sit
+                // on disk under it.
+                execute("ALTER LIVE VIEW lv CONVERT PARTITION TO PARQUET LIST '1970-01-01T00'");
+                driveLiveViewWalApply(job);
+                assertBand(instance, "1970-01-01T01:59:50.000000Z", 2);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertFalse(instance.isTierStale());
+
+                // Two more ALTERs back to back. The retry lands the DROP of hour 01 - 01:59:50, the
+                // band's first row - and the quota stops it before the conversion back.
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-01T01'");
+                execute("ALTER LIVE VIEW lv CONVERT PARTITION TO NATIVE LIST '1970-01-01T00'");
+                drainWalQueue();
+                final long appliedBefore = tracker.getWriterTxn();
+                Assert.assertEquals("both ALTERs must wait in the view's WAL", appliedBefore + 2, engine.getTableSequencerAPI().lastTxn(lvToken));
+                clock.startDrifting();
+                try {
+                    Assert.assertTrue("the lagging scan's retry must land the DROP", job.run());
+                } finally {
+                    clock.stopDrifting();
+                }
+                Assert.assertEquals("the exhausted quota must stop the retry after the DROP", appliedBefore + 1, tracker.getWriterTxn());
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-01T00:10:00.000000Z\t2\t2
+                                1970-01-01T02:00:05.000000Z\t4\t4
+                                """);
+
+                // A row at the same clock, so no cadence flush comes round to write it.
+                execute("INSERT INTO base VALUES ('1970-01-01T02:00:06.000000Z', 'a', 5)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-01T00:10:00.000000Z\t2\t2
+                                1970-01-01T02:00:05.000000Z\t4\t4
+                                1970-01-01T02:00:06.000000Z\t5\t5
+                                """);
+
+                driveLiveViewWalApply(job);
+                driveRefreshToQuiescence(job);
+                assertParquetPartitionCount(0);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertFalse(instance.isTierStale());
+                Assert.assertEquals("the DROP must leave the lifetime counter once", 4, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                // The DROP retired 01:59:50's root and lowered the one above it; the flush that landed
+                // the conversion seals the frontier.
+                assertLadder(
+                        instance,
+                        ts("1970-01-01T00:00:00.000000Z"), 1,
+                        ts("1970-01-01T00:10:00.000000Z"), 2,
+                        ts("1970-01-01T02:00:05.000000Z"), 3,
+                        ts("1970-01-01T02:00:06.000000Z"), 4
+                );
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT ts, x, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn
+                            1970-01-01T00:00:00.000000Z\t1\t1
+                            1970-01-01T00:10:00.000000Z\t2\t2
+                            1970-01-01T02:00:05.000000Z\t4\t4
+                            1970-01-01T02:00:06.000000Z\t5\t5
+                            """);
+        });
+    }
+
+    @Test
+    public void testPartWayRetryOnAnIdleViewRebuildsTheTierOnceTheRestLands() throws Exception {
+        // The idle side of the case above. With no base commit behind the part-way retry nothing
+        // flushes straight through, so the tier that retry left stale comes back through the retry
+        // alone: the lagging scan still finds a block outstanding and no lead, re-drives the apply, and
+        // rebuilds the tier once the table holds every block the view committed. Until then reads stay
+        // on the applied table, un-stamped, which is behind the view and never wrong.
+        final DriftingMicrosClock clock = new DriftingMicrosClock();
+        testMicrosClock = clock;
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // a root per flush
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 10s PARTITION BY DAY START FROM NOW AS "
+                    + "(SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = resumeWithOneOfTwoHeldBlocksApplied(job, clock);
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+                Assert.assertTrue("a part-way retry must leave the tier stale over the block still outstanding",
+                        instance.isTierStale());
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_DISK_ONLY);
+
+                // The clock is frozen again, so the quota no longer bites and the next retry lands the
+                // rest. The base stays quiescent, so no flush can be the applier.
+                final long committedSeqTxn = tracker.getSeqTxn();
+                driveLiveViewWalApply(job);
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("no flush may run on an idle view: the retry must land the rest",
+                        committedSeqTxn, engine.getTableSequencerAPI().lastTxn(lvToken));
+                Assert.assertEquals(committedSeqTxn, tracker.getWriterTxn());
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-02T00:00:00.000000Z\t2\t2
+                                1970-01-03T00:00:00.000000Z\t3\t3
+                                1970-01-03T00:00:01.000000Z\t4\t4
+                                """);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertFalse(instance.isTierStale());
+                Assert.assertEquals(4, instance.getLvRowsTotal());
+                // A retry seals nothing, so the ladder holds the two roots from before the suspension
+                // until the next flush seals above them.
+                assertLadder(instance, ts("1970-01-01"), 1, ts("1970-01-02"), 2);
+
+                flushOneRow(job, "1970-01-04T00:00:00.000000Z", 5, 5);
+                assertLadder(instance, ts("1970-01-01"), 1, ts("1970-01-02"), 2, ts("1970-01-04"), 5);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT ts, x, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn
+                            1970-01-01T00:00:00.000000Z\t1\t1
+                            1970-01-02T00:00:00.000000Z\t2\t2
+                            1970-01-03T00:00:00.000000Z\t3\t3
+                            1970-01-03T00:00:01.000000Z\t4\t4
+                            1970-01-04T00:00:00.000000Z\t5\t5
+                            """);
+        });
+    }
+
+    @Test
     public void testTtlEvictionIntoTheOverlapBandRebuildsTheBandItInvalidates() throws Exception {
         // The eviction the seam arithmetic has to survive: an IN MEMORY window wider than what the
         // TTL keeps, so the rows the flush's own commit evicts are rows the overlap band holds. The
@@ -6966,6 +7229,64 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         try (TableReader reader = engine.getReader(lvToken)) {
             return reader.size();
         }
+    }
+
+    /**
+     * The state both part-way retry cases start from. Two days are flushed, then an operator's
+     * {@code SUSPEND WAL} holds two blocks in the view's WAL: the cadence flush of 1970-01-03, and a
+     * row at the same clock that the tier this flush left stale sends straight through. {@code RESUME
+     * WAL} hands both to the lagging scan, whose retry runs with the clock drifting under a zero apply
+     * quota and so lands only the older one. Asserts the durable side of that and the read, which
+     * serves the table as the retry left it; what the in-memory tier does next is the caller's.
+     */
+    private LiveViewInstance resumeWithOneOfTwoHeldBlocksApplied(LiveViewRefreshJob job, DriftingMicrosClock clock) throws Exception {
+        final TableToken lvToken = engine.verifyTableName("lv");
+        flushOneRow(job, "1970-01-01T00:00:00.000000Z", 1, 1);
+        flushOneRow(job, "1970-01-02T00:00:00.000000Z", 2, 2);
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+        final long appliedAtSuspend = tracker.getWriterTxn();
+        Assert.assertEquals(appliedAtSuspend, engine.getTableSequencerAPI().lastTxn(lvToken));
+
+        execute("ALTER LIVE VIEW lv SUSPEND WAL");
+        execute("INSERT INTO base VALUES ('1970-01-03T00:00:00.000000Z', 'a', 3)");
+        driveUntil(
+                job,
+                () -> engine.getTableSequencerAPI().lastTxn(lvToken) > appliedAtSuspend,
+                "the cadence flush never committed 1970-01-03"
+        );
+        execute("INSERT INTO base VALUES ('1970-01-03T00:00:01.000000Z', 'a', 4)");
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+        Assert.assertEquals("both blocks must wait in the view's WAL", appliedAtSuspend + 2, engine.getTableSequencerAPI().lastTxn(lvToken));
+        Assert.assertEquals(appliedAtSuspend, tracker.getWriterTxn());
+        Assert.assertEquals(0, instance.getLeadRowCount());
+
+        execute("ALTER LIVE VIEW lv RESUME WAL");
+        drainWalQueue();
+        clock.startDrifting();
+        try {
+            // One pass over an empty notification queue, so the lagging scan is what runs.
+            Assert.assertTrue("the lagging scan's retry must land a block", job.run());
+        } finally {
+            clock.stopDrifting();
+        }
+        Assert.assertEquals("the exhausted quota must stop the retry after one block", appliedAtSuspend + 1, tracker.getWriterTxn());
+        Assert.assertEquals("the retry commits nothing of its own", appliedAtSuspend + 2, engine.getTableSequencerAPI().lastTxn(lvToken));
+        Assert.assertFalse("a part-way apply must not suspend the table", engine.getTableSequencerAPI().isSuspended(lvToken));
+        assertQuery("SELECT ts, x, rn FROM lv")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tx\trn
+                        1970-01-01T00:00:00.000000Z\t1\t1
+                        1970-01-02T00:00:00.000000Z\t2\t2
+                        1970-01-03T00:00:00.000000Z\t3\t3
+                        """);
+        assertNoRefreshFaults("lv");
+        return instance;
     }
 
     /**

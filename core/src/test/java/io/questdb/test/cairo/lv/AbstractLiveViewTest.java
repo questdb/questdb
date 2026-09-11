@@ -43,6 +43,8 @@ import io.questdb.mp.Job;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -346,6 +348,35 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             LiveViewCheckpointLifecycle.retireTimeline(engine.getConfiguration(), p, null, true);
+        }
+    }
+
+    /**
+     * Reads like the default test clock - frozen on {@code currentMicros} - until
+     * {@link #startDrifting()} arms it, after which every read returns one microsecond later than
+     * the last. The WAL apply loop computes its deadline from one clock read and tests every later
+     * iteration against another, so an armed drift plus a zero
+     * {@code cairo.wal.apply.table.time.quota} stops the apply after the transaction its firstRun
+     * guard forces through. That is the part-way apply a live view's inline appliers have to
+     * survive, and a frozen clock leaves even a zero quota unbounded. A test installs it as
+     * {@code testMicrosClock} before its engine starts and arms it only around the pass under test.
+     */
+    protected static final class DriftingMicrosClock implements MicrosecondClock {
+        private long drift;
+        private boolean isDrifting;
+
+        @Override
+        public long getTicks() {
+            final long base = currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+            return isDrifting ? base + drift++ : base;
+        }
+
+        public void startDrifting() {
+            isDrifting = true;
+        }
+
+        public void stopDrifting() {
+            isDrifting = false;
         }
     }
 }
