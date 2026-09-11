@@ -541,7 +541,10 @@ public class WalCustomEventTest extends AbstractCairoTest {
                 final long mem = TableUtils.mapRW(ff, fd, fileSize, MemoryTag.NATIVE_DEFAULT);
                 try {
                     length = Unsafe.getUnsafe().getInt(mem + recordStart);
-                    checksum = TableUtils.calculateCvAreaChecksum(mem + recordStart, length);
+                    // Body only, matching WalEventWriter.finishRecord(): the writer fills the sidecar
+                    // entry BEFORE it publishes the length, so the 4-byte length header cannot be inside
+                    // the hashed region. The header stays verified through the storedLength comparison.
+                    checksum = TableUtils.calculateCvAreaChecksum(mem + recordStart + Integer.BYTES, length - Integer.BYTES);
                 } finally {
                     ff.munmap(mem, fileSize, MemoryTag.NATIVE_DEFAULT);
                 }
