@@ -2618,12 +2618,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * timeline and the lifetime row counter is deliberately NOT done here: some callers
      * hold an out-of-order repair capture that must be disposed of first, so each caller
      * runs {@link #reconcilePendingPartitionRemovals} at its own safe boundary.
+     * <p>
+     * A hard-suspended view applies nothing: an operator's {@code ALTER LIVE VIEW ...
+     * SUSPEND WAL}, or the view's directory in {@code cairo.wal.apply.suspended.tables}.
+     * {@code ApplyWal2TableJob.doRun} is where that suspension holds for a table, and a
+     * live view never reaches it, so without this the view's next flush applied its own
+     * block, and the progress cleared the sequencer's suspension while the hard flag
+     * stayed set. The view keeps computing and committing blocks, the way a suspended
+     * table keeps buffering its writers' WAL, and every caller handles the apply that did
+     * not land exactly as it handles a busy writer: the lead path and the coupled cycles
+     * keep reads on the applied table, a repair or a seed reset hands its replacement to
+     * the reconciliation gate in {@link #refreshInstance}, and the resume setups wait.
+     * {@code RESUME WAL} clears the flag and {@link #retryPendingLiveViewApply} lands the
+     * backlog. A suspension a failed apply set, with no operator behind it, is not
+     * hard: the next inline apply retries it and clears it once the fault has.
      *
      * @return the number of rows this apply removed from the live view's table, so a
      * caller that is about to re-stamp the in-memory slot as a subset of disk knows the
      * slot may hold rows disk no longer has
      */
     private long applyLiveViewWal(LiveViewInstance instance) {
+        if (engine.isWalApplySuspended(instance.getLiveViewToken())) {
+            // Ahead of the removal-log read as well: only an apply resets that log, so without
+            // one it still holds the previous apply's events, which that apply transferred.
+            return 0;
+        }
         final long start = System.nanoTime();
         applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
         liveViewApplyNanos += System.nanoTime() - start;
@@ -5233,6 +5252,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Whether the live view's own WAL refuses writes right now: it is hard-suspended, by an
+     * operator's {@code SUSPEND WAL} or by {@code cairo.wal.apply.suspended.tables}, and
+     * {@code cairo.wal.apply.suspended.write.denied} makes that suspension deny writes too.
+     * The same test {@code MatViewRefreshJob.isViewWriteSuspended} parks a materialized
+     * view's refresh on.
+     */
+    private boolean isViewWriteSuspended(LiveViewInstance instance) {
+        return engine.getConfiguration().isWalApplySuspendedWriteDenied()
+                && engine.isWalApplySuspended(instance.getLiveViewToken());
+    }
+
+    /**
      * Reports whether the applied base over {@code (fromSeqTxn, toSeqTxn]} provably equals
      * the base's raw WAL stream, so a coupled dedup-base view can refresh through the proven
      * raw-WAL {@link #drainBaseWal} path instead of the applied-reader {@link #drainAppliedBase}.
@@ -7768,6 +7799,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // earlier root) behind a live marker instead of retiring; the seal below
         // resolves it.
         boolean prefixMarkerLive = false;
+        // Set when the replay cut the timeline back to the anchor's prefix before it read
+        // a row, which is what a resume holding no capture does. A resume that held one
+        // left every root standing for the splice to re-version.
+        boolean truncatedBeforeReplay = false;
         // The ladder this resume leaves behind. Every boundary above the anchor
         // describes output the replay is about to rewrite, so it needs a new root
         // version either way; the choice is whether to re-version them - which keeps
@@ -8143,6 +8178,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // rewrite.
                             final long timelineStart = System.nanoTime();
                             prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, plan.getOutputLowTs());
+                            truncatedBeforeReplay = true;
                             openSegmentRepairPhases.timelinePublicationNanos += System.nanoTime() - timelineStart;
                         }
                         final long rootRestoreStart = System.nanoTime();
@@ -8437,8 +8473,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // turn replayed and drained ahead of it - which the check below tells apart.
             assert timelineCapture == null || !instance.hasPendingPartitionRemovals();
             final long applyStart = System.nanoTime();
-            applyLiveViewWal(instance);
+            final boolean replacementApplied = reconcileLiveViewReplacement(instance, replacementLvSeqTxn);
             openSegmentRepairPhases.applyNanos += System.nanoTime() - applyStart;
+            if (!replacementApplied) {
+                // The replacement is in the live view's WAL and not in its table: the apply failed
+                // and suspended the table, the writer was busy, the table backed off under memory
+                // pressure, or an operator's SUSPEND WAL holds it. Everything below reads that table
+                // - the row-count proof, the positions the splice publishes, the consumed watermark
+                // and the head seal - so none of it may run. The repair hands the replacement to the
+                // reconciliation gate at the top of refreshInstance instead, as the head-miss replay
+                // and the seed reset do. The gate re-drives the apply on every later turn, and once
+                // the block lands the repair runs again from the base range it never consumed.
+                timelineCapture = Misc.free(timelineCapture);
+                deferUnappliedResumeReplacement(instance, session, plan, replacementLvSeqTxn, committedSeqTxn, truncatedBeforeReplay);
+                return;
+            }
             // A removal ordered ahead of the replacement inside (anchor, +inf) took rows the
             // replacement then re-emitted, so the events no longer say what the table lacks:
             // not to the proof, not to the splice's correction, and not to the retention a
@@ -8799,6 +8848,67 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
             }
         }
+    }
+
+    /**
+     * Disposes of an out-of-order resume whose replacement committed and did not apply,
+     * and leaves the view blocked on it.
+     * <p>
+     * The roots at or above the output floor describe output the replacement is about to
+     * rewrite, so they go now rather than once it lands: the capture that would have
+     * re-versioned them cannot prove a replacement the table does not hold, and nothing
+     * may describe superseded output once the block does land. The roots below the floor
+     * are the anchor and everything under it, which no row of the replacement touches, so
+     * they stay behind the repair marker a truncate writes. The repeated repair then
+     * resumes from the same anchor rather than rebuilding the whole view, and a restart in
+     * between rebuilds from the applied base on the marker. A resume that held no capture
+     * already cut the timeline back to that prefix before its replay, behind a marker that
+     * is still live, or retired it when no prefix survived, so it needs nothing further.
+     * <p>
+     * A removal the failed drain committed ahead of the replacement is the exception. It
+     * may have taken rows under the kept roots, and the only retention that could retire
+     * or lower those roots works off events that no longer say what the table lacks once
+     * the replacement re-emits the rows inside its range. The whole timeline goes, the
+     * events with it, and the retention marker their commit wrote.
+     * <p>
+     * The lifetime counter is taken from the table, which is the one coordinate that
+     * describes it while the replacement is outstanding; the repeated repair re-seats it
+     * either way. The watermarks stay where they are, so the base range stays unconsumed,
+     * and a keyed resume leaves the primary runtime as the forward drain left it rather
+     * than transplanting keys whose output the table does not hold.
+     */
+    private void deferUnappliedResumeReplacement(
+            LiveViewInstance instance,
+            @Nullable LiveViewCheckpointRepairSession session,
+            LiveViewCheckpointRepairPlan plan,
+            long replacementLvSeqTxn,
+            long committedSeqTxn,
+            boolean truncatedBeforeReplay
+    ) {
+        final String viewName = instance.getDefinition().getViewName();
+        if (session != null) {
+            // A capture's candidate is gone with the capture, and a retire below would take the
+            // directory the descriptor lives in.
+            session.discardDescriptor();
+        }
+        if (instance.hasPendingPartitionRemovals()) {
+            retireCheckpointStateOnO3(instance, true);
+            instance.getPendingPartitionRemovals().clear();
+            clearRetentionMarker(instance);
+        } else if (!truncatedBeforeReplay) {
+            truncateOrRetireTimelineOnO3(instance, plan.getOutputLowTs());
+        }
+        try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+            instance.setLvRowsTotal(lvReader.size());
+        } catch (Throwable t) {
+            LOG.error().$("could not measure live view rows after an unapplied O3 resume replacement [view=")
+                    .$(viewName).$(", error=").$(t).I$();
+        }
+        instance.setPendingReplacementLvSeqTxn(replacementLvSeqTxn);
+        LOG.critical().$("live view O3 resume replacement committed but did not apply, deferring repair [view=")
+                .$(viewName)
+                .$(", lvSeqTxn=").$(replacementLvSeqTxn)
+                .$(", advanceTo=").$(committedSeqTxn).I$();
     }
 
     /**
@@ -10872,9 +10982,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * reset committed and reports whether the live-view table now holds it. The refresh
      * worker owns the live view's {@code TableWriter} on a primary, so this inline
      * apply is the view's only applier - but it can silently no-op (the writer is
-     * busy, or the table backed off under memory pressure) or suspend the table,
-     * and neither raises. Comparing the applied writer txn against the seqTxn the
-     * commit minted is what turns "the apply ran" into "the replacement landed".
+     * busy, the table backed off under memory pressure, or an operator's
+     * {@code SUSPEND WAL} holds the view) or suspend the table, and none of them
+     * raises. Comparing the applied writer txn against the seqTxn the commit minted is
+     * what turns "the apply ran" into "the replacement landed".
      * <p>
      * Idempotent: a block that is already applied short-circuits without reopening
      * the writer, which is what lets the next refresh turn re-drive the same
@@ -14813,16 +14924,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * True when the live view's own WAL carries transactions its inline apply never landed
      * ({@code seqTxn > writerTxn}) and a retry can make progress. Excludes the states a retry
-     * cannot move: a suspended table (only an operator RESUME clears it), a memory-pressure
-     * back-off ({@code applyWal} returns at its own readiness gate without advancing), and a
-     * view whose tracker is not initialised yet. Excludes a view with an un-flushed lead too -
-     * its next FLUSH EVERY tick calls {@code flushLead}, whose {@code applyWalDirect} re-drives
-     * the outstanding block anyway, so only a view the scan would otherwise leave idle needs
-     * the retry. And excludes a view with a localized repair parked between turns, whose own
-     * final turn is the apply this view is waiting for.
+     * cannot move: a hard-suspended view, whose apply {@link #applyLiveViewWal} withholds until
+     * the operator resumes it, a suspended table (only an operator RESUME clears it), a
+     * memory-pressure back-off ({@code applyWal} returns at its own readiness gate without
+     * advancing), and a view whose tracker is not initialised yet. Excludes a view with an
+     * un-flushed lead too - its next FLUSH EVERY tick calls {@code flushLead}, whose
+     * {@code applyWalDirect} re-drives the outstanding block anyway, so only a view the scan
+     * would otherwise leave idle needs the retry. And excludes a view with a localized repair
+     * parked between turns, whose own final turn is the apply this view is waiting for.
      */
     private boolean hasPendingLiveViewApply(LiveViewInstance instance) {
         if (instance.getLeadRowCount() > 0) {
+            return false;
+        }
+        // A hard suspension is the operator's, and applyLiveViewWal holds it, so a retry could
+        // only log that it tried. SUSPEND WAL also suspends the sequencer, which the check below
+        // reads; the configured list does not, so this is what keeps a listed view quiet.
+        if (engine.isWalApplySuspended(instance.getLiveViewToken())) {
             return false;
         }
         // A parked repair measured the live view's table before its replay and carries those
@@ -15422,6 +15540,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (instance.isFreezeArmed()) {
                 return false;
             }
+            // A hard suspension that also denies writes (cairo.wal.apply.suspended.write.denied)
+            // refuses every commit this turn could make - a flush, a seed turn's block, a repair's
+            // replacement - and every refusal is a refresh failure charged to the retry budget,
+            // whose exhaustion invalidates the view durably. That would turn an operator's
+            // reversible SUSPEND WAL into an invalidation only a DROP undoes. Park instead, as a
+            // materialized view's refresh does: the base range stays unconsumed, reads keep the
+            // table and whatever lead the view already holds, and the tick after RESUME WAL
+            // continues from where this one stopped.
+            if (isViewWriteSuspended(instance)) {
+                return false;
+            }
             // Authoritative apply-lag gate, under the refresh latch, and the only place the floor is
             // cleared. The pre-latch check above races: a worker that reads a satisfied floor there can
             // be descheduled, and by the time it clears the field another worker has already run a full
@@ -15440,10 +15569,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // watermark - reads that table, so refresh stays blocked until the block is
             // known applied. Reporting no work idles the worker instead of spinning a
             // repair or a sweep that would derive its numbers from a table missing the
-            // rows; scanForLaggingViews re-drives the apply on each sweep. applyWal has no
-            // suspension gate of its own, so that retry also lands the block on a table the
-            // failed apply suspended, once the fault clears; the view serves disk-only
-            // behind the seqTxn fence meanwhile.
+            // rows; scanForLaggingViews re-drives the apply on each sweep. applyLiveViewWal
+            // withholds only an operator's hard suspension, so that retry also lands the
+            // block on a table a failed apply suspended, once the fault clears, and on a
+            // hard-suspended one once RESUME WAL lifts it; the view serves disk-only behind
+            // the seqTxn fence meanwhile.
             if (!reconcilePendingReplacement(instance)) {
                 return false;
             }

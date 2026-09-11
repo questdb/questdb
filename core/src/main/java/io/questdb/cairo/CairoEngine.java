@@ -3146,7 +3146,8 @@ public class CairoEngine implements Closeable, WriterSource {
     /**
      * Whether the table is hard-suspended from WAL apply, either by the reloadable
      * {@code cairo.wal.apply.suspended.tables} config list or by a runtime
-     * {@code ALTER TABLE ... SUSPEND WAL}. The ApplyWal2Table job skips such tables. Resuming
+     * {@code ALTER TABLE ... SUSPEND WAL}. The ApplyWal2Table job skips such tables, and so does a
+     * live view's refresh worker, which applies the view's own WAL inline. Resuming
      * requires removing the table from the config list (and reloading) and running
      * {@code ALTER TABLE ... RESUME WAL}.
      */

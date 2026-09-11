@@ -92,8 +92,9 @@ import java.util.function.BooleanSupplier;
  * publishes - a replacement, or the upsert a keyed repair publishes instead - and what a removal
  * taken while the view is still SEEDING does to the sweep's resume, including a failure at each
  * step of the reset that resume falls back to, and what the in-memory tier and a restart's restore
- * do over a block the view's own WAL holds and its table does not. Replica propagation belongs to a
- * later stage.
+ * do over a block the view's own WAL holds and its table does not - including the block an
+ * operator's {@code SUSPEND WAL} withholds until {@code RESUME WAL}, and the replacement of an
+ * out-of-order repair that did not land. Replica propagation belongs to a later stage.
  */
 public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
@@ -4021,6 +4022,389 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testSuspendWalHoldsTheViewsFlushesAndItsDdlUntilResumed() throws Exception {
+        // ALTER LIVE VIEW ... SUSPEND WAL sets the sequencer's suspension and the hard flag, and only
+        // ApplyWal2TableJob.doRun read the hard flag, while a live view's WAL is applied by its own
+        // refresh worker instead. So the view's next flush applied its own block, together with a
+        // DROP PARTITION sequenced after the suspend, and the progress cleared the sequencer's
+        // suspension: live_views() went back to 'active' with the hard flag still set, and the
+        // operator's command had held for one flush. The refresh worker's apply now withholds a
+        // hard-suspended view's WAL. The view keeps computing and committing blocks, the way a
+        // suspended table keeps buffering its writers' WAL, reads stay on the table as it stood at
+        // the suspend, and RESUME WAL lands the backlog in WAL order.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // a root per flush
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 10s PARTITION BY DAY START FROM NOW AS "
+                    + "(SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushOneRow(job, "1970-01-01T00:00:00.000000Z", 1, 1);
+                flushOneRow(job, "1970-01-02T00:00:00.000000Z", 2, 2);
+                flushOneRow(job, "1970-01-03T00:00:00.000000Z", 3, 3);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+                final long appliedAtSuspend = tracker.getWriterTxn();
+                final long committedAtSuspend = engine.getTableSequencerAPI().lastTxn(lvToken);
+                capture.start();
+
+                execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '1970-01-01'");
+                // The cadence flush of 1970-01-04 commits its block behind the DROP and applies
+                // neither.
+                execute("INSERT INTO base VALUES ('1970-01-04T00:00:00.000000Z', 'a', 4)");
+                driveUntil(
+                        job,
+                        () -> engine.getTableSequencerAPI().lastTxn(lvToken) == committedAtSuspend + 2,
+                        "the cadence flush never committed 1970-01-04"
+                );
+                // That flush left the tier stale, so a row at the same clock is flushed straight
+                // through, and its block waits as well.
+                execute("INSERT INTO base VALUES ('1970-01-04T00:00:01.000000Z', 'a', 5)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                // Idle passes: the lagging scan must not re-drive the apply either.
+                driveRefreshToQuiescence(job);
+
+                Assert.assertEquals("nothing may apply while the operator's suspension holds", appliedAtSuspend, tracker.getWriterTxn());
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(lvToken));
+                Assert.assertTrue(engine.isWalApplySuspended(lvToken));
+                Assert.assertEquals("the DROP and both blocks must wait in the view's WAL", committedAtSuspend + 3, engine.getTableSequencerAPI().lastTxn(lvToken));
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\nsuspended\n");
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-02T00:00:00.000000Z\t2\t2
+                                1970-01-03T00:00:00.000000Z\t3\t3
+                                """);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_DISK_ONLY);
+                Assert.assertEquals(0, instance.getLeadRowCount());
+                Assert.assertTrue(instance.isTierStale());
+                capture.drain();
+                capture.assertNotLogged("job failed, table suspended");
+                capture.assertNotLogged("live view has committed but unapplied WAL, retrying apply");
+                assertNoRefreshFaults("lv");
+
+                // RESUME WAL lifts both flags, and the lagging scan lands the DROP and the two blocks
+                // behind it in one apply.
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveLiveViewWalApply(job);
+                driveRefreshToQuiescence(job);
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
+                Assert.assertFalse(engine.isWalApplySuspended(lvToken));
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\nactive\n");
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-02T00:00:00.000000Z\t2\t2
+                                1970-01-03T00:00:00.000000Z\t3\t3
+                                1970-01-04T00:00:00.000000Z\t4\t4
+                                1970-01-04T00:00:01.000000Z\t5\t5
+                                """);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertFalse(instance.isTierStale());
+                Assert.assertEquals("the DROP must leave the lifetime counter once", 4, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                // The DROP retired 1970-01-01's root and lowered the two above it; the flushes the
+                // suspension held sealed nothing over their outstanding blocks.
+                assertLadder(instance, ts("1970-01-02"), 1, ts("1970-01-03"), 2);
+
+                flushOneRow(job, "1970-01-05T00:00:00.000000Z", 6, 5);
+                assertLadder(instance, ts("1970-01-02"), 1, ts("1970-01-03"), 2, ts("1970-01-05"), 5);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            } finally {
+                capture.stop();
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT ts, x, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn
+                            1970-01-02T00:00:00.000000Z\t2\t2
+                            1970-01-03T00:00:00.000000Z\t3\t3
+                            1970-01-04T00:00:00.000000Z\t4\t4
+                            1970-01-04T00:00:01.000000Z\t5\t5
+                            1970-01-05T00:00:00.000000Z\t6\t6
+                            """);
+        });
+    }
+
+    @Test
+    public void testResumeReplacementThatDidNotApplyHoldsRefreshUntilItLands() throws Exception {
+        // The resume executor committed its replacement, applied it inline and went on as if it had
+        // landed, whether or not it had: the head-miss replay and the seed reset hand an unapplied
+        // replacement to the reconciliation gate, and this executor did not. Over a failed apply it
+        // measured the table that still held the pre-repair rows, so its row-count proof failed at
+        // critical and the whole ladder went, and it walked the watermarks past the correction with
+        // the counter leading the table by the rows that had not landed. The rows came out right once
+        // the block did land; the ladder did not come back, so a restart in between paid a rebuild
+        // from the applied base, and a later correction below the fresh head found no anchor. It now
+        // defers like the other two. The correction at 02:59:55 resumes from the anchor at 02:59:50,
+        // and a refused column file in hour 02 fails the replacement's apply and suspends the table:
+        // the watermark stays, the roots the replacement is rewriting go while the anchor's prefix
+        // stays behind the repair marker, and a forward row waits behind the gate. Once the fault
+        // clears the gate lands the replacement and the repeated repair resumes from the same anchor.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failApply = new AtomicBoolean();
+        final AtomicInteger applyFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failApply.get()
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "2026-01-01T02")
+                        && Utf8s.endsWithAscii(name, ".d")) {
+                    applyFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            createHourlyRangeView();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = flushResumeRepairHistory(job);
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+                capture.start();
+
+                // Armed right before the replacement commits, so only its apply meets the fault.
+                job.setSimulateDdlBeforeRepairReplacementForTest(() -> failApply.set(true));
+                execute("INSERT INTO base VALUES ('2026-01-01T02:59:55.000000Z', 'a', 100)");
+                driveUntil(
+                        job,
+                        () -> instance.getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL,
+                        "the resume never handed its replacement to the gate"
+                );
+                Assert.assertTrue("the replacement's apply must actually have been failed", applyFaults.get() > 0);
+                assertResumeReplacementHeld(job, instance, lvToken, capture, processedBefore);
+
+                // The fault clears, the gate lands the replacement and the repair runs again.
+                failApply.set(false);
+                driveUntil(
+                        job,
+                        () -> instance.getPendingReplacementLvSeqTxn() == Numbers.LONG_NULL
+                                && instance.getLastProcessedSeqTxn() > processedBefore,
+                        "the repair never ran again once its replacement landed"
+                );
+                driveRefreshToQuiescence(job);
+                capture.drain();
+                capture.assertLogged("live view deferred replacement applied, resuming refresh [view=lv");
+                assertResumeRepairFinished(instance, lvToken, capture);
+            } finally {
+                capture.stop();
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertResumeRepairRows();
+        });
+    }
+
+    @Test
+    public void testSuspendWalAheadOfAResumeReplacementHoldsTheRepairUntilResumed() throws Exception {
+        // The operator's suspension meeting an out-of-order repair: the hook suspends the view right
+        // before the resume commits its replacement, so the apply that would land it is the one the
+        // suspension withholds. The resume hands the replacement to the reconciliation gate, and the
+        // gate holds every later turn - the forward row included - until RESUME WAL lets the lagging
+        // scan land the replacement. The repeated repair then resumes from the same anchor.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createHourlyRangeView();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = flushResumeRepairHistory(job);
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+                capture.start();
+
+                job.setSimulateDdlBeforeRepairReplacementForTest(() -> {
+                    try {
+                        execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                    } catch (SqlException e) {
+                        throw new AssertionError(e);
+                    }
+                });
+                execute("INSERT INTO base VALUES ('2026-01-01T02:59:55.000000Z', 'a', 100)");
+                driveUntil(
+                        job,
+                        () -> instance.getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL,
+                        "the resume never handed its replacement to the gate"
+                );
+                Assert.assertTrue(engine.isWalApplySuspended(lvToken));
+                assertResumeReplacementHeld(job, instance, lvToken, capture, processedBefore);
+                capture.drain();
+                capture.assertNotLogged("job failed, table suspended");
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveUntil(
+                        job,
+                        () -> instance.getPendingReplacementLvSeqTxn() == Numbers.LONG_NULL
+                                && instance.getLastProcessedSeqTxn() > processedBefore,
+                        "the repair never ran again once RESUME WAL landed its replacement"
+                );
+                driveRefreshToQuiescence(job);
+                assertResumeRepairFinished(instance, lvToken, capture);
+            } finally {
+                capture.stop();
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertResumeRepairRows();
+        });
+    }
+
+    @Test
+    public void testSuspendWalHoldsASeedSweepsBlocksUntilResumed() throws Exception {
+        // The seed sweep under the operator's suspension. Every turn commits its block and applies
+        // nothing, so the sweep runs to completion over its own outstanding WAL: the view flips
+        // ACTIVE holding no row on disk, and the completion's head seal declines over the
+        // outstanding apply, so it holds no timeline either. RESUME WAL lands every block in order,
+        // and the next flush seals a fresh history at the count the table then holds. What this
+        // pins is that a suspension taken before the first turn holds for the whole sweep, where the
+        // first turn's apply used to lift it, and that nothing the sweep derived over the unapplied
+        // blocks survives the resume as a wrong row or a wrong position.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createSeedBase();
+            createSeedView("");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            execute("ALTER LIVE VIEW lv SUSPEND WAL");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertTrue(engine.isWalApplySuspended(lvToken));
+                Assert.assertEquals("no seed block may apply while the suspension holds", 0, lvRowCount(lvToken));
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\nsuspended\n");
+                assertTimelineExists(lvToken, false);
+                assertNoRefreshFaults("lv");
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveLiveViewWalApply(job);
+                driveRefreshToQuiescence(job);
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\nactive\n");
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-02T00:00:00.000000Z\t2\t2
+                                1970-01-03T00:00:00.000000Z\t3\t3
+                                1970-01-04T00:00:00.000000Z\t4\t4
+                                1970-01-05T00:00:00.000000Z\t5\t5
+                                """);
+                Assert.assertEquals(5, instance.getLvRowsTotal());
+
+                flushOneRow(job, "1970-01-06T00:00:00.000000Z", 6, 6);
+                assertLadder(instance, ts("1970-01-06"), 6);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT ts, x, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn
+                            1970-01-01T00:00:00.000000Z\t1\t1
+                            1970-01-02T00:00:00.000000Z\t2\t2
+                            1970-01-03T00:00:00.000000Z\t3\t3
+                            1970-01-04T00:00:00.000000Z\t4\t4
+                            1970-01-05T00:00:00.000000Z\t5\t5
+                            1970-01-06T00:00:00.000000Z\t6\t6
+                            """);
+        });
+    }
+
+    @Test
+    public void testSuspendWalWithWritesDeniedParksTheRefresh() throws Exception {
+        // cairo.wal.apply.suspended.write.denied makes a hard suspension refuse WAL writes as well as
+        // the apply. The refresh worker is the only writer a live view has, so every cycle after the
+        // suspend had its WAL writer refused, each refusal was counted as a refresh failure, and the
+        // retry budget invalidated the view durably - an operator's reversible SUSPEND WAL turned
+        // into an invalidation that only a DROP and a re-CREATE undo. The refresh now parks while
+        // writes are denied, as a materialized view's does, and RESUME WAL picks it up where it
+        // stopped.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY DAY START FROM NOW AS "
+                    + "(SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushOneRow(job, "1970-01-01T00:00:00.000000Z", 1, 1);
+                flushOneRow(job, "1970-01-02T00:00:00.000000Z", 2, 2);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final long committedAtSuspend = engine.getTableSequencerAPI().lastTxn(lvToken);
+
+                execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                // More base commits than the retry budget allows failures for, each driven through.
+                for (int day = 3; day <= 10; day++) {
+                    execute("INSERT INTO base VALUES ('" + String.format("1970-01-%02d", day) + "T00:00:00.000000Z', 'a', " + day + ")");
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                }
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\nsuspended\n");
+                Assert.assertFalse(instance.isInvalid());
+                Assert.assertEquals("a parked view commits nothing", committedAtSuspend, engine.getTableSequencerAPI().lastTxn(lvToken));
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-02T00:00:00.000000Z\t2\t2
+                                """);
+                assertNoRefreshFaults("lv");
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveUntilDurableRowCount(job, 10);
+                driveRefreshToQuiescence(job);
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\nactive\n");
+                assertQuery("SELECT count(), max(rn) FROM lv")
+                        .noLeakCheck().noRandomAccess().expectSize().returns("count\tmax\n10\t10\n");
+                Assert.assertEquals(10, instance.getLvRowsTotal());
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT count(), max(rn) FROM lv")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\tmax\n10\t10\n");
+        });
+    }
+
+    @Test
     public void testTtlEvictionIntoTheOverlapBandRebuildsTheBandItInvalidates() throws Exception {
         // The eviction the seam arithmetic has to survive: an IN MEMORY window wider than what the
         // TTL keeps, so the rows the flush's own commit evicts are rows the overlap band holds. The
@@ -6691,6 +7075,139 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
      * Drives the worker that parked a repair until it finishes it, one clock step and one
      * notification pass at a time - the drive a parked repair's owner takes between its turns.
      */
+    /**
+     * One commit - and so one logical root - per row over {@link #createHourlyRangeView}, shaped so a
+     * correction at 02:59:55 resumes from the anchor at 02:59:50: it sits within one frame width of
+     * the 03:00:05 frontier, so localizing would read to the end of the base anyway, and the roots
+     * at 02:59:58 and 03:00:05 are the two above the anchor its replacement rewrites.
+     */
+    private LiveViewInstance flushResumeRepairHistory(LiveViewRefreshJob job) throws Exception {
+        flushOneRow(job, "2026-01-01T01:00:10.000000Z", 1, 1);
+        flushOneRow(job, "2026-01-01T02:59:30.000000Z", 2, 2);
+        flushOneRow(job, "2026-01-01T02:59:40.000000Z", 3, 3);
+        flushOneRow(job, "2026-01-01T02:59:50.000000Z", 4, 4);
+        flushOneRow(job, "2026-01-01T02:59:58.000000Z", 5, 5);
+        flushOneRow(job, "2026-01-01T03:00:05.000000Z", 6, 6);
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        assertLadder(
+                instance,
+                ts("2026-01-01T01:00:10.000000Z"), 1,
+                ts("2026-01-01T02:59:30.000000Z"), 2,
+                ts("2026-01-01T02:59:40.000000Z"), 3,
+                ts("2026-01-01T02:59:50.000000Z"), 4,
+                ts("2026-01-01T02:59:58.000000Z"), 5,
+                ts("2026-01-01T03:00:05.000000Z"), 6
+        );
+        return instance;
+    }
+
+    /**
+     * Asserts what a resume over {@link #flushResumeRepairHistory} leaves when its replacement did
+     * not land, then commits a forward row and asserts the gate holds it: no turn may drain it over
+     * a table that still holds the output the replacement is about to rewrite.
+     */
+    private void assertResumeReplacementHeld(
+            LiveViewRefreshJob job,
+            LiveViewInstance instance,
+            TableToken lvToken,
+            LogCapture capture,
+            long processedBefore
+    ) throws Exception {
+        final long replacementLvSeqTxn = instance.getPendingReplacementLvSeqTxn();
+        Assert.assertEquals("the replacement must be the view's newest block", replacementLvSeqTxn, engine.getTableSequencerAPI().lastTxn(lvToken));
+        Assert.assertTrue(
+                "the replacement must not have applied",
+                engine.getTableSequencerAPI().getTxnTracker(lvToken).getWriterTxn() < replacementLvSeqTxn
+        );
+        Assert.assertEquals("no watermark may walk past output the table does not hold", processedBefore, instance.getLastProcessedSeqTxn());
+        assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck().noRandomAccess().returns("view_status\nsuspended\n");
+        assertQuery("SELECT * FROM lv")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tsym\ts
+                        2026-01-01T01:00:10.000000Z\ta\t1.0
+                        2026-01-01T02:59:30.000000Z\ta\t2.0
+                        2026-01-01T02:59:40.000000Z\ta\t5.0
+                        2026-01-01T02:59:50.000000Z\ta\t9.0
+                        2026-01-01T02:59:58.000000Z\ta\t14.0
+                        2026-01-01T03:00:05.000000Z\ta\t18.0
+                        """);
+        Assert.assertEquals("the counter tracks the table, which has not moved", 6, instance.getLvRowsTotal());
+        // The roots the replacement rewrites went; the anchor's prefix stays, behind the marker a
+        // restart in this state rebuilds from.
+        assertLadder(
+                instance,
+                ts("2026-01-01T01:00:10.000000Z"), 1,
+                ts("2026-01-01T02:59:30.000000Z"), 2,
+                ts("2026-01-01T02:59:40.000000Z"), 3,
+                ts("2026-01-01T02:59:50.000000Z"), 4
+        );
+        assertRepairMarker(lvToken, true);
+        capture.drain();
+        capture.assertLogged("live view O3 resume replacement committed but did not apply, deferring repair [view=lv, lvSeqTxn="
+                + replacementLvSeqTxn + ", ");
+        capture.assertNotLogged("row count does not match");
+
+        execute("INSERT INTO base VALUES ('2026-01-01T03:00:20.000000Z', 'a', 7)");
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        Assert.assertEquals(replacementLvSeqTxn, instance.getPendingReplacementLvSeqTxn());
+        Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+        Assert.assertEquals("the gate must commit nothing behind the replacement", replacementLvSeqTxn, engine.getTableSequencerAPI().lastTxn(lvToken));
+        Assert.assertEquals(6, lvRowCount(lvToken));
+        assertNoRefreshFaults("lv");
+    }
+
+    /**
+     * Asserts the view a held resume over {@link #flushResumeRepairHistory} finishes as once its
+     * replacement lands: the repair repeated from the same anchor, the forward row the gate held
+     * folded in, and a ladder that keeps the anchor's prefix and seals the frontier above it.
+     */
+    private void assertResumeRepairFinished(LiveViewInstance instance, TableToken lvToken, LogCapture capture) throws Exception {
+        assertResumeRepairRows();
+        assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck().noRandomAccess().returns("view_status\nactive\n");
+        Assert.assertEquals(Numbers.LONG_NULL, instance.getPendingReplacementLvSeqTxn());
+        Assert.assertEquals("the repeated repair must resume from the anchor", 4, instance.getO3ResumeReplayRows());
+        Assert.assertEquals(8, instance.getLvRowsTotal());
+        assertLadder(
+                instance,
+                ts("2026-01-01T01:00:10.000000Z"), 1,
+                ts("2026-01-01T02:59:30.000000Z"), 2,
+                ts("2026-01-01T02:59:40.000000Z"), 3,
+                ts("2026-01-01T02:59:50.000000Z"), 4,
+                ts("2026-01-01T03:00:20.000000Z"), 8
+        );
+        assertRepairMarker(lvToken, false);
+        assertRetentionMarker(lvToken, false);
+        capture.drain();
+        capture.assertNotLogged("row count does not match");
+        assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+        assertNoRefreshFaults("lv");
+    }
+
+    private void assertResumeRepairRows() throws Exception {
+        assertQuery("SELECT * FROM lv")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tsym\ts
+                        2026-01-01T01:00:10.000000Z\ta\t1.0
+                        2026-01-01T02:59:30.000000Z\ta\t2.0
+                        2026-01-01T02:59:40.000000Z\ta\t5.0
+                        2026-01-01T02:59:50.000000Z\ta\t9.0
+                        2026-01-01T02:59:55.000000Z\ta\t109.0
+                        2026-01-01T02:59:58.000000Z\ta\t114.0
+                        2026-01-01T03:00:05.000000Z\ta\t118.0
+                        2026-01-01T03:00:20.000000Z\ta\t122.0
+                        """);
+    }
+
     private void driveParkedRepairToCompletion(LiveViewRefreshJob job, LiveViewInstance instance) {
         for (int turn = 0; turn < REFRESH_QUIESCENCE_PASSES && instance.getSuspendedRepair() != null; turn++) {
             setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
