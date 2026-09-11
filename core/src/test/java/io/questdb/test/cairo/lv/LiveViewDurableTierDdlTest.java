@@ -4663,7 +4663,8 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 Assert.assertFalse("the failure must re-arm the resume setup", instance.isSeedResumeAttempted());
                 Assert.assertEquals(LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
                 Assert.assertEquals(1, instance.getRefreshFaultCount());
-                Assert.assertEquals("a mid-seed fault must not charge the retry budget", 0, instance.getFlushRetryCount());
+                // The re-arm is a retry rather than a repair, so the fault charges the budget once.
+                Assert.assertEquals("a mid-seed fault charges the retry budget once", 1, instance.getFlushRetryCount());
                 Assert.assertFalse(instance.isInvalid());
 
                 // The re-armed setup resets again, off the marker the failed commit left standing.
@@ -4672,6 +4673,7 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
                 assertSeedFinishedAfterItsFirstEviction(instance);
                 Assert.assertEquals("exactly the injected fault, and no other", 1, instance.getRefreshFaultCount());
+                Assert.assertEquals("completing the sweep must clear the charge", 0, instance.getFlushRetryCount());
                 capture.drain();
                 capture.assertLogged("live view seed sweep replacing unproven durable output [view=lv, onDiskLvRows=3, retentionMarkerSeqTxn=");
                 capture.assertNotLogged("retentionMarkerSeqTxn=null");
@@ -5366,7 +5368,8 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                         6,
                         instance.getLvRowsTotal()
                 );
-                Assert.assertEquals("a mid-seed fault must not charge the retry budget", 0, instance.getFlushRetryCount());
+                // The re-arm is a retry rather than a repair, so the fault charges the budget once.
+                Assert.assertEquals("a mid-seed fault charges the retry budget once", 1, instance.getFlushRetryCount());
                 Assert.assertFalse("a mid-seed fault must not invalidate the view", instance.isInvalid());
 
                 // The re-armed turn runs the resume setup again, in this same process.
@@ -5390,6 +5393,7 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
                         .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
                 Assert.assertEquals("exactly the injected fault, and no other", 1, instance.getRefreshFaultCount());
+                Assert.assertEquals("completing the sweep must clear the charge", 0, instance.getFlushRetryCount());
             } finally {
                 capture.stop();
             }
