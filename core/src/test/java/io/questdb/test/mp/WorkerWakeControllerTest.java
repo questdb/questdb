@@ -41,89 +41,35 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class WorkerWakeControllerTest {
+    private static final long CONCURRENT_TEST_JOIN_TIMEOUT_MS = 60_000L;
+
+    @Test
+    public void testConcurrentRegisterFailureStillHaltsPool() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AssertionError childFailure = new AssertionError("injected registrar failure");
+            final AtomicBoolean isPoolReleased = new AtomicBoolean();
+            try (WorkerPool pool = createPool(8)) {
+                pool.freeResourceOnExit(() -> isPoolReleased.set(true));
+                final AssertionError failure = Assert.assertThrows(
+                        AssertionError.class,
+                        () -> assertConcurrentRegisterWakeAllAndSelfUnregisterReconcileState(pool, () -> {
+                            throw childFailure;
+                        })
+                );
+                Assert.assertSame(childFailure, failure.getCause());
+                // Check the exercise's own finally before try-with-resources retries halt().
+                Assert.assertTrue("child failure bypassed pool cleanup", isPoolReleased.get());
+            }
+        });
+    }
 
     @Test
     public void testConcurrentRegisterWakeAllAndSelfUnregisterReconcileState() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final int registrarCount = 8;
-            final int registrationCount = 10_000;
-            final WorkerPool pool = createPool(registrarCount);
-            final CountDownLatch start = new CountDownLatch(1);
-            final CountDownLatch registrarsDone = new CountDownLatch(registrarCount);
-            final AtomicBoolean isWakerStopped = new AtomicBoolean();
-            final AtomicReference<Throwable> error = new AtomicReference<>();
-            final ObjList<Thread> registrars = new ObjList<>(registrarCount);
-            final Thread waker = new Thread(() -> {
-                try {
-                    Assert.assertTrue(start.await(10, TimeUnit.SECONDS));
-                    int iteration = 0;
-                    while (!isWakerStopped.get()
-                            && (registrarsDone.getCount() != 0 || pool.getReadyWorkerCountForTesting() != 0)) {
-                        if ((iteration++ & 7) == 0) {
-                            pool.wakeAllForTesting();
-                        } else {
-                            pool.wakeOneForTesting(FiberRuntime.NO_WORKER);
-                        }
-                    }
-                } catch (Throwable th) {
-                    error.compareAndSet(null, th);
+        TestUtils.assertMemoryLeak(() -> assertConcurrentRegisterWakeAllAndSelfUnregisterReconcileState(
+                createPool(8),
+                () -> {
                 }
-            }, "fiber-ready-waker");
-            waker.setDaemon(true);
-            try {
-                registerAllTargets(pool, registrarCount);
-                for (int workerId = 0; workerId < registrarCount; workerId++) {
-                    final int id = workerId;
-                    final Thread registrar = new Thread(() -> {
-                        try {
-                            Assert.assertTrue(start.await(10, TimeUnit.SECONDS));
-                            for (int i = 0; i < registrationCount; i++) {
-                                if (!pool.registerReadyWorkerForTesting(id)) {
-                                    throw new AssertionError("could not register an unowned ready bit");
-                                }
-                                if ((i & 7) == 0) {
-                                    Thread.yield();
-                                }
-                                pool.unregisterReadyWorkerForTesting(id);
-                            }
-                        } catch (Throwable th) {
-                            error.compareAndSet(null, th);
-                        } finally {
-                            registrarsDone.countDown();
-                        }
-                    }, "fiber-ready-registrar-" + workerId);
-                    registrars.add(registrar);
-                    registrar.start();
-                }
-                waker.start();
-                start.countDown();
-
-                for (int i = 0; i < registrarCount; i++) {
-                    registrars.getQuick(i).join(10_000L);
-                    Assert.assertFalse(
-                            registrars.getQuick(i).getName() + " did not stop",
-                            registrars.getQuick(i).isAlive()
-                    );
-                }
-                waker.join(10_000L);
-                Assert.assertFalse("ready-bit waker did not stop", waker.isAlive());
-                if (error.get() != null) {
-                    throw new AssertionError(error.get());
-                }
-                assertNoneReady(pool, registrarCount);
-            } finally {
-                isWakerStopped.set(true);
-                start.countDown();
-                for (int i = 0; i < registrarCount; i++) {
-                    final Thread registrar = registrars.getQuick(i);
-                    registrar.join(10_000L);
-                    Assert.assertFalse(registrar.getName() + " did not stop", registrar.isAlive());
-                }
-                waker.join(10_000L);
-                Assert.assertFalse("ready-bit waker did not stop", waker.isAlive());
-                pool.halt();
-            }
-        });
+        ));
     }
 
     @Test
@@ -158,8 +104,7 @@ public class WorkerWakeControllerTest {
                 }
                 start.countDown();
                 for (int i = 0; i < wakerCount; i++) {
-                    wakers.getQuick(i).join(10_000L);
-                    Assert.assertFalse(wakers.getQuick(i).getName() + " did not stop", wakers.getQuick(i).isAlive());
+                    joinAndAssertStopped(wakers.getQuick(i));
                 }
                 if (error.get() != null) {
                     throw new AssertionError(error.get());
@@ -240,6 +185,83 @@ public class WorkerWakeControllerTest {
                 pool.halt();
             }
         });
+    }
+
+    private static void assertConcurrentRegisterWakeAllAndSelfUnregisterReconcileState(
+            WorkerPool pool,
+            Runnable beforeRegistration
+    ) throws InterruptedException {
+        final int registrarCount = pool.getWorkerCount();
+        final int registrationCount = 10_000;
+        final CountDownLatch start = new CountDownLatch(1);
+        final CountDownLatch registrarsDone = new CountDownLatch(registrarCount);
+        final AtomicBoolean isWakerStopped = new AtomicBoolean();
+        final AtomicReference<Throwable> error = new AtomicReference<>();
+        final ObjList<Thread> registrars = new ObjList<>(registrarCount);
+        final Thread waker = new Thread(() -> {
+            try {
+                Assert.assertTrue(start.await(10, TimeUnit.SECONDS));
+                int iteration = 0;
+                while (!isWakerStopped.get()
+                        && (registrarsDone.getCount() != 0 || pool.getReadyWorkerCountForTesting() != 0)) {
+                    if ((iteration++ & 7) == 0) {
+                        pool.wakeAllForTesting();
+                    } else {
+                        pool.wakeOneForTesting(FiberRuntime.NO_WORKER);
+                    }
+                    Thread.yield();
+                }
+            } catch (Throwable th) {
+                error.compareAndSet(null, th);
+            }
+        }, "fiber-ready-waker");
+        waker.setDaemon(true);
+        try {
+            registerAllTargets(pool, registrarCount);
+            for (int workerId = 0; workerId < registrarCount; workerId++) {
+                final int id = workerId;
+                final Thread registrar = new Thread(() -> {
+                    try {
+                        Assert.assertTrue(start.await(10, TimeUnit.SECONDS));
+                        beforeRegistration.run();
+                        for (int i = 0; i < registrationCount; i++) {
+                            if (!pool.registerReadyWorkerForTesting(id)) {
+                                throw new AssertionError("could not register an unowned ready bit");
+                            }
+                            if ((i & 7) == 0) {
+                                Thread.yield();
+                            }
+                            pool.unregisterReadyWorkerForTesting(id);
+                        }
+                    } catch (Throwable th) {
+                        error.compareAndSet(null, th);
+                    } finally {
+                        registrarsDone.countDown();
+                    }
+                }, "fiber-ready-registrar-" + workerId);
+                registrars.add(registrar);
+                registrar.start();
+            }
+            waker.start();
+            start.countDown();
+
+            for (int i = 0; i < registrarCount; i++) {
+                joinAndAssertStopped(registrars.getQuick(i));
+            }
+            joinAndAssertStopped(waker);
+            if (error.get() != null) {
+                throw new AssertionError(error.get());
+            }
+            assertNoneReady(pool, registrarCount);
+        } finally {
+            isWakerStopped.set(true);
+            start.countDown();
+            for (int i = 0; i < registrarCount; i++) {
+                joinAndAssertStopped(registrars.getQuick(i));
+            }
+            joinAndAssertStopped(waker);
+            pool.halt();
+        }
     }
 
     private static void assertCursorWrapsFromPartialLastWord(int workerCount) {
@@ -327,6 +349,12 @@ public class WorkerWakeControllerTest {
                 return WorkerPoolMode.FIBER_HOST;
             }
         });
+    }
+
+    private static void joinAndAssertStopped(Thread thread) throws InterruptedException {
+        // Callers report child failures after joining, never from a cleanup join.
+        thread.join(CONCURRENT_TEST_JOIN_TIMEOUT_MS);
+        Assert.assertFalse(thread.getName() + " did not stop", thread.isAlive());
     }
 
     private static void registerAllTargets(WorkerPool pool, int workerCount) {
