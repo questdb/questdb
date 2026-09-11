@@ -48,8 +48,11 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -90,7 +93,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * disposition a replay reaches when its replacement's own apply evicted a TTL
  * partition or drained a queued {@code DROP PARTITION}: one generation retires the
  * roots inside the removed intervals and corrects every position above them, and a
- * batch the publication cannot account for is declined whole.
+ * batch the publication cannot account for is declined whole. A third takes the
+ * removal in the other order - an eviction the ordinary retention already reconciled,
+ * then a repair over the roots it lowered - and checks every position against the
+ * table's own row count.
  */
 public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
 
@@ -794,6 +800,78 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
                             "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
                             "2026-01-01T00:02:00.000000Z\ta\t42.0\n");
+        });
+    }
+
+    @Test
+    public void testLocalizedRepairAfterAnEvictionPositionsEachRootAtItsDurableRowCount() throws Exception {
+        // A TTL eviction the ordinary retention reconciled, and then an out-of-order commit whose
+        // localized repair re-versions the roots above it. The two corrections meet in the same
+        // positions and have to compose. The retention left one difference-array breakpoint - the
+        // evicted row, subtracted at the first surviving root - and the repair derives each
+        // repaired root's position from the live view's own table, which the eviction had already
+        // shrunk: durable rows below R plus the rows the replay emitted up to the boundary. What
+        // the splice stores is that position less the breakpoint's prefix sum, and the converged
+        // suffix above H moves by the replacement's own row delta on top of the retention's. The
+        // property is the one a restart and every later repair read: each root's effective
+        // position is the count of rows the table holds at or below its boundary.
+        //
+        // The first surviving root is itself one the repair re-versions, so the retention's
+        // breakpoint sits on a key the splice rewrites rather than on one it reuses.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100ms PARTITION BY HOUR TTL 1 HOUR START FROM NOW AS " +
+                            "SELECT ts, sym, sum(x) OVER (" +
+                            "PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW" +
+                            ") s FROM base"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, "2026-01-01T01:00:10.000000Z", 1);
+                appendAndRefresh(job, "2026-01-01T02:00:20.000000Z", 2);
+                appendAndRefresh(job, "2026-01-01T02:00:30.000000Z", 3);
+                // TTL judges age by the smaller of the frontier and the wall clock, so the clock
+                // catches up with the data first. Hour 01 ends at 02:00 and an hour past that is
+                // 03:00, which the next row's flush crosses: its own commit evicts hour 01.
+                setCurrentMicros(ts("2026-01-01T03:00:10.000000Z"));
+                appendAndRefresh(job, "2026-01-01T03:00:10.000000Z", 4);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals("the flush must have evicted hour 01", 3, durableRowCount(instance));
+                Assert.assertEquals("the evicted hour's root, and only it", 1, retiredCheckpointCount(instance));
+                final LongList before = snapshotTimeline(instance);
+                Assert.assertEquals(3 * ENTRY_SIZE, before.size());
+                assertEffectivePositionsMatchTheTable(before, 1, 2, 3);
+                final long generationBefore = generation(instance);
+
+                // R is 02:00:15 and the frame converges one microsecond past 02:00:45, which the
+                // 03:00:10 frontier clears: 02:00:20 and 02:00:30 are re-versioned, and 03:00:10
+                // is the converged suffix. Hour 02 ends at 03:00 and keeps for an hour past that,
+                // so the replacement's own commit evicts nothing.
+                appendAndRefresh(job, "2026-01-01T02:00:15.000000Z", 100);
+
+                Assert.assertEquals(4, durableRowCount(instance));
+                Assert.assertEquals("the splice is this repair's one publication", generationBefore + 1, generation(instance));
+                Assert.assertEquals(1, retiredCheckpointCount(instance));
+                final LongList after = snapshotTimeline(instance);
+                Assert.assertEquals(before.size(), after.size());
+                assertNewRoot(before, after, 0);
+                assertNewRoot(before, after, 1);
+                assertSameRoot(before, after, 2);
+                assertEffectivePositionsMatchTheTable(after, 2, 3, 4);
+                assertNoRefreshFaults("lv");
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\ts
+                            2026-01-01T02:00:15.000000Z\ta\t100.0
+                            2026-01-01T02:00:20.000000Z\ta\t102.0
+                            2026-01-01T02:00:30.000000Z\ta\t105.0
+                            2026-01-01T03:00:10.000000Z\ta\t4.0
+                            """);
         });
     }
 
@@ -2972,8 +3050,12 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     private void appendAndRefresh(LiveViewRefreshJob job, int second, long value) throws Exception {
+        appendAndRefresh(job, timestamp(second), value);
+    }
+
+    private void appendAndRefresh(LiveViewRefreshJob job, String timestamp, long value) throws Exception {
         setCurrentMicros(currentMicros + 200_000);
-        execute("INSERT INTO base VALUES ('" + timestamp(second) + "', 'a', " + value + ")");
+        execute("INSERT INTO base VALUES ('" + timestamp + "', 'a', " + value + ")");
         drainWalQueue();
         drainJob(job);
         drainWalQueue();
@@ -3022,6 +3104,27 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
             execute("DROP LIVE VIEW lv");
             execute("DROP TABLE base");
         });
+    }
+
+    /**
+     * Asserts each logical entry of {@code timeline} carries the effective position given, and
+     * that the position is the count of rows the live view holds at or below the entry's
+     * boundary - which is what a restart restoring the root, and a later repair anchoring on it,
+     * take it for. Every boundary in the callers' histories closes its own timestamp group, so a
+     * complete root and the table's count agree exactly.
+     */
+    private void assertEffectivePositionsMatchTheTable(LongList timeline, long... expectedPositions) throws SqlException {
+        Assert.assertEquals(expectedPositions.length * ENTRY_SIZE, timeline.size());
+        for (int i = 0; i < expectedPositions.length; i++) {
+            final long maxTimestamp = timeline.getQuick(i * ENTRY_SIZE + ENTRY_MAX_TIMESTAMP);
+            final long effectivePosition = timeline.getQuick(i * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION);
+            Assert.assertEquals("effective position at index " + i, expectedPositions[i], effectivePosition);
+            Assert.assertEquals(
+                    "rows the table holds at or below the boundary at index " + i,
+                    effectivePosition,
+                    rowCountAtOrBelow(maxTimestamp)
+            );
+        }
     }
 
     @Test
@@ -3406,6 +3509,16 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     private long retiredCheckpointCount(LiveViewInstance instance) {
         try (LiveViewCheckpointMetaStore store = openStore(instance)) {
             return store.getSuperblock().retiredCheckpointCount;
+        }
+    }
+
+    private long rowCountAtOrBelow(long maxTimestamp) throws SqlException {
+        try (
+                RecordCursorFactory factory = select("SELECT count() FROM lv WHERE ts <= " + maxTimestamp + "::timestamp");
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getLong(0);
         }
     }
 

@@ -529,6 +529,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // One-shot (self-clears on fire); always null in production.
     @TestOnly
     private Runnable simulateBaseCommitBetweenAheadGuardReadsForTest;
+    // Test-only: when armed, the next out-of-order repair to commit its replacement runs this
+    // action first - after its replay, before the replacement takes its seqTxn. A DDL the action
+    // sequences into the view's WAL then sits ahead of the replacement, and the repair's own
+    // apply drains the two together: the shape a DROP PARTITION issued while a single-turn repair
+    // replays produces, without a second session racing the drive.
+    // One-shot (self-clears on fire); always null in production.
+    @TestOnly
+    private Runnable simulateDdlBeforeRepairReplacementForTest;
     // Test-only: an extra closeable whose close() throws. consumeBaseMetadataCloseFaultForTest
     // closes it and returns the resulting throwable as the primary of the very freeBestEffort call
     // that closes the pooled base metadata, so the fault lands in closeFailure exactly where a real
@@ -1192,6 +1200,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setSimulateBaseCommitBetweenAheadGuardReadsForTest(Runnable action) {
         this.simulateBaseCommitBetweenAheadGuardReadsForTest = action;
+    }
+
+    /**
+     * Test-only: arms a one-shot action that the next out-of-order repair runs right before it
+     * commits its replacement, on either executor, so a test can sequence a DDL into the view's own
+     * WAL between the repair's capture and the apply that lands the replacement. That is the window
+     * a {@code DROP PARTITION} issued while a single-turn repair replays falls into, and nothing a
+     * test can drive from outside the job opens it. {@code refreshInstance} holds the instance's
+     * refresh latch across the call, so the action must not reach a path that waits for that latch -
+     * {@code DROP LIVE VIEW} on this view, or a checkpoint freeze; sequencing an
+     * {@code ALTER LIVE VIEW} does not. Production never calls this.
+     */
+    @TestOnly
+    public void setSimulateDdlBeforeRepairReplacementForTest(Runnable action) {
+        this.simulateDdlBeforeRepairReplacementForTest = action;
     }
 
     /**
@@ -7687,6 +7710,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long durableRowsBeforeRepair = Numbers.LONG_NULL;
         long durableMaxTsBeforeRepair = Numbers.LONG_NULL;
         long insertedRowDelta = 0;
+        // The seqTxn the replacement took in the view's own WAL, which is what orders it against a
+        // removal the same apply drains.
+        long replacementLvSeqTxn = Numbers.LONG_NULL;
         final LiveViewCompiledPlan primaryPlan = instance.getCompiledPlan();
         final boolean runtimeAnchorReusable = canReuseRuntimeAnchor(instance, windowFactory, plan);
         openSegmentRepairPhases.reset(
@@ -8226,6 +8252,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 .$(", firstDuplicateTs=").$ts(outputUniqueness.getFirstDuplicateTs())
                                 .I$();
                     }
+                    runDdlBeforeRepairReplacementForTest();
                     final long commitStart = System.nanoTime();
                     if (sparse) {
                         openSegmentSparseResumeCount++;
@@ -8248,6 +8275,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     } else {
                         commitLiveViewWithReplaceRangeFenced(instance, walWriter, committedSeqTxn, replaceLowTs, Long.MAX_VALUE);
                     }
+                    replacementLvSeqTxn = walWriter.getLastSeqTxn();
                     openSegmentRepairPhases.commitNanos += System.nanoTime() - commitStart;
                     replayCompleted = true;
                 }
@@ -8312,12 +8340,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         try {
             // beginCheckpointTimelineRepair refuses a capture while a removal is still
             // unreconciled, and this path opens its own after measuring
-            // durableRowsBeforeRepair, so every event the apply below leaves pending
-            // belongs to the replacement's own commit and the proof can subtract it.
+            // durableRowsBeforeRepair, so every event the apply below leaves pending came
+            // from that apply: the replacement's own commit, or a DDL sequenced while this
+            // turn replayed and drained ahead of it - which the check below tells apart.
             assert timelineCapture == null || !instance.hasPendingPartitionRemovals();
             final long applyStart = System.nanoTime();
             applyLiveViewWal(instance);
             openSegmentRepairPhases.applyNanos += System.nanoTime() - applyStart;
+            // A removal ordered ahead of the replacement inside (anchor, +inf) took rows the
+            // replacement then re-emitted, so the events no longer say what the table lacks:
+            // not to the proof, not to the splice's correction, and not to the retention a
+            // kept prefix or a fresh head would take from them later.
+            final boolean aheadOfReplacement = isRemovalAheadOfReplacement(
+                    instance.getPendingPartitionRemovals(),
+                    replacementLvSeqTxn,
+                    plan.getOutputLowTs(),
+                    Long.MAX_VALUE
+            );
+            long durableRowsAfterRepair = Numbers.LONG_NULL;
+            if (timelineCapture != null || aheadOfReplacement) {
+                try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                    durableRowsAfterRepair = lvReader.size();
+                } catch (Throwable t) {
+                    LOG.error().$("could not measure live view rows after an O3 resume replay [view=")
+                            .$(viewName).$(", error=").$(t).I$();
+                }
+            }
             if (timelineCapture != null) {
                 // The replacement is durable in the live view's table, so the re-versioned
                 // roots describe real output and the splice may commit. Nothing published
@@ -8329,13 +8377,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // replacement says makes all of them wrong - and a wrong lvRowPosition is
                 // not something a later restart can detect, only fail on. Skipping the
                 // splice costs this repair its ladder and nothing else.
-                long durableRowsAfterRepair = Numbers.LONG_NULL;
-                try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-                    durableRowsAfterRepair = lvReader.size();
-                } catch (Throwable t) {
-                    LOG.error().$("could not measure live view rows after an O3 resume replay [view=")
-                            .$(viewName).$(", error=").$(t).I$();
-                }
                 // The replacement's own commit can evict TTL partitions, and the drain
                 // that applied it can carry a queued DROP. Those rows are already gone
                 // from the count read above, so the proof owes them - and the splice
@@ -8359,7 +8400,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 } catch (ArithmeticException e) {
                     throw CairoException.critical(0).put("live view row count overflow after O3 resume replay");
                 }
-                if (durableRowsAfterRepair != expectedRowsAfterRepair) {
+                if (aheadOfReplacement) {
+                    LOG.info().$("live view removal landed ahead of the O3 resume replacement, retiring instead of splicing [view=")
+                            .$(viewName)
+                            .$(", removedRows=").$(removedRows)
+                            .$(", outputLowTs=").$ts(plan.getOutputLowTs()).I$();
+                } else if (durableRowsAfterRepair != expectedRowsAfterRepair) {
                     LOG.critical().$("live view resume replacement row count does not match the repair plan [view=")
                             .$(viewName)
                             .$(", anchorRows=").$(anchorRowPosition)
@@ -8426,10 +8472,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     //
                     // A removal this splice declined stays pending: the counter still counts
                     // its rows, the seal below stamps that count on the fresh head, and
-                    // reconcilePendingPartitionRemovals lowers both when it runs.
+                    // reconcilePendingPartitionRemovals lowers both when it runs. One that
+                    // landed ahead of the replacement is the exception, handled next.
                     retireCheckpointStateOnO3(instance, true);
                     prefixMarkerLive = false;
                 }
+            }
+            // Whether the lifetime counter already holds the table's own count, which the head
+            // seal below must then stamp as it is rather than advance by the replay's rows.
+            boolean counterFromTable = false;
+            if (aheadOfReplacement && durableRowsAfterRepair != Numbers.LONG_NULL) {
+                // The events cannot be subtracted later: the counter the replay carried forward
+                // from the anchor counts the rows the replacement re-emitted, and so does the
+                // table. So the counter takes the table's count and the events go. A truncate
+                // that kept a prefix below the anchor goes as well - the removal may have taken
+                // rows under its roots, and the retention that would retire those roots works off
+                // the same events, so it would also lower the fresh head by every row they name,
+                // re-emitted ones included. That leaves the timeline retired on every route and
+                // the retention marker the removal's commit wrote with nothing to guard. The
+                // retires take it, and the clear covers a truncate that retired before the replay
+                // ran, which is before the marker was written. The seal below then opens a fresh
+                // history at the table's own count.
+                if (prefixMarkerLive) {
+                    retireCheckpointStateOnO3(instance, true);
+                    prefixMarkerLive = false;
+                }
+                instance.setLvRowsTotal(durableRowsAfterRepair);
+                instance.getPendingPartitionRemovals().clear();
+                clearRetentionMarker(instance);
+                counterFromTable = true;
             }
             if (keyed) {
                 // The corrected accumulators are in the isolated runtime and the primary
@@ -8511,7 +8582,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // A keyed resume kept the durable counter in place and owes only
                         // exact inserts, whichever way it published. A whole-range
                         // replacement rewound to the anchor and owes every row above it.
-                        keyed ? insertedRowDelta : appendedRows,
+                        // A counter taken from the table owes nothing.
+                        counterFromTable ? 0 : keyed ? insertedRowDelta : appendedRows,
                         true,
                         timelineSplice == null || replayMaxTs > timelineSplice.getHeadRootMaxTimestamp()
                 );
@@ -9813,6 +9885,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                             .$(", firstDuplicateTs=").$ts(outputUniqueness.getFirstDuplicateTs())
                                             .I$();
                                 }
+                                runDdlBeforeRepairReplacementForTest();
                                 if (sparse) {
                                     sparsePublicationCount++;
                                     final long supersededRows = coldKeyedRoute
@@ -10147,13 +10220,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             }
                         } else {
                             retentionDuringRepair = true;
+                            // A removal ordered ahead of the replacement inside [R, H) took rows
+                            // the replacement then re-emitted - the DROP PARTITION a user
+                            // sequenced while this repair sat parked, which this apply drained
+                            // first - so neither the proof nor the removal's own correction can
+                            // be separated from the replacement's.
+                            final boolean aheadOfReplacement = isRemovalAheadOfReplacement(
+                                    instance.getPendingPartitionRemovals(),
+                                    repairPublication.getCommittedLvSeqTxn(),
+                                    emitLowTs,
+                                    timelineHighTsExclusive
+                            );
                             // Not this apply's alone, so the splice must not subtract them.
-                            unspliceableRemovals = unreconciledRemovalsBeforeApply;
+                            unspliceableRemovals = unreconciledRemovalsBeforeApply || aheadOfReplacement;
                             repairPartitionRemovals.clear();
                             repairPartitionRemovals.addAll(instance.getPendingPartitionRemovals());
                             LOG.info().$("live view durable rows removed during an O3 repair [view=")
                                     .$(viewName)
                                     .$(", removedRows=").$(repairPartitionRemovals.getTotalRemovedRows())
+                                    .$(", aheadOfReplacement=").$(aheadOfReplacement)
                                     .$(", spliceable=").$(timelineCapture != null && !unspliceableRemovals)
                                     .I$();
                         }
@@ -10265,6 +10350,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         .$(", rootsRetired=").$(timelineSplice.getRetiredRootCount()).I$();
                             }
                         }
+                    }
+                }
+                if (timelineCapture != null && replacementReconciled && timelineSplice == null) {
+                    // The replacement moved the output under every root the capture pinned and
+                    // no splice corrected them - the proof failed, the publication declined, or
+                    // the removals this apply drained were not the splice's to publish - so the
+                    // timeline goes. Here rather than on the way out: the post-replay seal below
+                    // then opens a fresh history at the frontier, where a retire after it would
+                    // take that head too and leave the view with no timeline, and a restart with
+                    // the applied-base rebuild, until the next cadence seal. The retire takes the
+                    // repair marker and the retention marker this apply's removals wrote, and the
+                    // counter was re-seated from the table above, so the seal stamps the count the
+                    // table holds. replayFromAnchor orders its own fallback the same way.
+                    retireCheckpointStateOnO3(instance, true);
+                    timelineCapture = Misc.free(timelineCapture);
+                    prefixMarkerLive = false;
+                    if (session != null) {
+                        session.setRepairMarkerLive(false);
                     }
                 }
                 // The one runtime exchange, and the first point at which it is safe: the
@@ -10389,9 +10492,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // truncated timeline has to be retired - which removes the marker -
                         // and left to a restart.
                         //
-                        // A splice that never published falls to neither. The exit path below
-                        // retires the timeline for it, and that takes the marker with it, so
-                        // this must not clear one on the strength of a seal alone.
+                        // A splice that never published does not reach here: once its
+                        // replacement applied it retired the timeline ahead of the seal, markers
+                        // and all, and one whose replacement has not applied never seals - the
+                        // exit path below retires the timeline for it, and that takes the marker
+                        // with it, so this must not clear one on the strength of a seal alone.
                         //
                         // A truncate whose replacement apply also removed partitions
                         // reconciled the kept prefix with the removal above, before the
@@ -10448,9 +10553,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         }
                     }
                     if (timelineCapture != null && timelineSplice == null) {
-                        // Either the splice could not publish, or it was never allowed to try
-                        // because the replacement has not applied. The output the timeline's
-                        // roots describe has moved either way, so it must not survive them.
+                        // The splice was never allowed to try because the replacement has not
+                        // applied, or the block above unwound before it could. A splice that
+                        // tried and failed over an applied replacement already retired the
+                        // timeline ahead of its seal and freed the capture. The output the
+                        // timeline's roots describe has moved either way, so it must not
+                        // survive them.
                         retireCheckpointTimeline(instance);
                     }
                     Misc.free(timelineCapture);
@@ -10616,6 +10724,36 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Whether a removal in {@code removals} landed ahead of the replacement committed at
+     * {@code replacementLvSeqTxn} and took rows from {@code [lowTs, highTsExclusive)}, the
+     * range that replacement rewrote.
+     * <p>
+     * A repair measures the rows its replacement deletes off the pre-repair table. A removal
+     * ordered after the replacement - a TTL eviction inside the replacement's own commit, or a
+     * {@code DROP PARTITION} the same drain applied after it - takes rows as the replacement
+     * left them, so subtracting it from that measurement is exact. One ordered ahead of it and
+     * inside the range took rows the measurement still counts as the replacement's to delete,
+     * and the replacement then re-emitted them: the row-count proof counts those rows twice,
+     * and the removal's own correction would lower every repaired root above it by rows that
+     * are back on disk. Nothing after the apply can tell the two apart.
+     */
+    private static boolean isRemovalAheadOfReplacement(
+            PartitionRemovalEvents removals,
+            long replacementLvSeqTxn,
+            long lowTs,
+            long highTsExclusive
+    ) {
+        for (int i = 0, n = removals.size(); i < n; i++) {
+            if (removals.getSeqTxn(i) < replacementLvSeqTxn
+                    && removals.getLo(i) < highTsExclusive
+                    && removals.getHiExclusive(i) > lowTs) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Which state the compiled factory ends the repair holding. A repair that kept the
      * primary runtime proved its convergence boundary lands at or below the runtime
      * frontier, so the state above it was correct all along - whether the replay ran on
@@ -10689,6 +10827,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(instance.getDefinition().getViewName())
                 .$(", lvSeqTxn=").$(pendingLvSeqTxn).I$();
         return true;
+    }
+
+    private void runDdlBeforeRepairReplacementForTest() {
+        final Runnable action = simulateDdlBeforeRepairReplacementForTest;
+        if (action != null) { // @TestOnly, always null in production
+            simulateDdlBeforeRepairReplacementForTest = null;
+            action.run();
+        }
     }
 
     /**
@@ -14525,10 +14671,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * view whose tracker is not initialised yet. Excludes a view with an un-flushed lead too -
      * its next FLUSH EVERY tick calls {@code flushLead}, whose {@code applyWalDirect} re-drives
      * the outstanding block anyway, so only a view the scan would otherwise leave idle needs
-     * the retry.
+     * the retry. And excludes a view with a localized repair parked between turns, whose own
+     * final turn is the apply this view is waiting for.
      */
     private boolean hasPendingLiveViewApply(LiveViewInstance instance) {
         if (instance.getLeadRowCount() > 0) {
+            return false;
+        }
+        // A parked repair measured the live view's table before its replay and carries those
+        // counts across every turn it takes: the replacement's row-count proof and every
+        // repaired root's position rest on them, and the capture pinned the generation they
+        // describe. The table therefore must not move until the repair's final turn applies
+        // its replacement, and that apply drains everything the view's WAL holds - a DROP
+        // PARTITION sequenced meanwhile included - so the repair accounts for the removal
+        // itself. Landing the DROP from here instead would move the table under the capture
+        // and publish a retention over the generation it pinned, and the repair would then
+        // fail its proof and retire the whole ladder. The owning worker drives its parked
+        // repairs ahead of everything else, and a repair it abandons clears this again.
+        if (instance.getSuspendedRepair() != null) {
             return false;
         }
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
