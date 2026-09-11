@@ -153,7 +153,7 @@ public final class QwpConstants {
      * {@code X-QWP-Request-Durable-Ack} handshake header) when WAL segments
      * have been uploaded to the configured object store. Payload:
      * 1-byte status + 2-byte tableCount +
-     * [1-byte nameLen + nameLen bytes UTF-8 table name + 8-byte seqTxn] per table.
+     * [2-byte nameLen + nameLen bytes UTF-8 table name + 8-byte seqTxn] per table.
      * Only tables whose durable seqTxn progressed since the last durable ack
      * are included. Not emitted on servers without primary replication enabled.
      */
@@ -175,7 +175,7 @@ public final class QwpConstants {
      * fdatasync'd to the local disk -- the acked transactions survive power
      * loss. Same payload layout as {@link #STATUS_DURABLE_ACK}:
      * 1-byte status + 2-byte tableCount +
-     * [1-byte nameLen + nameLen bytes UTF-8 table name + 8-byte seqTxn] per table.
+     * [2-byte nameLen + nameLen bytes UTF-8 table name + 8-byte seqTxn] per table.
      * Only tables whose local-durable seqTxn progressed since the last local
      * durable ack are included. Weaker than {@link #STATUS_DURABLE_ACK}: local
      * durability does not survive the loss of the server's disk.
