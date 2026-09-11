@@ -91,7 +91,9 @@ import java.util.function.BooleanSupplier;
  * a {@code DROP PARTITION} queued between such a repair's capture and the apply of what it
  * publishes - a replacement, or the upsert a keyed repair publishes instead - and what a removal
  * taken while the view is still SEEDING does to the sweep's resume, including a failure at each
- * step of the reset that resume falls back to. Replica propagation belongs to a later stage.
+ * step of the reset that resume falls back to, and what the in-memory tier and a restart's restore
+ * do over a block the view's own WAL holds and its table does not. Replica propagation belongs to a
+ * later stage.
  */
 public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
@@ -3682,6 +3684,343 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testDedupCleanCycleOverAFailedApplyServesOnlyTheAppliedTable() throws Exception {
+        // A coupled cycle commits its rows into the view's WAL, applies them inline and then
+        // publishes them into the in-memory tier as a subset of disk, stamped with the applied
+        // seqTxn. When the apply lands nothing - a real fault here, which suspends the view's table -
+        // the stamp is the seqTxn the table already stood at, so the fence engages over rows the
+        // table does not hold. The seam then cut them into the read in place of real ones: after a
+        // restart the tier holds only the IN MEMORY window, one row, and the read served 1970-01-01,
+        // 1970-01-03 and the unapplied 1970-01-04, dropping 1970-01-02 at an unchanged count. A band
+        // as long as the table trips LiveViewRecordCursor's own leadStart <= diskSize assert instead.
+        // flushLead already refused this shape. The coupled cycles now leave the rows out of the
+        // slot when nothing landed - the slot still mirrors the table, which has not moved - and
+        // un-stamp it when a later apply lands a backlog under it, as flushLead does.
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failApply = new AtomicBoolean();
+        final AtomicInteger applyFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failApply.get()
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "1970-01-04")
+                        && Utf8s.endsWithAscii(name, "x.d")) {
+                    applyFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            createDedupBaseAndView();
+            execute("""
+                    INSERT INTO base VALUES
+                    ('1970-01-01T00:00:00.000000Z', 1, 'a'),
+                    ('1970-01-02T00:00:00.000000Z', 2, 'b'),
+                    ('1970-01-03T00:00:00.000000Z', 3, 'c')""");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveUntilDurableRowCount(job, 3);
+                driveRefreshToQuiescence(job);
+            }
+
+            // A restart empties the tier, and the next cycle seeds it from the IN MEMORY window
+            // before it publishes: 1970-01-03 alone, so the band is shorter than the table.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals("a dedup base is coupled and carries no lead", 0, instance.getLeadRowCount());
+
+                final long cleanCyclesBefore = instance.getDedupRawWalCleanCycles();
+                final long committedBefore = engine.getTableSequencerAPI().lastTxn(lvToken);
+                failApply.set(true);
+                execute("INSERT INTO base VALUES ('1970-01-04T00:00:00.000000Z', 4, 'd')");
+                driveUntil(
+                        job,
+                        () -> engine.getTableSequencerAPI().lastTxn(lvToken) > committedBefore,
+                        "the dedup-clean cycle never committed 1970-01-04"
+                );
+                Assert.assertTrue("the cycle's apply must actually have been failed", applyFaults.get() > 0);
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(lvToken));
+                Assert.assertTrue(
+                        "the cycle must take the clean raw-WAL drain, not drainAppliedBase",
+                        instance.getDedupRawWalCleanCycles() > cleanCyclesBefore
+                );
+                Assert.assertEquals("the block must be sequenced and not applied", 3, lvRowCount(lvToken));
+                // The view serves the table as it stands, and nothing from the unapplied block. The
+                // band still mirrors the table's tail, so a fresh cursor keeps seaming over it.
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-02T00:00:00.000000Z\t2\t1
+                                1970-01-03T00:00:00.000000Z\t3\t1
+                                """);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                assertBand(instance, "1970-01-03T00:00:00.000000Z", 1);
+
+                // The fault clears. The next cycle's apply lands the stranded block together with
+                // its own, and rebuilds the tier from the table rather than publishing onto a band
+                // the backlog now sits under.
+                failApply.set(false);
+                execute("INSERT INTO base VALUES ('1970-01-05T00:00:00.000000Z', 5, 'e')");
+                driveUntilDurableRowCount(job, 5);
+                driveRefreshToQuiescence(job);
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-02T00:00:00.000000Z\t2\t1
+                                1970-01-03T00:00:00.000000Z\t3\t1
+                                1970-01-04T00:00:00.000000Z\t4\t1
+                                1970-01-05T00:00:00.000000Z\t5\t1
+                                """);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertFalse(instance.isTierStale());
+                assertBand(instance, "1970-01-05T00:00:00.000000Z", 1);
+                Assert.assertEquals(5, instance.getLvRowsTotal());
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testDedupForwardAppendOverAFailedApplyServesOnlyTheAppliedTable() throws Exception {
+        // The other coupled cycle, drainAppliedBase's forward append, publishes the same way and
+        // took the same wrong turn over an apply that landed nothing. The commit that fails carries
+        // two rows sharing (ts, sym), so the base apply dedups one and the clean-range signal
+        // diverges, which is what routes the refresh through drainAppliedBase.
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failApply = new AtomicBoolean();
+        final AtomicInteger applyFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failApply.get()
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "1970-01-04")
+                        && Utf8s.endsWithAscii(name, "x.d")) {
+                    applyFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            createDedupBaseAndView();
+            execute("""
+                    INSERT INTO base VALUES
+                    ('1970-01-01T00:00:00.000000Z', 1, 'a'),
+                    ('1970-01-02T00:00:00.000000Z', 2, 'b'),
+                    ('1970-01-03T00:00:00.000000Z', 3, 'c')""");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveUntilDurableRowCount(job, 3);
+                driveRefreshToQuiescence(job);
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+
+                final long cleanCyclesBefore = instance.getDedupRawWalCleanCycles();
+                final long committedBefore = engine.getTableSequencerAPI().lastTxn(lvToken);
+                failApply.set(true);
+                execute("""
+                        INSERT INTO base VALUES
+                        ('1970-01-04T00:00:00.000000Z', 4, 'd'),
+                        ('1970-01-04T00:00:00.000000Z', 44, 'd')""");
+                driveUntil(
+                        job,
+                        () -> engine.getTableSequencerAPI().lastTxn(lvToken) > committedBefore,
+                        "the dedup forward append never committed 1970-01-04"
+                );
+                Assert.assertTrue("the cycle's apply must actually have been failed", applyFaults.get() > 0);
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(lvToken));
+                Assert.assertEquals(
+                        "the cycle must take drainAppliedBase, not the clean raw-WAL drain",
+                        cleanCyclesBefore,
+                        instance.getDedupRawWalCleanCycles()
+                );
+                Assert.assertEquals("the block must be sequenced and not applied", 3, lvRowCount(lvToken));
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-02T00:00:00.000000Z\t2\t1
+                                1970-01-03T00:00:00.000000Z\t3\t1
+                                """);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                assertBand(instance, "1970-01-03T00:00:00.000000Z", 1);
+
+                failApply.set(false);
+                execute("INSERT INTO base VALUES ('1970-01-05T00:00:00.000000Z', 5, 'e')");
+                driveUntilDurableRowCount(job, 5);
+                driveRefreshToQuiescence(job);
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
+                // The deduped pair's survivor is the second row, so x = 44 rather than 4.
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-02T00:00:00.000000Z\t2\t1
+                                1970-01-03T00:00:00.000000Z\t3\t1
+                                1970-01-04T00:00:00.000000Z\t44\t1
+                                1970-01-05T00:00:00.000000Z\t5\t1
+                                """);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertFalse(instance.isTierStale());
+                assertBand(instance, "1970-01-05T00:00:00.000000Z", 1);
+                Assert.assertEquals(5, instance.getLvRowsTotal());
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testLeadOverAFailedApplyServesOnlyTheAppliedTable() throws Exception {
+        // The lead path's side of the two cases above. A cadence flush whose apply fails leaves the
+        // tier stale, and the next cycle's rows are flushed straight through rather than held in RAM.
+        // That flush's apply fails too while the fault stands, but the cycle then rebuilt the tier
+        // from the table regardless, which stamped a slot missing the stranded blocks and cleared
+        // the stale marking. The cycle after it published its lead on top of that slot, and the view
+        // served its applied rows and the lead with the stranded rows missing between them: rn 1, 2,
+        // then 5. The rebuild now waits for a table that holds every block the view committed.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // a root per flush
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failApply = new AtomicBoolean();
+        final AtomicInteger applyFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failApply.get()
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "1970-01-03")
+                        && Utf8s.endsWithAscii(name, "x.d")) {
+                    applyFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 10s PARTITION BY DAY START FROM NOW AS "
+                    + "(SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushOneRow(job, "1970-01-01T00:00:00.000000Z", 1, 1);
+                flushOneRow(job, "1970-01-02T00:00:00.000000Z", 2, 2);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+
+                // The cadence flush of 1970-01-03 fails its apply and suspends the table.
+                final long committedBefore = engine.getTableSequencerAPI().lastTxn(lvToken);
+                failApply.set(true);
+                execute("INSERT INTO base VALUES ('1970-01-03T00:00:00.000000Z', 'a', 3)");
+                driveUntil(
+                        job,
+                        () -> engine.getTableSequencerAPI().lastTxn(lvToken) > committedBefore,
+                        "the cadence flush never committed 1970-01-03"
+                );
+                Assert.assertTrue("the flush's apply must actually have been failed", applyFaults.get() > 0);
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(lvToken));
+                Assert.assertTrue(instance.isTierStale());
+
+                // Two more rows at the same clock, so no cadence flush writes them: each finds the
+                // tier stale and is flushed through, and each flush's apply fails in turn.
+                execute("INSERT INTO base VALUES ('1970-01-03T00:00:01.000000Z', 'a', 4)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                execute("INSERT INTO base VALUES ('1970-01-03T00:00:02.000000Z', 'a', 5)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-02T00:00:00.000000Z\t2\t2
+                                """);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_DISK_ONLY);
+                Assert.assertEquals("no row may wait in RAM above the stranded blocks", 0, instance.getLeadRowCount());
+                Assert.assertEquals("each row is its own stranded block", committedBefore + 3, engine.getTableSequencerAPI().lastTxn(lvToken));
+                Assert.assertEquals(2, lvRowCount(lvToken));
+                Assert.assertTrue(instance.isTierStale());
+
+                // The fault clears. The next row's flush lands all four blocks, and the tier is
+                // rebuilt from the table that now holds them.
+                failApply.set(false);
+                execute("INSERT INTO base VALUES ('1970-01-03T00:00:03.000000Z', 'a', 6)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-02T00:00:00.000000Z\t2\t2
+                                1970-01-03T00:00:00.000000Z\t3\t3
+                                1970-01-03T00:00:01.000000Z\t4\t4
+                                1970-01-03T00:00:02.000000Z\t5\t5
+                                1970-01-03T00:00:03.000000Z\t6\t6
+                                """);
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertFalse(instance.isTierStale());
+                Assert.assertEquals(6, instance.getLvRowsTotal());
+                assertLadder(instance, ts("1970-01-01"), 1, ts("1970-01-02"), 2, ts("1970-01-03T00:00:03.000000Z"), 6);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT ts, x, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn
+                            1970-01-01T00:00:00.000000Z\t1\t1
+                            1970-01-02T00:00:00.000000Z\t2\t2
+                            1970-01-03T00:00:00.000000Z\t3\t3
+                            1970-01-03T00:00:01.000000Z\t4\t4
+                            1970-01-03T00:00:02.000000Z\t5\t5
+                            1970-01-03T00:00:03.000000Z\t6\t6
+                            """);
+        });
+    }
+
+    @Test
     public void testTtlEvictionIntoTheOverlapBandRebuildsTheBandItInvalidates() throws Exception {
         // The eviction the seam arithmetic has to survive: an IN MEMORY window wider than what the
         // TTL keeps, so the rows the flush's own commit evicts are rows the overlap band holds. The
@@ -4619,6 +4958,165 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
             restartAndAssertRestoredFromTimeline();
             assertSurvivingSeedRows();
+        });
+    }
+
+    @Test
+    public void testRestartOverAnUnappliedFlushWaitsForItBehindAHalfInitialisedTracker() throws Exception {
+        // The ACTIVE twin of the case above. A flush commits 1970-01-04's block, its inline apply
+        // fails, and the process ends there: the view's WAL carries the block, its table does not,
+        // and _lv.s already names the block's base range, since the flush persists the consumed
+        // watermark whether or not its apply landed. The restart's floor reconcile has nothing to
+        // clamp, so what it guards is the restore after it, which reads the table's row count and
+        // frontier against that watermark. It re-drives the apply and must refuse to go on until
+        // the block is in the table.
+        //
+        // It judged that through isLiveViewWalFullyApplied, whose memory fast path trusted any
+        // tracker holding a writer txn. The restart hands it a tracker holding neither number, and
+        // the reconcile's own failed apply stamps the writer txn while the committed seqTxn stays
+        // unset, so the fast path read the view as caught up. The restore that followed passed its
+        // own proof rather than catching the gap: its replay of the base range above the root stops
+        // at the table's frontier, so the block's row above it was never re-fed, the root's 3 rows
+        // matched the 3-row table, and the restore took the runtime off root@1970-01-03 with the
+        // consumed watermark past 1970-01-04. Once the block landed, the next row counted from
+        // there: two rows numbered 4, 1970-01-04's and 1970-01-05's. The helper now reads disk truth
+        // for a tracker missing either number, so the first turn defers the whole restore and the
+        // one after the block lands replays 1970-01-04 from the base before the next row arrives.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // a root per flush
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failFlushPartition = new AtomicBoolean();
+        final AtomicInteger flushPartitionFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failFlushPartition.get()
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "1970-01-04")
+                        && Utf8s.endsWithAscii(name, "x.d")) {
+                    flushPartitionFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY DAY START FROM NOW AS "
+                    + "(SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushOneRow(job, "1970-01-01T00:00:00.000000Z", 1, 1);
+                flushOneRow(job, "1970-01-02T00:00:00.000000Z", 2, 2);
+                flushOneRow(job, "1970-01-03T00:00:00.000000Z", 3, 3);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                assertLadder(instance, ts("1970-01-01"), 1, ts("1970-01-02"), 2, ts("1970-01-03"), 3);
+
+                final long committedBefore = engine.getTableSequencerAPI().lastTxn(lvToken);
+                failFlushPartition.set(true);
+                execute("INSERT INTO base VALUES ('1970-01-04T00:00:00.000000Z', 'a', 4)");
+                driveUntil(
+                        job,
+                        () -> engine.getTableSequencerAPI().lastTxn(lvToken) > committedBefore,
+                        "the flush never committed 1970-01-04's block"
+                );
+                Assert.assertTrue("the flush's apply must actually have been failed", flushPartitionFaults.get() > 0);
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(lvToken));
+                Assert.assertEquals("the block must be sequenced and not applied", 3, lvRowCount(lvToken));
+                Assert.assertEquals(
+                        "the durable floor already names the block, so the restart has nothing to clamp",
+                        engine.readLiveViewAppliedMaxBaseSeqTxn(lvToken),
+                        instance.getStateReader().getLastProcessedSeqTxn()
+                );
+                assertLadder(instance, ts("1970-01-01"), 1, ts("1970-01-02"), 2, ts("1970-01-03"), 3);
+            }
+
+            final LogCapture capture = new LogCapture();
+            // A restart down to the sequencer's trackers, which come back holding neither number.
+            engine.getLiveViewRegistry().clear();
+            engine.getTableSequencerAPI().releaseAll();
+            engine.buildViewGraphs();
+            Assert.assertFalse(engine.getTableSequencerAPI().isTxnTrackerInitialised(lvToken));
+            capture.start();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                final int faultsBeforeRestart = flushPartitionFaults.get();
+                // No WAL drain ahead of this turn: CheckWalTransactionsJob would initialise the tracker.
+                job.run();
+                Assert.assertTrue(
+                        "the reconcile's apply after the restart must fail too",
+                        flushPartitionFaults.get() > faultsBeforeRestart
+                );
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+                Assert.assertTrue("the failed apply stamps the writer txn", tracker.isInitialised());
+                Assert.assertEquals(
+                        "and nothing has stamped the committed seqTxn yet",
+                        SeqTxnTracker.UNINITIALIZED_TXN,
+                        tracker.getSeqTxn()
+                );
+                Assert.assertFalse(
+                        "the restore must wait for the block rather than read a table missing it",
+                        reloaded.isCheckpointRestoreAttempted()
+                );
+                capture.drain();
+                capture.assertNotLogged("restored live view from checkpoint timeline [view=lv");
+                capture.assertNotLogged("live view restart rebuilding from applied base [view=lv");
+                Assert.assertEquals(3, lvRowCount(lvToken));
+
+                // The fault clears, but the reconcile does not re-drive a suspended table, so the view
+                // waits for the operator, as any suspended WAL table does.
+                failFlushPartition.set(false);
+                driveRefreshToQuiescence(job);
+                Assert.assertFalse(reloaded.isCheckpointRestoreAttempted());
+                Assert.assertEquals(3, lvRowCount(lvToken));
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveUntil(job, reloaded::isCheckpointRestoreSucceeded, "the restore never ran once the block could land");
+                capture.waitFor("restored live view from checkpoint timeline [view=lv");
+                capture.drain();
+                capture.assertLoggedRE("restored live view from checkpoint timeline \\[view=lv, generation=\\d+, checkpointId=\\d+, "
+                        + "boundary=1970-01-03T00:00:00\\.000000Z, frontier=1970-01-04T00:00:00\\.000000Z, baseSeqTxn=\\d+, replayedRows=1]");
+                capture.assertNotLogged("live view restart rebuilding from applied base [view=lv");
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
+                Assert.assertEquals(4, lvRowCount(lvToken));
+                Assert.assertEquals(4, reloaded.getLvRowsTotal());
+
+                // The next row folds onto a runtime that counted 1970-01-04.
+                flushOneRow(job, "1970-01-05T00:00:00.000000Z", 5, 5);
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                1970-01-01T00:00:00.000000Z\t1\t1
+                                1970-01-02T00:00:00.000000Z\t2\t2
+                                1970-01-03T00:00:00.000000Z\t3\t3
+                                1970-01-04T00:00:00.000000Z\t4\t4
+                                1970-01-05T00:00:00.000000Z\t5\t5
+                                """);
+                Assert.assertEquals(5, reloaded.getLvRowsTotal());
+                assertLadder(reloaded, ts("1970-01-01"), 1, ts("1970-01-02"), 2, ts("1970-01-03"), 3, ts("1970-01-05"), 5);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            } finally {
+                capture.stop();
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT ts, x, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn
+                            1970-01-01T00:00:00.000000Z\t1\t1
+                            1970-01-02T00:00:00.000000Z\t2\t2
+                            1970-01-03T00:00:00.000000Z\t3\t3
+                            1970-01-04T00:00:00.000000Z\t4\t4
+                            1970-01-05T00:00:00.000000Z\t5\t5
+                            """);
         });
     }
 

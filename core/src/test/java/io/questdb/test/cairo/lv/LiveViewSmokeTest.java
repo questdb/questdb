@@ -3513,9 +3513,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testSuspendedStatusOutranksSeedingInCatalogue() throws Exception {
         // A SEEDING view whose own WAL table the sequencer has suspended reads "suspended"
-        // in live_views().view_status: the sweep parks on the same unapplied block that
-        // stalls an ACTIVE view, and RESUME WAL is the operator's move either way. The
-        // seed signal is untouched underneath, so RESUME WAL returns the view to "seeding".
+        // in live_views().view_status: a suspended table keeps the sweep's output off disk
+        // as it does an ACTIVE view's. The seed signal is untouched underneath, so RESUME
+        // WAL returns the view to "seeding".
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
@@ -7978,12 +7978,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         //
         // Cycle 1 flushes a block whose inline apply no-ops on EntryUnavailableException, so
         // flushLead un-stamps the slot and marks the tier stale. Cycle 2 therefore takes
-        // finishLeadRefresh's tierStale branch: it flushes (a second block, whose apply no-ops
-        // again) and then calls rebuildInMemoryTier, which restages the slot from the
-        // STILL-STALE disk, stamps it with that stale seqTxn and clears the stale marking. The
-        // slot is a correct tail of the disk it was staged from - but the LV WAL still carries
-        // two unapplied blocks, and the marking that would have told the next applier to rebuild
-        // is gone.
+        // finishLeadRefresh's tierStale branch and flushes a second block, whose apply no-ops
+        // again. That branch used to rebuild the tier from the STILL-STALE disk right after,
+        // stamping the slot with that stale seqTxn and clearing the stale marking; it now waits
+        // for a table that holds every committed block, so the test runs the same rebuild through
+        // rebuildInMemoryTierForTest. That is the state any rebuild over the backlog leaves, and
+        // the part-way retry still reaches it on its own. The slot is a correct tail of the disk
+        // it was staged from - but the LV WAL still carries two unapplied blocks, and the marking
+        // that would have told the next applier to rebuild is gone.
         //
         // Releasing the writer lets scanForLaggingViews / retryPendingLiveViewApply land the
         // whole backlog, which makes the disk tier completely correct. The slot is not: it holds
@@ -8036,11 +8038,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         2L, tracker.getSeqTxn() - tracker.getWriterTxn());
                 Assert.assertFalse("a busy writer must not suspend the LV table",
                         engine.getTableSequencerAPI().isSuspended(lvToken));
-                // Both preconditions of the retry-site guard, asserted rather than assumed. Cycle
-                // 2's rebuild cleared the tier-stale marking, which is what makes the re-stamp
-                // this test forbids look legitimate to retryPendingLiveViewApply; a future change
-                // that left the marking set would route the retry into rebuildInMemoryTier for the
-                // wrong reason and leave this test green and vacuous.
+                Assert.assertTrue("the stale flush must leave the tier stale over the backlog",
+                        instance.isTierStale());
+                job.rebuildInMemoryTierForTest(instance);
+                // Both preconditions of the retry-site guard, asserted rather than assumed. The
+                // rebuild over the backlog cleared the tier-stale marking, which is what makes the
+                // re-stamp this test forbids look legitimate to retryPendingLiveViewApply; a future
+                // change that left the marking set would route the retry into rebuildInMemoryTier
+                // for the wrong reason and leave this test green and vacuous.
                 Assert.assertFalse("the tier-stale marking must be gone, which is what lets the"
                         + " re-stamp below look legitimate", instance.isTierStale());
                 final long committedSeqTxn = tracker.getSeqTxn();
@@ -8146,9 +8151,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainJob(job);
                 drainWalQueue();
 
-                // Two held cycles build the backlog and, on the second, leave tierStale false:
-                // finishLeadRefresh's tierStale branch restages the slot from the still-stale disk
-                // and clears the marking while both blocks are still unapplied.
+                // Two held cycles build the backlog. finishLeadRefresh's tierStale branch on the
+                // second leaves the tier stale, since its rebuild waits for a table holding every
+                // committed block; the rebuild run below restages the slot from the still-stale
+                // disk and clears the marking while both blocks are unapplied, as that branch used
+                // to and as any rebuild over the backlog does.
                 try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
                     setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                     execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 2)");
@@ -8161,6 +8168,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 }
                 Assert.assertEquals("the two held cycles must leave two committed but unapplied LV blocks",
                         2L, tracker.getSeqTxn() - tracker.getWriterTxn());
+                Assert.assertTrue("the stale flush must leave the tier stale over the backlog",
+                        instance.isTierStale());
+                job.rebuildInMemoryTierForTest(instance);
                 Assert.assertFalse("the tier-stale marking must be gone, which is what lets the"
                                 + " re-stamp below look legitimate",
                         instance.isTierStale());
@@ -8268,9 +8278,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainJob(job);
                 drainWalQueue();
 
-                // Two held cycles build the backlog and, on the second, leave tierStale false:
-                // finishLeadRefresh's tierStale branch restages the slot from the still-stale disk
-                // and clears the marking while both blocks are still unapplied.
+                // Two held cycles build the backlog. finishLeadRefresh's tierStale branch on the
+                // second leaves the tier stale, since its rebuild waits for a table holding every
+                // committed block; the rebuild run below restages the slot from the still-stale
+                // disk and clears the marking while both blocks are unapplied, as that branch used
+                // to and as any rebuild over the backlog does.
                 try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
                     setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                     execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 2)");
@@ -8283,6 +8295,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 }
                 Assert.assertEquals("the two held cycles must leave two committed but unapplied LV blocks",
                         2L, tracker.getSeqTxn() - tracker.getWriterTxn());
+                Assert.assertTrue("the stale flush must leave the tier stale over the backlog",
+                        instance.isTierStale());
+                job.rebuildInMemoryTierForTest(instance);
                 Assert.assertFalse("the tier-stale marking must be gone, which is what lets the"
                         + " re-stamp below look legitimate", instance.isTierStale());
 

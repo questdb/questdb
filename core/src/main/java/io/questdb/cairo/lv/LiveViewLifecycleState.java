@@ -52,10 +52,14 @@ public enum LiveViewLifecycleState {
      * Registry committed, not invalid, but the sequencer has suspended the view's
      * own WAL table: an inline apply failed, or an operator ran
      * {@code ALTER LIVE VIEW ... SUSPEND WAL}. Output the refresh worker commits into
-     * the view's WAL does not land on disk until {@code ALTER LIVE VIEW ... RESUME WAL};
-     * queries serve the last applied state. A SEEDING view whose table is suspended
-     * reports this state too, since the sweep parks on the same unapplied block.
-     * {@code wal_tables()} carries the error tag and message behind the suspension.
+     * the view's WAL stays off disk until an apply lands, and the first one that does
+     * clears the suspension. The refresh worker's own inline applies carry no suspension
+     * gate, so they retry the table and a transient fault heals without an operator;
+     * {@code ALTER LIVE VIEW ... RESUME WAL} is what moves a view left with nothing else
+     * to drive it. Those retries do not honour an operator's {@code SUSPEND WAL} either,
+     * so the view's next flush ends that suspension too. A SEEDING view whose table is
+     * suspended reports this state as well. {@code wal_tables()} carries the error tag and
+     * message behind the suspension.
      */
     SUSPENDED,
     /**
@@ -116,9 +120,8 @@ public enum LiveViewLifecycleState {
         if (invalid) {
             return INVALID;
         }
-        // Suspension outranks the seed signal: a suspended table blocks the sweep
-        // exactly as it blocks incremental refresh, and RESUME WAL is the operator's
-        // move either way.
+        // Suspension outranks the seed signal: a suspended table keeps the view's
+        // output off disk whether the sweep or incremental refresh produced it.
         if (walSuspended) {
             return SUSPENDED;
         }

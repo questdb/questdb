@@ -821,6 +821,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the refresh latch (the invalidator's own free lost the CAS). Production reaches the helper only
      * through {@link #scanForLaggingViews()}, which skips already-invalid views.
      */
+    /**
+     * Test-only: rebuilds the view's in-memory tier from its table under the refresh latch, the
+     * way {@link #retryPendingLiveViewApply} does, whatever the view's own WAL still holds. A
+     * rebuild over committed but unapplied blocks leaves a slot that is not stale and is stamped
+     * with a seqTxn the next apply moves past - the state {@link #flushLead}'s backlog branches and
+     * {@link #retryPendingLiveViewApply}'s unconditional rebuild are there for. The stale flush in
+     * {@link #finishLeadRefresh} no longer produces it, so a test pinning those guards builds it
+     * with this rather than depend on which production path still does.
+     */
+    @TestOnly
+    public void rebuildInMemoryTierForTest(LiveViewInstance instance) {
+        if (!instance.tryLockForRefresh()) {
+            throw new IllegalStateException("live view refresh latch is held [view=" + instance.getDefinition().getViewName() + ']');
+        }
+        try {
+            rebuildInMemoryTier(instance);
+        } finally {
+            try {
+                stagingBuffer = Misc.free(stagingBuffer);
+            } finally {
+                instance.unlockAfterRefresh();
+            }
+        }
+    }
+
     @TestOnly
     public boolean retryPendingLiveViewApplyForTest(LiveViewInstance instance) {
         return retryPendingLiveViewApply(instance);
@@ -2818,7 +2843,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // lead-eligible LVs take the refresh/flush split instead.
             instance.setAppliedWatermark(advanceTo);
             boolean lvConsumedPersisted = false;
-            // LV-table applied seqTxn for the fence stamp; LONG_NULL until apply.
+            // LV-table applied seqTxn before and after the apply: the tier publish below reads
+            // what the apply landed off the pair. LONG_NULL until apply.
+            long lvAppliedBefore = Numbers.LONG_NULL;
             long lvAppliedSeqTxn = Numbers.LONG_NULL;
             // LV-table committed seqTxn, alongside the applied one: the un-stamp branch below
             // rebuilds only when the two agree. LONG_NULL until apply.
@@ -2830,6 +2857,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // applyWalDirect here the LIVE_VIEW_DATA block would sit
                 // unapplied and the on-disk tier would not catch up.
                 final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
+                lvAppliedBefore = lvTracker.getWriterTxn();
                 removedRows = applyLiveViewWal(instance);
                 // Capture the just-applied LV-table seqTxn (matches a query
                 // reader's getSeqTxn()) to stamp the slot below.
@@ -2885,37 +2913,29 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // handleRefreshFailure which ticks the flush-retry budget.
                 persistState(instance);
             }
-            // Set by the un-stamp branch below when the apply left disk fully current: the
-            // rebuild at the end of this cycle then re-establishes the slot as a subset of disk,
-            // instead of leaving reads disk-only until the next base commit.
+            // Set when the apply left the slot un-stamped over a fully current disk: the rebuild
+            // at the end of this cycle then re-establishes the slot as a subset of disk, instead
+            // of leaving reads disk-only until the next base commit.
             boolean isTierRebuildDue = false;
             if (lvConsumedPersisted && populateTier && appendedRows > 0) {
-                if (removedRows > 0) {
-                    // The apply that landed this cycle's rows also removed durable ones, so
-                    // the slot's retained band may hold rows disk no longer has. Publishing
-                    // on top of it would re-stamp those rows as a subset of disk; un-stamp
-                    // instead so the fence routes reads disk-only, and rebuild the slot from
-                    // the surviving table below - the same disposition flushLead and
-                    // drainAppliedBase take.
-                    restampSlot(instance, Numbers.LONG_NULL, 0);
-                    instance.setTierStale(true);
-                    // Only when the apply drained the LV WAL whole. A part-way apply leaves
-                    // blocks outstanding, and retryPendingLiveViewApply rebuilds when it lands
-                    // them, so a rebuild here would be repeated.
-                    isTierRebuildDue = lvCommittedSeqTxn == lvAppliedSeqTxn;
-                } else {
-                    // Publish the just-applied rows into the tier as a subset of disk
-                    // (leadRowCount = 0). Failure to acquire a write slot is a
-                    // non-fatal stall: the on-disk tier still advanced, the in-mem
-                    // tier just trails this cycle. A view whose output schema the tier
-                    // cannot store never gets here (populateTier is false above), so the
-                    // one route that reaches it with a live tier is a DEDUP base whose
-                    // range isRangeProvablyClean admitted: dedup makes the view coupled,
-                    // and the clean range sends it down this raw-WAL drain rather than
-                    // drainAppliedBase. That is this publish's real workload, not a
-                    // defensive leftover.
-                    publishToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows, false);
-                }
+                // Publish the just-applied rows into the tier as a subset of disk, or leave
+                // them out of it when the apply did not land exactly them. Failure to acquire a
+                // write slot is a non-fatal stall: the on-disk tier still advanced, the in-mem
+                // tier just trails this cycle. A view whose output schema the tier cannot store
+                // never gets here (populateTier is false above), so the one route that reaches
+                // it with a live tier is a DEDUP base whose range isRangeProvablyClean admitted:
+                // dedup makes the view coupled, and the clean range sends it down this raw-WAL
+                // drain rather than drainAppliedBase. That is this publish's real workload, not
+                // a defensive leftover.
+                isTierRebuildDue = publishCoupledCycleToInMemoryTier(
+                        instance,
+                        stagingMaxTs,
+                        appendedRows,
+                        lvAppliedBefore,
+                        lvAppliedSeqTxn,
+                        lvCommittedSeqTxn,
+                        removedRows
+                );
             }
             if (lvConsumedPersisted && appendedRows > 0) {
                 // The removal is accounted for before the seal below reads the
@@ -3268,11 +3288,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
             boolean lvConsumedPersisted = false;
             long removedRows = 0;
+            // LV-table applied seqTxn before the apply: the tier publish below reads what the
+            // apply landed off it and lvAppliedSeqTxn. LONG_NULL until apply.
+            long lvAppliedBefore = Numbers.LONG_NULL;
             // LV-table committed seqTxn, alongside the applied one: the un-stamp branch below
             // rebuilds only when the two agree. LONG_NULL until apply.
             long lvCommittedSeqTxn = Numbers.LONG_NULL;
             if (appendedRows > 0) {
                 final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
+                lvAppliedBefore = lvTracker.getWriterTxn();
                 removedRows = applyLiveViewWal(instance);
                 lvAppliedSeqTxn = lvTracker.getWriterTxn();
                 // Read the committed seqTxn once, right after it: the rebuild decision below
@@ -3292,30 +3316,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (!lvConsumedPersisted) {
                 persistState(instance);
             }
-            // Set by the un-stamp branch below when the apply left disk fully current: the
-            // rebuild at the end of this cycle then re-establishes the slot as a subset of disk.
-            // It matters more here than on the lead path: this disk-subset publish is the tier's
+            // Set when the apply left the slot un-stamped over a fully current disk: the rebuild
+            // at the end of this cycle then re-establishes the slot as a subset of disk. It
+            // matters more here than on the lead path: this disk-subset publish is the tier's
             // only feed for a dedup base, so a deferred rebuild leaves the view reading disk-only
             // until its next base commit - which never comes for an idle view.
             boolean isTierRebuildDue = false;
             if (lvConsumedPersisted && populateTier && appendedRows > 0) {
-                if (removedRows > 0) {
-                    // Same un-stamp as flushLead: the apply removed durable rows, so the slot's
-                    // retained band is not provably a subset of disk any more. Un-stamp so the
-                    // fence routes reads disk-only, and rebuild it from the surviving table below.
-                    restampSlot(instance, Numbers.LONG_NULL, 0);
-                    instance.setTierStale(true);
-                    // Only when the apply drained the LV WAL whole. A part-way apply leaves
-                    // blocks outstanding, and retryPendingLiveViewApply rebuilds when it lands
-                    // them (this path never carries an un-flushed lead, so hasPendingLiveViewApply
-                    // picks the view up), so a rebuild here would be repeated.
-                    isTierRebuildDue = lvCommittedSeqTxn == lvAppliedSeqTxn;
-                } else {
-                    // Publish the just-applied rows into the tier as a subset of disk
-                    // (leadRowCount = 0). This disk-subset publish is the tier's only feed
-                    // for a dedup base (it has no un-flushed lead), so it is load-bearing.
-                    publishToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows, false);
-                }
+                // This disk-subset publish is the tier's only feed for a dedup base (it has no
+                // un-flushed lead), so it is load-bearing - and only as good as the apply it
+                // publishes over.
+                isTierRebuildDue = publishCoupledCycleToInMemoryTier(
+                        instance,
+                        stagingMaxTs,
+                        appendedRows,
+                        lvAppliedBefore,
+                        lvAppliedSeqTxn,
+                        lvCommittedSeqTxn,
+                        removedRows
+                );
             }
             if (lvConsumedPersisted && appendedRows > 0) {
                 reconcilePendingPartitionRemovals(instance);
@@ -4016,7 +4035,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // future path that could leave a stale non-zero count while tierStale.
                     instance.setLeadRowCount(0);
                     flushLead(instance, windowFactory, advanceTo, appendedRows);
-                    rebuildInMemoryTier(instance);
+                    // Only over a table that holds every block the view committed. A flush
+                    // whose apply did not land - a fault that suspended the table, a busy
+                    // writer - leaves those blocks in the view's WAL alone, and the rebuild
+                    // would stamp a slot staged from the table without them and clear the
+                    // stale marking. The next cycle's lead would then publish on top of that
+                    // slot, above rows no read can reach, and the view would serve its
+                    // applied rows and the lead with the stranded blocks missing between
+                    // them. Left stale, the next cycle flushes straight through again, and
+                    // reads stay on the applied table until the blocks land, at which point
+                    // this rebuild runs.
+                    if (isLiveViewWalFullyApplied(instance)) {
+                        rebuildInMemoryTier(instance);
+                    }
                     instance.setRefreshedUpToSeqTxn(advanceTo);
                     return;
                 }
@@ -4338,6 +4369,61 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
         }
+    }
+
+    /**
+     * Publishes a coupled cycle's rows into the in-memory tier, or leaves them out of it, by
+     * what its inline apply actually landed. Both coupled cycles of a DEDUP base -
+     * {@link #incrementalRefresh}'s raw-WAL drain and {@link #drainAppliedBase}'s forward
+     * append - publish as a subset of disk stamped with the applied seqTxn, which asserts that
+     * the slot's rows are the table's own trailing rows at that seqTxn: the identity the read
+     * path's seam cuts on. Only an apply that landed exactly this cycle's block, left nothing
+     * outstanding and removed nothing makes that true. Everything else is the classification
+     * {@link #flushLead} runs on the lead path, with one difference that follows from what the
+     * slot holds:
+     * <ul>
+     *     <li>The applied seqTxn did not advance. The apply no-opped (the writer was busy, or
+     *     the table backed off under memory pressure) or failed and suspended the table, so the
+     *     rows are in the view's WAL and not in its table. Publishing them would stamp them with
+     *     the seqTxn the table already stands at, the fence would engage over them, and the seam
+     *     would serve them in place of rows the table does hold, at an unchanged count. The slot
+     *     is left as it was: unlike the lead path's, it holds nothing the table lacks until this
+     *     publish, and the table has not moved, so it still mirrors the table's tail and keeps
+     *     seaming. The rows reach it once the block lands, through the branch below.</li>
+     *     <li>It advanced by more than this block, or stopped short of the committed seqTxn: a
+     *     backlog landed under this cycle's block, or the apply ran out part-way. The slot is no
+     *     longer the table's tail either way - the backlog sits under it, or this block's own
+     *     rows are still off disk - so it is un-stamped and marked stale, and rebuilt from the
+     *     table when the apply left it fully current.</li>
+     *     <li>It landed exactly this block but removed rows on the way, a TTL eviction in the
+     *     commit's own housekeeping: un-stamped, and rebuilt from the surviving table.</li>
+     * </ul>
+     * A part-way apply leaves the rebuild to {@link #retryPendingLiveViewApply}, which rebuilds
+     * when it lands the rest - a coupled view never carries an un-flushed lead, so
+     * {@link #hasPendingLiveViewApply} picks it up.
+     *
+     * @return true when the caller must rebuild the tier from the table, after it has
+     * reconciled the removal and sealed the head
+     */
+    private boolean publishCoupledCycleToInMemoryTier(
+            LiveViewInstance instance,
+            long stagingMaxTs,
+            long appendedRows,
+            long lvAppliedBefore,
+            long lvAppliedSeqTxn,
+            long lvCommittedSeqTxn,
+            long removedRows
+    ) {
+        if (lvAppliedSeqTxn <= lvAppliedBefore) {
+            return false;
+        }
+        if (lvAppliedSeqTxn != lvAppliedBefore + 1 || lvCommittedSeqTxn != lvAppliedSeqTxn || removedRows > 0) {
+            restampSlot(instance, Numbers.LONG_NULL, 0);
+            instance.setTierStale(true);
+            return lvCommittedSeqTxn == lvAppliedSeqTxn;
+        }
+        publishToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows, false);
+        return false;
     }
 
     /**
@@ -5106,10 +5192,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code CheckWalTransactionsJob} stamps it, and a real writer txn compared against the
      * unset seqTxn reads as caught up.
      * <p>
-     * Fails closed: any read failure reports {@code false}. Both callers act on a
-     * {@code true}: the ACTIVE restart reconcile clamps a base-WAL purge floor on it, and
-     * the seed sweep's resume setup derives its skip-write floor off the table's row count.
-     * So "cannot tell" has to mean "not yet".
+     * Fails closed: any read failure reports {@code false}. Every caller acts on a
+     * {@code true}: the ACTIVE restart reconcile clamps a base-WAL purge floor on it, the
+     * seed sweep's resume setup derives its skip-write floor off the table's row count, and
+     * the lead path's stale flush rebuilds the in-memory tier from the table. So "cannot
+     * tell" has to mean "not yet".
      */
     private boolean isLiveViewWalFullyApplied(LiveViewInstance instance) {
         final TableToken token = instance.getLiveViewToken();
@@ -5133,15 +5220,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (appliedSeqTxn >= committedSeqTxn) {
                 return true;
             }
-            // Debug, not info: the caller re-enters per base commit while the block is
+            // Debug, not info: every caller re-enters per base commit while the block is
             // outstanding, and scanForLaggingViews already reports the same condition.
-            LOG.debug().$("live view has committed but unapplied WAL, deferring restart floor reconcile [view=")
+            LOG.debug().$("live view has committed but unapplied WAL [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", appliedSeqTxn=").$(appliedSeqTxn)
                     .$(", committedSeqTxn=").$(committedSeqTxn).I$();
             return false;
         } catch (Throwable t) {
-            LOG.error().$("could not read live view apply state on restart [view=")
+            LOG.error().$("could not read live view apply state [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
             return false;
