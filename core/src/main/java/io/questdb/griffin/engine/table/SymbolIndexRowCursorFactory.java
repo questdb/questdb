@@ -55,7 +55,7 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         return pageFrame
                 .getIndexReader(columnIndex, indexDirection)
-                .getCursor(symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getCursor(symbolKey, pageFrame.getIndexRowLo(), pageFrame.getIndexRowHi() - 1);
     }
 
     @Override

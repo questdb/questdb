@@ -1414,6 +1414,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     @Test
     public void testNoLagUsedWhenDataIsInOrder() throws Exception {
+        // Merge-append refuses WAL lag for the whole table, which this test's lag-scheduling assertions need.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + " (" +
@@ -1875,6 +1877,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     @Test
     public void testSavedDataInTxnFile() throws Exception {
+        // Merge-append refuses WAL lag for the whole table, which this test's lag-count assertion needs.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + " (" +

@@ -680,6 +680,14 @@ public final class PostingIndexChainWriter {
         }
     }
 
+    public long readPublishedRegionLimit(MemoryR keyMem) {
+        if (!PostingIndexChainHeader.readUnderSeqlock(keyMem, headerScratch)
+                || headerScratch.formatVersion != PostingIndexUtils.V2_FORMAT_VERSION) {
+            return -1L;
+        }
+        return headerScratch.regionLimit;
+    }
+
     /**
      * Walk the chain backwards from head and drop every entry whose
      * {@code txnAtSeal > currentTableTxn}. These are abandoned publishes

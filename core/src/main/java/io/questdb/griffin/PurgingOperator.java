@@ -63,6 +63,60 @@ public final class PurgingOperator {
         this.ff = configuration.getFilesFacade();
     }
 
+    /**
+     * Queues {@code columnVersions} for the column purge job. Static because a caller with nothing else to purge -
+     * {@code TableWriter} handing over the {@code _geometry} generations a rotation retired, see GEOMETRY_PURGE.md -
+     * needs the queue without needing this operator's per-column bookkeeping.
+     */
+    public static void purgeColumnVersionAsync(
+            Log log,
+            MessageBus messageBus,
+            TableToken tableToken,
+            String columnName,
+            int tableId,
+            int tableTruncateVersion,
+            int columnType,
+            byte indexType,
+            int timestampType,
+            int partitionBy,
+            long updateTxn,
+            @Transient LongList columnVersions,
+            int columnVersionsLo,
+            int columnVersionsHi
+    ) {
+        Sequence pubSeq = messageBus.getColumnPurgePubSeq();
+        while (true) {
+            long cursor = pubSeq.next();
+            if (cursor > -1L) {
+                ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
+                task.of(
+                        tableToken,
+                        columnName,
+                        tableId,
+                        tableTruncateVersion,
+                        columnType,
+                        indexType,
+                        timestampType,
+                        partitionBy,
+                        updateTxn,
+                        columnVersions,
+                        columnVersionsLo,
+                        columnVersionsHi
+                );
+                pubSeq.done(cursor);
+                return;
+            } else if (cursor == -1L) {
+                // Queue overflow
+                log.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").$safe(tableToken.getTableName())
+                        .$("\"' [columnName=").$safe(columnName)
+                        .$(", updateTxn=").$(updateTxn)
+                        .I$();
+                return;
+            }
+            Os.pause();
+        }
+    }
+
     public void add(
             int columnIndex,
             String columnName,
@@ -227,37 +281,22 @@ public final class PurgingOperator {
             int columnVersionsLo,
             int columnVersionsHi
     ) {
-        Sequence pubSeq = messageBus.getColumnPurgePubSeq();
-        while (true) {
-            long cursor = pubSeq.next();
-            if (cursor > -1L) {
-                ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
-                task.of(
-                        tableToken,
-                        columnName,
-                        tableId,
-                        tableTruncateVersion,
-                        columnType,
-                        indexType,
-                        timestampType,
-                        partitionBy,
-                        updateTxn,
-                        columnVersions,
-                        columnVersionsLo,
-                        columnVersionsHi
-                );
-                pubSeq.done(cursor);
-                return;
-            } else if (cursor == -1L) {
-                // Queue overflow
-                log.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").$safe(tableToken.getTableName())
-                        .$("\"' [columnName=").$safe(columnName)
-                        .$(", updateTxn=").$(updateTxn)
-                        .I$();
-                return;
-            }
-            Os.pause();
-        }
+        purgeColumnVersionAsync(
+                log,
+                messageBus,
+                tableToken,
+                columnName,
+                tableId,
+                tableTruncateVersion,
+                columnType,
+                indexType,
+                timestampType,
+                partitionBy,
+                updateTxn,
+                columnVersions,
+                columnVersionsLo,
+                columnVersionsHi
+        );
     }
 
 }

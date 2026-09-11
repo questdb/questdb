@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -161,6 +162,10 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
     }
 
     private void runConcurrentReadFuzz(Rnd rnd, boolean legacyInitial, boolean singleTxn, boolean o3Mode) throws Exception {
+        // The WAL-lag fast append this test exists to exercise is unreachable with merge-append ON:
+        // TableWriter forces noLag for the whole table and tryFastAppendInOrderBlock returns before its
+        // body. Pin the shipping default so the assertions below measure the path they name.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10_000_000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 2000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 600_000);
@@ -302,6 +307,11 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
                         }
                     } catch (Throwable e) {
                         bgError.set(e);
+                    } finally {
+                        // A read of a COMPOSITE partition resolves its geometry through a thread-local
+                        // Path (see PartitionGeometry), born on this thread the first time. The thread
+                        // ends with the test, so free it here or the leak check charges it to the test.
+                        Path.clearThreadLocals();
                     }
                 }, "covering-fastpath-reader-" + r);
                 readers[r].setDaemon(true);

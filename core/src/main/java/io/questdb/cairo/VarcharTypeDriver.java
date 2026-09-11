@@ -655,6 +655,33 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void o3ColumnMergeWithTop(
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexCount,
+            long srcDataTop,
+            long srcAuxAddr1,
+            long srcDataAddr1,
+            long srcAuxAddr2,
+            long srcDataAddr2,
+            long dstAuxAddr,
+            long dstDataAddr,
+            long dstDataOffset
+    ) {
+        Vect.oooMergeCopyVarcharColumnWithTop(
+                timestampMergeIndexAddr,
+                timestampMergeIndexCount,
+                srcDataTop,
+                srcAuxAddr1,
+                srcDataAddr1,
+                srcAuxAddr2,
+                srcDataAddr2,
+                dstAuxAddr,
+                dstDataAddr,
+                dstDataOffset
+        );
+    }
+
+    @Override
     public void o3copyAuxVector(FilesFacade ff, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstFileOffset, long dstFd, boolean mixedIOFlag) {
         O3CopyJob.copyFixedSizeCol(ff, srcAddr, srcLo, srcHi, dstAddr, dstFileOffset, dstFd, VARCHAR_AUX_SHL, mixedIOFlag);
     }

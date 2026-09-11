@@ -944,7 +944,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 packedDataStartOffset += Unsafe.getLong(baseAddr + srcPackedOffsetsOffset + (long) startBlock * Long.BYTES);
             }
             this.sidecarStrideKeyStart += skippedValueCount;
-            this.denseVarKeyStartCount += skippedValueCount;
             if (!isCurrentGenDense && coverCount > 0) {
                 this.sidecarOrdinal += skippedValueCount;
             }

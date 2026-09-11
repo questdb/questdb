@@ -93,8 +93,9 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
-import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
+import static io.questdb.tasks.TableWriterTask.CMD_COMPOSITE_PARTITION_SWAP;
+import static io.questdb.tasks.TableWriterTask.CMD_PARQUET_PARTITION_SWAP;
 import static io.questdb.tasks.TableWriterTask.CMD_STORAGE_POLICY;
 import static io.questdb.tasks.TableWriterTask.getCommandName;
 
@@ -108,6 +109,11 @@ public final class TableUtils {
     public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
+    /**
+     * Marks a composite-partition REWRITE built off a {@link io.questdb.cairo.TableReader} snapshot, staged next to the
+     * source directory before the writer has agreed to swap it in - see {@code PartitionCompactionScanJob}.
+     */
+    public static final String COMPACTING_DIR_MARKER = ".compacting";
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
@@ -148,6 +154,7 @@ public final class TableUtils {
     public static final String PARQUET_METADATA_STAGING_FILE_NAME = "_pm.staging";
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String PARQUET_PARTITION_STAGING_NAME = "data.parquet.staging";
+    public static final String PARTITION_GEOMETRY_FILE_NAME = "_geometry";
     public static final String PARTITION_LAST_SQUASH_TIMESTAMP_FILE = ".squash_ts";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
@@ -1283,12 +1290,18 @@ public final class TableUtils {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
     }
 
+    /**
+     * A lock reason the WAL apply machinery did not arrange itself is unsolicited - including {@link
+     * io.questdb.cairo.pool.WriterPool#OWNERSHIP_REASON_UNKNOWN}, reported while a holder is still constructing the
+     * writer and has not stamped its reason yet.
+     */
     public static boolean isUnsolicitedTableLock(String lockReason) {
-        //noinspection StringEquality
-        return lockReason != NO_LOCK_REASON
-                && !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
+        return !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
                 && !WAL_2_TABLE_RESUME_REASON.equals(lockReason)
-                && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason);
+                && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason)
+                // The compaction sweep holds the writer to land its swap the same way STORAGE POLICY does.
+                && !getCommandName(CMD_COMPOSITE_PARTITION_SWAP).equals(lockReason)
+                && !getCommandName(CMD_PARQUET_PARTITION_SWAP).equals(lockReason);
     }
 
     public static boolean isValidColumnName(CharSequence columnName, int fsFileNameLimit) {

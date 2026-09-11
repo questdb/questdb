@@ -43,8 +43,8 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
         this.provider = provider;
         this.nativeAddress = Unsafe.malloc(Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
         // The counters must start zeroed: used = 0, limit = 0.
-        Unsafe.getUnsafe().putLong(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
-        Unsafe.getUnsafe().putLong(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, 0L);
+        Unsafe.putLong(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
+        Unsafe.putLong(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, 0L);
     }
 
     @Override

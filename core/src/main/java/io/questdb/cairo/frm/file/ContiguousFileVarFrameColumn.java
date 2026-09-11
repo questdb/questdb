@@ -76,108 +76,126 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
     @Override
     public void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
-        if (sourceColumn.getStorageType() != COLUMN_CONTIGUOUS_FILE) {
+        final int sourceStorageType = sourceColumn.getStorageType();
+        if (sourceStorageType != COLUMN_CONTIGUOUS_FILE && sourceStorageType != COLUMN_MEMORY) {
             throw new UnsupportedOperationException();
         }
+
+        // Each side offsets by its OWN column top: a column whose data starts at a top does not hold the rows below it.
         sourceLo -= sourceColumn.getColumnTop();
         sourceHi -= sourceColumn.getColumnTop();
         appendOffsetRowCount -= columnTop;
 
-        assert sourceHi >= 0;
         assert sourceLo >= 0;
+        assert sourceHi >= 0;
         assert appendOffsetRowCount >= 0;
 
-        if (sourceHi > 0) {
+        if (sourceHi <= sourceLo) {
+            return;
+        }
+
+        // A file source hands its aux vector over as a mapping of its own and has it released afterwards; a
+        // memory source is already addressable, so it maps nothing. That is the whole difference between the
+        // two, and everything below reads one address either way.
+        final boolean isSourceMapped = sourceStorageType == COLUMN_CONTIGUOUS_FILE;
+        // sourceHi is exclusive, so this covers every entry the copy reads.
+        final long srcAuxMapSize = isSourceMapped ? columnTypeDriver.getAuxVectorSize(sourceHi) : 0;
+        final long srcAuxAddr = isSourceMapped
+                ? TableUtils.mapAppendColumnBuffer(ff, sourceColumn.getSecondaryFd(), 0, srcAuxMapSize, false, MEMORY_TAG)
+                : sourceColumn.getContiguousAuxAddr(sourceHi);
+        try {
             final long targetDataOffset = getDataAppendOffsetBytes(appendOffsetRowCount);
+            final long srcDataOffset = columnTypeDriver.getDataVectorOffset(srcAuxAddr, sourceLo);
+            assert (sourceLo == 0 && srcDataOffset == 0) || (sourceLo > 0 && srcDataOffset >= columnTypeDriver.getDataVectorMinEntrySize() && srcDataOffset < 1L << 40);
+            final long srcDataSize = columnTypeDriver.getDataVectorSize(srcAuxAddr, sourceLo, sourceHi - 1);
 
-            // Map source offset file, it will be used to copy data from anyway.
-            // sourceHi is exclusive
-            long srcAuxMemSize = columnTypeDriver.getAuxVectorSize(sourceHi);
+            if (srcDataSize > 0) {
+                assert srcDataSize < 1L << 40;
+                TableUtils.allocateDiskSpaceToPage(ff, dataFd, targetDataOffset + srcDataSize);
+                appendData(sourceColumn, isSourceMapped, sourceHi, srcDataOffset, srcDataSize, targetDataOffset, commitMode);
+            }
 
-            final long srcAuxMemAddr = TableUtils.mapAppendColumnBuffer(
-                    ff,
-                    sourceColumn.getSecondaryFd(),
-                    0,
-                    srcAuxMemSize,
-                    false,
-                    MEMORY_TAG
-            );
-
+            final long dstAuxOffset = columnTypeDriver.getAuxVectorOffset(appendOffsetRowCount);
+            final long dstAuxSize = columnTypeDriver.getAuxVectorSize(sourceHi - sourceLo);
+            TableUtils.allocateDiskSpaceToPage(ff, auxFd, dstAuxOffset + dstAuxSize);
+            long dstAuxAddr = 0;
             try {
-                long srcDataOffset = columnTypeDriver.getDataVectorOffset(srcAuxMemAddr, sourceLo);
-                assert (sourceLo == 0 && srcDataOffset == 0) || (sourceLo > 0 && srcDataOffset >= columnTypeDriver.getDataVectorMinEntrySize() && srcDataOffset < 1L << 40);
-                long srcDataSize = columnTypeDriver.getDataVectorSize(srcAuxMemAddr, sourceLo, sourceHi - 1);
-                if (srcDataSize > 0) {
-                    assert srcDataSize < 1L << 40;
-                    TableUtils.allocateDiskSpaceToPage(ff, dataFd, targetDataOffset + srcDataSize);
-                    if (mixedIOFlag) {
-                        if (ff.copyData(sourceColumn.getPrimaryFd(), dataFd, srcDataOffset, targetDataOffset, srcDataSize) != srcDataSize) {
-                            throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(dataFd)
-                                    .put(", destOffset=").put(targetDataOffset)
-                                    .put(", size=").put(srcDataSize)
-                                    .put(", fileSize=").put(ff.length(dataFd))
-                                    .put(", srcFd=").put(sourceColumn.getPrimaryFd())
-                                    .put(", srcOffset=").put(srcDataOffset)
-                                    .put(", srcFileSize=").put(ff.length(sourceColumn.getPrimaryFd()))
-                                    .put(']');
-                        }
-
-                        if (commitMode != CommitMode.NOSYNC) {
-                            ff.fsync(dataFd);
-                        }
-                    } else {
-                        long srcDataAddress = 0;
-                        long dstDataAddress = 0;
-                        try {
-                            srcDataAddress = TableUtils.mapAppendColumnBuffer(ff, sourceColumn.getPrimaryFd(), srcDataOffset, srcDataSize, false, MEMORY_TAG);
-                            dstDataAddress = TableUtils.mapAppendColumnBuffer(ff, dataFd, targetDataOffset, srcDataSize, true, MEMORY_TAG);
-
-                            Vect.memcpy(dstDataAddress, srcDataAddress, srcDataSize);
-
-                            if (commitMode != CommitMode.NOSYNC) {
-                                TableUtils.msync(ff, dstDataAddress, srcDataSize, commitMode == CommitMode.ASYNC);
-                            }
-                        } finally {
-                            if (srcDataAddress != 0) {
-                                TableUtils.mapAppendColumnBufferRelease(ff, srcDataAddress, srcDataOffset, srcDataSize, MEMORY_TAG);
-                            }
-                            if (dstDataAddress != 0) {
-                                TableUtils.mapAppendColumnBufferRelease(ff, dstDataAddress, targetDataOffset, srcDataSize, MEMORY_TAG);
-                            }
-                        }
-                    }
-                }
-
-                final long dstAuxOffset = columnTypeDriver.getAuxVectorOffset(appendOffsetRowCount);
-                TableUtils.allocateDiskSpaceToPage(ff, auxFd, dstAuxOffset + srcAuxMemSize);
-                final long dstAuxAddr = TableUtils.mapAppendColumnBuffer(ff, auxFd, dstAuxOffset, srcAuxMemSize, true, MEMORY_TAG);
-                try {
-                    columnTypeDriver.shiftCopyAuxVector(
-                            srcDataOffset - targetDataOffset,
-                            srcAuxMemAddr,
-                            sourceLo,
-                            sourceHi - 1, // inclusive
-                            dstAuxAddr,
-                            srcAuxMemSize
-                    );
-
-                    if (commitMode != CommitMode.NOSYNC) {
-                        TableUtils.msync(ff, dstAuxAddr, srcAuxMemSize, commitMode == CommitMode.ASYNC);
-                    }
-                } finally {
-                    TableUtils.mapAppendColumnBufferRelease(ff, dstAuxAddr, dstAuxOffset, srcAuxMemSize, MEMORY_TAG);
-                }
-
-                this.appendOffsetRowCount = appendOffsetRowCount + (sourceHi - sourceLo);
-                this.dataAppendOffsetBytes = targetDataOffset + srcDataSize;
-            } finally {
-                TableUtils.mapAppendColumnBufferRelease(
-                        ff,
-                        srcAuxMemAddr,
-                        0,
-                        srcAuxMemSize,
-                        MEMORY_TAG
+                dstAuxAddr = TableUtils.mapAppendColumnBuffer(ff, auxFd, dstAuxOffset, dstAuxSize, true, MEMORY_TAG);
+                columnTypeDriver.shiftCopyAuxVector(
+                        srcDataOffset - targetDataOffset,
+                        srcAuxAddr,
+                        sourceLo,
+                        sourceHi - 1, // inclusive
+                        dstAuxAddr,
+                        dstAuxSize
                 );
+                if (commitMode != CommitMode.NOSYNC) {
+                    TableUtils.msync(ff, dstAuxAddr, dstAuxSize, commitMode == CommitMode.ASYNC);
+                }
+            } finally {
+                if (dstAuxAddr != 0) {
+                    TableUtils.mapAppendColumnBufferRelease(ff, dstAuxAddr, dstAuxOffset, dstAuxSize, MEMORY_TAG);
+                }
+            }
+
+            this.appendOffsetRowCount = appendOffsetRowCount + (sourceHi - sourceLo);
+            this.dataAppendOffsetBytes = targetDataOffset + srcDataSize;
+        } finally {
+            if (isSourceMapped) {
+                TableUtils.mapAppendColumnBufferRelease(ff, srcAuxAddr, 0, srcAuxMapSize, MEMORY_TAG);
+            }
+        }
+    }
+
+    /**
+     * Copies one contiguous run of the source's DATA vector to {@code targetDataOffset} in this column's data file.
+     */
+    private void appendData(
+            FrameColumn sourceColumn,
+            boolean isSourceMapped,
+            long sourceHi,
+            long srcDataOffset,
+            long srcDataSize,
+            long targetDataOffset,
+            int commitMode
+    ) {
+        final long sourceFd = sourceColumn.getPrimaryFd();
+        if (isSourceMapped && mixedIOFlag) {
+            if (ff.copyData(sourceFd, dataFd, srcDataOffset, targetDataOffset, srcDataSize) != srcDataSize) {
+                throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(dataFd)
+                        .put(", destOffset=").put(targetDataOffset)
+                        .put(", size=").put(srcDataSize)
+                        .put(", fileSize=").put(ff.length(dataFd))
+                        .put(", srcFd=").put(sourceFd)
+                        .put(", srcOffset=").put(srcDataOffset)
+                        .put(", srcFileSize=").put(ff.length(sourceFd))
+                        .put(']');
+            }
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.fsync(dataFd);
+            }
+            return;
+        }
+
+        long srcDataAddress = 0;
+        long dstDataAddress = 0;
+        try {
+            srcDataAddress = isSourceMapped
+                    ? TableUtils.mapAppendColumnBuffer(ff, sourceFd, srcDataOffset, srcDataSize, false, MEMORY_TAG)
+                    : sourceColumn.getContiguousDataAddr(sourceHi) + srcDataOffset;
+            dstDataAddress = TableUtils.mapAppendColumnBuffer(ff, dataFd, targetDataOffset, srcDataSize, true, MEMORY_TAG);
+
+            Vect.memcpy(dstDataAddress, srcDataAddress, srcDataSize);
+
+            if (commitMode != CommitMode.NOSYNC) {
+                TableUtils.msync(ff, dstDataAddress, srcDataSize, commitMode == CommitMode.ASYNC);
+            }
+        } finally {
+            if (isSourceMapped && srcDataAddress != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, srcDataAddress, srcDataOffset, srcDataSize, MEMORY_TAG);
+            }
+            if (dstDataAddress != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, dstDataAddress, targetDataOffset, srcDataSize, MEMORY_TAG);
             }
         }
     }
@@ -317,6 +335,118 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         return COLUMN_CONTIGUOUS_FILE;
     }
 
+    @Override
+    public void merge(
+            long appendOffsetRowCount,
+            FrameColumn sourceColumn1,
+            long source1Lo,
+            long source1Hi,
+            FrameColumn sourceColumn2,
+            long source2Lo,
+            long source2Hi,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            int commitMode
+    ) {
+        // The target offsets by its OWN column top, exactly as append does; each SOURCE does the same in
+        // rowZeroAuxAddr below.
+        appendOffsetRowCount -= columnTop;
+
+        assert appendOffsetRowCount >= 0;
+        // Not an equality: a deduplicating commit drops rows, so the index is SHORTER than both sides added together.
+        assert mergeIndexRows <= (source1Hi - source1Lo) + (source2Hi - source2Lo);
+
+        if (mergeIndexRows == 0) {
+            return;
+        }
+
+        // Only the DATA side can carry a column top - the O3 side is a batch this commit is writing now, so
+        // every row of it exists. When the slice reaches below that top the top-aware kernel takes the top
+        // directly and emits this type's NULL for the rows underneath.
+        final long src1Top = sourceColumn1.getColumnTop();
+        final boolean readsBelowTop = source1Lo < source1Hi && source1Lo < src1Top;
+        // Both vectors are addressed from ROW 0 and BYTE 0 of their own column: the merge index carries absolute row
+        // ids, and an aux entry carries an absolute data offset, so neither side is relative to the slice being read.
+        final long src1AuxAddr = readsBelowTop
+                ? sourceColumn1.getContiguousAuxAddr(source1Hi)
+                : rowZeroAuxAddr(sourceColumn1, source1Lo, source1Hi);
+        final long src2AuxAddr = rowZeroAuxAddr(sourceColumn2, source2Lo, source2Hi);
+        final long src1DataAddr = source1Lo < source1Hi ? sourceColumn1.getContiguousDataAddr(source1Hi) : 0;
+        final long src2DataAddr = source2Lo < source2Hi ? sourceColumn2.getContiguousDataAddr(source2Hi) : 0;
+
+        // Every row of both slices is written out exactly once and carries its own bytes with it, so the merged image
+        // is as long as the two slices put together - the interleaving moves bytes around but creates none.
+        final long belowTopRows = readsBelowTop ? Math.min(source1Hi, src1Top) - source1Lo : 0;
+        final long dataSize = (readsBelowTop
+                ? sourceDataSize(src1AuxAddr, Math.max(source1Lo, src1Top) - src1Top, source1Hi - src1Top)
+                  + belowTopRows * columnTypeDriver.getDataVectorMinEntrySize()
+                : sourceDataSize(src1AuxAddr, source1Lo, source1Hi))
+                + sourceDataSize(src2AuxAddr, source2Lo, source2Hi);
+        final long targetDataOffset = getDataAppendOffsetBytes(appendOffsetRowCount);
+        final long dstAuxOffset = columnTypeDriver.getAuxVectorOffset(appendOffsetRowCount);
+        final long dstAuxSize = columnTypeDriver.getAuxVectorSize(mergeIndexRows);
+
+        TableUtils.allocateDiskSpaceToPage(ff, auxFd, dstAuxOffset + dstAuxSize);
+        if (dataSize > 0) {
+            TableUtils.allocateDiskSpaceToPage(ff, dataFd, targetDataOffset + dataSize);
+        }
+
+        long dstAuxAddr = 0;
+        long dstDataAddr = 0;
+        try {
+            dstAuxAddr = TableUtils.mapAppendColumnBuffer(ff, auxFd, dstAuxOffset, dstAuxSize, true, MEMORY_TAG);
+            if (dataSize > 0) {
+                dstDataAddr = TableUtils.mapAppendColumnBuffer(ff, dataFd, targetDataOffset, dataSize, true, MEMORY_TAG);
+            }
+            // The kernel writes ABSOLUTE data offsets into the aux entries and addresses its writes by the same value,
+            // so it is handed the address byte 0 of the data file would be at.
+            final long dstDataBase = dstDataAddr != 0 ? dstDataAddr - targetDataOffset : 0;
+            if (readsBelowTop) {
+                columnTypeDriver.o3ColumnMergeWithTop(
+                        mergeIndexAddr,
+                        mergeIndexRows,
+                        src1Top,
+                        src1AuxAddr,
+                        src1DataAddr,
+                        src2AuxAddr,
+                        src2DataAddr,
+                        dstAuxAddr,
+                        dstDataBase,
+                        targetDataOffset
+                );
+            } else {
+                columnTypeDriver.o3ColumnMerge(
+                        mergeIndexAddr,
+                        mergeIndexRows,
+                        src1AuxAddr,
+                        src1DataAddr,
+                        src2AuxAddr,
+                        src2DataAddr,
+                        dstAuxAddr,
+                        dstDataBase,
+                        targetDataOffset
+                );
+            }
+
+            if (commitMode != CommitMode.NOSYNC) {
+                TableUtils.msync(ff, dstAuxAddr, dstAuxSize, commitMode == CommitMode.ASYNC);
+                if (dstDataAddr != 0) {
+                    TableUtils.msync(ff, dstDataAddr, dataSize, commitMode == CommitMode.ASYNC);
+                }
+            }
+        } finally {
+            if (dstAuxAddr != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, dstAuxAddr, dstAuxOffset, dstAuxSize, MEMORY_TAG);
+            }
+            if (dstDataAddr != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, dstDataAddr, targetDataOffset, dataSize, MEMORY_TAG);
+            }
+        }
+
+        this.appendOffsetRowCount = appendOffsetRowCount + mergeIndexRows;
+        this.dataAppendOffsetBytes = targetDataOffset + dataSize;
+    }
+
     public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex, boolean isEmpty) {
         assert auxFd == -1;
         closed = false;
@@ -413,5 +543,27 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         if (dataMapSize > 0) {
             dataMapAddr = TableUtils.mapRO(ff, dataFd, dataMapSize, 0, MEMORY_TAG);
         }
+    }
+
+    /**
+     * The address the source's row 0 WOULD be at in its AUX vector, which is what the merge index's absolute row ids
+     * address.
+     */
+    private long rowZeroAuxAddr(FrameColumn column, long lo, long hi) {
+        if (lo >= hi) {
+            return 0;
+        }
+        final long top = column.getColumnTop();
+        if (lo < top) {
+            throw CairoException.critical(0).put("merge reads below a column top [column=").put(columnIndex)
+                    .put(", rowLo=").put(lo)
+                    .put(", columnTop=").put(top)
+                    .put(']');
+        }
+        return column.getContiguousAuxAddr(hi) - columnTypeDriver.getAuxVectorOffset(top);
+    }
+
+    private long sourceDataSize(long auxAddr, long lo, long hi) {
+        return lo < hi ? columnTypeDriver.getDataVectorSize(auxAddr, lo, hi - 1) : 0;
     }
 }

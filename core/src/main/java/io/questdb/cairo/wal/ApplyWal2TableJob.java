@@ -1137,7 +1137,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         // WAL apply must never fiber-suspend, or an applied UPDATE that waits on WAL progress
         // would park the apply it depends on; generateUpdate rejects such statements at compile
         // time, and no caller reaches applyWal from a mounted fiber.
-        applyWal(tableToken, engine, operationExecutor, runStatus);
+        applyWal(tableToken, engine, operationExecutor, runStatus, false);
     }
 
     /**
@@ -1162,6 +1162,23 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             CairoEngine engine,
             OperationExecutor operationExecutor,
             WorkerContext runStatus
+    ) {
+        applyWal(tableToken, engine, operationExecutor, runStatus, false);
+    }
+
+    /**
+     * @param queueDriven true when a WAL notification off the queue drove this apply, so a busy
+     *                    writer has to re-publish the notification rather than drop it. A direct
+     *                    caller ({@link #applyWalDirect}) passes false: it owns the retry itself,
+     *                    and re-publishing would reset the SeqTxnTracker the caller reads back to
+     *                    find out whether its block landed.
+     */
+    public void applyWal(
+            @NotNull TableToken tableToken,
+            CairoEngine engine,
+            OperationExecutor operationExecutor,
+            WorkerContext runStatus,
+            boolean queueDriven
     ) {
         final Path tempPath = Path.PATH.get();
         SeqTxnTracker txnTracker = null;
@@ -1195,13 +1212,31 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writerTxn = writer.getSeqTxn();
                     dirtyWriterTxn = writer.getAppliedSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
+                    // Nothing applied this notification, and the queue slot it came on is already consumed.
+                    // SeqTxnTracker.notifyOnCommit publishes only while the table is exactly caught up, so
+                    // this was the last wakeup the table gets until something sends a new one. Who owes it
+                    // depends on what holds the writer.
+                    //
+                    // A direct caller drives its own retry and is excluded throughout: LiveViewRefreshJob
+                    // reads the tracker back to see whether its block landed.
                     if (isUnsolicitedTableLock(tableBusy.getReason())) {
                         LOG.critical().$("unsolicited table lock [table=").$(tableToken)
                                 .$(", lockReason=").$(tableBusy.getReason())
                                 .I$();
-                        // This is abnormal termination but table is not set to suspended state.
-                        // Reset state of SeqTxnTracker so that next CheckWalTransactionJob run will send job notification if necessary.
-                        engine.notifyWalTxnRepublisher(tableToken);
+                        // A lock the WAL machinery did not arrange can be held for as long as its holder
+                        // likes, so re-queueing here would spin a worker on it. Reset the tracker instead and
+                        // let CheckWalTransactionsJob pace the retry.
+                        if (queueDriven) {
+                            engine.notifyWalTxnRepublisher(tableToken);
+                        }
+                    } else if (queueDriven && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
+                        // A partition swap or a storage policy command: it lands one writer operation and
+                        // gives the writer straight back, so put the notification back on the queue rather
+                        // than marking the table for CheckWalTransactionsJob, which walks every table off disk
+                        // and paces itself - the table would sit un-applied for a whole scan interval.
+                        //
+                        // Another WAL apply needs neither: it re-notifies on its own way out, below.
+                        engine.notifyWalTxnCommitted(tableToken);
                     }
                     // Do not suspend table. Perhaps writer will be unlocked with no transaction applied.
                     // We do not suspend table because of having initial value on writerTxn. It will either be
@@ -1260,7 +1295,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return true;
         }
 
-        applyWal(tableToken, engine, operationExecutor, workerContext);
+        applyWal(tableToken, engine, operationExecutor, workerContext, true);
         return true;
     }
 

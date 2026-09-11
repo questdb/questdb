@@ -2337,6 +2337,70 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRebuildsIndexOverCompositePartitionExtent() throws Exception {
+        // A COMPOSITE partition's column files reach E, and a merge-append relocates a live piece
+        // into [liveRows, E). TableSnapshotRestore used to size its index rebuild by the LIVE row
+        // count, so every row of the relocated piece got no index entry and index-driven queries
+        // quietly returned a subset after a restore. The oracle is a twin table built from the same
+        // statements without the index: it answers by full scan and therefore cannot be wrong.
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174003";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            // The rebuild is off by default; the defect only exists on the rebuild path.
+            setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, "true");
+            // A production-sized partition pre-splits on its own at the 50MB default; shrink the
+            // threshold so a fixture small enough to read still ends up composite.
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+
+            createCompositeIndexedDay("ci_indexed", ", INDEX(s CAPACITY 8)");
+            createCompositeIndexedDay("ci_plain", "");
+
+            // The fixture is only worth anything while the day's files really do reach past its
+            // live rows - that gap is exactly what the rebuild used to leave unindexed.
+            try (TableReader reader = engine.getReader(engine.verifyTableName("ci_indexed"))) {
+                final long liveRows = reader.getTxFile().getPartitionSize(0);
+                final long e = reader.getGeometry().getE(0);
+                Assert.assertTrue("fixture needs a piece above the live rows, got E=" + e + " live=" + liveRows, e > liveRows);
+            }
+
+            // 'kz' is carried only by the two backdated strides, so every one of its rows is a
+            // relocated row - a row whose file row differs from its partition row.
+            final String countQuery = "SELECT count(), sum(v) FROM %s WHERE s = 'kz'";
+            printSql(String.format(countQuery, "ci_plain"));
+            final String expected = sink.toString();
+
+            assertQuery(String.format(countQuery, "ci_indexed"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("Index forward scan")
+                    .returns(expected);
+
+            execute("checkpoint create");
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+            drainWalQueue();
+
+            // The unindexed twin is the oracle: it never had an index to rebuild.
+            assertQuery(String.format(countQuery, "ci_plain"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery(String.format(countQuery, "ci_indexed"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("Index forward scan")
+                    .returns(expected);
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsPostingIndex() throws Exception {
         // Regression: TableSnapshotRestore must produce sealed posting index
         // generations and covering sidecars after rebuild, parallel to how it
@@ -5215,6 +5279,28 @@ public class CheckpointTest extends AbstractCairoTest {
                 execute("checkpoint release");
             }
         });
+    }
+
+    /**
+     * A day of one row a minute, then two backdated strides rewritten at the shared files' tail. The
+     * strides carry a key of their own, 'kz', and land at :30 seconds so no two 'kz' rows share a
+     * timestamp. Same shape as {@code CompositeIndexedAsOfJoinTest.createCompositeQuotes}: the day ends
+     * up several pieces over one set of column files, with the relocated pieces above the live rows.
+     */
+    private static void createCompositeIndexedDay(String table, String index) throws Exception {
+        execute("CREATE TABLE " + table + " AS (" +
+                " SELECT x::INT v, ('k' || ((x % 2) + 1))::SYMBOL s," +
+                " timestamp_sequence('2024-01-01', 60_000_000L) ts" +
+                " FROM long_sequence(240))" + index + " TIMESTAMP(ts) PARTITION BY DAY WAL");
+        // A later day, so 2024-01-01 is never the active partition and the batches below are O3.
+        execute("INSERT INTO " + table + " VALUES (90_000, 'k1', '2024-01-03T00:00:00.000000Z')");
+        drainWalQueue();
+        execute("INSERT INTO " + table + " SELECT x::INT + 800_000, 'kz'," +
+                " timestamp_sequence('2024-01-01T02:00:30', 60_000_000L) FROM long_sequence(10)");
+        drainWalQueue();
+        execute("INSERT INTO " + table + " SELECT x::INT + 810_000, 'kz'," +
+                " timestamp_sequence('2024-01-01T01:00:30', 60_000_000L) FROM long_sequence(10)");
+        drainWalQueue();
     }
 
     private void testCheckpointRecoveryTornKeyEntry(boolean rebuildColumnIndexes) throws Exception {

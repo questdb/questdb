@@ -343,7 +343,7 @@ public class LiveViewCheckpointRepairMarkerTest extends AbstractCairoTest {
                 Assert.assertTrue(fd > 0);
                 final long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    Unsafe.getUnsafe().putLong(buf, 0xDEAD_BEEFL);
+                    Unsafe.putLong(buf, 0xDEAD_BEEFL);
                     ff.write(fd, buf, Long.BYTES, LiveViewCheckpointRepairMarker.BASE_GENERATION_OFFSET);
                 } finally {
                     ff.close(fd);

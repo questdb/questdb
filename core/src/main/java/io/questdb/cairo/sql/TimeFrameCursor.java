@@ -82,6 +82,14 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
     }
 
     /**
+     * The low bound, inclusive, to give the reader from {@link #getIndexReaderForCurrentFrame} for the current frame:
+     * the INDEX row the frame's first row sits at.
+     */
+    default long getIndexRowLoForCurrentFrame() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * @return record to be used for random access on open time frames
      */
     Record getRecord();

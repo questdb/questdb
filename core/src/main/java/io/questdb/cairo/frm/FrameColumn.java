@@ -51,6 +51,25 @@ public interface FrameColumn extends Closeable {
      */
     void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode);
 
+    /**
+     * Appends the MERGE of two sources to this column's tail, interleaved by {@code mergeIndexAddr}.
+     *
+     * @param mergeIndexAddr native address of the merge index
+     * @param mergeIndexRows number of rows the index describes, which is the number of rows appended
+     */
+    void merge(
+            long appendOffsetRowCount,
+            FrameColumn sourceColumn1,
+            long source1Lo,
+            long source1Hi,
+            FrameColumn sourceColumn2,
+            long source2Lo,
+            long source2Hi,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            int commitMode
+    );
+
     void appendNulls(long rowCount, long sourceColumnTop, int commitMode);
 
     void close();
@@ -70,6 +89,10 @@ public interface FrameColumn extends Closeable {
     long getSecondaryFd();
 
     int getStorageType();
+
+    default boolean isTimestampIndex() {
+        return false;
+    }
 
     void setRecycleBin(RecycleBin<FrameColumn> pool);
 
