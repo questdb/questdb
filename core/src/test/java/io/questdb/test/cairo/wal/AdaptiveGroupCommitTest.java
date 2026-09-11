@@ -30,6 +30,8 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.DurabilityTier;
+import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -113,6 +115,21 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
                     Assert.assertEquals(1, ff.failureAttempts);
                     Assert.assertTrue(engine.isDurabilityFailed());
                     Assert.assertEquals(durableBefore, tracker.getLocalDurableSeqTxn());
+
+                    // The QWP durable-ack side of the poison. The engine hands out the disabled
+                    // registry, so (a) a durable-ack handshake is DENIED -- no tier set is available
+                    // and no confirmation header would be written -- and (b) a connection already
+                    // holding a grant reads a -1 frontier, so collectDurableProgress produces no
+                    // entries: the parked ack for the never-fsynced commit is never sent. Better to
+                    // go silent and let the client replay than to ack data the disk refused.
+                    final DurableAckRegistry poisonedRegistry = engine.getDurableAckRegistry();
+                    Assert.assertFalse("poisoned engine must disable the durable-ack registry",
+                            poisonedRegistry.isEnabled());
+                    Assert.assertFalse("no tier may be grantable on a poisoned engine",
+                            poisonedRegistry.isTierAvailable(DurabilityTier.LOCAL));
+                    Assert.assertFalse(poisonedRegistry.isTierSetAvailable(DurabilityTier.LOCAL));
+                    Assert.assertEquals("poisoned frontier must read as never-durable",
+                            -1L, poisonedRegistry.getLocalDurableSeqTxn(tt.getDirName()));
 
                     try {
                         commitRow(writer, 60_000_000L, 2);

@@ -32,6 +32,7 @@ import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -42,10 +43,13 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.CharSequenceLongHashMap;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -403,9 +407,16 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
      * LOCAL durable-ack tier, seeds the pending-durable table set via the exact private consumer the commit
      * path runs per committed table ({@code recordCommittedTable}, i.e. {@code this::recordCommittedTable} from
      * {@code tudCache.commitAll}), then calls {@link QwpIngressProcessorState#collectDurableProgress} — the
-     * method whose returned snapshot is serialized into the client's {@code STATUS_DURABLE_ACK} frame — and
-     * returns the acked seqTxn for the table. The load-bearing ack VALUE comes from the real
+     * method whose returned snapshot is serialized into the client's durable-ack frame (for the LOCAL-only
+     * grant here, a {@code STATUS_LOCAL_DURABLE_ACK} frame). The load-bearing ack VALUE comes from the real
      * registry&rarr;tracker read inside {@code collectDurableProgress}.
+     * <p>
+     * WIRE LEG: the snapshot is then serialized exactly as the server's send path does for a LOCAL-only
+     * grant and parsed back with the REAL pinned client ({@link WebSocketResponse}). The returned value is
+     * the CLIENT-parsed seqTxn — the number the client's trim watermark would advance to — so the no-loss
+     * bar downstream covers the frame layout and the client's status-byte classification, not just the
+     * server-side map. (The full websocket send machine still cannot be crash-stepped deterministically;
+     * this closes the serialization half of that documented gap.)
      */
     private long collectDurableAck(String tableName, String dirName, long committedSeqTxn, DurableAckRegistry registry) throws Exception {
         final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
@@ -419,7 +430,31 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
             final CharSequenceLongHashMap snapshot = state.collectDurableProgress(registry);
             Assert.assertTrue("durable-ack path must report the pending adaptive table",
                     snapshot.keyIndex(tableName) < 0);
-            return snapshot.get(tableName);
+            // Serialize as trySendCollectedDurableAck does for a LOCAL-only grant: the status byte plus
+            // the per-table entries, no flavor field. Then let the pinned client read it back.
+            final int payloadLen = state.computeDurableAckPayloadSize();
+            final long addr = Unsafe.malloc(payloadLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putByte(addr, QwpConstants.STATUS_LOCAL_DURABLE_ACK);
+                QwpIngressProcessorState.writeTableSeqTxnEntries(addr + 1, snapshot);
+                Assert.assertTrue("pinned client must accept the local durable-ack payload as structurally valid",
+                        WebSocketResponse.isStructurallyValid(addr, payloadLen));
+                final WebSocketResponse response = new WebSocketResponse();
+                Assert.assertTrue("pinned client must parse the local durable-ack payload",
+                        response.readFrom(addr, payloadLen));
+                Assert.assertTrue("pinned client must classify 0x0E as the LOCAL durable ack",
+                        response.isLocalDurableAck());
+                Assert.assertFalse("0x0E must not be classified as the replicated durable ack",
+                        response.isDurableAck());
+                Assert.assertEquals("frame must carry exactly the one pending table", 1, response.getTableEntryCount());
+                Assert.assertEquals(tableName, response.getTableName(0));
+                final long clientAckedSeqTxn = response.getTableSeqTxn(0);
+                Assert.assertEquals("client-parsed seqTxn must equal the server snapshot",
+                        snapshot.get(tableName), clientAckedSeqTxn);
+                return clientAckedSeqTxn;
+            } finally {
+                Unsafe.free(addr, payloadLen, MemoryTag.NATIVE_DEFAULT);
+            }
         } finally {
             state.close();
         }

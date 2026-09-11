@@ -28,14 +28,21 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.DurabilityTier;
+import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
@@ -45,6 +52,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -282,6 +290,17 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
             maxSeqTxn = baseDurableSeqTxn;
             markDurableBaseline();
 
+            // Processor layer under the same random interleavings: the state whose snapshot becomes
+            // the client's STATUS_LOCAL_DURABLE_ACK frame, opted into the LOCAL tier as an OSS QWP
+            // connection would be. Fed per op below and checked against the same independent oracle.
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            final QwpIngressProcessorState ackState = new QwpIngressProcessorState(
+                    1024, 1024, engine, httpConfig.getLineHttpProcessorConfiguration());
+            ackState.of(-1, AllowAllSecurityContext.INSTANCE);
+            ackState.setDurableAckEnabled(true);
+            ackState.setDurableAckTiers(DurabilityTier.LOCAL);
+            final DurableAckRegistry ackRegistry = engine.getDurableAckRegistry();
+
             final WalWriter[] writers = new WalWriter[WRITERS];
             long preCrashDurable = baseDurableSeqTxn;
             boolean reachedCrash = false;
@@ -332,6 +351,24 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
                             frontier <= trueDurable
                     );
 
+                    // Same invariant one layer up: the snapshot the ack frame is serialized from must
+                    // never cover a seqTxn beyond the true device-durable frontier. onDurableAckSent()
+                    // simulates a completed send, so successive collects also exercise the real path's
+                    // lastSent de-dup and pending-set pruning between ops.
+                    recordAckCommittedTable(ackState, table, tt.getDirName(), maxSeqTxn);
+                    final CharSequenceLongHashMap ackSnapshot = ackState.collectDurableProgress(ackRegistry);
+                    final int ackKey = ackSnapshot.keyIndex(table);
+                    if (ackKey < 0) {
+                        final long ackSeqTxn = ackSnapshot.valueAt(ackKey);
+                        Assert.assertTrue(
+                                seedMsg("ack-snapshot OVER-CLAIM at op " + op + ": STATUS_LOCAL_DURABLE_ACK value ("
+                                        + ackSeqTxn + ") exceeded the true contiguous device-durable frontier ("
+                                        + trueDurable + ")"),
+                                ackSeqTxn <= trueDurable
+                        );
+                        ackState.onDurableAckSent();
+                    }
+
                     if (op == crashAt) {
                         break;
                     }
@@ -347,6 +384,7 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
                 // Reclaim the held (now distressed) writers as a fresh boot's empty WAL-writer pool would —
                 // BEFORE crash() truncates the files, while the segment files are still their intact size.
                 // Runs on the invariant-violation exit too, so a mid-loop failure never leaks a held writer.
+                ackState.close();
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
                 engine.releaseCrashOrphanedWalWriters();
@@ -582,5 +620,20 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
             }
             return fd;
         }
+    }
+
+    private static Method recordCommittedTableMethod;
+
+    // Seeds the ack state's pending-durable set through the exact private consumer the commit path
+    // runs per committed table -- the same doorway AdaptiveQwpDurableAckNoLossCrashTest uses.
+    private static void recordAckCommittedTable(
+            QwpIngressProcessorState state, String tableName, String dirName, long seqTxn
+    ) throws Exception {
+        if (recordCommittedTableMethod == null) {
+            recordCommittedTableMethod = QwpIngressProcessorState.class.getDeclaredMethod(
+                    "recordCommittedTable", String.class, String.class, long.class);
+            recordCommittedTableMethod.setAccessible(true);
+        }
+        recordCommittedTableMethod.invoke(state, tableName, dirName, seqTxn);
     }
 }
