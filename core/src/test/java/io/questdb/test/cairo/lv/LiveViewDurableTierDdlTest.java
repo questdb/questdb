@@ -90,8 +90,8 @@ import java.util.function.BooleanSupplier;
  * converted partition, the rows such a repair brings back over a period a removal already took,
  * a {@code DROP PARTITION} queued between such a repair's capture and the apply of what it
  * publishes - a replacement, or the upsert a keyed repair publishes instead - and what a removal
- * taken while the view is still SEEDING does to the sweep's resume. Replica propagation belongs
- * to a later stage.
+ * taken while the view is still SEEDING does to the sweep's resume, including a failure at each
+ * step of the reset that resume falls back to. Replica propagation belongs to a later stage.
  */
 public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
@@ -4267,6 +4267,455 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testSeedResetWhoseReplacementFailsToSequenceResetsAgain() throws Exception {
+        // The first step of the reset's crash matrix: the replacement that discards the unproven
+        // output never reaches the sequencer. The view's _txnlog takes one part file per transaction
+        // here, so refusing to open the part the replacement's record would land in fails exactly
+        // that commit, before any seqTxn is minted - the state a crash inside the commit leaves too.
+        //
+        // Nothing durable moved: no replacement is sequenced, the table still holds the output the
+        // reset could not prove, and the retention marker that says so still stands, because the
+        // retire waits for the commit. The turn had fed 1970-01-01 into the accumulators, so the
+        // refresh failure handler re-arms the resume in this same process, and the re-armed setup
+        // has to reach the verdict the first one reached - reset again - off that same marker. What
+        // it must not do is carry on from the failed turn, whose accumulators counted a row that no
+        // commit made durable.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per seed turn
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 1); // one _txnlog part per transaction
+        final String[] lvDir = new String[1];
+        final String[] failedPartSuffix = new String[1];
+        final AtomicBoolean partOpenFailed = new AtomicBoolean();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final String partSuffix = failedPartSuffix[0];
+                if (partSuffix != null
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.endsWithAscii(name, partSuffix)) {
+                    failedPartSuffix[0] = null;
+                    partOpenFailed.set(true);
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            interruptSeedAfterItsFirstEviction();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            final long lastTxn = engine.getTableSequencerAPI().lastTxn(lvToken);
+
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                capture.start();
+                // Transaction lastTxn + 1 is recorded in part lastTxn.
+                failedPartSuffix[0] = WalUtils.TXNLOG_PARTS_DIR + Files.SEPARATOR + lastTxn;
+                job.run();
+                drainWalQueue();
+                Assert.assertTrue("the replacement's sequencing must actually have been failed", partOpenFailed.get());
+                capture.drain();
+                capture.assertLogged("could not apply transaction to WAL table sequencer [table=" + lvToken.getDirName());
+                capture.assertLogged("live view mid-seed refresh failure, sweep will resume [view=lv");
+                capture.stop();
+
+                Assert.assertEquals("nothing may be sequenced", lastTxn, engine.getTableSequencerAPI().lastTxn(lvToken));
+                Assert.assertEquals("the table still holds the unproven output", 3, lvRowCount(lvToken));
+                assertRetentionMarker(lvToken, true);
+                Assert.assertFalse("the failure must re-arm the resume setup", instance.isSeedResumeAttempted());
+                Assert.assertEquals(LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
+                Assert.assertEquals(1, instance.getRefreshFaultCount());
+                Assert.assertEquals("a mid-seed fault must not charge the retry budget", 0, instance.getFlushRetryCount());
+                Assert.assertFalse(instance.isInvalid());
+
+                // The re-armed setup resets again, off the marker the failed commit left standing.
+                capture.start();
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                assertSeedFinishedAfterItsFirstEviction(instance);
+                Assert.assertEquals("exactly the injected fault, and no other", 1, instance.getRefreshFaultCount());
+                capture.drain();
+                capture.assertLogged("live view seed sweep replacing unproven durable output [view=lv, onDiskLvRows=3, retentionMarkerSeqTxn=");
+                capture.assertNotLogged("retentionMarkerSeqTxn=null");
+            } finally {
+                capture.stop();
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertSurvivingSeedRows();
+        });
+    }
+
+    @Test
+    public void testSeedResetWhoseReplacementDidNotApplyHoldsTheSweepUntilItLands() throws Exception {
+        // The second step: the replacement is sequenced and its apply fails. The fault is a real
+        // one - the replacement's new 1970-01-01 partition cannot open its column file - so the apply
+        // job suspends the view's table, and the table keeps the output the reset exists to discard
+        // while the WAL carries what replaces it. The retire has already run, since it follows the
+        // commit, so the retention marker is gone and the unapplied replacement is now the only
+        // evidence that the table is not to be trusted.
+        //
+        // Section 3.7 rule 3 says a committed-but-unapplied reset may not be followed by new appends,
+        // and the sweep followed it anyway: the reset turn sealed a seed root at a position the table
+        // did not hold, and the next turn appended 1970-01-02 behind the replacement. With the fault
+        // still standing the sweep ran on to its completion, whose head seal declined over the
+        // outstanding apply, and left the view ACTIVE with no timeline. The sweep now hands the
+        // replacement to the reconciliation gate an out-of-order repair's unapplied replacement
+        // already blocks on: while the fault stands, every turn re-drives the apply and nothing else
+        // runs; once it clears, the gate lands the replacement and the sweep carries on from the
+        // offset the reset turn reached, without resetting a second time.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per seed turn
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failReplacementPartition = new AtomicBoolean();
+        final AtomicInteger replacementPartitionFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failReplacementPartition.get()
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "1970-01-01.")
+                        && Utf8s.endsWithAscii(name, "x.d")) {
+                    replacementPartitionFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            interruptSeedAfterItsFirstEviction();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            final long lastTxn = engine.getTableSequencerAPI().lastTxn(lvToken);
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                failReplacementPartition.set(true);
+                job.run();
+                drainWalQueue();
+                Assert.assertTrue("the replacement's apply must actually have been failed", replacementPartitionFaults.get() > 0);
+                Assert.assertEquals("the replacement must be sequenced", lastTxn + 1, engine.getTableSequencerAPI().lastTxn(lvToken));
+                Assert.assertEquals("and must not be applied", lastTxn, tracker.getWriterTxn());
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(lvToken));
+                assertQuery("SELECT view_status FROM live_views()").noLeakCheck().noRandomAccess().returns("view_status\nsuspended\n");
+                Assert.assertEquals("the table still holds the output the reset discards", 3, lvRowCount(lvToken));
+                assertRetentionMarker(lvToken, false);
+                // No seed root over a replacement the table does not hold.
+                assertTimelineExists(lvToken, false);
+                Assert.assertEquals(lastTxn + 1, instance.getPendingReplacementLvSeqTxn());
+                Assert.assertEquals(1, instance.getSeedDataOffset());
+                Assert.assertEquals(1, instance.getLvRowsTotal());
+                capture.drain();
+                capture.assertLogged("live view seed reset replacement committed but did not apply, deferring the sweep [view=lv");
+
+                // While the fault stands, each turn re-drives the apply and appends nothing.
+                for (int i = 0; i < 3; i++) {
+                    job.run();
+                    drainWalQueue();
+                }
+                Assert.assertEquals("no append may follow the unapplied reset", lastTxn + 1, engine.getTableSequencerAPI().lastTxn(lvToken));
+                Assert.assertEquals(lastTxn, tracker.getWriterTxn());
+                Assert.assertEquals(1, instance.getSeedDataOffset());
+                Assert.assertEquals(LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
+                assertTimelineExists(lvToken, false);
+                Assert.assertEquals(lastTxn + 1, instance.getPendingReplacementLvSeqTxn());
+
+                failReplacementPartition.set(false);
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                capture.waitFor("live view deferred replacement applied, resuming refresh [view=lv, lvSeqTxn=" + (lastTxn + 1));
+                capture.drain();
+                capture.assertOnlyOnce("live view seed sweep replacing unproven durable output \\[view=lv");
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
+
+                assertSeedFinishedAfterItsFirstEviction(instance);
+                // The apply failures are the apply job's, which suspends the table and returns;
+                // none of them is a refresh fault.
+                assertNoRefreshFaults("lv");
+            } finally {
+                capture.stop();
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertSurvivingSeedRows();
+        });
+    }
+
+    @Test
+    public void testRestartOverASeedResetWhoseReplacementDidNotApplyResetsAgain() throws Exception {
+        // The same failed apply, followed by the end of the process instead of a recovery in it. The
+        // restart finds the table still holding the output the reset discards, no retention marker
+        // and no timeline - the retire ran with the commit, and the reset turn sealed nothing over
+        // its unapplied replacement - with that replacement committed in the view's WAL.
+        //
+        // The resume setup applies the view's WAL before it reads anything off the table, so the
+        // replacement lands first and the table holds the one row it carried. Nothing proves that row
+        // either, so the sweep resets again - a table with rows and no root always does - and the
+        // second replacement lays the re-swept prefix down over it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per seed turn
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failReplacementPartition = new AtomicBoolean();
+        final AtomicInteger replacementPartitionFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failReplacementPartition.get()
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "1970-01-01.")
+                        && Utf8s.endsWithAscii(name, "x.d")) {
+                    replacementPartitionFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            interruptSeedAfterItsFirstEviction();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            final long lastTxn = engine.getTableSequencerAPI().lastTxn(lvToken);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                failReplacementPartition.set(true);
+                job.run();
+                drainWalQueue();
+                failReplacementPartition.set(false);
+                Assert.assertTrue("the replacement's apply must actually have been failed", replacementPartitionFaults.get() > 0);
+                Assert.assertEquals(lastTxn + 1, engine.getTableSequencerAPI().lastTxn(lvToken));
+                Assert.assertEquals(lastTxn, engine.getTableSequencerAPI().getTxnTracker(lvToken).getWriterTxn());
+                Assert.assertEquals(3, lvRowCount(lvToken));
+                assertRetentionMarker(lvToken, false);
+                assertTimelineExists(lvToken, false);
+            }
+
+            final LogCapture capture = new LogCapture();
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            capture.start();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                capture.waitFor("live view seed sweep replacing unproven durable output [view=lv, onDiskLvRows=1, retentionMarkerSeqTxn=null]");
+            } finally {
+                capture.stop();
+            }
+
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            assertSeedFinishedAfterItsFirstEviction(reloaded);
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
+            assertNoRefreshFaults("lv");
+
+            restartAndAssertRestoredFromTimeline();
+            assertSurvivingSeedRows();
+        });
+    }
+
+    @Test
+    public void testRestartOverAnUnappliedSeedAppendWaitsForItBehindAHalfInitialisedTracker() throws Exception {
+        // The third step: the reset has landed and the append after it commits, but its apply fails,
+        // and the process ends there. The reset sealed its one root at 1970-01-01 - one row per turn
+        // with no row or duration cadence to seal on - so the root now sits behind a table that
+        // holds 1970-01-01 and 1970-01-02, while the view's WAL also carries 1970-01-03. No removal
+        // happened after the reset, so the restart's resume is the proven kind, and its skip-write
+        // floor is the table's row count - which names the emitted ordinal only once the append has
+        // landed. The resume setup therefore applies the view's WAL first and refuses to read the
+        // table until the apply has caught up.
+        //
+        // It judged "caught up" off the SeqTxnTracker alone. A restart hands the sweep a tracker
+        // holding neither number until CheckWalTransactionsJob gets to it, and the setup's own apply
+        // then stamps the writer txn - its failure path records where the writer stopped - while the
+        // committed seqTxn stays unset. A real writer txn against an unset seqTxn read as caught up,
+        // so with the apply failing again on the first turn after the restart the setup read two
+        // rows, took a floor of 2 off root@1, skip-wrote 1970-01-02 and appended 1970-01-03 behind
+        // the block that already carried it: two rows at 1970-01-03, both numbered 3, once both
+        // applied. The check now reads disk truth for a tracker missing either number, so that turn
+        // waits, and the next one finds the append applied and floors at 3.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS, 0); // one row per seed turn
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failAppendPartition = new AtomicBoolean();
+        final AtomicInteger appendPartitionFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failAppendPartition.get()
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "1970-01-03.")
+                        && Utf8s.endsWithAscii(name, "x.d")) {
+                    appendPartitionFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            interruptSeedAfterItsFirstEviction();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The reset turn and the append after it, both applied.
+                final LiveViewInstance instance = driveSeedTurnsUntil(
+                        job,
+                        () -> {
+                            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                            return lv.isSeedResumeAttempted() && lv.getLvRowsTotal() == 2;
+                        },
+                        "the re-sweep never reached its second row"
+                );
+                Assert.assertEquals(2, lvRowCount(lvToken));
+                assertRetentionMarker(lvToken, false);
+                assertLadder(instance, ts("1970-01-01"), 1);
+
+                failAppendPartition.set(true);
+                job.run();
+                drainWalQueue();
+                Assert.assertTrue("the append's apply must actually have been failed", appendPartitionFaults.get() > 0);
+                Assert.assertEquals(3, instance.getLvRowsTotal());
+                Assert.assertEquals("the append must be sequenced and not applied", 2, lvRowCount(lvToken));
+                assertLadder(instance, ts("1970-01-01"), 1);
+            }
+
+            final LogCapture capture = new LogCapture();
+            // A restart down to the sequencer's trackers, which come back holding neither number.
+            engine.getLiveViewRegistry().clear();
+            engine.getTableSequencerAPI().releaseAll();
+            engine.buildViewGraphs();
+            Assert.assertFalse(engine.getTableSequencerAPI().isTxnTrackerInitialised(lvToken));
+            capture.start();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                // No WAL drain ahead of this turn: CheckWalTransactionsJob would initialise the tracker.
+                job.run();
+                Assert.assertTrue("the first apply after the restart must fail too", appendPartitionFaults.get() > 1);
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+                Assert.assertTrue("the failed apply stamps the writer txn", tracker.isInitialised());
+                Assert.assertEquals(
+                        "and nothing has stamped the committed seqTxn yet",
+                        SeqTxnTracker.UNINITIALIZED_TXN,
+                        tracker.getSeqTxn()
+                );
+                Assert.assertFalse(
+                        "the resume must wait for the append rather than read a table missing it",
+                        reloaded.isSeedResumeAttempted()
+                );
+                Assert.assertEquals(2, lvRowCount(lvToken));
+
+                failAppendPartition.set(false);
+                driveSeedTurnsUntil(job, reloaded::isSeedResumeAttempted, "the resume never ran once the append could land");
+                Assert.assertEquals(
+                        "the floor must count the append the restart found unapplied",
+                        3,
+                        reloaded.getSeedSkipWriteFloor()
+                );
+                Assert.assertEquals(3, lvRowCount(lvToken));
+
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                capture.drain();
+                capture.assertNotLogged("live view seed sweep replacing unproven durable output [view=lv");
+
+                assertSeedFinishedAfterItsFirstEviction(reloaded);
+                assertNoRefreshFaults("lv");
+            } finally {
+                capture.stop();
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertSurvivingSeedRows();
+        });
+    }
+
+    @Test
+    public void testSeedCompletionWhosePromotionDidNotPersistReSeedsOnRestart() throws Exception {
+        // The last step: the sweep completes but its promotion to ACTIVE never reaches _lv.s. The
+        // completion retires the sweep's roots, settles the counter, seals the finished head and
+        // only then persists the state that says ACTIVE - so a failure there, or a crash at that
+        // point, leaves the finished output and a steady head root on disk under a state file that
+        // still says SEEDING. The in-memory view has flipped; the durable one has not.
+        //
+        // The restart reads SEEDING and runs the sweep's resume setup, where the head is no seed
+        // resume point: it carries no cursor offset, so nothing proves which prefix of a sweep the
+        // three rows on disk are, and the sweep resets over them. The retention marker went with the
+        // completion's retire, so the reset keys on the missing resume point alone. That costs a
+        // re-sweep of the whole history, and the result is still exactly the uninterrupted one.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one row per seed turn
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failStatePersist = new AtomicBoolean();
+        final AtomicInteger statePersistFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failStatePersist.get()
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)) {
+                    statePersistFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            interruptSeedAfterItsFirstEviction();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Every row re-swept; the next turn is the completion.
+                final LiveViewInstance instance = driveSeedTurnsUntil(
+                        job,
+                        () -> {
+                            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                            return lv.isSeedResumeAttempted() && lv.getSeedDataOffset() == 5;
+                        },
+                        "the re-sweep never fed its last row"
+                );
+                failStatePersist.set(true);
+                job.run();
+                failStatePersist.set(false);
+                drainWalQueue();
+                // Both writes the completion attempts: the consumed-seqTxn advance, and the plain
+                // state persist it falls back on.
+                Assert.assertEquals(2, statePersistFaults.get());
+                capture.drain();
+                capture.assertLogged("could not advance live view consumed seqTxn after seed sweep [view=lv");
+                Assert.assertEquals(
+                        "the in-memory view flips before the persist",
+                        LiveViewState.SEED_STATE_ACTIVE,
+                        instance.getStateReader().getSeedState()
+                );
+                assertLadder(instance, ts("1970-01-05"), 3);
+                assertRetentionMarker(lvToken, false);
+                Assert.assertEquals(3, instance.getLvRowsTotal());
+                Assert.assertEquals(1, instance.getRefreshFaultCount());
+            } finally {
+                capture.stop();
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertEquals(
+                    "the durable state never left SEEDING",
+                    LiveViewState.SEED_STATE_SEEDING,
+                    reloaded.getStateReader().getSeedState()
+            );
+            capture.start();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                capture.waitFor("live view timeline holds no seed resume point [view=lv");
+                capture.waitFor("live view seed sweep replacing unproven durable output [view=lv, onDiskLvRows=3, retentionMarkerSeqTxn=null]");
+            } finally {
+                capture.stop();
+            }
+
+            assertSeedFinishedAfterItsFirstEviction(reloaded);
+            assertNoRefreshFaults("lv");
+
+            restartAndAssertRestoredFromTimeline();
+            assertSurvivingSeedRows();
+        });
+    }
+
+    @Test
     public void testTtlEvictionBelowTheResumeFloorStillWritesEveryLaterOutput() throws Exception {
         // The skip-write floor is a durable output POSITION, established once per process by a
         // proven resume, and the sweep keeps writing every output whose emitted ordinal reaches it.
@@ -5523,6 +5972,48 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 ('1970-01-07T00:00:00.000000Z', 'a', 7)""");
         drainWalQueue();
         setCurrentMicros(ts("1970-02-01T00:00:00.000000Z"));
+    }
+
+    /**
+     * The state every case of the seed reset's crash matrix starts from: {@link #createSeedBase}'s
+     * five days seeded under {@code TTL 2 DAYS}, one row per turn, and the process ended right after
+     * the sweep's own commit of 1970-01-04 evicted 1970-01-01. The table holds 1970-01-02 to
+     * 1970-01-04 under a live retention marker, so the resume this restart leaves behind cannot
+     * prove the durable output, and the next seed turn is the reset: a full-range replacement that
+     * carries 1970-01-01, the first re-swept row.
+     */
+    private void interruptSeedAfterItsFirstEviction() throws Exception {
+        createSeedBase();
+        createSeedView("TTL 2 DAYS ");
+        final TableToken lvToken = engine.verifyTableName("lv");
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveSeedTurnsUntilEviction(job);
+        }
+        Assert.assertEquals("the sweep must have written four rows and lost one", 3, lvRowCount(lvToken));
+        assertRetentionMarker(lvToken, true);
+        engine.getLiveViewRegistry().clear();
+        engine.buildViewGraphs();
+    }
+
+    /**
+     * What a seed {@link #interruptSeedAfterItsFirstEviction} left behind finishes as, however many
+     * faults, resets and restarts it took to get there: exactly what an uninterrupted seed produces,
+     * with the lifetime counter, the ladder and both pieces of reconciliation evidence settled.
+     */
+    private void assertSeedFinishedAfterItsFirstEviction(LiveViewInstance instance) throws Exception {
+        assertSurvivingSeedRows();
+        Assert.assertEquals(
+                "the seed must have completed",
+                LiveViewState.SEED_STATE_ACTIVE,
+                instance.getStateReader().getSeedState()
+        );
+        Assert.assertEquals("the evicted rows must leave the lifetime counter", 3, instance.getLvRowsTotal());
+        Assert.assertFalse(instance.hasPendingPartitionRemovals());
+        Assert.assertEquals(Numbers.LONG_NULL, instance.getPendingReplacementLvSeqTxn());
+        assertRetentionMarker(engine.verifyTableName("lv"), false);
+        assertLadder(instance, ts("1970-01-05"), 3);
+        assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
     }
 
     private void createSeedBase() throws Exception {

@@ -5096,22 +5096,30 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * committed, from disk truth: the sequencer log's last committed seqTxn against the
      * applied seqTxn the LV table records in its {@code _txn}.
      * <p>
-     * Deliberately does not consult the {@link SeqTxnTracker}. That tracker is memory-only
-     * and both of its txns default to {@code UNINITIALIZED_TXN}, so on a restart path -
-     * where nothing has initialised it yet - a tracker comparison answers "fully applied"
-     * for a view that has applied nothing, which is the wrong way to be wrong here.
+     * Deliberately does not trust a {@link SeqTxnTracker} that is missing either number.
+     * That tracker is memory-only and both of its txns default to {@code UNINITIALIZED_TXN},
+     * so on a restart path - where nothing has initialised it yet - a tracker comparison
+     * answers "fully applied" for a view that has applied nothing, which is the wrong way to
+     * be wrong here. Half an initialisation is no better: the first apply after a restart
+     * stamps the writer txn - even when it fails, since its failure path records where the
+     * writer stopped - while the committed seqTxn stays unset until the next commit or
+     * {@code CheckWalTransactionsJob} stamps it, and a real writer txn compared against the
+     * unset seqTxn reads as caught up.
      * <p>
-     * Fails closed: any read failure reports {@code false}. The caller clamps a base-WAL
-     * purge floor on the answer, so "cannot tell" has to mean "do not release".
+     * Fails closed: any read failure reports {@code false}. Both callers act on a
+     * {@code true}: the ACTIVE restart reconcile clamps a base-WAL purge floor on it, and
+     * the seed sweep's resume setup derives its skip-write floor off the table's row count.
+     * So "cannot tell" has to mean "not yet".
      */
     private boolean isLiveViewWalFullyApplied(LiveViewInstance instance) {
         final TableToken token = instance.getLiveViewToken();
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
-        if (tracker.isInitialised()) {
-            // An initialised tracker already holds both numbers - the apply job feeds it
-            // writerTxn from the LV writer and seqTxn from the sequencer - so answer from
-            // memory. Only a cold tracker needs the disk read below, which matters because
-            // a deferred reconcile is re-entered on every base commit until the block
+        if (tracker.isInitialised() && tracker.getSeqTxn() != SeqTxnTracker.UNINITIALIZED_TXN) {
+            // A tracker holding both numbers answers from memory: the apply job feeds it
+            // writerTxn from the LV writer, and the sequencer stamps seqTxn on every commit
+            // this process makes, as CheckWalTransactionsJob does for the ones before it.
+            // Only a tracker missing either number needs the disk read below, which matters
+            // because a deferred reconcile is re-entered on every base commit until the block
             // lands, and paying a sequencer read lock plus a reader open per commit for an
             // answer already in memory would be pure waste.
             return tracker.getWriterTxn() >= tracker.getSeqTxn();
@@ -10776,8 +10784,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Drives the live view's own WAL apply for the replacement a repair just
-     * committed and reports whether the live-view table now holds it. The refresh
+     * Drives the live view's own WAL apply for the replacement a repair or a seed
+     * reset committed and reports whether the live-view table now holds it. The refresh
      * worker owns the live view's {@code TableWriter} on a primary, so this inline
      * apply is the view's only applier - but it can silently no-op (the writer is
      * busy, or the table backed off under memory pressure) or suspend the table,
@@ -10811,14 +10819,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Re-drives an out-of-order repair's replacement that committed without
-     * applying, and reports whether refresh may proceed. A turn that ran over an
-     * unapplied replacement would read its own coordinates - the lifetime row
-     * count, a head checkpoint's {@code lvRowPosition}, a repaired root's position
-     * - off a table that does not hold the output, and would consume base
-     * transactions nothing materialised. So the view stays blocked here until the
-     * block lands, at which point the deferred repair simply runs again from the
-     * base range it never consumed.
+     * Re-drives a replacement that committed without applying, and reports whether
+     * refresh may proceed. Two producers leave one behind: an out-of-order repair, and
+     * a seed sweep's reset, whose replacement discards the partial output the sweep
+     * could not prove. A turn that ran over an unapplied replacement would read its
+     * own coordinates - the lifetime row count, a head checkpoint's
+     * {@code lvRowPosition}, a repaired root's position, a seed root's position - off a
+     * table that does not hold the output, and would build on output the replacement
+     * is about to discard. So the view stays blocked here until the block lands, at
+     * which point the deferred repair simply runs again from the base range it never
+     * consumed, and the sweep continues from the offset its reset turn reached.
      * <p>
      * Called under the refresh latch, before any other work in the turn.
      */
@@ -10831,7 +10841,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         instance.setPendingReplacementLvSeqTxn(Numbers.LONG_NULL);
-        LOG.info().$("live view deferred O3 replacement applied, resuming refresh [view=")
+        LOG.info().$("live view deferred replacement applied, resuming refresh [view=")
                 .$(instance.getDefinition().getViewName())
                 .$(", lvSeqTxn=").$(pendingLvSeqTxn).I$();
         return true;
@@ -10955,7 +10965,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * offset 0 and its first commit REPLACEs the view's whole range, so the partial
      * output leaves the table in the same commit that lays the recomputed prefix down.
      * Either way the resume applies any committed-but-unapplied block first, so what it
-     * reads off the table covers every block the sweep has already committed.
+     * reads off the table covers every block the sweep has already committed. Within a
+     * process, a reset whose replacement committed without applying parks the sweep
+     * behind the reconciliation gate an out-of-order repair's unapplied replacement
+     * already blocks on, so nothing is sealed or appended over the output the
+     * replacement is about to discard.
      * <p>
      * The proof is what TTL enforcement and {@code ALTER LIVE VIEW ... DROP PARTITION}
      * take away, and they stay live during a sweep: the table then holds fewer rows than
@@ -11027,10 +11041,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // them). Only stamp the single-shot resume flag and derive the floor once the LV writer
             // has actually caught up to its committed seqTxn; otherwise leave the view SEEDING with
             // the flag unset so the fallback scan re-enqueues it and the next turn re-attempts the
-            // apply (a genuinely suspended LV table then blocks the seed until RESUME - correct, and
+            // apply (a fault that persists then blocks the seed until it clears - correct, and
             // strictly better than duplicating).
-            final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
-            if (lvTracker.isInitialised() && lvTracker.getSeqTxn() > lvTracker.getWriterTxn()) {
+            //
+            // The answer comes from isLiveViewWalFullyApplied, which reads disk truth whenever
+            // the tracker is missing either number, rather than from the tracker alone. A
+            // restart hands the sweep a tracker nothing has initialised yet, and the apply above
+            // stamps its writer txn - failed or not - while its committed seqTxn stays unset
+            // until the next commit or CheckWalTransactionsJob; a notification-queue overflow or
+            // an unsolicited writer lock resets the writer txn of a warm one instead. A check
+            // that trusted either state read it as "nothing outstanding" and derived the floor
+            // off a table missing the block, which behind a root older than the block re-emits
+            // and duplicates it.
+            if (!isLiveViewWalFullyApplied(instance)) {
                 return;
             }
             // Pin the base snapshot the whole sweep reads BEFORE choosing a resume
@@ -11213,6 +11236,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         boolean readerBound = false;
         boolean replacePending = instance.isSeedReplacePending();
         boolean replaceCommitted = false;
+        long replaceLvSeqTxn = Numbers.LONG_NULL;
         try {
             // The pinned reader is borrowed (not detached), so the base SELECT reads a
             // copy at the reader's fixed snapshot txn via getReaderAtTxn's copy path.
@@ -11328,6 +11352,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 Long.MAX_VALUE
                         );
                         replaceCommitted = true;
+                        replaceLvSeqTxn = walWriter.getLastSeqTxn();
                     } else if (appendedThisTurn > 0) {
                         commitLiveViewBlock(instance, walWriter, sweepSeqTxn);
                     }
@@ -11357,6 +11382,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         if (appendedThisTurn > 0 || replaceCommitted) {
             applyLiveViewWal(instance);
+        }
+        if (replaceCommitted
+                && engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken()).getWriterTxn() < replaceLvSeqTxn) {
+            // The reset's replacement is in the live view's WAL but not in its table - the
+            // apply failed and suspended the table, the writer was busy, or the table backed
+            // off under memory pressure - so the table still holds the output the reset exists
+            // to discard. Nothing may be built on top of that until the replacement lands: no
+            // seed root, whose position would name rows the table does not hold, no later
+            // append, and no completion, whose head seal would decline over the outstanding
+            // apply and leave the view ACTIVE with no timeline. So the sweep stops here and
+            // hands the replacement to the reconciliation gate at the top of refreshInstance,
+            // the one an out-of-order repair's unapplied replacement already blocks on: it
+            // re-drives the apply on every later turn and lets the sweep continue from this
+            // turn's offset only once the block is in the table. The turn's rows are in the
+            // replacement, so the window state they advanced is the durable one, and
+            // dataOffset and lvRowsTotal already stand past them.
+            instance.setPendingReplacementLvSeqTxn(replaceLvSeqTxn);
+            LOG.critical().$("live view seed reset replacement committed but did not apply, deferring the sweep [view=")
+                    .$(viewName)
+                    .$(", lvSeqTxn=").$(replaceLvSeqTxn)
+                    .$(", seedDataOffset=").$(dataOffset).I$();
+            return;
         }
 
         if (yielded) {
@@ -15293,16 +15340,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (isApplyLagDeferred(instance, true)) {
                 return false;
             }
-            // Reconciliation gate. A prior turn's out-of-order repair committed a
-            // REPLACE_RANGE whose inline apply never landed, so the live view's table
-            // does not yet hold the output its WAL carries. Every coordinate this turn
-            // would derive - the lifetime row count, a head checkpoint's lvRowPosition,
-            // a repaired root's position, the consumed watermark - reads that table, so
-            // refresh stays blocked until the block is known applied. Reporting no work
-            // idles the worker instead of spinning a repair that would derive its
-            // numbers from a table missing the rows; scanForLaggingViews re-drives the
-            // apply on each sweep, and a suspended live view waits for an operator
-            // RESUME WAL, serving disk-only behind the seqTxn fence meanwhile.
+            // Reconciliation gate. A prior turn committed a REPLACE_RANGE whose inline
+            // apply never landed - an out-of-order repair's, or a seed sweep's reset - so
+            // the live view's table does not yet hold the output its WAL carries. Every
+            // coordinate this turn would derive - the lifetime row count, a head
+            // checkpoint's lvRowPosition, a repaired or seed root's position, the consumed
+            // watermark - reads that table, so refresh stays blocked until the block is
+            // known applied. Reporting no work idles the worker instead of spinning a
+            // repair or a sweep that would derive its numbers from a table missing the
+            // rows; scanForLaggingViews re-drives the apply on each sweep. applyWal has no
+            // suspension gate of its own, so that retry also lands the block on a table the
+            // failed apply suspended, once the fault clears; the view serves disk-only
+            // behind the seqTxn fence meanwhile.
             if (!reconcilePendingReplacement(instance)) {
                 return false;
             }

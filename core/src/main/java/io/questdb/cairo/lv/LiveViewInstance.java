@@ -591,16 +591,20 @@ public class LiveViewInstance implements QuietCloseable {
     // discipline as lvRowsTotal. Heap-backed and grown once, so a removal costs no
     // allocation on the steady state; the per-view memory tracker does not see it.
     private final PartitionRemovalEvents pendingPartitionRemovals = new PartitionRemovalEvents();
-    // LV-WRITER space, not base space: the live-view writer's own seqTxn of an
-    // out-of-order repair's REPLACE_RANGE block that committed but whose inline
-    // apply did not land. LONG_NULL when nothing is outstanding. Refresh is blocked
-    // behind reconciliation until such a replacement is known applied or not
+    // LV-WRITER space, not base space: the live-view writer's own seqTxn of a
+    // REPLACE_RANGE block that committed but whose inline apply did not land - an
+    // out-of-order repair's, or the one a seed sweep's reset commits to discard the
+    // output it could not prove. LONG_NULL when nothing is outstanding. Refresh is
+    // blocked behind reconciliation until such a replacement is known applied or not
     // applied: the repair's own bookkeeping (lvRowsTotal, every repaired root's
-    // lvRowPosition, the suffix range-add) reads the materialised table, so a turn
-    // that runs over an unapplied replacement derives its coordinates from a table
-    // that does not hold the output. In-RAM only - a restart reconciles the same
-    // window through LiveViewRefreshJob.reconcileAppliedFloorAfterRestart. Mutated
-    // and read under the refresh latch.
+    // lvRowPosition, the suffix range-add) reads the materialised table, and a sweep
+    // that ran on would seal seed roots and append output over rows the replacement is
+    // about to discard, so a turn that runs over an unapplied replacement derives its
+    // coordinates from a table that does not hold the output. In-RAM only - a restart
+    // reconciles the same window through LiveViewRefreshJob.reconcileAppliedFloorAfterRestart
+    // for an ACTIVE view, and through the seed sweep's resume setup, which applies the
+    // view's WAL and refuses to read the table until it is fully applied, for a SEEDING
+    // one. Mutated and read under the refresh latch.
     private long pendingReplacementLvSeqTxn = Numbers.LONG_NULL;
     // Cached RecordToRowCopier (compiled bytecode bridging the SELECT cursor's record
     // shape to the LV's WalWriter row). Invalidated when the WalWriter's metadata version
@@ -1568,11 +1572,6 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * @return the live-view-writer seqTxn of an out-of-order repair's replacement
-     * that committed but did not apply, or {@link Numbers#LONG_NULL} when nothing
-     * is outstanding. See {@link #pendingReplacementLvSeqTxn}.
-     */
-    /**
      * The durable partition removals the refresh job still owes a reconciliation for. See
      * the field for ownership; only the refresh worker reads or mutates it.
      */
@@ -1580,6 +1579,11 @@ public class LiveViewInstance implements QuietCloseable {
         return pendingPartitionRemovals;
     }
 
+    /**
+     * @return the live-view-writer seqTxn of a replacement - an out-of-order repair's
+     * or a seed reset's - that committed but did not apply, or {@link Numbers#LONG_NULL}
+     * when nothing is outstanding. See {@link #pendingReplacementLvSeqTxn}.
+     */
     public long getPendingReplacementLvSeqTxn() {
         return pendingReplacementLvSeqTxn;
     }
@@ -2509,8 +2513,8 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * Arms (or, with {@link Numbers#LONG_NULL}, clears) the reconciliation block a
-     * repair leaves behind when its replacement committed without applying. See
-     * {@link #pendingReplacementLvSeqTxn}.
+     * repair or a seed reset leaves behind when its replacement committed without
+     * applying. See {@link #pendingReplacementLvSeqTxn}.
      */
     public void setPendingReplacementLvSeqTxn(long lvSeqTxn) {
         this.pendingReplacementLvSeqTxn = lvSeqTxn;
