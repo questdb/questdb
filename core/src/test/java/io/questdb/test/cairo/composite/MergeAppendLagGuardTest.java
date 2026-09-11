@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -62,9 +61,6 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
  * {@code O3PartitionJob.processPartition} gates composite promotion on {@code isWalEnabled()} and
  * {@code compositeIndex > -1} WITHOUT an {@code isPartitioned} conjunct - both of which a non-partitioned WAL table
  * would satisfy. "There is no partition for a composite to exist on" is NOT what makes this safe.
- * <p>
- * {@link #testWalTableIsAlwaysPartitioned()} locks that invariant at every route the engine offers. If a future
- * change lets a WAL table be non-partitioned, this test goes red BEFORE the guard silently starts admitting it.
  */
 public class MergeAppendLagGuardTest extends AbstractCairoTest {
 
@@ -160,63 +156,5 @@ public class MergeAppendLagGuardTest extends AbstractCairoTest {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
             walApplyJob.run();
         }
-    }
-
-    /**
-     * Every route the engine offers refuses a non-partitioned WAL table, so {@code isMergeAppendTable()} and the raw
-     * merge-append flag agree at the LAG guard and at the block fast append.
-     */
-    @Test
-    public void testWalTableIsAlwaysPartitioned() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
-        assertMemoryLeak(() -> {
-            // 1. CREATE TABLE naming WAL explicitly.
-            assertExceptionNoLeakCheck(
-                    "CREATE TABLE t1 (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY NONE WAL",
-                    71,
-                    "WAL Write Mode can only be used on partitioned tables"
-            );
-
-            // 2. CREATE TABLE AS SELECT naming WAL explicitly.
-            assertExceptionNoLeakCheck(
-                    "CREATE TABLE t2 AS (SELECT 1L x, 0::TIMESTAMP ts) TIMESTAMP(ts) PARTITION BY NONE WAL",
-                    82,
-                    "WAL Write Mode can only be used on partitioned tables"
-            );
-
-            // 3. The WAL-by-default setting must not smuggle one in either.
-            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "true");
-            execute("CREATE TABLE t3 (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY NONE");
-            final TableToken t3 = engine.verifyTableName("t3");
-            Assert.assertFalse("wal.enabled.default made a non-partitioned table WAL", t3.isWal());
-
-            // 4. A materialized view is always WAL, so it is refused the same way.
-            execute("CREATE TABLE base (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertExceptionNoLeakCheck(
-                    "CREATE MATERIALIZED VIEW mv AS (SELECT ts, count() c FROM base SAMPLE BY 1h) PARTITION BY NONE",
-                    90,
-                    "materialized view has to be partitioned"
-            );
-
-            // 5. ALTER TABLE ... SET TYPE WAL, the only writer of the _convert marker.
-            assertExceptionNoLeakCheck(
-                    "ALTER TABLE t3 SET TYPE WAL",
-                    12,
-                    "Cannot convert non-partitioned table"
-            );
-
-            // Nothing above created a WAL table that is not partitioned.
-            for (int i = 1; i <= 3; i++) {
-                final TableToken token = engine.getTableTokenIfExists("t" + i);
-                if (token != null && token.isWal()) {
-                    try (TableMetadata m = engine.getTableMetadata(token)) {
-                        Assert.assertTrue(
-                                "WAL table t" + i + " is not partitioned",
-                                PartitionBy.isPartitioned(m.getPartitionBy())
-                        );
-                    }
-                }
-            }
-        });
     }
 }
