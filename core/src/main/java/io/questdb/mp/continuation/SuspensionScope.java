@@ -255,7 +255,6 @@ public final class SuspensionScope {
         int fiberDrainMountCount;
         int fiberDrainMountLimit;
         FiberRuntime fiberDrainRuntime;
-        long fiberDrainStartNanos;
         Mode mode;
         final RoleSwitchReadLockState roleSwitchReadLocks = new RoleSwitchReadLockState();
         int roleSwitchWriteLockDepth;

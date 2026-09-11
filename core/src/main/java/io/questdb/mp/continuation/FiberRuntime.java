@@ -552,7 +552,6 @@ public final class FiberRuntime {
             scope.fiberDrainMountCount = 1;
             scope.fiberDrainMountLimit = 1;
             scope.fiberDrainRuntime = this;
-            scope.fiberDrainStartNanos = System.nanoTime();
             try {
                 processSelected(fiber, ownerContext);
             } finally {
@@ -616,7 +615,6 @@ public final class FiberRuntime {
                 }
                 if (attempts == 0) {
                     drainStartNanos = System.nanoTime();
-                    scope.fiberDrainStartNanos = drainStartNanos;
                 }
                 attempts++;
                 scope.fiberDrainMountCount++;
@@ -782,12 +780,6 @@ public final class FiberRuntime {
 
     public long getWakeClaimCount() {
         return wakeClaimCount.sum();
-    }
-
-    public boolean hasCurrentDrainTimeBudgetElapsed() {
-        final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
-        return scope.fiberDrainRuntime == this
-                && System.nanoTime() - scope.fiberDrainStartNanos >= OWNED_DRAIN_TIME_BUDGET_NANOS;
     }
 
     public boolean hasQueuedWork() {
@@ -1178,7 +1170,6 @@ public final class FiberRuntime {
         scope.fiberDrainMountCount = 0;
         scope.fiberDrainMountLimit = 0;
         scope.fiberDrainRuntime = null;
-        scope.fiberDrainStartNanos = 0;
     }
 
     private static void incrementAfterCommit(LongAdder counter) {
