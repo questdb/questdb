@@ -25,7 +25,9 @@
 package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -126,6 +128,41 @@ public class CompositePartitionForceSquashTest extends AbstractCairoTest {
             );
             Assert.assertFalse("forced squash left the day composite", isComposite("2024-01-01"));
             Assert.assertEquals("forced squash changed the day's data", before, fingerprintOfDay("2024-01-01"));
+        });
+    }
+
+    /**
+     * The shape a forced squash used to walk straight past: a composite day with NO split siblings.
+     * {@code squashPartitionForce} only merges siblings, so it did nothing here - the dead space a
+     * merge-append left in the column files stayed, and so did the relocated pieces. SQUASH PARTITIONS is
+     * the explicit request to reclaim them, so it folds the directory to plain first.
+     */
+    @Test
+    public void testSquashPartitionsFoldsAnUnsplitCompositeDay() throws Exception {
+        assertMemoryLeak(() -> {
+            createUnsplitCompositeDay();
+            final String before = fingerprintOfDay("2024-01-01");
+            final long liveRows = rowsOfDay("2024-01-01");
+            // The file holds more rows than the day has: that gap is what the fold gives back.
+            final long fileRowsBefore = timestampFileRows("2024-01-01");
+            Assert.assertTrue("fixture left no dead space to reclaim", fileRowsBefore > liveRows);
+
+            execute("ALTER TABLE x SQUASH PARTITIONS");
+            drainWalQueue();
+
+            Assert.assertFalse("squash left the unsplit day composite", isComposite("2024-01-01"));
+            Assert.assertEquals("squash split the day", 1, partitionCountOfDay("2024-01-01"));
+            // The point of the statement: the bytes are actually back, not just the flag cleared. The file
+            // is page-padded on append, so it never lands on an exact row count - assert it shrank and
+            // still covers every live row, not that it equals one.
+            final long fileRowsAfter = timestampFileRows("2024-01-01");
+            Assert.assertTrue(
+                    "squash reclaimed no dead space, file rows " + fileRowsBefore + " -> " + fileRowsAfter,
+                    fileRowsAfter < fileRowsBefore
+            );
+            Assert.assertTrue("squash cut into live rows", fileRowsAfter >= liveRows);
+            Assert.assertEquals("squash lost rows", liveRows, rowsOfDay("2024-01-01"));
+            Assert.assertEquals("squash changed the day's data", before, fingerprintOfDay("2024-01-01"));
         });
     }
 
@@ -285,6 +322,31 @@ public class CompositePartitionForceSquashTest extends AbstractCairoTest {
 
     private static long rowsOfDay(String day) throws Exception {
         return scalar("SELECT count() FROM x WHERE ts IN '" + day + "'");
+    }
+
+    /**
+     * File rows the day's designated-timestamp column holds - eight bytes each, and no column top on a
+     * designated timestamp, so the byte length reads back as the PHYSICAL extent. Dead space shows up here
+     * as a count above the day's live rows, and a fold gives it back.
+     */
+    private static long timestampFileRows(String day) throws Exception {
+        final TableToken tt = engine.verifyTableName("x");
+        try (TableReader reader = engine.getReader(tt); Path path = new Path()) {
+            final TxReader txReader = reader.getTxFile();
+            final int partitionIndex = txReader.getPartitionIndex(MicrosTimestampDriver.floor(day + "T00:00:00.000000Z"));
+            Assert.assertTrue("day is not attached: " + day, partitionIndex > -1);
+            path.of(configuration.getDbRoot()).concat(tt);
+            TableUtils.setPathForNativePartition(
+                    path,
+                    ColumnType.TIMESTAMP_MICRO,
+                    PartitionBy.DAY,
+                    txReader.getPartitionTimestampByIndex(partitionIndex),
+                    txReader.getPartitionNameTxn(partitionIndex)
+            );
+            final long length = Files.length(path.concat("ts.d").$());
+            Assert.assertTrue("no ts.d for " + day, length > 0);
+            return length / Long.BYTES;
+        }
     }
 
     private static long scalar(String sql) throws Exception {

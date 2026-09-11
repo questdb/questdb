@@ -229,11 +229,13 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private void dispatchComposite(TableToken tableToken, long partitionTimestamp, long nowMicros) {
         final CompositePartitionSwapCommand command;
         final long fingerprint;
+        final TimestampDriver timestampDriver;
         try (TableReader reader = engine.getReader(tableToken)) {
             final int partitionIndex = reader.getTxFile().getPartitionIndex(partitionTimestamp);
             if (partitionIndex < 0 || !reader.getTxFile().isPartitionComposite(partitionIndex)) {
                 return;
             }
+            timestampDriver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
             reader.getGeometry().resolve(partitionIndex);
             final long srcNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
             final long writerTxn = reader.getGeometry().getWriterTxn(partitionIndex);
@@ -254,11 +256,31 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             );
             if (isSwapPending(fingerprint, other)) {
                 // The copy for this exact generation is already staged and its swap already queued.
+                LOG.debug().$("composite partition REWRITE already staged, skipping [table=").$(tableToken)
+                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                        .$(", nameTxn=").$(srcNameTxn)
+                        .$(", generation=").$(writerTxn)
+                        .I$();
                 return;
             }
+            // Hoisted: every value the chain below prints is read before the ring slot is taken.
+            final int pieceCount = reader.getGeometry().getPieceCount(partitionIndex);
+            final long liveRows = reader.getTxFile().getPartitionSize(partitionIndex);
+            final long physicalRows = reader.getGeometry().getE(partitionIndex);
+            LOG.info().$("compaction sweep is rebuilding a composite partition, REWRITE [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", nameTxn=").$(srcNameTxn)
+                    .$(", generation=").$(writerTxn)
+                    .$(", pieces=").$(pieceCount)
+                    .$(", liveRows=").$(liveRows)
+                    .$(", deadRows=").$(physicalRows - liveRows)
+                    .I$();
             command = buildCompactedComposite(tableToken, reader, partitionIndex, partitionTimestamp);
         }
         if (command == null) {
+            LOG.info().$("composite partition REWRITE built nothing, partition holds no live rows [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
             return;
         }
         boolean applied;
@@ -271,6 +293,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 pendingSwaps.add(fingerprint, nowMicros);
             }
         }
+        LOG.info().$("composite partition REWRITE handed over [table=").$(tableToken)
+                .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                .$(", swappedInline=").$(applied)
+                .I$();
         if (applied) {
             notifyWalApplyIfLagging(tableToken);
         }
@@ -284,22 +310,39 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      */
     private void dispatchMakePlain(TableToken tableToken, long partitionTimestamp) {
         final CompositePartitionSwapCommand command = new CompositePartitionSwapCommand();
+        final TimestampDriver timestampDriver;
         try (TableReader reader = engine.getReader(tableToken)) {
             final int partitionIndex = reader.getTxFile().getPartitionIndex(partitionTimestamp);
             if (partitionIndex < 0 || !reader.getTxFile().isPartitionComposite(partitionIndex)) {
                 return;
             }
+            timestampDriver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
             reader.getGeometry().resolve(partitionIndex);
             if (!PartitionCompactionPolicy.isMakePlainShape(reader.getTxFile(), reader.getGeometry(), partitionIndex)) {
                 // The sweep read a _txn snapshot without holding anything; this reader is the current one.
+                LOG.debug().$("composite partition moved off the MAKE-PLAIN shape, skipping [table=").$(tableToken)
+                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                        .I$();
                 return;
             }
+            // Hoisted: every value the chain below prints is read before the ring slot is taken.
+            final long srcNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
+            final long writerTxn = reader.getGeometry().getWriterTxn(partitionIndex);
+            final long liveRows = reader.getTxFile().getPartitionSize(partitionIndex);
+            final long physicalRows = reader.getGeometry().getE(partitionIndex);
+            LOG.info().$("compaction sweep is trimming a composite partition, MAKE-PLAIN [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", nameTxn=").$(srcNameTxn)
+                    .$(", generation=").$(writerTxn)
+                    .$(", liveRows=").$(liveRows)
+                    .$(", deadRows=").$(physicalRows - liveRows)
+                    .I$();
             command.ofMakePlain(
                     tableToken,
                     tableToken.getTableId(),
                     partitionTimestamp,
-                    reader.getTxFile().getPartitionNameTxn(partitionIndex),
-                    reader.getGeometry().getWriterTxn(partitionIndex),
+                    srcNameTxn,
+                    writerTxn,
                     reader.getMetadataVersion()
             );
         }
@@ -314,6 +357,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             // Queued onto a busy writer instead: it applies the command on its own thread, via tick(). A busy
             // writer is also one whose own per-commit compaction is running, so either path is fine.
         }
+        LOG.info().$("composite partition MAKE-PLAIN handed over [table=").$(tableToken)
+                .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                .$(", appliedInline=").$(applied)
+                .I$();
         if (applied) {
             notifyWalApplyIfLagging(tableToken);
         }
@@ -434,12 +481,14 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private void dispatchParquet(TableToken tableToken, long partitionTimestamp, long nowMicros) {
         final ParquetPartitionSwapCommand command;
         final long fingerprint;
+        final TimestampDriver timestampDriver;
         try (TableReader reader = engine.getReader(tableToken)) {
             final TxReader txFile = reader.getTxFile();
             final int partitionIndex = txFile.getPartitionIndex(partitionTimestamp);
             if (partitionIndex < 0 || !txFile.isPartitionParquet(partitionIndex)) {
                 return;
             }
+            timestampDriver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
             final long srcNameTxn = txFile.getPartitionNameTxn(partitionIndex);
             final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
             fingerprint = Hash.hashLong256_64(
@@ -458,8 +507,17 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     parquetFileSize
             );
             if (isSwapPending(fingerprint, other)) {
+                LOG.debug().$("parquet partition rebuild already staged, skipping [table=").$(tableToken)
+                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                        .$(", nameTxn=").$(srcNameTxn)
+                        .I$();
                 return;
             }
+            LOG.info().$("compaction sweep is rebuilding a parquet partition [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", nameTxn=").$(srcNameTxn)
+                    .$(", parquetFileSize=").$(parquetFileSize)
+                    .I$();
             command = buildCompactedParquet(tableToken, reader, partitionIndex, partitionTimestamp);
         }
         boolean applied;
@@ -471,6 +529,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 pendingSwaps.add(fingerprint, nowMicros);
             }
         }
+        LOG.info().$("parquet partition rebuild handed over [table=").$(tableToken)
+                .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                .$(", swappedInline=").$(applied)
+                .I$();
         if (applied) {
             notifyWalApplyIfLagging(tableToken);
         }

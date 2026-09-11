@@ -3966,14 +3966,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void squashPartitions() {
+        boolean lastPartitionFolded = false;
         // Do not cache txWriter.getPartitionCount() as it changes during the squashing
         for (int i = 0; i < txWriter.getPartitionCount(); i++) {
+            final boolean isLastPartition = i == txWriter.getPartitionCount() - 1;
+            // Same pair, same order, as preparePartitionForParquetConversion. squashPartitionForce alone
+            // never touches a logical partition that has no split siblings, so a composite one would keep
+            // both the dead space a merge-append left behind and its relocated pieces. SQUASH PARTITIONS is
+            // the explicit request to reclaim them, so fold the directory to plain first, then merge the
+            // siblings.
+            //
+            // The last partition is left alone while it carries lag rows: those sit past the live ones in
+            // the column files and belong to no piece, so a REWRITE rebuilt from pieces would drop them.
+            // Same rule squashSplitPartitions applies to a composite source.
+            if (txWriter.isPartitionComposite(i) && (!isLastPartition || txWriter.getLagRowCount() == 0)) {
+                compactPartitionToPlain(i, "squash partitions");
+                lastPartitionFolded |= isLastPartition;
+            }
             squashPartitionForce(i);
+        }
+        if (lastPartitionFolded && !isLastPartitionClosed()) {
+            // The fold rewrote the partition into a fresh directory, or trimmed the files this writer
+            // still has mapped. Drop the stale mapping so the reopen below takes the folded shape.
+            closeActivePartition(false);
         }
         // Reopen the last partition if we've closed it.
         if (isLastPartitionClosed() && !isEmptyTable()) {
             openLastPartition();
         }
+        // A REWRITE retires the source directory. Drain it here so the statement actually gives the disk
+        // back, rather than leaving it to an unrelated later commit.
+        processPartitionRemoveCandidates();
     }
 
     @Override
