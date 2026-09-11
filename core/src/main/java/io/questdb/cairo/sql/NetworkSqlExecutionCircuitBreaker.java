@@ -190,6 +190,18 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return fd;
     }
 
+    @Override
+    public long getRemainingTimeoutMillis() {
+        if (!isTimerSet() || timeout == Long.MAX_VALUE) {
+            return Long.MAX_VALUE;
+        }
+        if (isCancelled()) {
+            return 0;
+        }
+        final long elapsed = Math.max(0, clock.getTicks() - powerUpTime);
+        return Math.max(0, timeout - elapsed);
+    }
+
     public int getSecret() {
         return secret;
     }
@@ -241,6 +253,10 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public long getTimeout() {
         return timeout;
+    }
+
+    public boolean isCancelled() {
+        return powerUpTime == Long.MIN_VALUE;
     }
 
     @Override
@@ -386,10 +402,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (cooperativePoller != null) {
             cooperativePoller.poll();
         }
-    }
-
-    private boolean isCancelled() {
-        return powerUpTime == Long.MIN_VALUE;
     }
 
     private void resetCooperativePoll() {

@@ -9487,6 +9487,25 @@ nodejs code:
     }
 
     @Test
+    public void testQueryTimeoutRestartsWithEachExecute() throws Exception {
+        maxQueryTime = 200;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            connection.setAutoCommit(false);
+            try (PreparedStatement statement = connection.prepareStatement("select x from long_sequence(3)")) {
+                statement.setFetchSize(1);
+                try (ResultSet rs = statement.executeQuery()) {
+                    for (int i = 1; i <= 3; i++) {
+                        Assert.assertTrue(rs.next());
+                        Assert.assertEquals(i, rs.getLong(1));
+                        Os.sleep(2 * maxQueryTime);
+                    }
+                    Assert.assertFalse(rs.next());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testQuestDBVersionIncludedInStatus() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             PgConnection pgConnection = connection.unwrap(PgConnection.class);

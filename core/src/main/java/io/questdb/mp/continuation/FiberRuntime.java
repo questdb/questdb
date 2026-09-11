@@ -533,15 +533,32 @@ public final class FiberRuntime {
      */
     public boolean drainOneBeforePark(OwnerContext ownerContext) {
         final Shard shard = ownedShard(ownerContext);
-        if (SuspensionScope.hasAnyRoleSwitchLock(shard.carrierScope)) {
+        final SuspensionScope.CarrierScope scope = shard.carrierScope;
+        if (SuspensionScope.hasAnyRoleSwitchLock(scope)) {
             return false;
+        }
+        if (dispatchSession != null && scope.fiberDrainRuntime != null) {
+            throw new IllegalStateException("owned Fiber drain cannot nest");
         }
         final Fiber fiber = selectBeforePark(shard);
         if (fiber == null) {
             tryClose();
             return false;
         }
-        processSelected(fiber, ownerContext);
+        if (dispatchSession == null) {
+            processSelected(fiber, ownerContext);
+        } else {
+            scope.fiberDrainLocalQueue = shard.localQueue;
+            scope.fiberDrainMountCount = 1;
+            scope.fiberDrainMountLimit = 1;
+            scope.fiberDrainRuntime = this;
+            scope.fiberDrainStartNanos = System.nanoTime();
+            try {
+                processSelected(fiber, ownerContext);
+            } finally {
+                clearOwnedDrain(scope);
+            }
+        }
         tryClose();
         return true;
     }
@@ -599,6 +616,7 @@ public final class FiberRuntime {
                 }
                 if (attempts == 0) {
                     drainStartNanos = System.nanoTime();
+                    scope.fiberDrainStartNanos = drainStartNanos;
                 }
                 attempts++;
                 scope.fiberDrainMountCount++;
@@ -612,10 +630,7 @@ public final class FiberRuntime {
                 budgetExhaustionCount.increment();
             }
         } finally {
-            scope.fiberDrainLocalQueue = null;
-            scope.fiberDrainMountCount = 0;
-            scope.fiberDrainMountLimit = 0;
-            scope.fiberDrainRuntime = null;
+            clearOwnedDrain(scope);
         }
         tryClose();
         return attempts;
@@ -767,6 +782,12 @@ public final class FiberRuntime {
 
     public long getWakeClaimCount() {
         return wakeClaimCount.sum();
+    }
+
+    public boolean hasCurrentDrainTimeBudgetElapsed() {
+        final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        return scope.fiberDrainRuntime == this
+                && System.nanoTime() - scope.fiberDrainStartNanos >= OWNED_DRAIN_TIME_BUDGET_NANOS;
     }
 
     public boolean hasQueuedWork() {
@@ -1150,6 +1171,14 @@ public final class FiberRuntime {
                 driverFailure.addSuppressed(th);
             }
         }
+    }
+
+    private static void clearOwnedDrain(SuspensionScope.CarrierScope scope) {
+        scope.fiberDrainLocalQueue = null;
+        scope.fiberDrainMountCount = 0;
+        scope.fiberDrainMountLimit = 0;
+        scope.fiberDrainRuntime = null;
+        scope.fiberDrainStartNanos = 0;
     }
 
     private static void incrementAfterCommit(LongAdder counter) {

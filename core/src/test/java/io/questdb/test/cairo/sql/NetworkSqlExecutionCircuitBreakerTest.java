@@ -496,6 +496,60 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemainingTimeoutMillis() throws Exception {
+        assertMemoryLeak(() -> {
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock, 100)) {
+                Assert.assertEquals(Long.MAX_VALUE, breaker.getRemainingTimeoutMillis());
+                breaker.resetTimer();
+                Assert.assertEquals(100, breaker.getRemainingTimeoutMillis());
+                clock.millis += 40;
+                Assert.assertEquals(60, breaker.getRemainingTimeoutMillis());
+                clock.millis += 60;
+                Assert.assertEquals(0, breaker.getRemainingTimeoutMillis());
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, breaker.getState());
+                clock.millis++;
+                Assert.assertEquals(0, breaker.getRemainingTimeoutMillis());
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_TIMEOUT, breaker.getState());
+                breaker.resetTimer();
+                Assert.assertEquals(100, breaker.getRemainingTimeoutMillis());
+                breaker.unsetTimer();
+                Assert.assertEquals(Long.MAX_VALUE, breaker.getRemainingTimeoutMillis());
+            }
+        });
+    }
+
+    @Test
+    public void testRemainingTimeoutMillisCancelled() throws Exception {
+        assertMemoryLeak(() -> {
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock, 100)) {
+                breaker.resetTimer();
+                breaker.cancel();
+                Assert.assertEquals(0, breaker.getRemainingTimeoutMillis());
+                breaker.resetTimer();
+                Assert.assertEquals(100, breaker.getRemainingTimeoutMillis());
+                breaker.setTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK);
+                Assert.assertEquals(0, breaker.getRemainingTimeoutMillis());
+            }
+        });
+    }
+
+    @Test
+    public void testRemainingTimeoutMillisUnlimited() throws Exception {
+        assertMemoryLeak(() -> {
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock, Long.MAX_VALUE)) {
+                breaker.resetTimer();
+                clock.millis += 100_000;
+                Assert.assertEquals(Long.MAX_VALUE, breaker.getRemainingTimeoutMillis());
+                Assert.assertEquals(Long.MAX_VALUE, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER.getRemainingTimeoutMillis());
+                Assert.assertEquals(Long.MAX_VALUE, new AtomicBooleanCircuitBreaker(engine).getRemainingTimeoutMillis());
+            }
+        });
+    }
+
+    @Test
     public void testResetTimerForcesPromptProbe() throws Exception {
         assertMemoryLeak(() -> {
             TestMillisecondClock clock = new TestMillisecondClock(1_000);
@@ -766,6 +820,26 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
 
                 wrapper.cancel();
                 Assert.assertFalse(signal.isCancelled(currentGeneration));
+            }
+        });
+    }
+
+    @Test
+    public void testWrapperRemainingTimeoutMillis() throws Exception {
+        assertMemoryLeak(() -> {
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
+            try (
+                    TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock, 100);
+                    SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(engine, breaker.getConfiguration())
+            ) {
+                wrapper.init(breaker);
+                Assert.assertEquals(100, wrapper.getRemainingTimeoutMillis());
+                clock.millis += 40;
+                Assert.assertEquals(60, wrapper.getRemainingTimeoutMillis());
+                clock.millis += 61;
+                Assert.assertEquals(0, wrapper.getRemainingTimeoutMillis());
+                wrapper.init(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                Assert.assertEquals(Long.MAX_VALUE, wrapper.getRemainingTimeoutMillis());
             }
         });
     }

@@ -131,6 +131,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
+    public long getRemainingTimeoutMillis() {
+        return delegate.getRemainingTimeoutMillis();
+    }
+
+    @Override
     public int getState() {
         return delegate.getState();
     }

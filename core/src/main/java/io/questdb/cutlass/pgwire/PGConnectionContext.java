@@ -955,6 +955,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         pipelineCurrentEntry.setStateExec(true);
         try {
             if (pipelineCurrentEntry.hasSqlExecutionOwner()) {
+                if (!circuitBreaker.isCancelled()) {
+                    circuitBreaker.resetTimer();
+                }
                 pipelineCurrentEntry.resumeSqlExecutionOwner();
             } else {
                 pipelineCurrentEntry.beginSqlExecutionOwner(

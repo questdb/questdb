@@ -2763,12 +2763,9 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "0");
         properties.setProperty(PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_LIVE.getPropertyPath(), "0");
         properties.setProperty(PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "0");
-        properties.setProperty(PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_LIVE.getPropertyPath(), "0");
-        properties.setProperty(PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "0");
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
         assertDerivedFiberDefaults(configuration.getSharedWorkerPoolNetworkConfiguration());
         assertDerivedFiberDefaults(configuration.getSharedWorkerPoolQueryConfiguration());
-        assertDerivedFiberDefaults(configuration.getSharedWorkerPoolWriteConfiguration());
     }
 
     @Test
@@ -2797,9 +2794,6 @@ public class PropServerConfigurationTest {
         properties.setProperty("shared.query.worker.fiber.max.live", "104");
         properties.setProperty("shared.query.worker.fiber.max.retained", "14");
         properties.setProperty("shared.query.worker.fiber.mount.budget", "24");
-        properties.setProperty("shared.write.worker.fiber.max.live", "105");
-        properties.setProperty("shared.write.worker.fiber.max.retained", "15");
-        properties.setProperty("shared.write.worker.fiber.mount.budget", "25");
         properties.setProperty("mat.view.refresh.worker.fiber.max.live", "106");
         properties.setProperty("mat.view.refresh.worker.fiber.max.retained", "16");
         properties.setProperty("mat.view.refresh.worker.fiber.mount.budget", "26");
@@ -2810,7 +2804,6 @@ public class PropServerConfigurationTest {
         assertWorkerPoolFiberConfiguration(configuration.getPGWireConfiguration(), 102, 12, 22);
         assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolNetworkConfiguration(), 103, 13, 23);
         assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolQueryConfiguration(), 104, 14, 24);
-        assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolWriteConfiguration(), 105, 15, 25);
         assertWorkerPoolFiberConfiguration(configuration.getMatViewRefreshPoolConfiguration(), 106, 16, 26);
     }
 
@@ -2910,10 +2903,6 @@ public class PropServerConfigurationTest {
                 PropServerConfiguration::getSharedWorkerPoolQueryConfiguration
         );
         assertWorkerPoolModeProperty(
-                PropertyKey.SHARED_WRITE_WORKER_FIBER_ENABLED,
-                PropServerConfiguration::getSharedWorkerPoolWriteConfiguration
-        );
-        assertWorkerPoolModeProperty(
                 PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_ENABLED,
                 PropServerConfiguration::getMatViewRefreshPoolConfiguration
         );
@@ -2958,22 +2947,17 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testWritePoolFiberModeIsIndependentOfWalApply() throws Exception {
+    public void testWritePoolStaysLegacy() throws Exception {
         final Properties properties = new Properties();
         Assert.assertEquals(
                 WorkerPoolMode.LEGACY,
                 newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
         );
 
-        properties.setProperty(PropertyKey.WAL_APPLY_WORKER_COUNT.getPropertyPath(), "0");
+        properties.setProperty("shared.write.worker.fiber.enabled", "true");
+        Assert.assertTrue(PropertyKey.getByString("shared.write.worker.fiber.enabled").isEmpty());
         Assert.assertEquals(
                 WorkerPoolMode.LEGACY,
-                newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
-        );
-
-        properties.setProperty(PropertyKey.SHARED_WRITE_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
-        Assert.assertEquals(
-                WorkerPoolMode.FIBER_HOST,
                 newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
         );
     }

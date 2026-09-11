@@ -406,6 +406,9 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     final AsyncQueryProgressState progressB = new AsyncQueryProgressState();
                     final AsyncQueryProgressState queueWaiterProgress = new AsyncQueryProgressState();
                     final AtomicReference<Throwable> failure = new AtomicReference<>();
+                    // Keep cursor-release and notification-order assertions independent of carrier timing.
+                    dispatcher.setBatchNanosForTesting(Long.MAX_VALUE);
+                    dispatcher.setBatchSliceNanosForTesting(Long.MAX_VALUE);
 
                     final long waiterOwnerVersion = queueWaiterProgress.getVersion();
                     final long waiterGlobalVersion = dispatcher.getProgressVersion();

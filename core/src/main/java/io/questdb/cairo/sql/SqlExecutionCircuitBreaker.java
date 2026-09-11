@@ -202,6 +202,10 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
 
     long getFd();
 
+    default long getRemainingTimeoutMillis() {
+        return Long.MAX_VALUE;
+    }
+
     /**
      * Similar to checkIfTripped() method but returns int value describing reason for tripping.
      *

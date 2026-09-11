@@ -1052,7 +1052,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // msgExecuteSelect() may try to recompile the query on its own when it gets TableReferenceOutOfDateException.
         // Calling a compiler while being called from a compiler is a bad idea.
         sqlExecutionContext.setCacheHit(cacheHit);
-        sqlExecutionContext.getCircuitBreaker().resetTimer();
+        if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
+            sqlExecutionContext.getCircuitBreaker().resetTimer();
+        }
         openCursor(sqlExecutionContext);
         copyPgResultSetColumnTypesAndNames();
         setStateExec(true);
@@ -1767,7 +1769,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 commit(pendingWriters);
             }
 
-            sqlExecutionContext.getCircuitBreaker().resetTimer();
+            if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
+                sqlExecutionContext.getCircuitBreaker().resetTimer();
+            }
             sqlExecutionContext.setCacheHit(cacheHit);
             // if the current execution is in the execute stage of prepare-execute mode, we always set the `cacheHit` to true after the first execution.
             // (The execute stage always does not compile the query, while the first execution corresponds to the prepare stage's cacheHit flag.)
@@ -3559,6 +3563,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (sqlExecutionOwnerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
             throw new IllegalStateException("PG pipeline entry already has a SQL execution owner");
         }
+        executionContext.getCircuitBreaker().resetTimer();
         final long ownerId = engine.beginSqlExecution(query, executionContext, compiledQueryType);
         sqlExecutionOwnerContext = executionContext;
         sqlExecutionOwnerId = ownerId;
