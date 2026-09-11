@@ -90,10 +90,45 @@ public class DurableRenamePublishTest extends AbstractCairoTest {
     }
 
     /**
-     * The interface default and the POSIX implementation both route through the OVERRIDABLE
-     * {@code rename}, so every fault-injecting facade that intercepts renames keeps intercepting these.
-     * Without that the harness goes quiet instead of red -- the failure mode {@code FilesFacadeImpl}'s
-     * {@code barrierFsync}/{@code fsyncDurable} comments already call out.
+     * {@code FilesFacadeImpl.barrierFsync} and {@code fsyncDurable} must route through the OVERRIDABLE
+     * {@code fdatasync}/{@code fsync} on EVERY platform -- on Darwin via the per-thread upgrade flag,
+     * since the durable variants are different fcntls there. A facade that intercepts the weak method
+     * without doing IO must fully absorb the durable call, or the crash harness's per-syscall model goes
+     * quiet on exactly the platform where the barrier syscall differs.
+     */
+    @Test
+    public void testFaultInjectingFacadesStillInterceptTheDurableFsyncs() {
+        final class CountingSyncFacade extends TestFilesFacadeImpl {
+            int fdatasyncCalls;
+            int fsyncCalls;
+
+            @Override
+            public void fdatasync(long fd) {
+                fdatasyncCalls++; // no IO: the delegation is the whole assertion
+            }
+
+            @Override
+            public void fsync(long fd) {
+                fsyncCalls++; // no IO: the delegation is the whole assertion
+            }
+        }
+        final CountingSyncFacade ff = new CountingSyncFacade();
+        // -1 is not a valid fd: if the durable variant bypasses the facade and reaches the real
+        // syscall, it throws instead of counting.
+        ff.barrierFsync(-1);
+        Assert.assertEquals(1, ff.fdatasyncCalls);
+        Assert.assertEquals(0, ff.fsyncCalls);
+        ff.fsyncDurable(-1);
+        Assert.assertEquals(1, ff.fsyncCalls);
+        Assert.assertEquals(1, ff.fdatasyncCalls);
+    }
+
+    /**
+     * The interface default and {@code FilesFacadeImpl} both route through the OVERRIDABLE
+     * {@code rename} on EVERY platform -- on Windows via the per-thread upgrade flag, since the durable
+     * move is a different syscall there -- so every fault-injecting facade that intercepts renames keeps
+     * intercepting these. Without that the harness goes quiet instead of red -- the failure mode
+     * {@code FilesFacadeImpl}'s {@code barrierFsync}/{@code fsyncDurable} comments already call out.
      */
     @Test
     public void testFaultInjectingFacadesStillInterceptTheDurableRename() {
@@ -112,14 +147,10 @@ public class DurableRenamePublishTest extends AbstractCairoTest {
             dst.of(root).concat("b");
             Assert.assertEquals(Files.FILES_RENAME_OK, ff.renameDurable(src.$(), dst.$()));
         }
-        if (Os.isWindows()) {
-            // On Windows the durable rename is a DIFFERENT syscall (MOVEFILE_WRITE_THROUGH), so
-            // FilesFacadeImpl cannot delegate to rename() there; a facade that wants to intercept it must
-            // override renameDurable itself. Asserting the POSIX delegation on Windows would be wrong.
-            Assert.assertEquals(0, ff.renameCalls);
-        } else {
-            Assert.assertEquals(1, ff.renameCalls);
-        }
+        // One rename call on every platform: the facade absorbed the rename without IO, so the real
+        // syscall -- write-through move on Windows, rename(2) elsewhere -- must never have run (the
+        // paths do not exist; the real syscall would have returned an error, failing the assert above).
+        Assert.assertEquals(1, ff.renameCalls);
     }
 
     /**
