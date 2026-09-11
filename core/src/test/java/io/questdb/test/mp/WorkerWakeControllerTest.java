@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class WorkerWakeControllerTest {
+    private static final long CONCURRENT_TEST_JOIN_TIMEOUT_MS = 60_000L;
 
     @Test
     public void testConcurrentRegisterWakeAllAndSelfUnregisterReconcileState() throws Exception {
@@ -64,6 +65,7 @@ public class WorkerWakeControllerTest {
                         } else {
                             pool.wakeOneForTesting(FiberRuntime.NO_WORKER);
                         }
+                        Thread.yield();
                     }
                 } catch (Throwable th) {
                     error.compareAndSet(null, th);
@@ -99,14 +101,9 @@ public class WorkerWakeControllerTest {
                 start.countDown();
 
                 for (int i = 0; i < registrarCount; i++) {
-                    registrars.getQuick(i).join(10_000L);
-                    Assert.assertFalse(
-                            registrars.getQuick(i).getName() + " did not stop",
-                            registrars.getQuick(i).isAlive()
-                    );
+                    joinAndAssertStopped(registrars.getQuick(i), error);
                 }
-                waker.join(10_000L);
-                Assert.assertFalse("ready-bit waker did not stop", waker.isAlive());
+                joinAndAssertStopped(waker, error);
                 if (error.get() != null) {
                     throw new AssertionError(error.get());
                 }
@@ -115,12 +112,9 @@ public class WorkerWakeControllerTest {
                 isWakerStopped.set(true);
                 start.countDown();
                 for (int i = 0; i < registrarCount; i++) {
-                    final Thread registrar = registrars.getQuick(i);
-                    registrar.join(10_000L);
-                    Assert.assertFalse(registrar.getName() + " did not stop", registrar.isAlive());
+                    joinAndAssertStopped(registrars.getQuick(i), error);
                 }
-                waker.join(10_000L);
-                Assert.assertFalse("ready-bit waker did not stop", waker.isAlive());
+                joinAndAssertStopped(waker, error);
                 pool.halt();
             }
         });
@@ -158,8 +152,7 @@ public class WorkerWakeControllerTest {
                 }
                 start.countDown();
                 for (int i = 0; i < wakerCount; i++) {
-                    wakers.getQuick(i).join(10_000L);
-                    Assert.assertFalse(wakers.getQuick(i).getName() + " did not stop", wakers.getQuick(i).isAlive());
+                    joinAndAssertStopped(wakers.getQuick(i), error);
                 }
                 if (error.get() != null) {
                     throw new AssertionError(error.get());
@@ -327,6 +320,14 @@ public class WorkerWakeControllerTest {
                 return WorkerPoolMode.FIBER_HOST;
             }
         });
+    }
+
+    private static void joinAndAssertStopped(Thread thread, AtomicReference<Throwable> error) throws InterruptedException {
+        thread.join(CONCURRENT_TEST_JOIN_TIMEOUT_MS);
+        if (error.get() != null) {
+            throw new AssertionError(error.get());
+        }
+        Assert.assertFalse(thread.getName() + " did not stop", thread.isAlive());
     }
 
     private static void registerAllTargets(WorkerPool pool, int workerCount) {
