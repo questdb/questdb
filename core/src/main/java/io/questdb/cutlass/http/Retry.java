@@ -31,6 +31,10 @@ import io.questdb.network.ServerDisconnectException;
 import java.io.Closeable;
 
 public interface Retry extends Closeable {
+    default boolean claimRetryClose(long taskIncarnation) {
+        return isRetryCloseOwner(taskIncarnation);
+    }
+
     /**
      * Notify client that re-run failed
      *
@@ -45,6 +49,14 @@ public interface Retry extends Closeable {
      * @return retry attributes
      */
     RetryAttemptAttributes getAttemptDetails();
+
+    default boolean isRetryCloseOwner(long taskIncarnation) {
+        return isRetryCurrent(taskIncarnation);
+    }
+
+    default boolean isRetryCurrent(long taskIncarnation) {
+        return true;
+    }
 
     /**
      * Retries context that could not acquire resource during regular execution.

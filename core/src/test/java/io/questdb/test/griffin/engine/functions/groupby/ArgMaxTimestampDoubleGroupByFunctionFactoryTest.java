@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -85,7 +86,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
                 "rnd_double() key " +
                 "from long_sequence(10000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -125,7 +126,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
                 "  cast(null as double) key " +
                 "from long_sequence(100000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -162,7 +163,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
                 "  rnd_double() key " +
                 "from long_sequence(2000000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -191,7 +192,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
                 "  case when x <= 1000000 then null else rnd_double() end key " +
                 "from long_sequence(2000000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -220,7 +221,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
                 "  case when x % 2 = 0 then null else rnd_double() end key " +
                 "from long_sequence(2000000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -391,7 +392,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
                     "x::timestamp_ns value, " +
                     "x::double key " +
                     "from long_sequence(100_000))");
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> assertQuery("select sym, typeOf(arg_max(value, key)) AS t, arg_max(value, key) val " +
                         "from tab group by sym order by sym")
                         .withEngine(engine)

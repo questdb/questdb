@@ -4882,7 +4882,7 @@ public class IODispatcherTest extends AbstractTest {
             };
             DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder().withNetwork(nf).withBaseDir(baseDir).withSendBufferSize(256).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withServerKeepAlive(true).withHttpProtocolVersion("HTTP/1.1 ").build(cairoConfiguration);
 
-            WorkerPool workerPool = new TestWorkerPool(1);
+            WorkerPool workerPool = new TestWorkerPool(1, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
 
             try (CairoEngine engine = new CairoEngine(cairoConfiguration); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
                 httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
@@ -5521,6 +5521,64 @@ public class IODispatcherTest extends AbstractTest {
                 27/05/2018 00:00:21,120\r
                 \r
                 ------WebKitFormBoundaryOsOAD9cPKyHuxyBV--""", NetworkFacadeImpl.INSTANCE, false, 1);
+    }
+
+    @Test
+    public void testProcessIOQueuePropagatesContextInitFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            final SOCountDownLatch closeLatch = new SOCountDownLatch(1);
+            final AssertionError failure = new AssertionError("context init failure");
+            final IODispatcherConfiguration dispatcherConfiguration = new DefaultIODispatcherConfiguration() {
+                @Override
+                public int getBindPort() {
+                    return 0;
+                }
+            };
+
+            try (IODispatcher<HelloContext> dispatcher = IODispatchers.create(
+                    dispatcherConfiguration,
+                    fd -> new HelloContext(fd, closeLatch) {
+                        @Override
+                        protected void doInit() {
+                            throw failure;
+                        }
+                    }
+            )) {
+                Assert.assertFalse(dispatcher.hasPendingIOEvents());
+                long clientFd = Net.socketTcp(true);
+                final long buffer = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+                final long sockAddr = Net.sockaddr("127.0.0.1", dispatcher.getPort());
+                try {
+                    TestUtils.assertConnect(clientFd, sockAddr);
+                    Unsafe.putByte(buffer, (byte) '.');
+                    Assert.assertEquals(1, Net.send(clientFd, buffer, 1));
+                    assertEventually(() -> {
+                        dispatcher.run();
+                        Assert.assertTrue(dispatcher.hasPendingIOEvents());
+                    });
+
+                    Throwable propagated = null;
+                    try {
+                        dispatcher.processIOQueue((_, _, _) -> true);
+                    } catch (Throwable th) {
+                        propagated = th;
+                    }
+                    Assert.assertSame(failure, propagated);
+                    Assert.assertFalse(dispatcher.hasPendingIOEvents());
+
+                    assertEventually(() -> {
+                        dispatcher.run();
+                        Assert.assertEquals(0, dispatcher.getConnectionCount());
+                        Assert.assertEquals(0, closeLatch.getCount());
+                    });
+                } finally {
+                    Net.freeSockAddr(sockAddr);
+                    Unsafe.free(buffer, 1, MemoryTag.NATIVE_DEFAULT);
+                    Net.close(clientFd);
+                }
+            }
+            Assert.assertEquals(0, closeLatch.getCount());
+        });
     }
 
     @Test
