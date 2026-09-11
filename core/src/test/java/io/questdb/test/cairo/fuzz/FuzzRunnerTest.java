@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
@@ -38,7 +39,10 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
@@ -173,6 +177,92 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             } finally {
                 Misc.freeObjListAndClear(transactions);
             }
+        });
+    }
+
+    @Test
+    public void testLatePurgeWorkerFailureReachesCallerAfterJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTable("late_error");
+            CountDownLatch purgeEntered = new CountDownLatch(1);
+            CountDownLatch releasePurge = new CountDownLatch(1);
+            AtomicReference<BooleanSupplier> isRunOver = new AtomicReference<>();
+            AtomicReference<Thread> purgeThread = new AtomicReference<>();
+            AtomicReference<Throwable> workerFailure = new AtomicReference<>();
+            AtomicReference<Throwable> callerFailure = new AtomicReference<>();
+            RuntimeException sentinel = new RuntimeException("late purge worker failure");
+            FuzzRunner failingFuzzer = new FuzzRunner() {
+                @Override
+                <T> @Nullable T openWithRetries(
+                        Supplier<T> open,
+                        boolean isTableRecreateTolerated,
+                        @Nullable BooleanSupplier isCancelled,
+                        long retryTimeoutMillis
+                ) {
+                    purgeThread.set(Thread.currentThread());
+                    isRunOver.set(isCancelled);
+                    purgeEntered.countDown();
+                    try {
+                        Assert.assertNotNull("purge reader must support cancellation", isCancelled);
+                        Assert.assertTrue("purge release timed out", releasePurge.await(30, TimeUnit.SECONDS));
+                    } catch (Throwable e) {
+                        workerFailure.set(e);
+                        throw new AssertionError("purge worker coordination failed", e);
+                    }
+                    throw sentinel;
+                }
+            };
+            failingFuzzer.withDb(engine, sqlExecutionContext);
+            // Empty transactions let every writer finish without introducing other worker failures.
+            ObjList<ObjList<FuzzTransaction>> transactions = new ObjList<>();
+            transactions.add(new ObjList<>());
+            Thread caller = new Thread(() -> {
+                try {
+                    failingFuzzer.applyManyWalParallel(transactions, new Rnd(), "late_error", false, true);
+                } catch (Throwable e) {
+                    callerFailure.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "late-purge-error-caller");
+            try {
+                caller.start();
+                Assert.assertTrue("purge worker did not enter", purgeEntered.await(10, TimeUnit.SECONDS));
+                // Cancellation alone is too early: the old ordering could still inspect errors next.
+                // With the purge worker held on the latch, the caller must stay in worker joins after
+                // writer completion. Observe that stable phase before allowing the sentinel to escape.
+                TestUtils.assertEventually(() -> {
+                    Assert.assertNull("purge worker coordination failed", workerFailure.get());
+                    Assert.assertNotNull(isRunOver.get());
+                    Assert.assertTrue("writers have not finished", isRunOver.get().getAsBoolean());
+                    boolean hasJoinFrame = false;
+                    boolean hasApplyFrame = false;
+                    for (StackTraceElement frame : caller.getStackTrace()) {
+                        hasJoinFrame |= Thread.class.getName().equals(frame.getClassName())
+                                && "join".equals(frame.getMethodName());
+                        hasApplyFrame |= FuzzRunner.class.getName().equals(frame.getClassName())
+                                && "applyManyWalParallel".equals(frame.getMethodName());
+                    }
+                    Assert.assertTrue("caller did not reach worker joins", hasJoinFrame && hasApplyFrame);
+                }, 10);
+            } finally {
+                releasePurge.countDown();
+                try {
+                    caller.join(10_000);
+                } finally {
+                    Thread purge = purgeThread.get();
+                    if (purge != null) {
+                        purge.join(10_000);
+                        Assert.assertFalse("purge worker did not terminate", purge.isAlive());
+                    }
+                }
+                Assert.assertFalse("caller did not terminate", caller.isAlive());
+            }
+            if (workerFailure.get() != null) {
+                throw new AssertionError("purge worker coordination failed", workerFailure.get());
+            }
+            Assert.assertNotNull("late worker failure did not reach caller", callerFailure.get());
+            Assert.assertSame(sentinel, callerFailure.get().getCause());
         });
     }
 

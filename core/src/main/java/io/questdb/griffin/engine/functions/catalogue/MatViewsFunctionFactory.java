@@ -126,7 +126,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_REFRESH_AVG_SCAN_SAMPLE_NANOS = COLUMN_REFRESH_AVG_COMMIT_NANOS + 1;
         private static final int COLUMN_REFRESH_AVG_SCAN_RANGE_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_SAMPLE_NANOS + 1;
         private static final int COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_RANGE_TS_UNITS + 1;
-        private static final int COLUMN_EXPIRE_CLAUSE = COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS + 1;
+        private static final int COLUMN_TIMERS_REGISTERED = COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS + 1;
+        private static final int COLUMN_EXPIRE_CLAUSE = COLUMN_TIMERS_REGISTERED + 1;
         private static final int COLUMN_EXPIRE_CLEANUP_EVERY = COLUMN_EXPIRE_CLAUSE + 1;
         private static final int COLUMN_EXPIRE_ENFORCEMENT = COLUMN_EXPIRE_CLEANUP_EVERY + 1;
         private static final RecordMetadata METADATA;
@@ -264,6 +265,12 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         // A pending retry deadline (in-memory only) means an incremental refresh was
                         // deferred after a transient "table busy" or out-of-memory error.
                         final boolean retrying = state != null && state.getRefreshRetryAfterMicros() != Numbers.LONG_NULL;
+                        // Timers live only in MatViewTimerJob's in-memory heap, which is where this
+                        // count comes from. Zero is expected for an immediate, non-period view, which
+                        // base table commits drive on their own. Zero on any other refresh type means
+                        // nothing schedules the view: the timer job never registered it, or lost it.
+                        // No other column shows that -- view_status keeps reporting 'valid'.
+                        final int timersRegistered = state != null ? state.getRegisteredTimerCount() : 0;
 
                         // The row-expiry policy lives in the view's table metadata (_meta), not the
                         // mat-view definition. The graph is populated synchronously at startup while the
@@ -304,6 +311,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 avgScanRangeTsUnits,
                                 commitGapThresholdTsUnits,
                                 retrying,
+                                timersRegistered,
                                 expirePredicate,
                                 expireCleanupMicros,
                                 expireEnforcement
@@ -393,6 +401,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private int timerInterval;
                 private char timerIntervalUnit;
                 private long timerStart;
+                private int timersRegistered;
                 private MatViewDefinition viewDefinition;
 
                 @Override
@@ -402,6 +411,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_TIMER_INTERVAL -> timerInterval;
                         case COLUMN_PERIOD_LENGTH -> periodLength;
                         case COLUMN_PERIOD_DELAY -> periodDelay;
+                        case COLUMN_TIMERS_REGISTERED -> timersRegistered;
                         default -> 0;
                     };
                 }
@@ -487,6 +497,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         long avgScanRangeTsUnits,
                         long commitGapThresholdTsUnits,
                         boolean retrying,
+                        int timersRegistered,
                         CharSequence expirePredicate,
                         long expireCleanupMicros,
                         String expireEnforcement
@@ -513,6 +524,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.avgScanRangeTsUnits = avgScanRangeTsUnits;
                     this.commitGapThresholdTsUnits = commitGapThresholdTsUnits;
                     this.retrying = retrying;
+                    this.timersRegistered = timersRegistered;
                     expirePredicateSink.clear();
                     hasExpirePredicate = expirePredicate != null;
                     if (hasExpirePredicate) {
@@ -568,6 +580,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("refresh_avg_scan_sample_nanos", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_avg_scan_range_ts_units", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_gap_threshold_ts_units", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("timers_registered", ColumnType.INT));
             metadata.add(new TableColumnMetadata("expire_clause", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("expire_cleanup_every", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("expire_enforcement", ColumnType.STRING));
