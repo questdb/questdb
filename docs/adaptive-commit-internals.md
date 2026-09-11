@@ -27,10 +27,11 @@ Adaptive commit is three independent ideas stacked on QuestDB's existing WAL:
 
 | Frontier | Advances when | Consumed by |
 |---|---|---|
-| **`localDurableSeqTxn`** | the WAL commit's `fdatasync` completes (W=0: every commit; W>0: after the ≤W batch flush) | the QWP client durable‑ack frame + observability |
+| **`localDurableSeqTxn`** | the WAL commit's `fdatasync` completes (W=0: every commit; W>0: after the ≤W batch flush) | the QWP client's `STATUS_LOCAL_DURABLE_ACK` frame + observability |
 | **`durableEpochSeqTxn`** | a durable epoch publishes | **only** `WalPurgeJob` (the WAL‑purge floor) + `wal_tables()` observability |
 
-QWP durable-ack frames gate on **`localDurableSeqTxn`** — never on the epoch. Ordinary table
+QWP `STATUS_LOCAL_DURABLE_ACK` frames gate on **`localDurableSeqTxn`** — never on the epoch
+(the replicated `STATUS_DURABLE_ACK` stream gates on the Enterprise upload frontier instead). Ordinary table
 visibility follows WAL apply and may therefore include the configured W>0 loss window. The epoch
 (`durableEpochSeqTxn`) is *only* the WAL‑purge floor and the recovery‑replay start point.
 Consequently the epoch cadence affects WAL disk retention, recovery‑replay lag, and

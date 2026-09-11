@@ -244,12 +244,28 @@ are documented at `PropertyKey.java:57-63`.
 
 ## 4. QWP durable acknowledgements
 
-A client receives durable-ack frames only when it opts in with the
-`X-QWP-Request-Durable-Ack` handshake header. Without the header, no durable-ack frames
-flow, so the client cannot safely retry within the group-commit window `W` (a retried
-commit could double-apply). Durable-ack progress advances only for tables whose effective
-commit mode is `adaptive`; on other modes an opted-in client receives the handshake but no
-frames.
+A client opts in with the `X-QWP-Request-Durable-Ack` handshake header, naming the tier
+set it wants: `local`, `replicated`, or `local,replicated`. The server grants the full
+requested set -- echoing it back in `X-QWP-Durable-Ack` -- or denies the whole request by
+omitting the confirmation header; it never substitutes a weaker guarantee than the client
+asked for. The legacy value `true` keeps its shipped meaning (the replicated tier,
+confirmed with the historical `enabled` token), so an OSS server denies it exactly as
+released servers do.
+
+A grant opens up to two independent ack streams:
+
+- `STATUS_LOCAL_DURABLE_ACK` (the `local` tier) reports `localDurableSeqTxn`: the
+  commit's sequencer record is fdatasync-durable and survives power loss. OSS serves
+  this tier for adaptive tables.
+- `STATUS_DURABLE_ACK` (the `replicated` tier) reports the replicated frontier: the
+  commit reached the object store (Enterprise primary replication only).
+
+A store-and-forward client trims its local copy on the strongest requested tier's ack;
+with both tiers requested, local acks arrive earlier as progress signals only. Without
+any opt-in, no durable-ack frames flow, so the client cannot safely retry within the
+group-commit window `W` (a retried commit could double-apply). Durable-ack progress
+advances only for tables whose effective commit mode is `adaptive`; on other modes an
+opted-in client receives the handshake but no frames.
 
 ---
 
