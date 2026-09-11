@@ -168,9 +168,11 @@ public interface MonotonicTimestampFunction {
      * {@code maxTimestamp}, so overflow is reachable only when {@code maxTimestamp + shift} itself
      * wraps, i.e. {@code shift > Long.MAX_VALUE - maxTimestamp}. For micros the ceiling is
      * {@code 9999-12-31}, leaving a gap of ~284000 years, so no realistic stride overflows and
-     * {@code dateadd('<fixed>', +stride, ts) < / <= bound} still prunes exactly. Nanos are not
-     * capped ({@code maxTimestamp == Long.MAX_VALUE}), so any positive shift is treated as wrapping
-     * and the predicate stays a row filter. Do not drop this ceiling check -- without it a
+     * {@code dateadd('<fixed>', +stride, ts) < / <= bound} still prunes exactly. Nanos report the
+     * long ceiling ({@code maxTimestamp == Long.MAX_VALUE}) even though the write path caps them at
+     * {@code 2261-12-31}, because tables written before that cap took effect can still hold larger
+     * values; any positive shift is therefore treated as wrapping and the predicate stays a row
+     * filter. Do not drop this ceiling check -- without it a
      * {@code ts} whose {@code ts + stride} overflows negative satisfies the predicate but would be
      * wrongly pruned away.
      */
