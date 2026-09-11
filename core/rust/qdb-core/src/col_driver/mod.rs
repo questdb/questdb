@@ -96,6 +96,26 @@ pub fn try_lookup_driver(col_type: ColumnType) -> CoreResult<&'static dyn Column
     }
 }
 
+/// On-disk data-file row width of a fixed-size column, or `None` for a variable-size column.
+///
+/// This is the authoritative width for sizing a column's `.d` file from a row count WITHOUT
+/// mapping the file: `data_size = fixed_data_row_width(col_type) * row_count`. It mirrors the
+/// driver dispatch in [`try_lookup_driver`] and, crucially, encodes the one place a driver's
+/// on-disk row width diverges from [`ColumnTypeTag::fixed_size`]: an ascending designated
+/// timestamp stores a 16-byte (timestamp, row-index) record per row in its segment `.d` file
+/// (see [`DesignatedTimestampDriver`]), not the tag's 8. Keeping that special case here, next to
+/// the dispatch it must agree with, is what lets callers size fixed columns arithmetically
+/// without re-deriving per-type widths and drifting from the drivers.
+///
+/// Returns `None` for variable-size types (varchar/string/binary/array): their data size depends
+/// on the aux file and cannot be computed from the row count alone.
+pub fn fixed_data_row_width(col_type: ColumnType) -> Option<u64> {
+    if col_type.tag() == ColumnTypeTag::Timestamp && col_type.is_designated_timestamp_ascending() {
+        return Some(16);
+    }
+    col_type.tag().fixed_size().map(|width| width as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +165,53 @@ mod tests {
             let actual_descr = driver.descr();
             assert_eq!(actual_descr, exp_descr);
         }
+    }
+
+    #[test]
+    fn test_fixed_data_row_width() {
+        // Plain fixed-size types match the tag width.
+        assert_eq!(
+            fixed_data_row_width(ColumnTypeTag::Boolean.into_type()),
+            Some(1)
+        );
+        assert_eq!(
+            fixed_data_row_width(ColumnTypeTag::Int.into_type()),
+            Some(4)
+        );
+        assert_eq!(
+            fixed_data_row_width(ColumnTypeTag::Long.into_type()),
+            Some(8)
+        );
+        assert_eq!(
+            fixed_data_row_width(ColumnTypeTag::Long256.into_type()),
+            Some(32)
+        );
+        assert_eq!(
+            fixed_data_row_width(ColumnTypeTag::Timestamp.into_type()),
+            Some(8)
+        );
+
+        // The one divergence: an ascending designated timestamp stores 16 bytes/row, not 8 -
+        // this is the value that must agree with DesignatedTimestampDriver.
+        let designated = ColumnTypeTag::Timestamp
+            .into_type()
+            .into_designated()
+            .unwrap();
+        assert_eq!(fixed_data_row_width(designated), Some(16));
+
+        // Variable-size types have no row-count-derivable data width.
+        assert_eq!(
+            fixed_data_row_width(ColumnTypeTag::Varchar.into_type()),
+            None
+        );
+        assert_eq!(
+            fixed_data_row_width(ColumnTypeTag::String.into_type()),
+            None
+        );
+        assert_eq!(
+            fixed_data_row_width(ColumnTypeTag::Binary.into_type()),
+            None
+        );
+        assert_eq!(fixed_data_row_width(ColumnTypeTag::Array.into_type()), None);
     }
 }
