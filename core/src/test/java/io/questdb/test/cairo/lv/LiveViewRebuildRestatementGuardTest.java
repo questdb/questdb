@@ -37,6 +37,7 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.LogCapture;
@@ -89,6 +90,21 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             2026-01-03T09:00:00.000000Z\tacct-1\t16.0\t1
             2026-01-03T09:10:00.000000Z\tacct-2\t32.0\t1
             """;
+    // Commits made after the fixture's six rows, in the order the cases below make them, and the
+    // view row each one produces on top of ALL_ROWS. They extend day three, so acct-1 and acct-2
+    // keep accumulating from 16.0 and 32.0.
+    private static final String[] ROWS_AHEAD = {
+            "('2026-01-03T10:00:00.000000Z', 'acct-1', 64.0)",
+            "('2026-01-03T10:10:00.000000Z', 'acct-2', 128.0)",
+            "('2026-01-03T10:20:00.000000Z', 'acct-1', 256.0)",
+            "('2026-01-03T10:30:00.000000Z', 'acct-2', 512.0)"
+    };
+    private static final String[] ROWS_AHEAD_OUTPUT = {
+            "2026-01-03T10:00:00.000000Z\tacct-1\t80.0\t2\n",
+            "2026-01-03T10:10:00.000000Z\tacct-2\t160.0\t2\n",
+            "2026-01-03T10:20:00.000000Z\tacct-1\t336.0\t3\n",
+            "2026-01-03T10:30:00.000000Z\tacct-2\t672.0\t3\n"
+    };
     private static final String VIEW_ROWS_QUERY = "SELECT created_at, account_id, cumulative_sum, cumulative_count FROM lv";
     private static final LogCapture capture = new LogCapture();
 
@@ -262,6 +278,58 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     @Test
+    public void testALostBaseWalRederiveBehindTheViewsLeadComparesAndRefuses() throws Exception {
+        assertMemoryLeak(() -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            final LiveViewInstance instance = instance("lv");
+            final long processedBefore = instance.getLastProcessedSeqTxn();
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // An un-flushed lead that runs one commit past the base's apply: the first commit
+                // is applied before the view drains it, the second is not. The base's applied head
+                // then sits strictly between the view's flushed watermark and its lead, which is
+                // what lets the re-derive below run at all, and it pins that head.
+                setCurrentMicros(instance.getLastFlushTimeUs());
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                drainWalQueue();
+                drainJob(job);
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[1]);
+                drainJob(job);
+                Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals(processedBefore + 2, instance.getRefreshedUpToSeqTxn());
+                // A third commit whose WAL segment is lost before anything applies or drains it.
+                commitThroughASecondWalAndLoseIt(ROWS_AHEAD[2]);
+
+                // The drain fails on the lost segment until the retry budget runs out, and the
+                // re-derive that follows pins the base's applied head, one commit behind the lead.
+                // That used to stand the guard down as a snapshot behind the view. The lead is not
+                // in the view's table, though, and the re-derive drops it, so the snapshot holds
+                // every commit the table does and the guard compares.
+                final int drainsToExhaustTheBudget = engine.getConfiguration().getLiveViewFlushRetryMax() + 1;
+                for (int i = 0; i < drainsToExhaustTheBudget; i++) {
+                    failDrainOnTheLostSegment(job, processedBefore + 3);
+                }
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            capture.drain();
+            capture.assertLogged("live view rebuild from the applied base refused, it would drop rows the view retains");
+            capture.assertNotLogged("live view re-derived from the applied base after base WAL loss");
+            capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
+            capture.assertNotLogged("live view rebuild from the applied base waits for the base table");
+            assertRebuildBlocked(instance, "base WAL segment missing");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
+            Assert.assertEquals(6, guard.getDurableRows());
+            Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+            Assert.assertFalse("a refused re-derive must not invalidate the view", instance.isInvalid());
+            // A view stopped at a running door keeps serving its in-memory lead.
+            assertViewRows(ALL_ROWS + rowsAheadOutput(2));
+        });
+    }
+
+    @Test
     public void testARebuildOverACompleteBasePassesTheGuard() throws Exception {
         assertMemoryLeak(() -> {
             seedSixRows("");
@@ -403,6 +471,159 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     @Test
+    public void testARebuildAheadOfTheBaseApplyWaitsForItAndHealsACompleteBase() throws Exception {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            fault.of(engine.verifyTableName("tx").getDirName());
+            final LiveViewInstance instance = instance("lv");
+            final long baseApplied = instance.getLastProcessedSeqTxn();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushAheadOfTheBaseApply(job);
+                // Keeps the mid-drain recovery's restore off the timeline, so it asks for the
+                // whole-view rebuild.
+                writeRepairMarker(instance);
+                failMidDrainAheadOfTheBaseApply(job, fault, 1);
+                // Pinned where the base had applied, the rebuild would hold the view's table, which
+                // has the flushed commit's row, against a snapshot that lacks it: seven rows held
+                // against six reproduced, and a refusal of a rebuild that restates nothing. The
+                // previous code stood the guard down there instead and ran the rebuild unchecked.
+                assertRebuildDeferred(job, instance, baseApplied);
+                assertViewRows(ALL_ROWS + rowsAheadOutput(2));
+
+                // One turn after the base applies the four commits. The deferred recovery's
+                // rebuild pins a snapshot holding every commit the view's table has output of, so
+                // the guard compares - and finds every row the view holds reproduced.
+                drainWalQueue();
+                drainJob(job);
+                final LiveViewRebuildRestatementGuard guard = job.rebuildRestatementGuardForTest();
+                Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+                Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_NONE, guard.getVerdict());
+                Assert.assertEquals(7, guard.getDurableRows());
+                Assert.assertEquals(7, guard.getReproducedRows());
+                // The cost of the wait: the rebuild commits at the base's head, four commits past
+                // the point the base had applied when the fault landed, so it materializes the
+                // lead's commit and the two the fault interrupted itself rather than leaving them
+                // to the next drain.
+                Assert.assertEquals(baseApplied + 4, instance.getLastProcessedSeqTxn());
+                Assert.assertFalse(instance.isWindowStateDirty());
+                driveRefreshToQuiescence(job);
+            }
+
+            capture.drain();
+            capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=mid-drain refresh failure]");
+            capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(instance.isInvalid());
+            assertViewRows(ALL_ROWS + rowsAheadOutput(4));
+        });
+    }
+
+    @Test
+    public void testARebuildAheadOfTheBaseApplyWaitsForItAndRefusesToDropTheOldestDay() throws Exception {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            fault.of(engine.verifyTableName("tx").getDirName());
+            dropPartitionAndRefresh("2026-01-01");
+            final LiveViewInstance instance = instance("lv");
+            final long baseApplied = instance.getLastProcessedSeqTxn();
+            final long generationBefore;
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushAheadOfTheBaseApply(job);
+                writeRepairMarker(instance);
+                generationBefore = newestGeneration(instance);
+                failMidDrainAheadOfTheBaseApply(job, fault, 1);
+                // Pinned where the base had applied, the rebuild would have stood the guard down and
+                // replaced the view with what the surviving days produce. It waits instead.
+                assertRebuildDeferred(job, instance, baseApplied);
+                assertViewRows(ALL_ROWS + rowsAheadOutput(2));
+
+                // The back-off only paces the retries. Once it has elapsed, a later commit's
+                // notification brings the view back with the base still behind: the window-state
+                // gate takes the debt, the restore declines again, and the rebuild defers again -
+                // through the refresh turn's own apply-lag arm this time, with no fault counted and
+                // no second log line for the same target.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                engine.getLiveViewStateStore().notifyBaseTableCommit(engine.verifyTableName("tx"), baseApplied + 4);
+                drainJob(job);
+                capture.drain();
+                // The retry reached the gate: the restore declined a second time.
+                capture.assertLoggedRE("(?s)live view cannot restore its runtime from the checkpoint timeline.*"
+                        + "live view cannot restore its runtime from the checkpoint timeline");
+                capture.assertOnlyOnce("live view rebuild from the applied base waits for the base table to apply what the view consumed");
+                Assert.assertTrue(instance.isWindowStateDirty());
+                Assert.assertEquals(baseApplied + 1, instance.getApplyLagDeferTargetSeqTxn());
+                Assert.assertEquals(1, instance.getRefreshFaultCount());
+                Assert.assertEquals(0, instance.getFlushRetryCount());
+                Assert.assertEquals(
+                        LiveViewRebuildRestatementGuard.ABSTAIN_NOT_EVALUATED,
+                        job.rebuildRestatementGuardForTest().getAbstention()
+                );
+                Assert.assertEquals(baseApplied + 1, instance.getLastProcessedSeqTxn());
+                assertViewRows(ALL_ROWS + rowsAheadOutput(2));
+
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            capture.drain();
+            capture.assertLogged("live view rebuild from the applied base refused, it would drop rows the view retains");
+            capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
+            assertRebuildBlocked(instance, "mid-drain refresh failure");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
+            TestUtils.assertContains(
+                    instance.getCheckpointRecoveryReason(),
+                    "the view holds rows from 2026-01-01T09:00:00.000000Z but the base table's earliest row is at 2026-01-02T09:00:00.000000Z"
+            );
+            Assert.assertEquals(baseApplied + 1, instance.getLastProcessedSeqTxn());
+            Assert.assertEquals(generationBefore, newestGeneration(instance));
+            try (Path dir = checkpointsDir(instance)) {
+                Assert.assertTrue(LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), dir));
+            }
+            assertLiveViewsReportsTheBlock();
+            // A view stopped at a running door keeps serving its in-memory lead.
+            assertViewRows(ALL_ROWS + rowsAheadOutput(2));
+        });
+    }
+
+    @Test
+    public void testARebuildBehindTheViewsLeadComparesAtOnceAndRefuses() throws Exception {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            fault.of(engine.verifyTableName("tx").getDirName());
+            dropPartitionAndRefresh("2026-01-01");
+            final LiveViewInstance instance = instance("lv");
+            final long baseApplied = instance.getLastProcessedSeqTxn();
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                writeRepairMarker(instance);
+                // The view drains the first of three unapplied commits into its lead, so the lead
+                // runs past the base's apply while its table does not. The rebuild pins where the
+                // base had applied, which holds every commit the table has output of, and drops the
+                // lead: the guard compares without waiting for anything.
+                failMidDrainAheadOfTheBaseApply(job, fault, 0);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            capture.drain();
+            capture.assertLogged("live view rebuild from the applied base refused, it would drop rows the view retains");
+            capture.assertNotLogged("live view rebuild from the applied base waits for the base table");
+            capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
+            assertRebuildBlocked(instance, "mid-drain refresh failure");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
+            Assert.assertEquals(6, guard.getDurableRows());
+            Assert.assertEquals(baseApplied, instance.getLastProcessedSeqTxn());
+            assertViewRows(ALL_ROWS + rowsAheadOutput(1));
+        });
+    }
+
+    @Test
     public void testATurnedOffGuardLetsTheRebuildFollowTheBase() throws Exception {
         assertMemoryLeak(() -> {
             seedSixRows("");
@@ -489,7 +710,6 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         final int[] abstentions = {
                 LiveViewRebuildRestatementGuard.ABSTAIN_DISABLED,
                 LiveViewRebuildRestatementGuard.ABSTAIN_NOTHING_RETAINED,
-                LiveViewRebuildRestatementGuard.ABSTAIN_SNAPSHOT_BEHIND,
                 LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
                 LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE
         };
@@ -569,6 +789,17 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         TestUtils.assertContains(reason, "cairo.live.view.rebuild.restatement.guard.enabled=false");
     }
 
+    /**
+     * The view rows the first {@code count} of {@link #ROWS_AHEAD} produce, in order.
+     */
+    private static String rowsAheadOutput(int count) {
+        final StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            sb.append(ROWS_AHEAD_OUTPUT[i]);
+        }
+        return sb.toString();
+    }
+
     private void assertLiveViewsReportsTheBlock() throws Exception {
         assertQuery("SELECT view_status, checkpoint_recovery_phase, "
                 + "invalidation_reason = checkpoint_recovery_reason AS reason_mirrored "
@@ -579,6 +810,32 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                         view_status\tcheckpoint_recovery_phase\treason_mirrored
                         invalid\trebuild_blocked\ttrue
                         """);
+    }
+
+    /**
+     * Asserts the whole-view rebuild a mid-drain recovery asked for waited for the base's apply
+     * instead of running: nothing pinned a snapshot, nothing was refused, rebuilt or charged to the
+     * retry budget, and the window-state debt stands on the instance behind an apply-lag back-off
+     * that names the commit the view flushed past the base's applied head.
+     */
+    private void assertRebuildDeferred(LiveViewRefreshJob job, LiveViewInstance instance, long baseApplied) {
+        capture.drain();
+        capture.assertLogged("live view rebuild from the applied base waits for the base table to apply what the view consumed "
+                + "[view=lv, cause=mid-drain refresh failure, rebuildSeqTxn=" + (baseApplied + 1)
+                + ", appliedSeqTxn=" + baseApplied + "]");
+        capture.assertNotLogged("live view recomputed window state from applied base");
+        Assert.assertEquals(
+                "no whole-view rebuild may have pinned a snapshot",
+                LiveViewRebuildRestatementGuard.ABSTAIN_NOT_EVALUATED,
+                job.rebuildRestatementGuardForTest().getAbstention()
+        );
+        Assert.assertTrue("the recovery the rebuild owes must carry to a later turn", instance.isWindowStateDirty());
+        Assert.assertEquals(baseApplied + 1, instance.getApplyLagDeferTargetSeqTxn());
+        Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+        Assert.assertFalse(instance.isInvalid());
+        Assert.assertEquals("the mid-drain fault is the one fault", 1, instance.getRefreshFaultCount());
+        Assert.assertEquals("a deferral charges no retry", 0, instance.getFlushRetryCount());
+        Assert.assertEquals(baseApplied + 1, instance.getLastProcessedSeqTxn());
     }
 
     private void assertViewRows(String expected) throws Exception {
@@ -609,6 +866,59 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
         assertViewRows(ALL_ROWS);
         assertNoRefreshFaults("lv");
+    }
+
+    /**
+     * Commits {@link #ROWS_AHEAD} {@code first} to {@code first + 2}, which the base table does not
+     * apply yet, and has the view fail mid-drain over them. A view over a base without dedup keys
+     * drains the raw WAL, so it runs ahead of the base's own apply: the first commit gets a refresh
+     * task of its own and lands in the view's un-flushed lead, the next two coalesce behind it, and
+     * the fault fails that pass's read of the third commit after the second has been fed. The
+     * recovery that follows owes the view its accumulators while the base has applied none of the
+     * three.
+     * <p>
+     * The clock stays on the view's last flush, so the lead is not flushed; the caller drives
+     * everything after the fault.
+     */
+    private void failMidDrainAheadOfTheBaseApply(LiveViewRefreshJob job, LiveViewMidDrainFault fault, int first) throws Exception {
+        setCurrentMicros(instance("lv").getLastFlushTimeUs());
+        for (int i = first; i < first + 3; i++) {
+            execute("INSERT INTO tx VALUES " + ROWS_AHEAD[i]);
+        }
+        fault.arm(2);
+        drainJob(job);
+        Assert.assertTrue("the mid-drain segment read must have been failed exactly once", fault.hasFired());
+    }
+
+    /**
+     * Commits {@link #ROWS_AHEAD}'s first row, which the base table does not apply, and has the view
+     * drain it from raw WAL and flush it, with the clock past {@code FLUSH EVERY}. The view's table
+     * then holds output of a commit the base has not applied, which is what puts the view's own
+     * coordinate past the base's applied head.
+     */
+    private void flushAheadOfTheBaseApply(LiveViewRefreshJob job) throws Exception {
+        final LiveViewInstance instance = instance("lv");
+        final long baseApplied = instance.getLastProcessedSeqTxn();
+        setCurrentMicros(instance.getLastFlushTimeUs() + CLOCK_ADVANCE_MICROS);
+        execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+        drainJob(job);
+        Assert.assertEquals(
+                "the view must have flushed a commit the base has not applied",
+                baseApplied + 1,
+                instance.getLastProcessedSeqTxn()
+        );
+        Assert.assertEquals(baseApplied, engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("tx")).getWriterTxn());
+    }
+
+    /**
+     * Re-publishes the base's head commit and drives the refresh, which is what a later commit
+     * notification looks like to the view: it drains from its lead up to the lost segment and fails
+     * there. The fallback scan would not retry the drain, because it drives a view only as far as
+     * the base has applied, and here the base's apply is at or behind the lead.
+     */
+    private void failDrainOnTheLostSegment(LiveViewRefreshJob job, long baseHead) {
+        engine.getLiveViewStateStore().notifyBaseTableCommit(engine.verifyTableName("tx"), baseHead);
+        drainJob(job);
     }
 
     private long newestGeneration(LiveViewInstance instance) {
@@ -653,6 +963,30 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 new File(engine.getConfiguration().getDbRoot(), viewToken.getDirName()),
                 LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME
         );
+    }
+
+    /**
+     * Commits one row to the base through a WAL of its own - the insert takes a second WAL writer
+     * while the test holds the first - and then removes that WAL, so this commit alone is lost to
+     * everything that would read it: the view's drain and the base's own apply. Every earlier
+     * commit stays readable in the first WAL.
+     */
+    private void commitThroughASecondWalAndLoseIt(String values) throws Exception {
+        final TableToken baseToken = engine.verifyTableName("tx");
+        try (WalWriter held = engine.getWalWriter(baseToken)) {
+            Assert.assertEquals("every earlier commit must sit in the first WAL", 1, held.getWalId());
+            execute("INSERT INTO tx VALUES " + values);
+        }
+        engine.releaseInactive();
+        final File secondWal = new File(
+                new File(engine.getConfiguration().getDbRoot(), baseToken.getDirName()),
+                WalUtils.WAL_NAME_BASE + 2
+        );
+        Assert.assertTrue("the insert must have taken a second WAL", secondWal.isDirectory());
+        try (Path p = new Path()) {
+            p.of(secondWal.getAbsolutePath());
+            Assert.assertTrue("could not remove " + secondWal, engine.getConfiguration().getFilesFacade().rmdir(p));
+        }
     }
 
     /**

@@ -43,7 +43,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * The restore from the checkpoint timeline that a refreshing view runs in place of a whole-view
@@ -238,7 +237,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
 
     @Test
     public void testAMidDrainFailureOverABaseThatLostADayKeepsTheViewRunning() throws Exception {
-        final MidDrainFault fault = new MidDrainFault();
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
         assertMemoryLeak(fault.facade(), () -> {
             createBase("");
             createView();
@@ -272,7 +271,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
 
     @Test
     public void testAMidDrainFailureRestoresTheRuntimeAndDerivesTheLeadAgain() throws Exception {
-        final MidDrainFault fault = new MidDrainFault();
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
         assertMemoryLeak(fault.facade(), () -> {
             createBase("");
             createView();
@@ -316,7 +315,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
 
     @Test
     public void testARestoreBehindALiveRepairMarkerFallsBackToTheRebuild() throws Exception {
-        final MidDrainFault fault = new MidDrainFault();
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
         assertMemoryLeak(fault.facade(), () -> {
             createBase("");
             createView();
@@ -461,7 +460,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
      * lead when the fault lands - the lead the recovery has to drop - and whatever the recovery
      * leaves is still unflushed when this returns. The caller drives the flush.
      */
-    private void insertThreeAndFailMidDrain(LiveViewRefreshJob job, MidDrainFault fault) throws Exception {
+    private void insertThreeAndFailMidDrain(LiveViewRefreshJob job, LiveViewMidDrainFault fault) throws Exception {
         setCurrentMicros(instance("lv").getLastFlushTimeUs());
         execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-2', 16.0)");
         drainWalQueue();
@@ -506,50 +505,6 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                     newestGeneration(instance),
                     ts("2026-01-02T00:00:00.000000Z")
             );
-        }
-    }
-
-    /**
-     * Fails one read of the base's WAL timestamp column after skipping a given number, which is
-     * what puts a refresh turn's failure between two commits it drains in one pass.
-     */
-    private static final class MidDrainFault {
-        // -1 disarmed; otherwise the number of reads still to skip before the one to fail.
-        private final AtomicInteger countdown = new AtomicInteger(-1);
-        private final AtomicBoolean fired = new AtomicBoolean();
-        private volatile String baseDir;
-
-        void arm(int skip) {
-            fired.set(false);
-            countdown.set(skip);
-        }
-
-        FilesFacade facade() {
-            return new TestFilesFacadeImpl() {
-                @Override
-                public long openRO(LPSZ name) {
-                    final String dir = baseDir;
-                    if (countdown.get() >= 0
-                            && dir != null
-                            && Utf8s.containsAscii(name, dir)
-                            && Utf8s.containsAscii(name, "wal")
-                            && Utf8s.endsWithAscii(name, "created_at.d")) {
-                        if (countdown.getAndDecrement() == 0) {
-                            fired.set(true);
-                            return -1;
-                        }
-                    }
-                    return super.openRO(name);
-                }
-            };
-        }
-
-        boolean hasFired() {
-            return fired.get() && countdown.get() < 0;
-        }
-
-        void of(String baseDir) {
-            this.baseDir = baseDir;
         }
     }
 }

@@ -70,16 +70,19 @@ import org.jetbrains.annotations.NotNull;
  *
  * <h2>When it compares nothing</h2>
  * Both checks read the view's table as the output of the base transactions the view has
- * consumed, while the rebuild runs at a pinned snapshot that may hold more. That is sound only
- * while every transaction the snapshot holds beyond the view's durable coordinate either adds
- * base rows or removes them the way incremental refresh would have frozen. The guard therefore
- * abstains - lets the rebuild run exactly as it did before the guard existed - when:
+ * consumed, while the rebuild runs at a pinned snapshot that may hold more. The snapshot never
+ * holds less: a view draining raw base WAL flushes ahead of the base's own apply, so the rebuild
+ * waits for the apply to reach the highest transaction whose output the view's table may hold
+ * before it pins, deferring the recovery that asked for it rather than blocking where it cannot.
+ * A snapshot behind that point would read the output of the commits it lacks as a loss, which
+ * could only refuse a rebuild that restates nothing. The view's un-flushed lead does not count:
+ * it is not in the table, and the rebuild drops it. What remains is sound only while every
+ * transaction the snapshot holds beyond the view's durable coordinate either adds base rows or
+ * removes them the way incremental refresh would have frozen. The guard therefore abstains -
+ * lets the rebuild run exactly as it did before the guard existed - when:
  * <ul>
  *     <li>there is nothing to protect: the view's table is empty, or the operator turned the
  *     guard off ({@link #ABSTAIN_DISABLED}, {@link #ABSTAIN_NOTHING_RETAINED});</li>
- *     <li>the snapshot is behind the view, which a view draining raw base WAL ahead of the
- *     base's own apply can be: its table then holds output of transactions the snapshot does
- *     not ({@link #ABSTAIN_SNAPSHOT_BEHIND});</li>
  *     <li>a backlog transaction can legitimately lower the output at or below the frontier,
  *     because incremental refresh propagates it and the rebuild restates nothing by following
  *     it: a REPLACE_RANGE commit whose delete band reaches the frontier (a materialized-view
@@ -113,12 +116,12 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
     /**
      * A backlog transaction can legitimately lower the output at or below the frontier.
      */
-    public static final int ABSTAIN_BACKLOG_MAY_REMOVE = 4;
+    public static final int ABSTAIN_BACKLOG_MAY_REMOVE = 3;
     /**
      * A backlog transaction could not be read, and the base can produce one that lowers the
      * output legitimately.
      */
-    public static final int ABSTAIN_BACKLOG_UNREADABLE = 5;
+    public static final int ABSTAIN_BACKLOG_UNREADABLE = 4;
     /**
      * {@code cairo.live.view.rebuild.restatement.guard.enabled} is off.
      */
@@ -135,10 +138,6 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
      * No whole-view rebuild has armed the guard since the job was built.
      */
     public static final int ABSTAIN_NOT_EVALUATED = -1;
-    /**
-     * The rebuild's pinned snapshot is behind the view's own coordinate.
-     */
-    public static final int ABSTAIN_SNAPSHOT_BEHIND = 3;
     /**
      * Returned by the job's backlog walk: every transaction between the view's durable
      * coordinate and the rebuild's snapshot adds base rows, or removes them the way incremental
@@ -187,7 +186,6 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
             case ABSTAIN_NONE -> "none";
             case ABSTAIN_DISABLED -> "disabled";
             case ABSTAIN_NOTHING_RETAINED -> "nothing retained";
-            case ABSTAIN_SNAPSHOT_BEHIND -> "snapshot behind the view";
             case ABSTAIN_BACKLOG_MAY_REMOVE -> "backlog may remove rows";
             case ABSTAIN_BACKLOG_UNREADABLE -> "backlog unreadable";
             default -> "not evaluated";
