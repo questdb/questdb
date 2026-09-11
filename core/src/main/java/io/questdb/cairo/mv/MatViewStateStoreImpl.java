@@ -62,7 +62,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<MatViewState> stateByTableDirName = new ConcurrentHashMap<>();
     private final CarrierLocal<MatViewRefreshTask> taskHolder = new CarrierLocal<>(MatViewRefreshTask::new);
-    private final Queue<MatViewRefreshTask> taskQueue = ConcurrentQueue.createConcurrentQueue(MatViewRefreshTask::new);
+    private final ConcurrentQueue<MatViewRefreshTask> taskQueue = ConcurrentQueue.createConcurrentQueue(MatViewRefreshTask::new);
     private final Telemetry<TelemetryMatViewTask> telemetry;
     private final MatViewTelemetryFacade telemetryFacade;
     private final Queue<MatViewTimerTask> timerTaskQueue;
@@ -164,26 +164,28 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     @Override
     public void enqueueFullRefresh(TableToken matViewToken, @Nullable Object fullRefreshOwner) {
         final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
-        if (state != null && !state.isDropped()) {
-            try {
-                enqueueMatViewTask(
-                        matViewToken,
-                        null,
-                        MatViewRefreshTask.FULL_REFRESH,
-                        null,
-                        null,
-                        Numbers.LONG_NULL,
-                        false,
-                        fullRefreshOwner,
-                        Numbers.LONG_NULL,
-                        Numbers.LONG_NULL
-                );
-            } catch (Throwable th) {
-                if (fullRefreshOwner != null) {
-                    requestPendingFullRefreshReenqueue(state);
-                }
-                throw th;
+        if (state == null || state.isDropped()) {
+            logDroppedRequest(matViewToken, state, MatViewRefreshTask.getRefreshOperationName(MatViewRefreshTask.FULL_REFRESH));
+            return;
+        }
+        try {
+            enqueueMatViewTask(
+                    matViewToken,
+                    null,
+                    MatViewRefreshTask.FULL_REFRESH,
+                    null,
+                    null,
+                    Numbers.LONG_NULL,
+                    false,
+                    fullRefreshOwner,
+                    Numbers.LONG_NULL,
+                    Numbers.LONG_NULL
+            );
+        } catch (Throwable th) {
+            if (fullRefreshOwner != null) {
+                requestPendingFullRefreshReenqueue(state);
             }
+            throw th;
         }
     }
 
@@ -250,20 +252,22 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
             long rangeTo
     ) {
         final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
-        if (state != null && !state.isDropped()) {
-            enqueueMatViewTask(
-                    matViewToken,
-                    null,
-                    operation,
-                    invalidationReason,
-                    null,
-                    Numbers.LONG_NULL,
-                    false,
-                    null,
-                    rangeFrom,
-                    rangeTo
-            );
+        if (state == null || state.isDropped()) {
+            logDroppedRequest(matViewToken, state, MatViewRefreshTask.getRefreshOperationName(operation));
+            return;
         }
+        enqueueMatViewTask(
+                matViewToken,
+                null,
+                operation,
+                invalidationReason,
+                null,
+                Numbers.LONG_NULL,
+                false,
+                null,
+                rangeFrom,
+                rangeTo
+        );
     }
 
     @Override
@@ -287,6 +291,11 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
             return state;
         }
         return null;
+    }
+
+    @Override
+    public boolean isRefreshQueueEmpty() {
+        return !taskQueue.hasAvailable();
     }
 
     @Override
@@ -505,12 +514,17 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     @Override
     public void updateViewDefinition(@NotNull TableToken matViewToken, @NotNull MatViewDefinition newDefinition) {
         final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
-        if (state != null) {
-            state.setViewDefinition(newDefinition);
-            // Make sure to recreate all timers associated with the mat view.
-            final MatViewTimerTask timerTask = tlTimerTask.get();
-            timerTaskQueue.enqueue(timerTask.ofUpdate(matViewToken));
+        if (state == null) {
+            // ALTER MATERIALIZED VIEW ... SET REFRESH has already reported success to the client by
+            // now, and the new definition is on disk, but with no state there is nothing to publish
+            // a timer task against, so nothing will ever schedule the view. Say so.
+            LOG.info().$("materialized view state not found, timers not registered [view=").$(matViewToken).I$();
+            return;
         }
+        state.setViewDefinition(newDefinition);
+        // Make sure to recreate all timers associated with the mat view.
+        final MatViewTimerTask timerTask = tlTimerTask.get();
+        timerTaskQueue.enqueue(timerTask.ofUpdate(matViewToken));
     }
 
     private void enqueueInvalidate0(
@@ -521,24 +535,26 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
             boolean isInvalidationForced
     ) {
         final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
-        if (state != null && !state.isDropped()) {
-            try {
-                enqueueMatViewTask(
-                        matViewToken,
-                        null,
-                        MatViewRefreshTask.INVALIDATE,
-                        invalidationReason,
-                        invalidationBaseTableToken,
-                        invalidationBaseTxn,
-                        isInvalidationForced,
-                        null,
-                        Numbers.LONG_NULL,
-                        Numbers.LONG_NULL
-                );
-            } catch (Throwable th) {
-                requestPendingInvalidationReenqueue(state);
-                throw th;
-            }
+        if (state == null || state.isDropped()) {
+            logDroppedRequest(matViewToken, state, MatViewRefreshTask.getRefreshOperationName(MatViewRefreshTask.INVALIDATE));
+            return;
+        }
+        try {
+            enqueueMatViewTask(
+                    matViewToken,
+                    null,
+                    MatViewRefreshTask.INVALIDATE,
+                    invalidationReason,
+                    invalidationBaseTableToken,
+                    invalidationBaseTxn,
+                    isInvalidationForced,
+                    null,
+                    Numbers.LONG_NULL,
+                    Numbers.LONG_NULL
+            );
+        } catch (Throwable th) {
+            requestPendingInvalidationReenqueue(state);
+            throw th;
         }
     }
 
@@ -575,6 +591,25 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
 
     private void enqueueTaskIfStateExists(TableToken matViewToken, int operation, String invalidationReason) {
         enqueueTaskIfStateExists(matViewToken, operation, invalidationReason, Numbers.LONG_NULL, Numbers.LONG_NULL);
+    }
+
+    /**
+     * Reports a refresh-related request the store had nowhere to put. A missing state gets an INFO
+     * line: the caller -- REFRESH MATERIALIZED VIEW, a base table commit, a timer firing -- has
+     * already reported success, and the request goes no further, which no other surface reveals. A
+     * dropped state gets a DEBUG line instead: the view is on its way out, the drop is what makes
+     * this correct, and the caller may repeat until the view leaves the dependency graph.
+     */
+    private void logDroppedRequest(TableToken matViewToken, @Nullable MatViewState state, CharSequence operationName) {
+        if (state == null) {
+            LOG.info().$("materialized view state not found, request dropped [view=").$(matViewToken)
+                    .$(", op=").$(operationName)
+                    .I$();
+        } else {
+            LOG.debug().$("materialized view is dropped, request dropped [view=").$(matViewToken)
+                    .$(", op=").$(operationName)
+                    .I$();
+        }
     }
 
     private void runPendingTaskReenqueueScanSeamForTesting() {
