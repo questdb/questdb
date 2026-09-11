@@ -24,11 +24,15 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -38,6 +42,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -66,6 +71,369 @@ public class LatestByTest extends AbstractCairoTest {
         return Arrays.asList(new Object[][]{
                 {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
+    }
+
+    @Test
+    public void testLatestKeyPushdownAllSymbolsSkipsOlderPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            // An absent NULL must not keep the all-key scan searching an older partition.
+            ff = failOpenForPartition("2024-01-01");
+            execute("CREATE TABLE all_keys (s SYMBOL, v DOUBLE, ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO all_keys VALUES
+                    ('a', 1, '2024-01-01'),
+                    ('a', 10, '2024-01-02'),
+                    ('b', 20, '2024-01-02'),
+                    ('a', 11, '2024-01-02')
+                    """);
+            String predicate = "s IN ('a', 'b', 'a', 'missing', NULL)";
+            assertQuery(latestKeyQuery("all_keys", predicate, false))
+                    .sizeMayVary().returns("v\n20.0\n11.0\n");
+            assertQuery(latestKeyQuery("all_keys", predicate, true))
+                    .sizeMayVary().returns("v\n20.0\n11.0\n");
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownAllSymbolsReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE all_keys (s SYMBOL, v DOUBLE, ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO all_keys VALUES ('a', 1, '2024-01-01'), ('b', 2, '2024-01-01')");
+            try (RecordCursorFactory factory = select(latestKeyQuery("all_keys", "s IN ('a', 'b', NULL, 'missing')", false))) {
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n1.0\n2.0\n");
+                execute("INSERT INTO all_keys VALUES ('other', 3, '2024-01-02')");
+                // The previously complete selector must not admit the new, unselected symbol.
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n1.0\n2.0\n");
+                execute("INSERT INTO all_keys VALUES (NULL, 4, '2024-01-03'), ('missing', 5, '2024-01-03')");
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n1.0\n2.0\n4.0\n5.0\n");
+                execute("ALTER TABLE all_keys DROP PARTITION LIST '2024-01-02'");
+                // Dropping rows need not remove their symbols from the dictionary.
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n1.0\n2.0\n4.0\n5.0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownAllSymbolsNullBoundaries() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE all_keys (s SYMBOL, v DOUBLE, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts)");
+            try (RecordCursorFactory factory = select(latestKeyQuery("all_keys", "s IN ('a', 'b', NULL)", false))) {
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n");
+                execute("INSERT INTO all_keys VALUES (NULL, 1, '2024-01-01'), (NULL, 2, '2024-01-01')");
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n2.0\n");
+                execute("INSERT INTO all_keys VALUES ('a', 3, '2024-01-02'), ('b', 4, '2024-01-02')");
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n2.0\n3.0\n4.0\n");
+            }
+            assertQuery(latestKeyQuery("all_keys", "s IN ('a', 'b')", false))
+                    .sizeMayVary().returns("v\n3.0\n4.0\n");
+        });
+    }
+
+    @Test
+    public void testLatestByAllSymbolsBindReuseAndExclusions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE all_keys (s SYMBOL, v DOUBLE, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO all_keys VALUES
+                    ('a', 1, '2024-01-01'), ('b', 2, '2024-01-01'),
+                    ('a', 10, '2024-01-02'), ('b', 20, '2024-01-02')
+                    """);
+            bindVariableService.setStr("key", "b");
+            try (RecordCursorFactory factory = select(latestKeyQuery("all_keys", "s IN ('a', :key, NULL)", true))) {
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n10.0\n20.0\n");
+                bindVariableService.setStr("key", "missing");
+                // The absent NULL cannot stand in for the missing non-NULL key in the coverage count.
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n10.0\n");
+                bindVariableService.setStr("key", "b");
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n10.0\n20.0\n");
+            }
+            assertQuery(latestKeyQuery("all_keys", "s IN ('a', 'b', NULL) AND s NOT IN ('b')", true))
+                    .sizeMayVary().returns("v\n10.0\n");
+            assertQuery(latestKeyQuery("all_keys", "s IN ('a', 'b', NULL) AND v < 10", true))
+                    .sizeMayVary().returns("v\n1.0\n2.0\n");
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownFeasibility() throws Exception {
+        assertMemoryLeak(() -> {
+            assertLatestKeyFeasibility("plain", "");
+            assertLatestKeyFeasibility("indexed", " INDEX");
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownFeasibilityCovering() throws Exception {
+        assertMemoryLeak(() -> assertLatestKeyFeasibility("covering", " INDEX TYPE POSTING INCLUDE (v)"));
+    }
+
+    @Test
+    public void testLatestKeyPushdownFeasibilityWithoutWithinOptimisation() throws Exception {
+        setProperty(PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            Assert.assertFalse(configuration.useWithinLatestByOptimisation());
+            assertLatestKeyFeasibility("indexed", " INDEX");
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownBindFeasibility() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int index = 0; index < 2; index++) {
+                for (int type = 0; type < 2; type++) {
+                    for (int syntax = 0; syntax < 2; syntax++) {
+                        String table = "binds_" + index + "_" + type + "_" + syntax;
+                        createLatestKeyFixture(table, index == 1 ? " INDEX" : "");
+                        boolean isVarchar = type == 1;
+                        boolean isNamed = syntax == 1;
+                        String predicate = "s = " + (isNamed ? ":key" : "$1");
+                        setLatestKeyBind(bindVariableService, isVarchar, isNamed, null);
+                        assertQuery(latestKeyQuery(table, predicate, false))
+                                .assertsPlanContaining(index == 0 ? "symbolFilter:" : "Filter filter:");
+                        try (
+                                RecordCursorFactory wrapped = select(latestKeyQuery(table, predicate, false));
+                                RecordCursorFactory pushed = index == 0 ? select(latestKeyQuery(table, predicate, true)) : null;
+                                SqlExecutionContextImpl otherContext = new SqlExecutionContextImpl(engine, 1)
+                        ) {
+                            for (int value = 0; value < 6; value++) {
+                                String key = switch (value) {
+                                    case 1, 5 -> "a";
+                                    case 2 -> "é";
+                                    case 3 -> "missing";
+                                    default -> null;
+                                };
+                                String expected = switch (value) {
+                                    case 1, 5 -> "v\n11.0\n";
+                                    case 2 -> "v\n40.0\n";
+                                    case 3 -> "v\n";
+                                    default -> "v\n31.0\n";
+                                };
+                                setLatestKeyBind(bindVariableService, isVarchar, isNamed, key);
+                                assertFactory(wrapped).withContext(sqlExecutionContext).sizeMayVary().returns(expected);
+                                if (pushed != null) {
+                                    assertFactory(pushed).withContext(sqlExecutionContext).sizeMayVary().returns(expected);
+                                }
+                                if (value == 3) {
+                                    execute("INSERT INTO " + table + " VALUES ('missing', 50, '2024-01-04')");
+                                    assertFactory(wrapped).withContext(sqlExecutionContext).sizeMayVary().returns("v\n50.0\n");
+                                    if (pushed != null) {
+                                        assertFactory(pushed).withContext(sqlExecutionContext).sizeMayVary().returns("v\n50.0\n");
+                                    }
+                                }
+                            }
+                            BindVariableServiceImpl otherBinds = new BindVariableServiceImpl(configuration);
+                            otherContext.with(AllowAllSecurityContext.INSTANCE, otherBinds);
+                            setLatestKeyBind(otherBinds, isVarchar, isNamed, "é");
+                            assertFactory(wrapped).withContext(otherContext).sizeMayVary().returns("v\n40.0\n");
+                            if (pushed != null) {
+                                assertFactory(pushed).withContext(otherContext).sizeMayVary().returns("v\n40.0\n");
+                            }
+                        }
+                        bindVariableService.clear();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownInitiallyAbsentNull() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int index = 0; index < 2; index++) {
+                for (int form = 0; form < 5; form++) {
+                    String table = "nulls_" + index + "_" + form;
+                    execute("CREATE TABLE " + table + " (s SYMBOL" + (index == 1 ? " INDEX" : "")
+                            + ", v DOUBLE, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts)");
+                    execute("INSERT INTO " + table + " VALUES ('a', 11, '2024-01-01'), ('other', 99, '2024-01-01')");
+                    String predicate = switch (form) {
+                        case 0 -> "s IS NULL";
+                        case 1 -> "s IN (NULL)";
+                        case 2 -> "s IN ('a', NULL)";
+                        case 3 -> "s = 'a' OR s IS NULL";
+                        default -> "NULL = s OR s = NULL";
+                    };
+                    String pushedPredicate = switch (form) {
+                        case 3 -> "s IN ('a', NULL)";
+                        case 4 -> "s IN (NULL)";
+                        default -> predicate;
+                    };
+                    try (
+                            RecordCursorFactory wrapped = select(latestKeyQuery(table, predicate, false));
+                            RecordCursorFactory pushed = select(latestKeyQuery(table, pushedPredicate, true))
+                    ) {
+                        String before = form == 2 || form == 3 ? "v\n11.0\n" : "v\n";
+                        assertFactory(wrapped).withContext(sqlExecutionContext).sizeMayVary().returns(before);
+                        assertFactory(pushed).withContext(sqlExecutionContext).sizeMayVary().returns(before);
+                        execute("INSERT INTO " + table + " VALUES (NULL, 30, '2024-01-02'), (NULL, 31, '2024-01-02')");
+                        String after = form == 2 || form == 3 ? "v\n11.0\n31.0\n" : "v\n31.0\n";
+                        assertFactory(wrapped).withContext(sqlExecutionContext).sizeMayVary().returns(after);
+                        assertFactory(pushed).withContext(sqlExecutionContext).sizeMayVary().returns(after);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownAliasesAndPayloads() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int index = 0; index < 2; index++) {
+                String table = "aliases_" + index;
+                createLatestKeyFixture(table, index == 1 ? " INDEX" : "");
+                String keyPlan = index == 1 ? "Index backward scan" : "symbolFilter:";
+                assertQuery("SELECT p FROM (SELECT s k, v p FROM " + table + " LATEST ON ts PARTITION BY s) WHERE k = 'a'")
+                        .withPlanContaining(keyPlan).withPlanNotContaining("Filter filter:")
+                        .sizeMayVary().returns("p\n11.0\n");
+                assertQuery("SELECT q.v FROM (SELECT s, v FROM " + table + " LATEST ON ts PARTITION BY s) q WHERE q.s = 'a'")
+                        .withPlanContaining(keyPlan).withPlanNotContaining("Filter filter:")
+                        .sizeMayVary().returns("v\n11.0\n");
+                execute("INSERT INTO " + table + " VALUES ('', NULL, '2024-01-04'), ('long_key', 60, '2024-01-04')");
+                assertLatestKeyPair(table, "s = ''", "s = ''", "v\nnull\n");
+                assertLatestKeyPair(table, "s = 'long_key'", "s = 'long_key'", "v\n60.0\n");
+                bindVariableService.setStr("key", "a");
+                assertQuery(latestKeyQuery(table, ":key = s", false))
+                        .withPlanContaining(index == 1 ? "Filter filter:" : "symbolFilter:")
+                        .sizeMayVary().returns("v\n11.0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownOuterResiduals() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int index = 0; index < 2; index++) {
+                String table = "residuals_" + index;
+                createLatestKeyFixture(table, index == 1 ? " INDEX" : "");
+                String singleKeyPlan = index == 1 ? "Index backward scan" : "symbolFilter:";
+                String listPlan = index == 1 ? "symbolFilter:" : "includedSymbols:";
+                assertQuery(latestKeyQuery(table, "s = 'a' AND v = 1", false))
+                        .withPlanContaining("Filter filter: v=1", singleKeyPlan).sizeMayVary().returns("v\n");
+                assertQuery(latestKeyQuery(table, "v = 11 AND s = 'a'", false))
+                        .withPlanContaining("Filter filter: v=11", singleKeyPlan).sizeMayVary().returns("v\n11.0\n");
+                assertQuery(latestKeyQuery(table, "s = 'a' AND v < 10_000", false))
+                        .withPlanContaining("Filter filter: v<10000", singleKeyPlan).sizeMayVary().returns("v\n11.0\n");
+                assertQuery(latestKeyQuery(table, "s IN ('a', 'b') AND v > 10", false))
+                        .withPlanContaining("Filter filter: 10<v", listPlan).sizeMayVary().returns("v\n11.0\n20.0\n");
+                assertQuery(latestKeyQuery(table, "(s = 'a' OR s = 'b') AND v > 10", false))
+                        .withPlanContaining("Filter filter: 10<v", listPlan).sizeMayVary().returns("v\n11.0\n20.0\n");
+                assertQuery("SELECT v FROM (SELECT s, v, ts FROM " + table
+                        + " LATEST ON ts PARTITION BY s) WHERE s = 'a' AND ts < '2024-01-02'")
+                        .withPlanContaining("Filter filter:", singleKeyPlan).sizeMayVary().returns("v\n");
+                assertQuery(latestKeyQuery(table, "s = 'a' AND s IN ('a', 'b')", false))
+                        .withPlanContaining("Filter filter:", singleKeyPlan).sizeMayVary().returns("v\n11.0\n");
+                assertQuery(latestKeyQuery(table, "s = 'a' AND s = 'b'", false)).sizeMayVary().returns("v\n");
+                execute("INSERT INTO " + table + " VALUES ('a', NULL, '2024-01-04')");
+                assertQuery(latestKeyQuery(table, "s = 'a' AND v = NULL", false))
+                        .withPlanContaining("Filter filter:", singleKeyPlan).sizeMayVary().returns("v\nnull\n");
+            }
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownOuterOrderAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int index = 0; index < 2; index++) {
+                String table = "ordered_" + index;
+                createLatestKeyFixture(table, index == 1 ? " INDEX" : "");
+                String singleKeyPlan = index == 1 ? "Index backward scan" : "symbolFilter:";
+                String listPlan = index == 1 ? "symbolFilter:" : "includedSymbols:";
+                assertQuery(latestKeyQuery(table, "s = 'a'", false) + " LIMIT 1")
+                        .withPlanContaining(singleKeyPlan).sizeMayVary().returns("v\n11.0\n");
+                assertQuery(latestKeyQuery(table, "s IN ('a')", false) + " LIMIT 1")
+                        .withPlanContaining(singleKeyPlan).sizeMayVary().returns("v\n11.0\n");
+                assertQuery(latestKeyQuery(table, "s IN ('a', 'b')", false) + " ORDER BY s DESC")
+                        .withPlanContaining(listPlan).sizeMayVary().returns("v\n20.0\n11.0\n");
+                execute("INSERT INTO " + table + " VALUES ('c', 20, '2024-01-04'), ('d', 20, '2024-01-04')");
+                assertQuery("SELECT s, v FROM (SELECT s, v FROM " + table
+                        + " LATEST ON ts PARTITION BY s) WHERE s IN ('a', 'b', 'c', 'd') ORDER BY v, s LIMIT 1, 3")
+                        .withPlanContaining(listPlan).sizeMayVary().returns("s\tv\nb\t20.0\nc\t20.0\n");
+                assertQuery(latestKeyQuery(table, "s IN ('a', 'b')", false) + " LIMIT 1")
+                        .withPlanContaining("Filter filter:").sizeMayVary().returns("v\n11.0\n");
+                assertQuery(latestKeyQuery(table, "s IN ('b', 'c', 'd')", false) + " ORDER BY v LIMIT 1")
+                        .withPlanContaining("Filter filter:").sizeMayVary().returns("v\n20.0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownRejectedPredicates() throws Exception {
+        assertMemoryLeak(() -> {
+            createLatestKeyFixture("rejected", "");
+            bindVariableService.setStr("key", "b");
+            assertLatestKeyRejectedPredicate("v = 11", "v\n11.0\n");
+            assertLatestKeyRejectedPredicate("s > 'a'", "v\n20.0\n40.0\n99.0\n");
+            assertLatestKeyRejectedPredicate("s::STRING = 'a'", "v\n11.0\n");
+            assertLatestKeyRejectedPredicate("s = 'a' AND abs(v) = 11", "v\n11.0\n");
+            assertLatestKeyRejectedPredicate("s = 'a' AND v = v", "v\n11.0\n");
+            assertLatestKeyRejectedPredicate("s = 'a' OR v = 20", "v\n11.0\n20.0\n");
+            assertLatestKeyRejectedPredicate("s = 'a' OR (s = 'b' OR v = 99)", "v\n11.0\n20.0\n99.0\n");
+            assertLatestKeyRejectedPredicate("s = 'a' OR (s = 'b' AND v = 20)", "v\n11.0\n20.0\n");
+            assertLatestKeyRejectedPredicate("s NOT IN ('a', 'b')", "v\n31.0\n40.0\n99.0\n");
+            assertLatestKeyRejectedPredicate("s IN ('a', :key)", "v\n11.0\n20.0\n");
+            assertLatestKeyRejectedPredicate("s IN ('a', lower('B'))", "v\n11.0\n20.0\n");
+            assertLatestKeyRejectedPredicate("s IN (SELECT 'a'::STRING)", "v\n11.0\n");
+            assertLatestKeyRejectedPredicate("s = 'a' OR s = :key", "v\n11.0\n20.0\n");
+            assertLatestKeyRejectedPredicate("s = 'a' OR s = lower('B')", "v\n11.0\n20.0\n");
+            assertLatestKeyRejectedPredicate("s = 'a' OR s IN ('b', 'é')", "v\n11.0\n20.0\n40.0\n");
+            assertLatestKeyRejectedPredicate("s IN ('a', 'b') OR s IN ('é', 'other')", "v\n11.0\n20.0\n40.0\n99.0\n");
+            assertQuery(latestKeyQuery("rejected", "s = 'a' AND v < rnd_double()", false))
+                    .assertsPlanContaining("Filter filter:", "LatestByDeferredListValuesFiltered");
+            bindVariableService.clear();
+            assertQuery(latestKeyQuery("rejected", "s = $1", false)).assertsPlanContaining("Filter filter:");
+            assertQuery(latestKeyQuery("rejected", "s = :undefined", false)).failsWith("undefined bind variable");
+            bindVariableService.clear();
+            bindVariableService.setBin(0, null);
+            assertQuery(latestKeyQuery("rejected", "s = $1", false)).failsWith("there is no matching operator `=` with the argument types: SYMBOL = BINARY");
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownRejectedModels() throws Exception {
+        assertMemoryLeak(() -> {
+            createLatestKeyFixture("models", "");
+            assertLatestKeyRejectedModel("SELECT v FROM (SELECT s, v + 1 v FROM models LATEST ON ts PARTITION BY s) WHERE s = 'a'", "v\n12.0\n");
+            assertLatestKeyRejectedModel("SELECT v FROM (SELECT v s, v FROM models LATEST ON ts PARTITION BY s) WHERE s = 11", "v\n11.0\n");
+            assertLatestKeyRejectedModel("SELECT v FROM (SELECT s, v FROM models WHERE v = 1 LATEST ON ts PARTITION BY s) WHERE s = 'a'", "v\n1.0\n");
+            assertLatestKeyRejectedModel("SELECT v FROM (SELECT s, v FROM models WHERE ts < '2024-01-02' LATEST ON ts PARTITION BY s) WHERE s = 'a'", "v\n1.0\n");
+            assertLatestKeyRejectedModel("SELECT v FROM (SELECT s, v FROM models LATEST ON ts PARTITION BY s LIMIT 1) WHERE s = 'a'", "v\n11.0\n");
+            assertLatestKeyRejectedModel("SELECT v FROM (SELECT s, v FROM models LATEST ON ts PARTITION BY s ORDER BY v) WHERE s = 'a'", "v\n11.0\n");
+            assertLatestKeyRejectedModel("SELECT v FROM (SELECT s, v FROM models LATEST ON ts PARTITION BY s, v) WHERE s = 'a'", "v\n1.0\n10.0\n11.0\n");
+            assertLatestKeyRejectedModel("SELECT v FROM (SELECT s, v FROM models LATEST ON ts PARTITION BY v) WHERE v = 11", "v\n11.0\n");
+            assertLatestKeyRejectedModel("SELECT v FROM (SELECT s, v FROM (SELECT t.s, t.v, t.ts FROM models t CROSS JOIN (SELECT 1 x)) LATEST ON ts PARTITION BY s) WHERE s = 'a'", "v\n11.0\n");
+            assertLatestKeyRejectedModel("SELECT v FROM (SELECT s, v FROM (SELECT s, v, ts FROM models UNION ALL SELECT s, v, ts FROM models) LATEST ON ts PARTITION BY s) WHERE s = 'a'", "v\n11.0\n");
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownInPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            createLatestKeyFixture("plain", "");
+            createLatestKeyFixture("indexed", " INDEX");
+            assertLatestKeyPair("plain", "s IN ('a', 'b')", "s IN ('a', 'b')", "v\n11.0\n20.0\n");
+            assertLatestKeyPair("indexed", "s IN ('a', 'b')", "s IN ('a', 'b')", "v\n11.0\n20.0\n");
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownOrPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            createLatestKeyFixture("plain", "");
+            createLatestKeyFixture("indexed", " INDEX");
+            assertLatestKeyPair("plain", "s = 'a' OR s = 'b'", "s IN ('a', 'b')", "v\n11.0\n20.0\n");
+            assertLatestKeyPair("indexed", "s = 'a' OR s = 'b'", "s IN ('a', 'b')", "v\n11.0\n20.0\n");
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownWithinFallback() throws Exception {
+        assertLatestKeyWithinFallback(false);
+    }
+
+    @Test
+    public void testLatestKeyPushdownWithinOptimisedFallback() throws Exception {
+        assertLatestKeyWithinFallback(true);
     }
 
     @Test
@@ -230,6 +598,9 @@ public class LatestByTest extends AbstractCairoTest {
                     .returns("ts\tdevice_id\tg8c\n" +
                             "2021-09-02T00:00:00.000001" + getTimestampSuffix(timestampType.getTypeName()) + "\tdevice_2\t46swgj10\n");
         });
+        // EXPLAIN leaves WITHIN prefixes in the pooled generator. Later tests disable the
+        // setting, so discard these compilers before they can reuse that scratch state.
+        engine.getSqlCompilerPool().releaseAll();
     }
 
     @Test
@@ -2271,6 +2642,130 @@ public class LatestByTest extends AbstractCairoTest {
                             a\t2.0
                             """);
         });
+    }
+
+    private void assertLatestKeyFeasibility(String table, String indexClause) throws Exception {
+        createLatestKeyFixture(table, indexClause);
+        assertLatestKeyPair(table, "s = 'a'", "s = 'a'", "v\n11.0\n");
+        assertLatestKeyPair(table, "'a' = s", "'a' = s", "v\n11.0\n");
+        assertLatestKeyPair(table, "s IS NULL", "s = NULL", "v\n31.0\n");
+        assertLatestKeyPair(table, "NULL = s", "NULL = s", "v\n31.0\n");
+        assertLatestKeyPair(table, "s IN ('a', 'b')", "s IN ('a', 'b')", "v\n11.0\n20.0\n");
+        assertLatestKeyPair(table, "s = 'a' OR s = 'b'", "s IN ('a', 'b')", "v\n11.0\n20.0\n");
+        assertLatestKeyPair(table, "s IN ('a')", "s IN ('a')", "v\n11.0\n");
+        assertLatestKeyPair(table, "s IN ('a', 'a')", "s IN ('a', 'a')", "v\n11.0\n");
+        assertLatestKeyPair(table, "(s = 'a' OR 'b' = s) OR s = 'é'", "s IN ('a', 'b', 'é')", "v\n11.0\n20.0\n40.0\n");
+        assertLatestKeyPair(table, "s = 'a' OR ('b' = s OR s = 'é')", "s IN ('a', 'b', 'é')", "v\n11.0\n20.0\n40.0\n");
+        assertLatestKeyPair(table, "s IN ('absent', 'unknown')", "s IN ('absent', 'unknown')", "v\n");
+        assertLatestKeyPair(table, "s = 'absent' OR s = 'unknown'", "s IN ('absent', 'unknown')", "v\n");
+        assertLatestKeyPair(table, "s = 'a' OR 'a' = s", "s IN ('a', 'a')", "v\n11.0\n");
+        assertLatestKeyPair(table, "s IN ('a', NULL)", "s IN ('a', NULL)", "v\n11.0\n31.0\n");
+        assertLatestKeyPair(table, "s = 'a' OR s IS NULL", "s IN ('a', NULL)", "v\n11.0\n31.0\n");
+        assertLatestKeyPair(table, "s IN (NULL)", "s IN (NULL)", "v\n31.0\n");
+        assertLatestKeyPair(table, "NULL = s OR s = NULL", "s IN (NULL)", "v\n31.0\n");
+        for (int form = 0; form < 3; form++) {
+            String key = "missing" + form;
+            String predicate = switch (form) {
+                case 0 -> "s = '" + key + "'";
+                case 1 -> "s IN ('a', '" + key + "')";
+                default -> "s = 'a' OR s = '" + key + "'";
+            };
+            String pushedPredicate = form == 2 ? "s IN ('a', '" + key + "')" : predicate;
+            try (
+                    RecordCursorFactory wrapped = select(latestKeyQuery(table, predicate, false));
+                    RecordCursorFactory pushed = select(latestKeyQuery(table, pushedPredicate, true))
+            ) {
+                String before = form == 0 ? "v\n" : "v\n11.0\n";
+                assertFactory(wrapped).withContext(sqlExecutionContext).inferRandomAccess().sizeMayVary().returns(before);
+                assertFactory(pushed).withContext(sqlExecutionContext).inferRandomAccess().sizeMayVary().returns(before);
+                execute("INSERT INTO " + table + " VALUES ('" + key + "', 50, '2024-01-04')");
+                String after = form == 0 ? "v\n50.0\n" : "v\n11.0\n50.0\n";
+                assertFactory(wrapped).withContext(sqlExecutionContext).inferRandomAccess().sizeMayVary().returns(after);
+                assertFactory(pushed).withContext(sqlExecutionContext).inferRandomAccess().sizeMayVary().returns(after);
+            }
+        }
+    }
+
+    private void assertLatestKeyPair(String table, String predicate, String pushedPredicate, String expected) throws Exception {
+        String pushed = latestKeyQuery(table, pushedPredicate, true);
+        printSql("EXPLAIN " + pushed);
+        String expectedPlan = sink.toString().substring("QUERY PLAN\n".length());
+        // Compare to the existing requested-key path, not a particular resolved/deferred factory name.
+        assertQuery(latestKeyQuery(table, predicate, false)).withPlan(expectedPlan)
+                .inferRandomAccess().sizeMayVary().returns(expected);
+        assertQuery(pushed).inferRandomAccess().sizeMayVary().returns(expected);
+    }
+
+    private void assertLatestKeyRejectedModel(String query, String expected) throws Exception {
+        assertQuery(query).withPlanContaining("Filter filter:")
+                .withPlanNotContaining("includedSymbols:", "symbolFilter:").inferRandomAccess().sizeMayVary().returns(expected);
+    }
+
+    private void assertLatestKeyRejectedPredicate(String predicate, String expected) throws Exception {
+        assertQuery(latestKeyQuery("rejected", predicate, false))
+                .withPlanContaining("Filter filter:", "LatestByDeferredListValuesFiltered")
+                .withPlanNotContaining("includedSymbols:", "symbolFilter:").sizeMayVary().returns(expected);
+    }
+
+    private void assertLatestKeyWithinFallback(boolean isWithinOptimised) throws Exception {
+        setProperty(PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, Boolean.toString(isWithinOptimised));
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(isWithinOptimised, configuration.useWithinLatestByOptimisation());
+            execute("CREATE TABLE geo (s SYMBOL INDEX, v DOUBLE, g GEOHASH(8c), ts "
+                    + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO geo VALUES
+                    ('a', 1, #46swgj10, '2024-01-01'),
+                    ('b', 2, #46swgj10, '2024-01-01'),
+                    ('a', 3, #46swgj12, '2024-01-02')
+                    """);
+            String query = "SELECT v FROM (SELECT s, v FROM geo WHERE g WITHIN (#46swgj10) LATEST ON ts PARTITION BY s) WHERE s = 'a'";
+            // These tests switch configuration. A pooled generator retains WITHIN scratch state
+            // after EXPLAIN when the next test disables the setting; keep this compiler local.
+            try (SqlCompiler compiler = new SqlCompilerImpl(engine)) {
+                assertQuery(query).withCompiler(compiler).returns(isWithinOptimised ? "v\n" : "v\n1.0\n");
+                assertQuery(query).withCompiler(compiler).noLeakCheck()
+                        .assertsPlanContaining("Filter filter: s='a'");
+            }
+        });
+    }
+
+    private void createLatestKeyFixture(String table, String indexClause) throws SqlException {
+        execute("CREATE TABLE " + table + " (s SYMBOL" + indexClause
+                + ", v DOUBLE, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO " + table + " VALUES " + """
+                ('a', 1, '2024-01-01'),
+                ('b', 2, '2024-01-01'),
+                (NULL, 3, '2024-01-01'),
+                ('a', 10, '2024-01-02'),
+                ('a', 11, '2024-01-02'),
+                ('b', 20, '2024-01-02'),
+                (NULL, 30, '2024-01-02'),
+                (NULL, 31, '2024-01-02'),
+                ('é', 40, '2024-01-02'),
+                ('other', 99, '2024-01-03')
+                """);
+    }
+
+    private static String latestKeyQuery(String table, String predicate, boolean isPushed) {
+        return isPushed
+                ? "SELECT v FROM " + table + " WHERE " + predicate + " LATEST ON ts PARTITION BY s"
+                : "SELECT v FROM (SELECT s, v FROM " + table + " LATEST ON ts PARTITION BY s) WHERE " + predicate;
+    }
+
+    private static void setLatestKeyBind(BindVariableService service, boolean isVarchar, boolean isNamed, String value) throws SqlException {
+        if (isVarchar) {
+            Utf8String utf8 = value == null ? null : new Utf8String(value);
+            if (isNamed) {
+                service.setVarchar("key", utf8);
+            } else {
+                service.setVarchar(0, utf8);
+            }
+        } else if (isNamed) {
+            service.setStr("key", value);
+        } else {
+            service.setStr(0, value);
+        }
     }
 
     // A FilesFacade whose openRO fails for any file under the named partition. Used to prove an indexed
