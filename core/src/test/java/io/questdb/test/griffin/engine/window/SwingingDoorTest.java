@@ -302,6 +302,46 @@ public class SwingingDoorTest {
         Assert.assertArrayEquals(new boolean[]{true, false, true, true}, k);
     }
 
+    @Test
+    public void testReconstructionBoundWithCompdevAboveValueUlp() {
+        long[] ts = {0, 1, 2, 3, 4, 5};
+        double[] offsets = {0, 4, 8, 12, 20, 16};
+        double compdev = 3.5;
+        // At 2^53 the value ULP is 2.0, but value +/- 3.5 rounds to value +/- 4.
+        // The widened corridor can drop row 4 with reconstruction error 7.2 > 7.0.
+        // Run the same offsets at zero as a small-magnitude control.
+        for (double base : new double[]{0, 0x1.0p53}) {
+            double[] values = new double[offsets.length];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = base + offsets[i];
+            }
+            boolean[] isKept = run(ts, values, compdev);
+            Assert.assertTrue("first point must survive", isKept[0]);
+            Assert.assertTrue("last point must survive", isKept[isKept.length - 1]);
+            int left = 0;
+            for (int right = 1; right < values.length; right++) {
+                if (isKept[right]) {
+                    long dt = ts[right] - ts[left];
+                    for (int i = left + 1; i < right; i++) {
+                        // Compare error * dt against the scaled budget. The small integral
+                        // differences and products are exact for both bases, so the oracle
+                        // introduces no large-offset interpolation or division rounding.
+                        double scaledError = Math.abs(
+                                (values[i] - values[left]) * dt
+                                        - (values[right] - values[left]) * (ts[i] - ts[left])
+                        );
+                        Assert.assertTrue(
+                                "base=" + base + ", dropped row " + i + " has reconstruction error "
+                                        + scaledError / dt + " > " + 2 * compdev,
+                                scaledError <= 2 * compdev * dt
+                        );
+                    }
+                    left = right;
+                }
+            }
+        }
+    }
+
     // ---- slope underflow: corridor width flushed away on finite input ----
 
     @Test
