@@ -210,7 +210,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // next commit can reach JOIN or MOVE-TAIL the moment their shape appears.
     private static final int COMPACTION_SKIPPED_HOT = 5;
     private static final long IGNORE = -1L;
-    private static final Log LOG = LogFactory.getLog(TableWriter.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(TableWriter.class);
     /*
         The most recent logical partition is allowed to have up to cairo.o3.last.partition.max.splits (20 by default) splits.
         Any other partition is allowed to have cairo.o3.mid.partition.max.splits (1 by default) splits.
@@ -3972,14 +3974,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void squashPartitions() {
+        boolean lastPartitionFolded = false;
         // Do not cache txWriter.getPartitionCount() as it changes during the squashing
         for (int i = 0; i < txWriter.getPartitionCount(); i++) {
+            final boolean isLastPartition = i == txWriter.getPartitionCount() - 1;
+            // Same pair, same order, as preparePartitionForParquetConversion. squashPartitionForce alone
+            // never touches a logical partition that has no split siblings, so a composite one would keep
+            // both the dead space a merge-append left behind and its relocated pieces. SQUASH PARTITIONS is
+            // the explicit request to reclaim them, so fold the directory to plain first, then merge the
+            // siblings.
+            //
+            // The last partition is left alone while it carries lag rows: those sit past the live ones in
+            // the column files and belong to no piece, so a REWRITE rebuilt from pieces would drop them.
+            // Same rule squashSplitPartitions applies to a composite source.
+            if (txWriter.isPartitionComposite(i) && (!isLastPartition || txWriter.getLagRowCount() == 0)) {
+                compactPartitionToPlain(i, "squash partitions");
+                lastPartitionFolded |= isLastPartition;
+            }
             squashPartitionForce(i);
+        }
+        if (lastPartitionFolded && !isLastPartitionClosed()) {
+            // The fold rewrote the partition into a fresh directory, or trimmed the files this writer
+            // still has mapped. Drop the stale mapping so the reopen below takes the folded shape.
+            closeActivePartition(false);
         }
         // Reopen the last partition if we've closed it.
         if (isLastPartitionClosed() && !isEmptyTable()) {
             openLastPartition();
         }
+        // A REWRITE retires the source directory. Drain it here so the statement actually gives the disk
+        // back, rather than leaving it to an unrelated later commit.
+        processPartitionRemoveCandidates();
     }
 
     @Override

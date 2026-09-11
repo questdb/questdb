@@ -108,7 +108,7 @@ public class FrameAlgebraColumnTopTest extends AbstractCairoTest {
                 // its row count - so this is the top appendNulls has to leave behind.
                 targetExtent = reader.getPartitionPhysicalRowCount(front);
                 Assert.assertTrue("fixture left the composite target with no dead space [E=" + targetExtent
-                        + ", liveRows=" + txFile.getPartitionSize(front) + ']',
+                                + ", liveRows=" + txFile.getPartitionSize(front) + ']',
                         targetExtent > txFile.getPartitionSize(front));
                 final ColumnVersionReader cvr = reader.getColumnVersionReader();
                 final int vIndex = reader.getMetadata().getColumnIndex("v");
@@ -141,7 +141,7 @@ public class FrameAlgebraColumnTopTest extends AbstractCairoTest {
                                 + " extent, so an extended top does not describe them",
                         targetExtent, topAfter);
                 Assert.assertNotEquals("the fold absorbed the source's NULL run into a composite target's"
-                                + " v column top", targetExtent + sourceTop, topAfter);
+                        + " v column top", targetExtent + sourceTop, topAfter);
             }
 
             Assert.assertEquals("the fold changed the day's row count", rowsBefore,
@@ -289,7 +289,7 @@ public class FrameAlgebraColumnTopTest extends AbstractCairoTest {
             final long targetTop = resolveTop(cvr, txFile.getPartitionTimestampByIndex(0), vIndex, targetRows);
             // The shortcut is reachable only from this shape.
             Assert.assertEquals("test setup gap: the fold target already carries v, so its top is not"
-                    + " its row count [targetTop=" + targetTop + ", targetRows=" + targetRows + ']',
+                            + " its row count [targetTop=" + targetTop + ", targetRows=" + targetRows + ']',
                     targetRows, targetTop);
             Assert.assertTrue("test setup gap: the fold source carries no v NULL run, so the append pads"
                     + " nothing [sourceTop=" + sourceTop + ']', sourceTop > 0);
