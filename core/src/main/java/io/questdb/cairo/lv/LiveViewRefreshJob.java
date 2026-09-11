@@ -10363,11 +10363,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // repair marker and the retention marker this apply's removals wrote, and the
                     // counter was re-seated from the table above, so the seal stamps the count the
                     // table holds. replayFromAnchor orders its own fallback the same way.
+                    //
+                    // The retire also removes the repair directory, and with it the descriptor the
+                    // publication still mirrors its stages into. The descriptor goes with it: the
+                    // candidate it claimed is freed, so it describes no file this process owns, and
+                    // a discarded descriptor turns the stages recorded below into no-ops. Left open,
+                    // the next one rewrites it into a directory that is gone, which fails, logs
+                    // critical and disables it - on every capture that did not publish.
                     retireCheckpointStateOnO3(instance, true);
                     timelineCapture = Misc.free(timelineCapture);
                     prefixMarkerLive = false;
                     if (session != null) {
                         session.setRepairMarkerLive(false);
+                        session.discardDescriptor();
                     }
                 }
                 // The one runtime exchange, and the first point at which it is safe: the

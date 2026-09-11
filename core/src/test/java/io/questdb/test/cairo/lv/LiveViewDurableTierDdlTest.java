@@ -43,6 +43,7 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRetentionMarker;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -87,9 +88,10 @@ import java.util.function.BooleanSupplier;
  * in-memory tier rebuild over a Parquet partition the conversion left inside the view's
  * {@code IN MEMORY} window, the row positions an out-of-order repair reads back through a
  * converted partition, the rows such a repair brings back over a period a removal already took,
- * a {@code DROP PARTITION} queued between such a repair's capture and its replacement's apply,
- * and what a removal taken while the view is still SEEDING does to the sweep's resume. Replica
- * propagation belongs to a later stage.
+ * a {@code DROP PARTITION} queued between such a repair's capture and the apply of what it
+ * publishes - a replacement, or the upsert a keyed repair publishes instead - and what a removal
+ * taken while the view is still SEEDING does to the sweep's resume. Replica propagation belongs
+ * to a later stage.
  */
 public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
@@ -2751,13 +2753,7 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 Assert.assertEquals(generationBefore, readGeneration(lvToken));
                 Assert.assertFalse(instance.hasPendingPartitionRemovals());
 
-                for (int turn = 0; turn < 64 && instance.getSuspendedRepair() != null; turn++) {
-                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-                    drainWalQueue();
-                    owner.processNotificationsForTest();
-                    drainWalQueue();
-                }
-                Assert.assertNull("the owner must finish what it parked", instance.getSuspendedRepair());
+                driveParkedRepairToCompletion(owner, instance);
                 driveRefreshToQuiescence(owner);
                 capture.drain();
                 capture.assertLogged("live view durable rows removed during an O3 repair [view=lv, removedRows=1, "
@@ -2851,16 +2847,14 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 execute("INSERT INTO base VALUES ('2026-01-01T02:00:15.000000Z', 'a', 100)");
                 driveUntilParked(job, "lv");
                 execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-01T02'");
-                for (int turn = 0; turn < 64 && instance.getSuspendedRepair() != null; turn++) {
-                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-                    drainWalQueue();
-                    job.processNotificationsForTest();
-                    drainWalQueue();
-                }
-                Assert.assertNull("the repair must finish", instance.getSuspendedRepair());
+                driveParkedRepairToCompletion(job, instance);
                 driveRefreshToQuiescence(job);
                 capture.drain();
                 capture.assertNotLogged("replacement row count does not match the repair plan");
+                // The retire ahead of the seal takes the repair directory with it, so the
+                // descriptor the publication mirrors its stages into has to go too; left open,
+                // its next stage fails to rewrite it and logs critical.
+                capture.assertNotLogged("could not update a live view checkpoint repair descriptor");
                 capture.assertLogged("live view durable rows removed during an O3 repair [view=lv, removedRows=3, "
                         + "aheadOfReplacement=true, spliceable=false]");
 
@@ -3085,6 +3079,421 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                             2026-01-01T03:00:10.000000Z\t5.0
                             """);
             Assert.assertEquals(5, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+        });
+    }
+
+    @Test
+    public void testDropAheadOfAKeyedResumesUpsertComesBackOnlyForTheKeysItFollows() throws Exception {
+        // The resume executor's keyed route, which publishes an upsert of the rows it recomputed
+        // rather than a replacement of everything above its anchor. The correction at 02:35 names
+        // acct-1 alone, so the resume follows acct-1's rows above the anchor at 01:40 and leaves
+        // every other account's stored rows where they stand. The hook sequences a DROP of hour 02
+        // right before that upsert commits, so one apply drains the removal first and the upsert
+        // behind it.
+        //
+        // That is where this route parts from the replacement: the upsert re-inserts the rows it
+        // recomputed, and only those. acct-1's 02:10 comes back beside the correction; acct-2, acct-3
+        // and acct-4 lose their hour-02 rows for good, because nothing this repair publishes names
+        // them. Both halves are the documented DROP PARTITION contract - a recovery that re-derives
+        // output brings back exactly what it re-derives - and a keyed repair re-derives by key.
+        //
+        // The ladder cannot keep what the two transactions touched together, for the reason the
+        // replacement cannot: the removal took a row the upsert then re-inserted. So the resume
+        // declines the splice up front, takes its lifetime counter from the table and opens a fresh
+        // history at the frontier, exactly as testDropAheadOfAResumeReplacementIsCountedByTheTable
+        // pins for the whole-range route.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createKeyedView();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            // What the DROP takes for good: every other account's row of the hour, since nothing
+            // the repair publishes names them.
+            final String droppedForGood = "created_at IN '2026-01-04T02' AND account_id <> 'acct-1'";
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openKeyedDayAboveRoots(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(120, lvRowCount(lvToken));
+                capture.start();
+
+                final AtomicBoolean dropSequenced = new AtomicBoolean();
+                job.setSimulateDdlBeforeRepairReplacementForTest(() -> {
+                    try {
+                        execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-04T02'");
+                        dropSequenced.set(true);
+                    } catch (SqlException e) {
+                        throw new AssertionError(e);
+                    }
+                });
+                commitKeyed(keyedRow(4, 2, 35, "acct-1"), job);
+                Assert.assertTrue("the hook must have sequenced the DROP", dropSequenced.get());
+                Assert.assertEquals("the resume must follow the correction's own key", 1, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals("and publish the upsert rather than fall back", 1, job.openSegmentSparseResumeCountForTest());
+                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                capture.drain();
+                capture.assertNotLogged("row count does not match");
+                capture.assertLogged("live view removal landed ahead of the O3 resume replacement, retiring instead of "
+                        + "splicing [view=lv, removedRows=4, ");
+
+                // Hour 02 holds acct-1's two rows and nothing else: 02:10 re-inserted by the upsert,
+                // 02:35 the correction itself.
+                assertQuery("SELECT created_at, account_id, cumulative_sum FROM lv WHERE created_at IN '2026-01-04T02'")
+                        .noLeakCheck()
+                        .timestamp("created_at")
+                        .returns("""
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-04T02:10:00.000000Z\tacct-1\t3.0
+                                2026-01-04T02:35:00.000000Z\tacct-1\t4.0
+                                """);
+                assertKeyedViewMatchesRecomputeExcept(droppedForGood);
+                Assert.assertEquals(118, lvRowCount(lvToken));
+                assertTimelineExists(lvToken, true);
+                assertLadder(instance, ts("2026-01-04T09:40:00.000000Z"), 118);
+                Assert.assertEquals("the counter must hold the table's own count", 118, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertRepairMarker(lvToken, false);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            } finally {
+                capture.stop();
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            Assert.assertEquals(118, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The restart restored the root the post-replay seal imaged once the transplant had
+                // handed acct-1's corrected accumulators back, so a forward row of each key has to
+                // fold onto the right sums.
+                commitKeyed(keyedRow(4, 10, 10, "acct-1") + ", " + keyedRow(4, 10, 20, "acct-2"), job);
+                assertKeyedViewMatchesRecomputeExcept(droppedForGood);
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testDropAheadOfAKeyedResumesUpsertBelowItsAnchorLandsInItsSplice() throws Exception {
+        // The same hook, over the hour below the anchor's own partition. The removal is still ordered
+        // ahead of the upsert, but it lies wholly below the range the upsert rewrites, so it took no
+        // row the upsert re-inserts and the splice can carry it: hour 00's root retires, and the
+        // removal's range-add at the anchor lowers every root above it - the ones this resume
+        // re-versioned included - by the four rows that went.
+        //
+        // The keyed route is the one that makes this worth a case of its own. It does not rewind its
+        // lifetime counter to the anchor the way the whole-range resume does; it carries the
+        // pre-repair table size forward and advances it by the exact insert delta at the head seal,
+        // and its row-count proof is that same arithmetic. So a published splice has to take the
+        // removed rows off a counter that still counts them, once, before the seal stamps the head.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createKeyedView();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openKeyedDayAboveRoots(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final long generationBefore = readGeneration(lvToken);
+                capture.start();
+
+                final AtomicBoolean dropSequenced = new AtomicBoolean();
+                job.setSimulateDdlBeforeRepairReplacementForTest(() -> {
+                    try {
+                        execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-04T00'");
+                        dropSequenced.set(true);
+                    } catch (SqlException e) {
+                        throw new AssertionError(e);
+                    }
+                });
+                commitKeyed(keyedRow(4, 2, 35, "acct-1"), job);
+                Assert.assertTrue("the hook must have sequenced the DROP", dropSequenced.get());
+                Assert.assertEquals(1, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(1, job.openSegmentSparseResumeCountForTest());
+                capture.drain();
+                capture.assertNotLogged("row count does not match");
+                capture.assertNotLogged("live view removal landed ahead of the O3 resume replacement");
+                capture.assertLogged("live view O3 resume repair published its own retention [view=lv, removedRows=4, rootsRetired=1]");
+
+                assertKeyedViewMatchesRecomputeExcept("created_at IN '2026-01-04T00'");
+                Assert.assertEquals(117, lvRowCount(lvToken));
+                Assert.assertEquals(
+                        "the upsert and the removal it drained must publish exactly one generation",
+                        generationBefore + 1,
+                        readGeneration(lvToken)
+                );
+                Assert.assertEquals("hour 00's root, and only it", 1, readRetiredCheckpointCount(lvToken));
+                assertLadder(
+                        instance,
+                        ts("2026-01-03T09:40:00.000000Z"), 80,
+                        ts("2026-01-04T01:40:00.000000Z"), 84,
+                        ts("2026-01-04T02:40:00.000000Z"), 89,
+                        ts("2026-01-04T03:40:00.000000Z"), 93,
+                        ts("2026-01-04T04:40:00.000000Z"), 97,
+                        ts("2026-01-04T05:40:00.000000Z"), 101,
+                        ts("2026-01-04T06:40:00.000000Z"), 105,
+                        ts("2026-01-04T07:40:00.000000Z"), 109,
+                        ts("2026-01-04T08:40:00.000000Z"), 113,
+                        ts("2026-01-04T09:40:00.000000Z"), 117
+                );
+                assertKeyedLadderCountsRowsAtOrBelowEachBoundary(instance);
+                Assert.assertEquals("the dropped rows must leave the lifetime counter once", 117, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertRepairMarker(lvToken, false);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            } finally {
+                capture.stop();
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            Assert.assertEquals(117, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitKeyed(keyedRow(4, 10, 10, "acct-1") + ", " + keyedRow(4, 10, 20, "acct-2"), job);
+                assertKeyedViewMatchesRecomputeExcept("created_at IN '2026-01-04T00'");
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testDropQueuedBehindAParkedColdKeyedRepairComesBackOnlyForTheKeysItFollows() throws Exception {
+        // The head-miss executor's keyed route. The seed leaves one root, at 2026-01-03T09:40, and the
+        // correction at 02:05 sits below it, so there is no anchor to resume from: the repair replays
+        // acct-1 cold from the day's origin, emits from the correction up, and publishes the rows it
+        // recomputed as an upsert. A one-row turn budget parks it on its first turn, and a DROP of
+        // hour 02 is sequenced while it sits parked - the shape a user's DROP takes against a repair
+        // that spans turns.
+        //
+        // The parked session measured the table before its replay, so the DROP waits for the
+        // repair's own final apply, which drains it ahead of the upsert. The upsert then re-inserts
+        // acct-1's 02:10 - above the emit floor, so recomputed - beside the correction, and nothing
+        // else: the other accounts' hour-02 rows stay dropped, exactly as
+        // testDropAheadOfAKeyedResumesUpsertComesBackOnlyForTheKeysItFollows has it for the resume
+        // executor. The re-inserted row is what the ladder cannot account for: the upsert's proof
+        // counts 02:10 as a row it replaces, and the removal's range-add would lower the root above
+        // it by a row that is back on disk. So the splice declines on the same rule and the timeline
+        // retires ahead of the post-replay seal, which opens a fresh history at the frontier.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createKeyedView();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                assertLadder(instance, ts("2026-01-03T09:40:00.000000Z"), 80);
+                capture.start();
+
+                execute("INSERT INTO tx VALUES " + keyedRow(3, 2, 5, "acct-1"));
+                driveUntilParked(job, "lv");
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-03T02'");
+                driveParkedRepairToCompletion(job, instance);
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+                Assert.assertEquals("the repair's own apply must have landed the DROP", tracker.getSeqTxn(), tracker.getWriterTxn());
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the repair must replay cold by key", 1, job.openSegmentColdKeyedReplayCountForTest());
+                Assert.assertEquals("and publish the upsert rather than fall back", 1, job.sparsePublicationCountForTest());
+                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                capture.drain();
+                capture.assertNotLogged("row count does not match");
+                capture.assertNotLogged("could not update a live view checkpoint repair descriptor");
+                capture.assertLogged("live view keyed repair published sparsely [view=lv, origin=segment start, ");
+                capture.assertLogged("outputLowTs=2026-01-03T02:05:00.000000Z");
+                capture.assertLogged("live view durable rows removed during an O3 repair [view=lv, removedRows=4, "
+                        + "aheadOfReplacement=true, spliceable=false]");
+
+                assertQuery("SELECT created_at, account_id, cumulative_sum FROM lv WHERE created_at IN '2026-01-03T02'")
+                        .noLeakCheck()
+                        .timestamp("created_at")
+                        .returns("""
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-03T02:05:00.000000Z\tacct-1\t3.0
+                                2026-01-03T02:10:00.000000Z\tacct-1\t4.0
+                                """);
+                assertKeyedViewMatchesRecomputeExcept("created_at IN '2026-01-03T02' AND account_id <> 'acct-1'");
+                Assert.assertEquals(78, lvRowCount(lvToken));
+                assertTimelineExists(lvToken, true);
+                assertLadder(instance, ts("2026-01-03T09:40:00.000000Z"), 78);
+                Assert.assertEquals("the counter must hold the table's own count", 78, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertRepairMarker(lvToken, false);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            } finally {
+                capture.stop();
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            Assert.assertEquals(78, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitKeyed(keyedRow(3, 10, 10, "acct-1") + ", " + keyedRow(3, 10, 20, "acct-2"), job);
+                assertKeyedViewMatchesRecomputeExcept("created_at IN '2026-01-03T02' AND account_id <> 'acct-1'");
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testDropAheadOfAClosedSegmentKeyedUpsertComesBackOnlyForTheKeysItFollows() throws Exception {
+        // The head-miss executor's other keyed publisher: a correction inside a segment the runtime
+        // has already left. The daily anchor closes 2026-01-02 once the view stands on 2026-01-03, so
+        // the correction at 02:05 is repaired per segment, by key, and published as an upsert over
+        // that day alone. Its row-count proof is not the cold route's insert delta but the rows the
+        // segment held, less the ones it replaced, plus the ones it wrote and the ones its merge
+        // left standing - a different formula over the same removal.
+        //
+        // The hook sequences a DROP of the hour being corrected right before the upsert commits. The
+        // outcome is the one the other two keyed routes have: acct-1's 02:10 comes back beside the
+        // correction, every other account's hour-02 row stays dropped, and the ladder retires ahead
+        // of a fresh seal at the frontier because the upsert re-inserted a row the removal took.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createKeyedView();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                capture.start();
+
+                final AtomicBoolean dropSequenced = new AtomicBoolean();
+                job.setSimulateDdlBeforeRepairReplacementForTest(() -> {
+                    try {
+                        execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-02T02'");
+                        dropSequenced.set(true);
+                    } catch (SqlException e) {
+                        throw new AssertionError(e);
+                    }
+                });
+                commitKeyed(keyedRow(2, 2, 5, "acct-1"), job);
+                Assert.assertTrue("the hook must have sequenced the DROP", dropSequenced.get());
+                Assert.assertEquals("the closed segment must be repaired by key", 1, job.keyedReplaySegmentCountForTest());
+                Assert.assertEquals("and publish the upsert rather than fall back", 1, job.sparsePublicationCountForTest());
+                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                capture.drain();
+                capture.assertNotLogged("row count does not match");
+                capture.assertNotLogged("could not update a live view checkpoint repair descriptor");
+                capture.assertLogged("live view keyed repair published sparsely [view=lv, origin=closed segment, ");
+                capture.assertLogged("live view durable rows removed during an O3 repair [view=lv, removedRows=4, "
+                        + "aheadOfReplacement=true, spliceable=false]");
+
+                assertQuery("SELECT created_at, account_id, cumulative_sum FROM lv WHERE created_at IN '2026-01-02T02'")
+                        .noLeakCheck()
+                        .timestamp("created_at")
+                        .returns("""
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-02T02:05:00.000000Z\tacct-1\t3.0
+                                2026-01-02T02:10:00.000000Z\tacct-1\t4.0
+                                """);
+                assertKeyedViewMatchesRecomputeExcept("created_at IN '2026-01-02T02' AND account_id <> 'acct-1'");
+                Assert.assertEquals(78, lvRowCount(lvToken));
+                assertTimelineExists(lvToken, true);
+                assertLadder(instance, ts("2026-01-03T09:40:00.000000Z"), 78);
+                Assert.assertEquals("the counter must hold the table's own count", 78, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertRepairMarker(lvToken, false);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            } finally {
+                capture.stop();
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            Assert.assertEquals(78, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitKeyed(keyedRow(3, 10, 10, "acct-1") + ", " + keyedRow(3, 10, 20, "acct-2"), job);
+                assertKeyedViewMatchesRecomputeExcept("created_at IN '2026-01-02T02' AND account_id <> 'acct-1'");
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testDropQueuedBehindAParkedColdKeyedRepairBelowItsFloorLandsInItsSplice() throws Exception {
+        // The same parked cold repair with the DROP a day below it: hour 05 of 2026-01-02, a segment
+        // the daily anchor keeps out of everything a correction on 2026-01-03 re-derives. The removal
+        // is still drained ahead of the upsert, but it took no row the upsert re-inserts, so the
+        // splice carries it in the generation it commits.
+        //
+        // What this pins is the sparse route's own row-count proof. A replacement proves itself
+        // against the rows it deleted and wrote; an upsert deletes nothing, so its proof is the
+        // pre-repair count plus the exact insert delta, and the removal has to come off that once.
+        // The seed's single root is the one boundary the repair re-versions, and the removal's
+        // range-add below it lowers the position the replay derived for it by the four rows that
+        // went.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createKeyedView();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final long generationBefore = readGeneration(lvToken);
+                capture.start();
+
+                execute("INSERT INTO tx VALUES " + keyedRow(3, 2, 35, "acct-1"));
+                driveUntilParked(job, "lv");
+                execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-02T05'");
+                driveParkedRepairToCompletion(job, instance);
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(1, job.openSegmentColdKeyedReplayCountForTest());
+                Assert.assertEquals(1, job.sparsePublicationCountForTest());
+                capture.drain();
+                capture.assertNotLogged("row count does not match");
+                capture.assertLogged("live view durable rows removed during an O3 repair [view=lv, removedRows=4, "
+                        + "aheadOfReplacement=false, spliceable=true]");
+                capture.assertLogged("live view O3 repair published its own retention [view=lv, removedRows=4, rootsRetired=0]");
+
+                assertKeyedViewMatchesRecomputeExcept("created_at IN '2026-01-02T05'");
+                Assert.assertEquals(77, lvRowCount(lvToken));
+                Assert.assertEquals(
+                        "the upsert and the removal it drained must publish exactly one generation",
+                        generationBefore + 1,
+                        readGeneration(lvToken)
+                );
+                Assert.assertEquals("no root sat inside the dropped hour", 0, readRetiredCheckpointCount(lvToken));
+                assertLadder(instance, ts("2026-01-03T09:40:00.000000Z"), 77);
+                assertKeyedLadderCountsRowsAtOrBelowEachBoundary(instance);
+                Assert.assertEquals("the dropped rows must leave the lifetime counter once", 77, instance.getLvRowsTotal());
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRetentionMarker(lvToken, false);
+                assertRepairMarker(lvToken, false);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            } finally {
+                capture.stop();
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            Assert.assertEquals(77, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitKeyed(keyedRow(3, 10, 10, "acct-1") + ", " + keyedRow(3, 10, 20, "acct-2"), job);
+                assertKeyedViewMatchesRecomputeExcept("created_at IN '2026-01-02T05'");
+                assertNoRefreshFaults("lv");
+            }
         });
     }
 
@@ -4599,6 +5008,24 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         assertTtl("lv", expectedTtlHoursOrMonths);
     }
 
+    private static void appendKeyedHour(StringBuilder rows, int day, int hour) {
+        for (int account = 1; account <= 4; account++) {
+            if (rows.length() > 0) {
+                rows.append(", ");
+            }
+            rows.append(keyedRow(day, hour, account * 10, "acct-" + account));
+        }
+    }
+
+    /**
+     * One {@link #createKeyedView} base row of {@code account} at {@code hour}:{@code minute} on
+     * 2026-01-{@code day}, as an INSERT tuple.
+     */
+    private static String keyedRow(int day, int hour, int minute, String account) {
+        return "('2026-01-" + String.format("%02d", day) + "T" + String.format("%02d", hour)
+                + ":" + String.format("%02d", minute) + ":00.000000Z', '" + account + "', 1.0)";
+    }
+
     private void assertRejected(String sql, String expectedMessageFragment) {
         assertRejected(sql, -1, expectedMessageFragment);
     }
@@ -5225,6 +5652,111 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 ts("2026-01-01T03:00:10.000000Z"), 5
         );
         return instance;
+    }
+
+    /**
+     * The anchored per-account running sum the keyed repair routes run over, seeded with
+     * 2026-01-02 and 2026-01-03: four accounts, one row each per hour from 00 to 09, at minute
+     * {@code 10 * account}. The base's account column carries the posting index a keyed replay
+     * follows, the view's own table carries {@code (created_at, account_id)} as the dedup keys a
+     * sparse publication upserts on - which needs the sparse-publication switch on before the
+     * CREATE - and the view inherits the base's hourly partitioning, so a {@code DROP} can take
+     * one hour of one day on its own. The daily anchor makes each day a segment of its own, so a
+     * correction inside one day re-derives nothing outside it.
+     */
+    private void createKeyedView() throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL NOCACHE INDEX CAPACITY 4, amount DOUBLE) "
+                + "TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+        final StringBuilder rows = new StringBuilder();
+        for (int day = 2; day <= 3; day++) {
+            for (int hour = 0; hour < 10; hour++) {
+                appendKeyedHour(rows, day, hour);
+            }
+        }
+        execute("INSERT INTO tx VALUES " + rows);
+        drainWalQueue();
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum FROM tx "
+                + "WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
+    }
+
+    /**
+     * Drives 2026-01-04 over {@link #createKeyedView} in order, one commit per hour from 00 to 09,
+     * so the one-row cadence seals a root at every hour's last row. That root below a correction
+     * inside the day is what lets the plan resume from an anchor; without one it takes the
+     * head-miss executor's cold keyed route instead.
+     */
+    private void openKeyedDayAboveRoots(LiveViewRefreshJob job) throws Exception {
+        for (int hour = 0; hour < 10; hour++) {
+            final StringBuilder rows = new StringBuilder();
+            appendKeyedHour(rows, 4, hour);
+            commitKeyed(rows.toString(), job);
+        }
+    }
+
+    /**
+     * Drives the worker that parked a repair until it finishes it, one clock step and one
+     * notification pass at a time - the drive a parked repair's owner takes between its turns.
+     */
+    private void driveParkedRepairToCompletion(LiveViewRefreshJob job, LiveViewInstance instance) {
+        for (int turn = 0; turn < REFRESH_QUIESCENCE_PASSES && instance.getSuspendedRepair() != null; turn++) {
+            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            drainWalQueue();
+            job.processNotificationsForTest();
+            drainWalQueue();
+        }
+        Assert.assertNull("the owner must finish the repair it parked", instance.getSuspendedRepair());
+    }
+
+    private void commitKeyed(String values, LiveViewRefreshJob job) throws Exception {
+        execute("INSERT INTO tx VALUES " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * Asserts {@link #createKeyedView}'s view holds exactly what a from-base recompute of its
+     * SELECT computes, minus the rows {@code droppedPredicate} names. The filter runs over the
+     * computed output, not over the base the window reads, so a surviving row still carries the
+     * running sum that counted the rows a {@code DROP} took from the view.
+     */
+    private void assertKeyedViewMatchesRecomputeExcept(String droppedPredicate) throws Exception {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
+        final String recompute = "SELECT created_at, account_id, "
+                + "sum(amount) OVER (PARTITION BY account_id, bucket ORDER BY created_at "
+                + "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_sum "
+                + "FROM (SELECT created_at, account_id, amount, " + bucket + " AS bucket FROM tx)";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(SELECT * FROM (" + recompute + ") WHERE NOT (" + droppedPredicate + ")) ORDER BY 2, 1, 3",
+                "(lv) ORDER BY 2, 1, 3",
+                LOG,
+                true
+        );
+    }
+
+    /**
+     * Holds every root of {@link #createKeyedView}'s ladder to the number of rows its table holds
+     * at or below the root's own timestamp - the identity a resume anchoring on that root reads.
+     */
+    private void assertKeyedLadderCountsRowsAtOrBelowEachBoundary(LiveViewInstance instance) throws Exception {
+        final LongList ladder = snapshotCheckpointLadder(instance);
+        Assert.assertTrue("the view must hold a ladder to check", ladder.size() > 0);
+        for (int i = 0, n = ladder.size() / 2; i < n; i++) {
+            final long maxTimestamp = ladder.getQuick(i * 2);
+            try (
+                    RecordCursorFactory factory = select("SELECT count() FROM lv WHERE created_at <= " + maxTimestamp + "::timestamp");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(
+                        "root " + i + " at " + maxTimestamp + " must count the rows at or below it",
+                        cursor.getRecord().getLong(0),
+                        ladder.getQuick(i * 2 + 1)
+                );
+            }
+        }
     }
 
     private void createBaseAndView(String partitionByClause) throws Exception {
