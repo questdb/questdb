@@ -33,6 +33,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.Clock;
@@ -91,6 +92,123 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
             Assert.assertNotEquals("the queued swap did not land", nameTxnBefore, parquetPartitionNameTxn(tableToken));
             assertUnusedBytesZero(tableToken);
             assertDataIntact("y");
+        });
+    }
+
+    /**
+     * {@link TableWriter#swapCompactedParquetPartition} refuses to run inside an open transaction: the staged
+     * copy was built off a reader snapshot taken before those uncommitted rows existed, so swapping it in
+     * would drop them. Declining leaves the transaction for its owner to commit normally - which is asserted
+     * here, row by row.
+     * <p>
+     * The table stays non-WAL because that is the shape the guard was written for: {@code
+     * TableUpdateDetails.commitIfMaxUncommittedRowsCountReached()} ticks a non-WAL writer every {@code
+     * cairo.writer.tick.rows.count} rows WITHOUT committing first, so an ILP-over-TCP table sits
+     * mid-transaction for most of a tick. The background sweep no longer reaches a non-WAL table at all
+     * (see {@link #testIdleSweepLeavesANonWalTableAlone}), so nothing queues a swap here any more and the
+     * test calls the entry point directly. The guard itself stays: the entry point is public and its
+     * contract holds for whoever calls it.
+     */
+    @Test
+    public void testSwapInsideAnOpenTransactionIsRefused() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        assertMemoryLeak(() -> {
+            // Non-WAL, the shape the ILP-over-TCP writer job holds: rows go straight through the held writer.
+            createTableWithDeadRowGroupBytes("q", false);
+            final TableToken tableToken = engine.verifyTableName("q");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final long parquetFileSizeBefore = parquetPartitionFileSize(tableToken);
+
+            try (TableWriter ownerWriter = engine.getWriter(tableToken, "owner")) {
+                // An O3 row INSIDE the parquet partition a staged copy would replace, left uncommitted:
+                // exactly the non-WAL lag a swap would drop, since a build's snapshot would predate it.
+                final TableWriter.Row row = ownerWriter.newRow(MicrosFormatUtils.parseTimestamp("2020-01-01T04:30:00.000000Z"));
+                row.putInt(0, 104);
+                row.putSym(1, "k2");
+                row.append();
+                Assert.assertTrue("the fixture must leave the writer in a transaction", ownerWriter.inTransaction());
+
+                // Every argument below names the LIVE generation, so the open transaction is the only thing
+                // that can make this stale. A TableReferenceOutOfDateException is what
+                // processAsyncWriterCommand reports as READER_OUT_OF_DATE - "rebuild and retry" - rather
+                // than as a command error.
+                try {
+                    ownerWriter.swapCompactedParquetPartition(
+                            MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"),
+                            nameTxnBefore,
+                            parquetFileSizeBefore,
+                            ownerWriter.getMetadataVersion(),
+                            parquetFileSizeBefore,
+                            false
+                    );
+                    Assert.fail("the swap ran inside an open transaction");
+                } catch (TableReferenceOutOfDateException ignore) {
+                    // The decline every stale swap raises.
+                }
+
+                // Declined, not committed: the transaction is still the owner's to finish.
+                Assert.assertTrue("the swap committed the writer's open transaction", ownerWriter.inTransaction());
+                Assert.assertEquals("a declined swap must not replace the live partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+                assertUnusedBytesPositive(tableToken);
+
+                // The owner finishes its transaction in its own time, exactly as it would have anyway.
+                ownerWriter.commit();
+            }
+
+            // The point of the whole exercise: the lag row outlived the decline and landed where it belongs,
+            // and every row the partition already held is still there.
+            assertDataIntactPlusLagRow("q");
+        });
+    }
+
+    /**
+     * The gate that makes the sweep WAL-only, pinned from both sides in one run so a gate that quietly
+     * disables compaction for everyone cannot pass: two tables built by the same fixture, one WAL and one
+     * not, swept together past the idle timeout. The WAL one must be compacted; the non-WAL one must come
+     * out byte-identical - same nameTxn, same dead bytes, no staging directory left behind.
+     * <p>
+     * Non-WAL tables are out of scope for the out-of-band sweep: their writer holds its transaction open
+     * across ticks, so a swap built off a reader snapshot can always arrive at a writer carrying rows that
+     * snapshot never saw (see {@link #testSwapInsideAnOpenTransactionIsRefused}).
+     */
+    @Test
+    public void testIdleSweepLeavesANonWalTableAlone() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        assertMemoryLeak(() -> {
+            createTableWithDeadRowGroupBytes("nw", false);
+            createTableWithDeadRowGroupBytes("wl", true);
+            final TableToken nonWalToken = engine.verifyTableName("nw");
+            final TableToken walToken = engine.verifyTableName("wl");
+            Assert.assertFalse(nonWalToken.isWal());
+            Assert.assertTrue(walToken.isWal());
+            assertUnusedBytesPositive(nonWalToken);
+            assertUnusedBytesPositive(walToken);
+
+            final long nonWalNameTxnBefore = parquetPartitionNameTxn(nonWalToken);
+            final long nonWalFileSizeBefore = parquetPartitionFileSize(nonWalToken);
+            final long walNameTxnBefore = parquetPartitionNameTxn(walToken);
+            final String nonWalStagingDir = stagingDir(nonWalToken);
+
+            // More passes than the WAL table needs, so "not yet" cannot pass for "never".
+            for (int i = 0; i < 3; i++) {
+                runSweepPastTheIdleTimeout();
+            }
+
+            Assert.assertEquals("the sweep compacted a non-WAL table", nonWalNameTxnBefore, parquetPartitionNameTxn(nonWalToken));
+            Assert.assertEquals("the sweep rewrote a non-WAL table's parquet file", nonWalFileSizeBefore, parquetPartitionFileSize(nonWalToken));
+            Assert.assertFalse("the sweep staged a copy of a non-WAL partition", dirExists(nonWalStagingDir));
+            assertUnusedBytesPositive(nonWalToken);
+            assertDataIntact("nw");
+
+            Assert.assertNotEquals("the gate disabled compaction for WAL tables too", walNameTxnBefore, parquetPartitionNameTxn(walToken));
+            assertUnusedBytesZero(walToken);
+            assertDataIntact("wl");
         });
     }
 
@@ -306,34 +424,61 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
      * no longer exists. The swap sees the source's parquet file size move - an in-place O3 update appends
      * to it - rejects the staged directory, deletes it and leaves the live partition, new row included,
      * alone; the next sweep starts over from a fresh snapshot.
+     * <p>
+     * Only a non-WAL writer can take that write in the gap. A WAL table's writer refuses direct appends
+     * ({@code TableWriter.newRow}) and is held by WAL apply for the whole batch, and a queued swap drains
+     * the moment the writer returns to the pool - so on WAL there is no gap to write into. The background
+     * sweep no longer reaches a non-WAL table either (see {@link #testIdleSweepLeavesANonWalTableAlone}),
+     * so the staged directory is created here the way the sweep would have, and the entry point is called
+     * directly.
      */
     @Test
     public void testSwapDiscardsAStagedCopyOfAPartitionWrittenToSinceTheSnapshot() throws Exception {
         setUpSmallRowGroupsNoAutoRewrite();
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
 
         assertMemoryLeak(() -> {
-            // Non-WAL, so the row written mid-flight below goes straight through the held writer.
             createTableWithDeadRowGroupBytes("v", false);
             final TableToken tableToken = engine.verifyTableName("v");
             assertUnusedBytesPositive(tableToken);
             final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final long fileSizeBefore = parquetPartitionFileSize(tableToken);
+
+            // The directory a build off the CURRENT snapshot stages into - its name carries that very
+            // generation, which is what the swap below compares against.
             final String stagingDir = stagingDir(tableToken);
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                TableUtils.createDirsOrFail(ff, path.of(stagingDir).slash(), configuration.getMkDirMode());
+                Assert.assertTrue(ff.touch(path.of(stagingDir).concat(TableUtils.PARQUET_PARTITION_NAME).$()));
+            }
 
             try (TableWriter ownerWriter = engine.getWriter(tableToken, "owner")) {
-                runSweepOnAnotherThread();
-                Assert.assertTrue("the build should have staged a compacted copy", dirExists(stagingDir));
-
-                // The write the snapshot never saw: an in-place O3 update into the parquet partition.
+                // The write the snapshot never saw: an in-place O3 update into the parquet partition,
+                // which appends to the .parquet file the staged directory is named after.
                 final TableWriter.Row row = ownerWriter.newRow(MicrosFormatUtils.parseTimestamp("2020-01-01T04:30:00.000000Z"));
                 row.putInt(0, 104);
                 row.putSym(1, "k2");
                 row.append();
                 ownerWriter.commit();
+                Assert.assertNotEquals(
+                        "the fixture did not move the partition the staged copy was built from",
+                        fileSizeBefore,
+                        parquetPartitionFileSize(tableToken)
+                );
 
-                // Applies the queued swap, which must now reject the staged directory.
-                ownerWriter.tick();
+                try {
+                    ownerWriter.swapCompactedParquetPartition(
+                            MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"),
+                            nameTxnBefore,
+                            fileSizeBefore,
+                            ownerWriter.getMetadataVersion(),
+                            fileSizeBefore,
+                            false
+                    );
+                    Assert.fail("the swap replaced a partition written to since the snapshot");
+                } catch (TableReferenceOutOfDateException ignore) {
+                    // The decline every stale swap raises.
+                }
             }
 
             Assert.assertFalse("a stale staging directory must be deleted by the swap that rejects it", dirExists(stagingDir));
@@ -496,6 +641,56 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                 );
     }
 
+    /**
+     * {@link #assertDataIntact} plus the one lag row {@link #testSwapInsideAnOpenTransactionIsRefused}
+     * leaves uncommitted across the declined swap - the row a swap built off the older snapshot would have
+     * dropped.
+     */
+    private void assertDataIntactPlusLagRow(String tableName) throws Exception {
+        assertQuery("SELECT count() FROM " + tableName)
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("count\n17\n");
+        // Through the index carried over into the swapped-in directory: the odd values of a.
+        assertQuery("SELECT count() FROM " + tableName + " WHERE s = 'k1'")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("count\n9\n");
+        assertQuery("SELECT count() FROM " + tableName + " WHERE s = 'k2'")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("count\n8\n");
+        assertQuery("SELECT a, s, ts FROM " + tableName + " ORDER BY ts, a")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(
+                        """
+                                a\ts\tts
+                                1\tk1\t2020-01-01T00:00:00.000000Z
+                                2\tk2\t2020-01-01T01:00:00.000000Z
+                                101\tk1\t2020-01-01T01:30:00.000000Z
+                                3\tk1\t2020-01-01T02:00:00.000000Z
+                                102\tk2\t2020-01-01T02:30:00.000000Z
+                                4\tk2\t2020-01-01T03:00:00.000000Z
+                                103\tk1\t2020-01-01T03:30:00.000000Z
+                                5\tk1\t2020-01-01T04:00:00.000000Z
+                                104\tk2\t2020-01-01T04:30:00.000000Z
+                                6\tk2\t2020-01-01T05:00:00.000000Z
+                                7\tk1\t2020-01-01T06:00:00.000000Z
+                                8\tk2\t2020-01-01T07:00:00.000000Z
+                                9\tk1\t2020-01-01T08:00:00.000000Z
+                                10\tk2\t2020-01-01T09:00:00.000000Z
+                                11\tk1\t2020-01-01T10:00:00.000000Z
+                                12\tk2\t2020-01-01T11:00:00.000000Z
+                                99\tk1\t2020-01-02T00:00:00.000000Z
+                                """
+                );
+    }
+
     private void assertUnusedBytesPositive(TableToken tableToken) throws Exception {
         try (TableReader reader = engine.getReader(tableToken)) {
             int parquetIdx = findParquetPartitionIndex(reader);
@@ -554,9 +749,11 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                     cast(x * 1000 as timestamp) c_ts_micro,
                     timestamp_sequence('2024-01-01', 60_000_000) ts
                   FROM long_sequence(20)
-                ) TIMESTAMP(ts) PARTITION BY DAY""");
+                ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
         execute("INSERT INTO t(c_int, ts) VALUES (1, '2024-01-02T00:00:00.000000Z')");
+        drainWalQueue();
         execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+        drainWalQueue();
         engine.releaseInactive();
     }
 
@@ -651,6 +848,14 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
             final var meta = reader.getAndInitParquetPartitionDecoder(parquetIdx).metadata();
             final int columnIndex = meta.getColumnIndex(columnName);
             return columnIndex < 0 ? -1 : meta.getColumnType(columnIndex);
+        }
+    }
+
+    private long parquetPartitionFileSize(TableToken tableToken) {
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final int parquetIdx = findParquetPartitionIndex(reader);
+            Assert.assertTrue("expected a parquet partition", parquetIdx >= 0);
+            return reader.getTxFile().getPartitionParquetFileSize(parquetIdx);
         }
     }
 

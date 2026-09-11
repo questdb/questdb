@@ -86,6 +86,10 @@ public class FrameImpl implements Frame {
     private long upcomingTableTxn;
     private boolean create = false;
     private volatile Throwable error;
+    // How far rowCount runs past the live rows: 0 for a PLAIN partition, and the dead space a COMPOSITE one's
+    // pieces have moved off otherwise. Held as the gap rather than as the live count so that every append,
+    // which lands live rows, advances both numbers by moving rowCount alone.
+    private long deadRowCount = 0;
     // When set, a COVERING posting-indexed column is opened as a plain column, so the frame writes its data but adds no
     // index entries.
     private boolean deferCoveredIndexing = false;
@@ -114,6 +118,9 @@ public class FrameImpl implements Frame {
 
     @Override
     public void close() {
+        // Scoped to the open that set it, the same way deferCoveredIndexing is: the next open gets a frame
+        // whose rows are all live, whatever the previous one stated.
+        this.deadRowCount = 0;
         this.columnsMemory = null;
         this.columnTopSink = null;
         this.crv = null;
@@ -211,6 +218,11 @@ public class FrameImpl implements Frame {
         this.create = true;
         this.frameType = COLUMN_CONTIGUOUS_FILE;
         this.timestampIndexAddr = 0;
+    }
+
+    @Override
+    public long getLiveRowCount() {
+        return rowCount - deadRowCount;
     }
 
     @Override
@@ -345,6 +357,12 @@ public class FrameImpl implements Frame {
     }
 
     @Override
+    public void setLiveRowCount(long liveRowCount) {
+        assert liveRowCount >= 0 && liveRowCount <= rowCount;
+        this.deadRowCount = rowCount - liveRowCount;
+    }
+
+    @Override
     public void setOffset(long offset) {
         this.offset = offset;
     }
@@ -383,8 +401,8 @@ public class FrameImpl implements Frame {
         try {
             final FrameColumn targetColumn = targetColumns.getQuick(columnIndex);
             targetColumn.setUpcomingTableTxn(upcomingTableTxn);
-            // rowCount is this frame's own tail.
-            FrameAlgebra.appendColumn(targetColumn, rowCount, source1Columns.getQuick(columnIndex), sourceLo, sourceHi, commitMode);
+            // rowCount is this frame's own tail; getLiveRowCount() is how much of it rows still point at.
+            FrameAlgebra.appendColumn(targetColumn, rowCount, getLiveRowCount(), source1Columns.getQuick(columnIndex), sourceLo, sourceHi, commitMode);
         } catch (Throwable th) {
             onError(columnIndex, th);
         }

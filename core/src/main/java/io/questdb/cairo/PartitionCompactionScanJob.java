@@ -51,8 +51,8 @@ import io.questdb.std.str.Utf8s;
 import java.io.Closeable;
 
 /**
- * Periodically scans every table for idle composite (multi-piece) or Parquet-format partitions and dispatches the
- * appropriate compaction entry point.
+ * Periodically scans every WAL table for idle composite (multi-piece) or Parquet-format partitions and dispatches the
+ * appropriate compaction entry point. Non-WAL tables are out of scope - see {@code scanTable}.
  */
 public class PartitionCompactionScanJob extends SynchronizedJob implements Closeable {
     // Caps how many partitions one sweep hands out: the first sweep after an upgrade can find every
@@ -61,14 +61,18 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     // Bounds the clean-parquet memo.
     private static final int MAX_MEMO_SIZE = 100_000;
     private static final Log LOG = LogFactory.getLog(PartitionCompactionScanJob.class);
-    // Bounds how long a pending-swap record can sit unclaimed. List hygiene, not the interlock:
-    // isSwapPending decides against the staging directory itself.
+    // Bounds how long a pending-swap record can sit unclaimed, and with it how long a queued swap keeps
+    // suppressing a re-dispatch. isSwapPending consults the staging directory only while the record is
+    // still on the list; once expirePendingSwaps drops it the fingerprint is simply absent and the check
+    // says "not pending", whatever the staging directory still holds. So the TTL is the backstop for a
+    // swap a writer never picked up: too short and the sweep re-does work already queued, too long and a
+    // stuck swap blocks the partition from being reconsidered.
     private static final long PENDING_SWAP_MEMO_TTL_MICROS = 60 * Micros.MINUTE_MICROS;
+    private final long checkInterval;
     // Fingerprints of parquet partitions already found to hold no dead space AND no stale schema. Any write
     // to a partition changes its nameTxn or its file size, and any DDL changes the metadata version, so
     // neither a changed partition nor a changed schema can match its own stale entry.
     private final LongHashSet cleanParquetPartitions = new LongHashSet();
-    private final long checkInterval;
     private final Clock clock;
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -77,9 +81,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final long idleTimeoutMicros;
     private final Path other = new Path();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+    private final Path path = new Path();
     // (fingerprint, queuedAtMicros) pairs for swaps handed to a BUSY writer's queue.
     private final LongList pendingSwaps = new LongList();
-    private final Path path = new Path();
     private final Utf8StringSink sidecarName = new Utf8StringSink();
     private final FindVisitor sidecarVisitor = this::copyParquetPartitionSidecar;
     private final TableUtils.SymbolTableProviderFromReader symbolTableProvider = new TableUtils.SymbolTableProviderFromReader();
@@ -89,6 +93,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private long last = 0;
     private int sidecarDstLen;
     private int sidecarSrcLen;
+    // Where the next sweep starts its walk over the table list. A sweep that runs out of budget part way
+    // through leaves this pointing at the first table it did not reach.
+    private int sweepStartTableIndex;
 
     public PartitionCompactionScanJob(CairoEngine engine, FilesFacade ff, Clock clock) {
         this.engine = engine;
@@ -697,6 +704,16 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      * Opens {@code tableToken}'s {@code _txn} standalone and walks its attached partitions.
      */
     private void scanTable(TableToken tableToken, long nowMicros) {
+        if (!tableToken.isWal()) {
+            // The sweep serves WAL tables only. A non-WAL writer holds its transaction open across ticks -
+            // TableUpdateDetails.commitIfMaxUncommittedRowsCountReached() ticks an ILP-over-TCP writer every
+            // cairo.writer.tick.rows.count rows without committing first - so a swap built off a reader
+            // snapshot can always be handed to a writer carrying rows that snapshot never saw. The writer's
+            // own per-commit compaction still runs there; only this out-of-band path stands down. The check
+            // reads one final field of the token, ahead of the _txn stat and the metadata open, so a non-WAL
+            // table costs nothing per sweep.
+            return;
+        }
         path.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME);
         if (!ff.exists(path.$())) {
             return;
@@ -796,13 +813,31 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         sink.put(TableUtils.COMPACTING_DIR_MARKER).put(generation);
     }
 
+    /**
+     * One tick: walks the table list from where the last sweep stopped, handing out at most {@link
+     * #MAX_DISPATCH_PER_SWEEP} dispatches in total.
+     * <p>
+     * The walk resumes rather than restarting because {@code getTableTokens} hands back a stable order - it
+     * walks a hash map whose bin order is a pure function of the table directory names, and {@code
+     * ObjHashSet.get} reads that walk back out of a dense list in the order it went in. Restarting at index 0
+     * every tick therefore let one table holding more qualifying partitions than the budget spend all of it,
+     * tick after tick, and the tables behind it were never opened at all - not compacted late, but not
+     * scanned - for as long as that table's backlog lasted. Resuming walks the whole ring instead, so every
+     * table gets its turn while the per-tick bound stays exactly as it was.
+     */
     private void sweep(long nowMicros) {
         dispatchBudget = MAX_DISPATCH_PER_SWEEP;
         expirePendingSwaps(nowMicros);
         tableTokenBucket.clear();
         engine.getTableTokens(tableTokenBucket, false);
-        for (int i = 0, n = tableTokenBucket.size(); i < n && dispatchBudget > 0; i++) {
+        final int n = tableTokenBucket.size();
+        if (n == 0) {
+            return;
+        }
+        int i = sweepStartTableIndex < n ? sweepStartTableIndex : 0;
+        for (int visited = 0; visited < n && dispatchBudget > 0; visited++) {
             final TableToken tableToken = tableTokenBucket.get(i);
+            i = i + 1 < n ? i + 1 : 0;
             try {
                 scanTable(tableToken, nowMicros);
             } catch (CairoException | TableReferenceOutOfDateException e) {
@@ -812,5 +847,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 txReader.clear();
             }
         }
+        // A sweep that got all the way round leaves this where it started, so a system under no dispatch
+        // pressure keeps the order it has always had. A table created or dropped in between shifts the
+        // indices, which can repeat or skip one table for a single tick - one interval's delay at worst,
+        // and the walk still covers the ring.
+        sweepStartTableIndex = i;
     }
 }

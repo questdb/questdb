@@ -178,7 +178,7 @@ public class ColumnPurgeOperator implements Closeable {
     private boolean hasReadersOnGeometryGeneration(int partitionDirLen, int generation, long updateTxn) {
         path.trimTo(partitionDirLen);
         final long firstWriterTxn;
-        try (PartitionGeometryFile geometryFile = new PartitionGeometryFile(MemoryTag.NATIVE_SQL_COMPILER)) {
+        try (PartitionGeometryFile geometryFile = new PartitionGeometryFile(MemoryTag.NATIVE_TABLE_READER)) {
             geometryFile.read(ff, path, generation, 0);
             firstWriterTxn = geometryFile.getWriterTxn();
         } catch (CairoException ex) {

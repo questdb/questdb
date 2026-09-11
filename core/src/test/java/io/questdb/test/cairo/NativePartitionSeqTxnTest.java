@@ -845,6 +845,52 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompositePartitionSeqTxnResolvesOnAColdReader() throws Exception {
+        // getSeqTxn was the one geometry accessor reading the already-resolved cache instead of
+        // resolving, so a reader that had not yet opened the partition read -1 and table_partitions
+        // rendered its seqTxn null. The cursor reads seqTxn BEFORE the accessors that do resolve, so
+        // the same query answered differently on a cold and on a warm reader.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T00', 60*1_000_000L), x FROM long_sequence(600)");
+            drainWalQueue();
+            // A later day, so 2024-01-01 stops being the active partition.
+            execute("INSERT INTO t VALUES ('2024-01-03T00:00:00', 1)");
+            drainWalQueue();
+            // Backdated: merge-append rewrites 2024-01-01's owning piece at the shared file tail, which
+            // leaves the partition composite with its stamp in _geometry, not in the offset-3 word.
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T02', 1_000_000L), x FROM long_sequence(200)");
+            drainWalQueue();
+
+            final long warmSeqTxn;
+            try (TableReader reader = getReader("t")) {
+                Assert.assertTrue("fixture left 2024-01-01 plain", reader.getTxFile().isPartitionComposite(0));
+                // Resolve first, the way a reader that has already served a query over this partition
+                // would have; every other geometry accessor does this for the caller.
+                reader.getGeometry().getPieceCount(0);
+                warmSeqTxn = reader.getGeometry().getSeqTxn(0);
+                Assert.assertTrue("a warm reader lost the stamp too", warmSeqTxn > 0);
+            }
+
+            engine.releaseInactive();
+            try (TableReader reader = getReader("t")) {
+                Assert.assertEquals("a cold reader must resolve the composite partition's stamp",
+                        warmSeqTxn, reader.getGeometry().getSeqTxn(0));
+            }
+
+            engine.releaseInactive();
+            // One piece, but it sits at a non-zero row offset: merge-append rewrote the owning piece at
+            // the file tail and abandoned the copy in front of it, which is what makes the partition
+            // composite here. seqTxn must render as the stamp, not null.
+            assertQuery("SELECT index, pieceCount, seqTxn FROM table_partitions('t') WHERE index = 0")
+                    .noLeakCheck().noRandomAccess().sizeMayVary()
+                    .returns("index\tpieceCount\tseqTxn\n" +
+                            "0\t1\t" + warmSeqTxn + "\n");
+        });
+    }
+
+    @Test
     public void testShowPartitionsDoesNotLeakSeqTxnAsFileSize() throws Exception {
         // Reader regression: every native partition now carries a non-(-1) seqTxn in offset 3, but
         // table_partitions gates the parquet-file-size read on the format bit, so it must still show

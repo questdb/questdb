@@ -84,11 +84,21 @@ MAKE-PLAIN commits at T2                 (E -> row count, folder stops being com
 TRIM-FILES                               (files cut down to the row count - no wait of its own)
 ```
 
-TRIM-FILES needs no wait of its own because **a reader maps a folder's column files only as far as its
-highest live piece reaches** - `max(rowOffset + rowCount)` over the pieces of the geometry record it
+TRIM-FILES needs no wait of its own because **a `TableReader` maps a folder's column files only as far as
+its highest live piece reaches** - `max(rowOffset + rowCount)` over the pieces of the geometry record it
 resolved, never `E` (see `PartitionGeometry#getLiveFileExtent` and `TableReader#mappedRowCount`). Nothing
-resolves a row outside a piece, so the dead space between the last live piece and `E` is bytes no reader
-can ask for. Once MAKE-PLAIN's own check has cleared - no reader below the transaction that published the
+resolves a row outside a piece, so the dead space between the last live piece and `E` is bytes no
+`TableReader` can ask for.
+
+This is a claim about `TableReader` only, not about every consumer of a folder's files. Writer-side
+consumers do size to `E` - squash, MOVE-TAIL and REWRITE inside `TableWriter`, plus `O3PartitionJob`,
+`RebuildColumnBase`, `ConvertOperatorImpl` and `TableSnapshotRestore` (all via
+`getPartitionPhysicalRowCount`, which returns `E` for a composite folder). What keeps those safe is not
+live-extent mapping: they either run on the writer thread, serialised against TRIM-FILES, or hold the
+scoreboard txn they were dispatched at. A new consumer that sizes to `E` and can run concurrently with
+TRIM-FILES would need its own check - the argument below does not cover it.
+
+Once MAKE-PLAIN's own check has cleared - no reader below the transaction that published the
 current, one-piece record - every live and arriving reader resolves either that record or the plain folder
 MAKE-PLAIN just committed, and both map exactly the live row count. That is precisely what TRIM-FILES cuts
 to.
@@ -124,5 +134,7 @@ rows are always moved to a fresh location first (which nothing has ever pointed 
 write to without asking), and only afterward is `E` itself lowered or a file shortened - both pure
 bookkeeping moves, gated on a check that no reader still needs the old state. MAKE-PLAIN and TRIM-FILES
 share ONE check (see above): lowering `E` and shortening a file both wait for the readers that still see
-the pieces MOVE-TAIL removed, and nothing else - a reader maps only as far as its highest live piece
-reaches, so the bytes TRIM-FILES cuts are already unreachable for every reader of the current shape.
+the pieces MOVE-TAIL removed, and nothing else - a `TableReader` maps only as far as its highest live
+piece reaches, so the bytes TRIM-FILES cuts are already unreachable for every `TableReader` of the
+current shape. The writer-side consumers that do size to `E` are covered by writer-thread serialisation
+and the scoreboard instead; see the list above before adding another.

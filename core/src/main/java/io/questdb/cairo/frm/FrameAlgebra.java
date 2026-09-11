@@ -159,8 +159,14 @@ public class FrameAlgebra {
 
     /**
      * One column's share of {@link #append}, which is what a frame runs per column task.
+     *
+     * @param targetRowCount      the target's physical extent {@code E}: the file row this append writes at
+     * @param targetLiveRowCount  how many of those rows are LIVE. Equal to {@code targetRowCount} for a PLAIN
+     *                            target; smaller for a COMPOSITE one, whose pieces have moved off part of its
+     *                            extent. A column top describes a flat run from row 0, so it can only stand in
+     *                            for the source's leading NULLs while the two agree - see below.
      */
-    public static void appendColumn(FrameColumn targetColumn, long targetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
+    public static void appendColumn(FrameColumn targetColumn, long targetRowCount, long targetLiveRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         int columnType = sourceColumn.getColumnType();
         if (columnType != targetColumn.getColumnType()) {
             throw new UnsupportedOperationException();
@@ -170,7 +176,11 @@ public class FrameAlgebra {
         final long nullPaddingRowCount = Math.max(0, Math.min(sourceColumnTop, sourceHi) - sourceLo);
         if (nullPaddingRowCount > 0) {
             long targetColTop = targetColumn.getColumnTop();
-            if (targetColTop == targetRowCount && targetColumn.canExtendColumnTop()) {
+            // Two conditions, one per number: the target column reaches this append with no data of its own
+            // (its top runs all the way to E), and every row below E is live. A COMPOSITE target fails the
+            // second - the dead rows its pieces moved off sit between row 0 and E - and a top pushed past
+            // them would claim to describe rows that are not this run's NULLs.
+            if (targetColTop == targetRowCount && targetRowCount == targetLiveRowCount) {
                 // Increase target column top
                 targetColumn.addTop(nullPaddingRowCount);
             } else {

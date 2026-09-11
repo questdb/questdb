@@ -349,6 +349,18 @@ public class ConvertOperatorImpl implements Closeable {
                                 );
                                 int pathTrimToLen = path.size();
 
+                                // A composite partition's dead space (a relocated piece's old, superseded copy) must
+                                // never be read - it can be short, missing, or simply garbage relative to what this.
+                                final boolean srcPieceable = ColumnType.isFixedSize(existingType) || existingType == ColumnType.STRING || existingType == ColumnType.VARCHAR;
+                                final boolean dstFixed = ColumnType.isFixedSize(newType);
+                                final boolean dstVarStringy = newType == ColumnType.STRING || newType == ColumnType.VARCHAR;
+                                final boolean pieceWalkable = srcPieceable && (dstFixed || dstVarStringy);
+                                // Those four only read the column types, so they cannot throw and belong outside the
+                                // descriptor guard. The geometry lookup they gate CAN throw, so it goes inside it -
+                                // otherwise it would run after the catch closes and before an owner takes the four
+                                // descriptors, and a throw there would leak all four.
+                                final int pieceCount;
+
                                 long srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
                                 try {
                                     openColumnsRO(columnName, partitionTimestamp, existingColIndex, existingType, pathTrimToLen);
@@ -366,20 +378,14 @@ public class ConvertOperatorImpl implements Closeable {
                                             .$(", rowCount=").$(rowCount)
                                             .I$();
                                     totalRows += rowCount;
+                                    pieceCount = pieceWalkable
+                                            ? tableWriter.getGeometry().getPieceCount(partitionIndex)
+                                            : 1;
                                 } catch (Throwable th) {
                                     closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
                                     throw th;
                                 }
 
-                                // A composite partition's dead space (a relocated piece's old, superseded copy) must
-                                // never be read - it can be short, missing, or simply garbage relative to what this.
-                                final boolean srcPieceable = ColumnType.isFixedSize(existingType) || existingType == ColumnType.STRING || existingType == ColumnType.VARCHAR;
-                                final boolean dstFixed = ColumnType.isFixedSize(newType);
-                                final boolean dstVarStringy = newType == ColumnType.STRING || newType == ColumnType.VARCHAR;
-                                final boolean pieceWalkable = srcPieceable && (dstFixed || dstVarStringy);
-                                final int pieceCount = pieceWalkable
-                                        ? tableWriter.getGeometry().getPieceCount(partitionIndex)
-                                        : 1;
                                 if (dstFixed && pieceWalkable && pieceCount > 1) {
                                     // For a fixed-width destination, walk the partition's own pieces (its live
                                     // sections) instead of the flat [columnTop, maxRow) range: convert each piece from

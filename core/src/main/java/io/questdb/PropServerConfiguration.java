@@ -425,8 +425,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
     private final boolean o3PartitionMergeAppendEnabled;
-    private final int o3PartitionPreSplitMaxCuts;
     private final boolean o3PartitionOverwriteControlEnabled;
+    private final int o3PartitionPreSplitMaxCuts;
     private final int o3PartitionPurgeListCapacity;
     private final int o3PartitionQueueCapacity;
     private final long o3PartitionSplitMinSize;
@@ -450,9 +450,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long partitionCompactionDeadMinSize;
     private final double partitionCompactionDeadRowsRatio;
     private final long partitionCompactionDeclineBackoffMax;
-    private final long partitionCompactionIdleTimeout;
     private final int partitionCompactionHotCommits;
     private final long partitionCompactionHotTime;
+    private final long partitionCompactionIdleTimeout;
     private final int partitionCompactionMoveTailMinGain;
     private final int partitionCompactionPieceThreshold;
     private final int partitionCompactionPrefixMinPercent;
@@ -4796,13 +4796,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getO3PartitionPreSplitMaxCuts() {
-            return o3PartitionPreSplitMaxCuts;
+        public int getO3OpenColumnQueueCapacity() {
+            return o3OpenColumnQueueCapacity;
         }
 
         @Override
-        public int getO3OpenColumnQueueCapacity() {
-            return o3OpenColumnQueueCapacity;
+        public int getO3PartitionPreSplitMaxCuts() {
+            return o3PartitionPreSplitMaxCuts;
         }
 
         @Override
@@ -4911,11 +4911,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getPartitionCompactionIdleTimeout() {
-            return partitionCompactionIdleTimeout;
-        }
-
-        @Override
         public int getPartitionCompactionHotCommits() {
             return partitionCompactionHotCommits;
         }
@@ -4923,6 +4918,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getPartitionCompactionHotTime() {
             return partitionCompactionHotTime;
+        }
+
+        @Override
+        public long getPartitionCompactionIdleTimeout() {
+            return partitionCompactionIdleTimeout;
         }
 
         @Override

@@ -428,6 +428,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 } else if (isComposite) {
                     // A COMPOSITE partition's file rows are not in timestamp order - a merge-append parks a rewritten
                     // piece at the tail and leaves the rows it superseded behind as dead space - so file row 0 and
+                    // the last file row are not the partition's minimum and maximum timestamps. The geometry's piece
+                    // list IS in timestamp order and carries each piece's bounds, so take the first piece's low
+                    // bound and the last piece's high bound instead of reading the timestamp column file.
                     final PartitionGeometry geometry = tableReader.getGeometry();
                     minTimestamp = geometry.getPieceTimestampLo(partitionIndex, 0);
                     maxTimestamp = geometry.getPieceTimestampHi(partitionIndex, geometry.getPieceCount(partitionIndex) - 1);

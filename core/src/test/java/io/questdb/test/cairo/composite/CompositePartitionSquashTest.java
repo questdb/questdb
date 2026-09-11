@@ -131,6 +131,41 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The merged partition's stamp. {@code squashSplitPartitions} folds max(sources' seqTxn) into the
+     * target, and a composite source keeps its stamp in {@code _geometry} rather than in the offset-3
+     * word. {@code Math.max(0, ...)} floors a -1 read away, so a source whose stamp does not come back
+     * would leave the merged partition reporting a seqTxn LOWER than one that wrote rows now inside it,
+     * and unchanged across a fold that did change its bytes - both of which
+     * {@link io.questdb.cairo.TxReader#getNativePartitionSeqTxn} promises never happens.
+     * <p>
+     * This holds today, and held before {@code PartitionGeometry.getSeqTxn} started resolving, but only
+     * by an accident of ordering: the {@code isComposite} call a few lines above each read has already
+     * pulled the slot into the resolved cache, so the old cache-only lookup happened to find it. Moving
+     * or dropping that call would have silently dropped the stamp. Pin the outcome, not the ordering.
+     */
+    @Test
+    public void testFoldCarriesACompositeSourcesSeqTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            createSplitDay();
+            // Only the LAST sibling goes composite, so it is a source and the fold's target stays plain -
+            // the one shape where the merged stamp is written into the offset-3 word and is observable.
+            makeComposite("T11:00:00");
+
+            Assert.assertFalse("fixture made the target composite", isComposite(DAY));
+            final long targetSeqTxnBefore = seqTxnOfSibling(0);
+            final long sourceSeqTxn = seqTxnOfSibling(2);
+            Assert.assertTrue("fixture left the composite source unstamped", sourceSeqTxn > 0);
+            Assert.assertTrue("the composite source must out-rank the target or the fold cannot show the drop",
+                    sourceSeqTxn > targetSeqTxnBefore);
+
+            assertFoldPreservesTheDay();
+
+            Assert.assertFalse("folding into a plain target left it composite", isComposite(DAY));
+            Assert.assertEquals("the fold dropped the composite source's stamp", sourceSeqTxn, seqTxnOfSibling(0));
+        });
+    }
+
     @Test
     public void testPlainSourceIntoCompositeTarget() throws Exception {
         assertMemoryLeak(() -> {
@@ -324,6 +359,34 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
     private static long partitionCountOfDay() throws Exception {
         return scalar("SELECT count() FROM table_partitions('x') WHERE name LIKE '" + DAY + "%'" +
                 " AND NOT name LIKE '%.detached'");
+    }
+
+    /**
+     * The resolved seqTxn of the day's sibling at {@code ordinal}: a composite one keeps its stamp in
+     * {@code _geometry}, a plain one in the offset-3 word. Resolves the geometry first, so what the
+     * fixture reads back does not itself depend on the accessor under test.
+     */
+    private static long seqTxnOfSibling(int ordinal) throws Exception {
+        final long dayLo = MicrosTimestampDriver.floor(DAY + "T00:00:00.000000Z");
+        final TableToken tt = engine.verifyTableName("x");
+        try (TableReader reader = engine.getReader(tt)) {
+            final TxReader txReader = reader.getTxFile();
+            int seen = 0;
+            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
+                if (txReader.getLogicalPartitionTimestamp(txReader.getPartitionTimestampByIndex(i)) != dayLo) {
+                    continue;
+                }
+                if (seen++ != ordinal) {
+                    continue;
+                }
+                if (!txReader.isPartitionComposite(i)) {
+                    return txReader.getNativePartitionSeqTxn(i);
+                }
+                reader.getGeometry().getPieceCount(i);
+                return reader.getGeometry().getSeqTxn(i);
+            }
+        }
+        return -1;
     }
 
     private static long rowsOfDay() throws Exception {

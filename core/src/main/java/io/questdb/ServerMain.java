@@ -810,6 +810,8 @@ public class ServerMain implements Closeable {
 
                         // Own single thread, never the shared write pool: a composite partition's REWRITE copies the
                         // whole partition inline on the worker that picked the job up, and on sharedPoolWrite that
+                        // worker is one of the few running WAL apply and the O3 jobs, so the copy would hold up
+                        // ingestion for as long as it takes.
                         final PartitionCompactionScanJob partitionCompactionScanJob = new PartitionCompactionScanJob(engine);
                         final WorkerPool compactionPool = getWorkerPool(
                                 new PartitionCompactionPoolConfiguration(config.getMetrics()),
