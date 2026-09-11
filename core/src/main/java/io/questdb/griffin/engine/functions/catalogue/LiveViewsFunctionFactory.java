@@ -742,23 +742,24 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                 getIntervalUnit(definition.getFlushEveryIntervalUnit());
                         case COLUMN_IN_MEMORY_INTERVAL_UNIT -> getIntervalUnit(definition.getInMemoryIntervalUnit());
                         case COLUMN_VIEW_SQL -> definition.getViewSql();
-                        // A format-blocked view reports its block here as well as
-                        // through the two recovery columns below, because it reports
-                        // view_status invalid and an operator reading that status
-                        // reads this column next. Read off the instance rather than
-                        // written into _lv.s: LiveViewInstance.getInvalidationReason
-                        // stays the durable field, so a state copy cannot persist a
-                        // derived block as a terminal invalidation.
+                        // A blocked view - format or refused rebuild - reports its
+                        // block here as well as through the two recovery columns
+                        // below, because it reports view_status invalid and an
+                        // operator reading that status reads this column next. Read
+                        // off the instance rather than written into _lv.s:
+                        // LiveViewInstance.getInvalidationReason stays the durable
+                        // field, so a state copy cannot persist a derived block as a
+                        // terminal invalidation.
                         case COLUMN_INVALIDATION_REASON -> {
                             final CharSequence reason = instance.getInvalidationReason();
                             yield reason != null ? reason : instance.getCheckpointRecoveryReason();
                         }
-                        // Where the view stands against the checkpoint format
-                        // boundary, and what tells a blocked view apart from a
-                        // durably invalidated one under the same view_status. Both
-                        // NULL for a view on this build's own format, which is every
-                        // view until a timeline written by a build with another
-                        // layout turns up.
+                        // Why the view's recovery stopped - blocked on a format this
+                        // build cannot read, or rebuild_blocked on a rebuild that would
+                        // have dropped rows it retains - and what tells a blocked view
+                        // apart from a durably invalidated one under the same
+                        // view_status. Both NULL for a view whose recovery finished or
+                        // never had to run.
                         case COLUMN_CHECKPOINT_RECOVERY_PHASE ->
                                 LiveViewCheckpointRecoveryPhase.name(instance.getCheckpointRecoveryPhase());
                         case COLUMN_CHECKPOINT_RECOVERY_REASON -> instance.getCheckpointRecoveryReason();

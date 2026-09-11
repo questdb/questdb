@@ -555,8 +555,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         // Live views publish lv_consumed_seqTxn through this purge floor
-        // alongside mat-view consumers. Dropped, invalid and format-blocked views
-        // all release their floor, mirroring the mat-view arm above. Invalidation
+        // alongside mat-view consumers. Dropped, invalid and blocked views - a
+        // format block or a refused rebuild - all release their floor, mirroring
+        // the mat-view arm above. Invalidation
         // is terminal for a live view - there is no in-place revalidation path,
         // the refresh worker permanently skips an invalid view, and its
         // lvConsumed / head checkpoint would otherwise freeze forever. Keeping
@@ -564,11 +565,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // block base WAL purging indefinitely while the base keeps ingesting.
         // Re-CREATE requires a DROP first and seeds through an MVCC snapshot
         // reader, not the raw base WAL, so the retained WAL is never load-bearing.
-        // A format-blocked view releases for the same reason and not because its
-        // WAL is worthless: its floor is frozen too, so any hold it takes grows
-        // without bound, and it grows the base table WAL that every other writer
-        // and view on that base shares. See LiveViewCheckpointRecoveryPhase for
-        // what that costs a view whose format later becomes readable again.
+        // A blocked view releases for the same reason and not because its WAL is
+        // worthless: its floor is frozen too, so any hold it takes grows without
+        // bound, and it grows the base table WAL that every other writer and view
+        // on that base shares. See LiveViewCheckpointRecoveryPhase for what that
+        // costs a view whose recovery could later have resumed from its timeline.
         // Skip the LV arm when no LiveViewRefreshJob will run - the feature is off, or the
         // dedicated live view refresh pool has no workers. In either case nothing advances
         // lvConsumedSeqTxn / headCheckpointBaseSeqTxn, and clamping to those frozen values would

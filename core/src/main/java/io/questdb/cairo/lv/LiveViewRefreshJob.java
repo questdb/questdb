@@ -321,6 +321,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // at the start of each repair; repairs never nest, so it cannot be observed
     // mid-walk.
     private final LiveViewCheckpointRepairPublication repairPublication = new LiveViewCheckpointRepairPublication();
+    // Whether the whole-view rebuild currently executing - or the last one, once it has
+    // returned - would drop rows the view retains. One instance per worker, armed at the
+    // start of each whole-view rebuild and left holding its evidence afterwards, which is
+    // what a caller reads to explain a refusal. Rebuilds never nest.
+    private final LiveViewRebuildRestatementGuard restatementGuard = new LiveViewRebuildRestatementGuard();
     // Reusable counter for the skip a resumed localized repair takes over the rows of
     // its resume group that a prior turn already folded.
     private final RecordCursor.Counter repairSkipCounter = new RecordCursor.Counter();
@@ -797,6 +802,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
         return processNotifications();
+    }
+
+    /**
+     * Test-only: the restatement guard as the last whole-view rebuild this worker ran left
+     * it - whether it compared or abstained, what it counted, and the verdict of a refusal.
+     */
+    @TestOnly
+    public LiveViewRebuildRestatementGuard rebuildRestatementGuardForTest() {
+        return restatementGuard;
     }
 
     /**
@@ -8334,6 +8348,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * rebuild never localizes - every one of its callers passes a non-DATA trigger, which
      * the plan refuses to derive floors from.
      * <p>
+     * That whole-range replacement is also what makes a full rebuild dangerous: the prefix
+     * the incremental path froze is exactly what it deletes, and what the recompute cannot
+     * put back. So a full rebuild runs behind {@link LiveViewRebuildRestatementGuard}, which
+     * refuses it - by throwing {@link LiveViewRebuildRefusedException} before anything durable
+     * moves - when the view retains rows the snapshot has no history for, or when the
+     * recompute reproduces fewer rows below the durable frontier than the view holds. A full
+     * rebuild also retires its timeline only after that second check, just before it commits,
+     * rather than before its scan, so a refusal leaves the timeline standing.
+     * <p>
      * A localized rebuild runs one turn at a time. Its interval is finite but can
      * still be dense enough to hold more rows than one refresh turn should carry,
      * so the replay stops once it crosses the per-turn budget, parks everything the
@@ -8781,6 +8804,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // forward drain left them. A fault there costs the candidate, not the view.
                 windowStateDirty = true;
             }
+            if (fullRebuild) {
+                // A whole-view rebuild replaces the view's output from its lower bound up with
+                // what the base rows this snapshot holds produce. After TTL, DROP/DETACH
+                // PARTITION or TRUNCATE - which the incremental path walks past, keeping the
+                // rows it derived from the removed history - that drops rows the view has
+                // published and restarts accumulations it carried forward. The guard decides
+                // whether it would, before anything moves: the history floor here, from
+                // metadata alone, and the row shortfall once the replay below has counted what
+                // it reproduces. A refusal throws, and the rebuild's caller stops the view. It
+                // runs in the prologue so a refusal unwinds through the prologue's cleanup and
+                // leaves the timeline, the runtime and the view's table as it found them.
+                armRebuildRestatementGuard(instance, reader, effectiveSeqTxn);
+                if (restatementGuard.isHistoryFloorBreached()) {
+                    restatementGuard.refuse(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR);
+                    throw LiveViewRebuildRefusedException.instance();
+                }
+            }
             try {
                 // From here on the replay's own finally blocks below own everything the
                 // prologue acquired - the inner one the stored-row cursor and the keyed merge
@@ -8830,6 +8870,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // First turn only: a repair that yielded already retired what its change
                 // unsealed, and the timeline it may still splice into is the one its
                 // capture pinned.
+                //
+                // A whole-view rebuild retires later, once its scan has shown the guard it
+                // restates nothing and just before its replacement commits (see
+                // prepareWholeViewReplacement). Its timeline is the one thing a refusal
+                // must leave standing: a view that stopped over a base schema change or a
+                // mid-drain fault restores from it on the next restart. Nothing between here
+                // and there reads the head or the timeline, and nothing durable moves.
                 if (!resuming) {
                     if (timelineCapture == null && localized) {
                         // Localized repair with no capture to splice through - the view's
@@ -8841,7 +8888,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // correction. The durable marker this writes forces a mid-repair
                         // crash to rebuild from the applied base.
                         prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, emitLowTs);
-                    } else {
+                    } else if (!fullRebuild) {
                         retireCheckpointStateOnO3(instance, timelineCapture == null);
                     }
                     if (session != null) {
@@ -9200,6 +9247,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         copier.copy(executionContext, outRecord, row);
                                         row.append();
                                         appendedRows++;
+                                        if (fullRebuild) {
+                                            restatementGuard.observe(ts);
+                                        }
                                         if (timelineCapture != null) {
                                             // Keep the freeze cursor's row position in step:
                                             // the next boundary it freezes sits below the row
@@ -9278,6 +9328,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // yielding turn counts the row it stopped on, which the next
                                 // turn reads again - the only double-count, and one row wide.
                                 o3ScanRows += filter != null ? filteringCursor.getBaseRowsConsumed() : scannedRows;
+                            }
+                            if (fullRebuild) {
+                                // The scan has emitted every row the replacement would commit,
+                                // so the shortfall is decided here, while the rows still sit
+                                // uncommitted in the writer: a refusal unwinds through the
+                                // finally below, which closes the writer and rolls them back.
+                                prepareWholeViewReplacement(instance);
                             }
 
                             // Every candidate root the repair owed is frozen and the runtime
@@ -9455,6 +9512,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // rebuild keeps the no-op: without a convergent trigger ts the emptiness is a
                     // frozen prefix (DROP PARTITION / TTL / TRUNCATE), not a deletion to propagate,
                     // and the pre-O3 accumulator state must survive.
+                    //
+                    // A full rebuild clears the view only when the guard agrees the emptiness is
+                    // not a restatement: a probe that found nothing reproduces nothing, so any row
+                    // the view retains is a shortfall the guard has to have abstained over.
+                    if (fullRebuild) {
+                        prepareWholeViewReplacement(instance);
+                    }
                     final long deleteLowTs = fullRebuild ? viewLowerBoundTimestamp : triggerLowTs;
                     clearWindowState(windowFactory, anchorWindow);
                     markWindowStateDirty(instance);
@@ -12028,6 +12092,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     true
             );
             instance.recordCheckpointRestoreRebuilt();
+        } catch (LiveViewRebuildRefusedException refused) {
+            // Not a failure: the rebuild would have dropped rows the view retains, and it
+            // stopped before anything moved. The view keeps its rows and stays valid, and
+            // the next restart asks the same question again.
+            blockRefusedRebuild(instance, cause);
+            instance.recordCheckpointRestoreRebuildBlocked();
         } catch (Throwable t) {
             LOG.critical().$("live view restart applied-base rebuild failed [view=")
                     .$(instance.getDefinition().getViewName())
@@ -12035,6 +12105,210 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.recordCheckpointRestoreBlocked();
             instance.setPendingInvalidationReason("live view restart timeline recovery failed");
         }
+    }
+
+    /**
+     * Arms {@link #restatementGuard} for one whole-view rebuild at the pinned snapshot
+     * {@code effectiveSeqTxn}, or records why it compares nothing. See
+     * {@link LiveViewRebuildRestatementGuard} for both checks and every abstention.
+     * <p>
+     * The view's durable coordinate is taken as the highest of its three watermarks: the
+     * applied watermark its table is known to hold, the processed one and the lead's. A
+     * snapshot behind any of them may lack base transactions whose output the table holds -
+     * a view draining raw base WAL can run ahead of the base's own apply - so the guard stands
+     * down rather than read their absence as a loss. The backlog it classifies starts at the
+     * lowest of the three instead, so a transaction whose output the table may or may not hold
+     * is classified either way.
+     * <p>
+     * The durable evidence comes off the view's table and the base evidence off the pinned
+     * reader, both from their transaction files: nothing here scans a row.
+     */
+    private void armRebuildRestatementGuard(LiveViewInstance instance, TableReader reader, long effectiveSeqTxn) {
+        if (!engine.getConfiguration().isLiveViewRebuildRestatementGuardEnabled()) {
+            restatementGuard.disarm(LiveViewRebuildRestatementGuard.ABSTAIN_DISABLED);
+            return;
+        }
+        final long durableRows;
+        final long durableMinTimestamp;
+        final long durableMaxTimestamp;
+        try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+            durableRows = lvReader.size();
+            durableMinTimestamp = lvReader.getMinTimestamp();
+            durableMaxTimestamp = lvReader.getMaxTimestamp();
+        }
+        if (durableRows == 0) {
+            restatementGuard.disarm(LiveViewRebuildRestatementGuard.ABSTAIN_NOTHING_RETAINED);
+            return;
+        }
+        final long appliedWatermark = instance.getAppliedWatermark();
+        final long durableSeqTxn = Math.max(
+                appliedWatermark,
+                Math.max(instance.getLastProcessedSeqTxn(), instance.getRefreshedUpToSeqTxn())
+        );
+        if (effectiveSeqTxn < durableSeqTxn) {
+            standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_SNAPSHOT_BEHIND);
+            return;
+        }
+        switch (classifyRebuildBacklog(instance, reader, appliedWatermark, effectiveSeqTxn, durableMaxTimestamp)) {
+            case LiveViewRebuildRestatementGuard.BACKLOG_MAY_REMOVE ->
+                    standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE);
+            case LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE ->
+                    standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE);
+            default -> restatementGuard.arm(
+                    durableRows,
+                    durableMinTimestamp,
+                    durableMaxTimestamp,
+                    reader.size(),
+                    reader.getMinTimestamp()
+            );
+        }
+    }
+
+    /**
+     * Stops a view whose whole-view rebuild {@link #restatementGuard} refused, with an
+     * operator reason naming the route that asked for the rebuild and the evidence that
+     * refused it. The refusal left everything as the rebuild found it; this only records
+     * the disposition, which the refresh gate, {@code WalPurgeJob} and {@code live_views()}
+     * read from here on. See {@link LiveViewCheckpointRecoveryPhase#REBUILD_BLOCKED}.
+     */
+    private void blockRefusedRebuild(LiveViewInstance instance, CharSequence cause) {
+        final StringSink reason = Misc.getThreadLocalSink();
+        reason.put("rebuilding the view from its base table would drop rows it retains [cause=").put(cause).put("]: ");
+        restatementGuard.appendEvidence(
+                reason,
+                ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType())
+        );
+        reason.put("; refresh is stopped and the view's rows, checkpoints and watermarks are kept. ")
+                .put("A restart retries the recovery. DROP and re-create the view to rebuild it from the base rows ")
+                .put("available today, or set cairo.live.view.rebuild.restatement.guard.enabled=false to let rebuilds ")
+                .put("follow the base table");
+        LOG.critical().$("live view rebuild from the applied base refused, it would drop rows the view retains [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", cause=").$(cause)
+                .$(", reason=").$(reason).I$();
+        instance.markCheckpointRebuildBlocked(reason);
+    }
+
+    /**
+     * Classifies the base transactions a whole-view rebuild at {@code toSeqTxn} folds in beyond
+     * the ones the view's table is known to hold - {@code (fromSeqTxn, toSeqTxn]} - by whether
+     * any of them can legitimately lower the view's output at or below {@code frontierTs}.
+     * <p>
+     * Three kinds can, because incremental refresh propagates each of them rather than freezing
+     * the rows it takes: a REPLACE_RANGE commit whose delete band reaches the frontier, a
+     * materialized view's TRUNCATE - its full refresh, which the apply side answers by
+     * invalidating the view anyway - and, for a view with a filter, any commit on a
+     * deduplicating base that reaches the frontier, since its replacement row may fail the
+     * filter the row it replaced passed. Everything else only adds rows or removes them the way
+     * the incremental path freezes: TRUNCATE, DROP/DETACH PARTITION and the TTL eviction that
+     * rides on a DATA commit. Following one of those is exactly the restatement the guard is
+     * for. UPDATE invalidates the view on the apply side and never reaches a rebuild, and a
+     * structural entry ({@code walId <= 0}) changes the schema and removes no row.
+     * <p>
+     * The walk reads commit metadata only, off the WAL-E event files, as
+     * {@link #computeApplyAheadBounds} does. A lost base WAL segment - which one of the
+     * rebuild's routes recovers from - leaves it unreadable, and that stops the checks only for
+     * a base that can produce one of the three kinds at all. REPLACE_RANGE reaches a table only
+     * through a materialized view's refresh; a live view's own table, the only other one that
+     * takes it, cannot be a live view's base. The filter case needs a deduplicating base. Any
+     * other base's backlog can only add rows or remove them the frozen way, read or not.
+     * <p>
+     * The dedup flag is the snapshot's. A backlog that disabled dedup after commits that used
+     * it reads as non-deduplicating; that costs a comparison where the guard should have
+     * abstained - a refusal a restart retries - never a restatement.
+     */
+    private int classifyRebuildBacklog(
+            LiveViewInstance instance,
+            TableReader reader,
+            long fromSeqTxn,
+            long toSeqTxn,
+            long frontierTs
+    ) {
+        if (fromSeqTxn >= toSeqTxn) {
+            return LiveViewRebuildRestatementGuard.BACKLOG_ADDITIVE;
+        }
+        final TableToken baseToken = instance.getDefinition().getBaseTableToken();
+        final boolean isMatViewBase = baseToken.isMatView();
+        final boolean isFilterFlippable = instance.getCompiledPlan().getFilter() != null
+                && hasDedupKeys(reader.getMetadata());
+        final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
+        try (
+                TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn);
+                // Every arm out of this walk closes the reader with the cursor - see the note
+                // on walEventReader.
+                WalEventReader eventReader = walEventReader
+        ) {
+            while (txnCursor.hasNext()) {
+                final long txn = txnCursor.getTxn();
+                if (txn > toSeqTxn) {
+                    break;
+                }
+                final int walId = txnCursor.getWalId();
+                if (walId <= 0) {
+                    continue;
+                }
+                walPath.of(engine.getConfiguration().getDbRoot())
+                        .concat(baseToken)
+                        .concat(WAL_NAME_BASE).put(walId).slash().put(txnCursor.getSegmentId());
+                final WalEventCursor eventCursor =
+                        WalTxnDetails.openWalEFile(walPath, eventReader, txnCursor.getSegmentTxn(), txn);
+                final byte type = eventCursor.getType();
+                if (!WalTxnType.isDataType(type)) {
+                    if (isMatViewBase && type == WalTxnType.TRUNCATE) {
+                        return LiveViewRebuildRestatementGuard.BACKLOG_MAY_REMOVE;
+                    }
+                    continue;
+                }
+                final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                final long deleteLo = effectiveReplaceRangeDeleteLo(dataInfo, viewLowerBoundTimestamp);
+                if (deleteLo != Numbers.LONG_NULL && deleteLo <= frontierTs) {
+                    return LiveViewRebuildRestatementGuard.BACKLOG_MAY_REMOVE;
+                }
+                if (isFilterFlippable && dataInfo.getMinTimestamp() <= frontierTs) {
+                    return LiveViewRebuildRestatementGuard.BACKLOG_MAY_REMOVE;
+                }
+            }
+        } catch (CairoException e) {
+            final boolean isLegitimateRemovalPossible = isMatViewBase || isFilterFlippable;
+            LOG.info().$("live view could not read the rebuild's base backlog [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", fromSeqTxn=").$(fromSeqTxn)
+                    .$(", toSeqTxn=").$(toSeqTxn)
+                    .$(", guardAbstains=").$(isLegitimateRemovalPossible)
+                    .$(", error=").$safe(e.getFlyweightMessage()).I$();
+            return isLegitimateRemovalPossible
+                    ? LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE
+                    : LiveViewRebuildRestatementGuard.BACKLOG_ADDITIVE;
+        }
+        return LiveViewRebuildRestatementGuard.BACKLOG_ADDITIVE;
+    }
+
+    /**
+     * The last step of a whole-view rebuild before its replacement commits: the guard's row
+     * shortfall, then the timeline retire every such rebuild owes. Ordered so a refusal leaves
+     * the timeline standing - a view that stopped over a base schema change or a mid-drain
+     * fault restores from it on its next restart - and so the retire still precedes the
+     * commit, as it did when it ran before the scan: a crash between the two leaves no root
+     * describing output the replacement has moved.
+     */
+    private void prepareWholeViewReplacement(LiveViewInstance instance) {
+        if (restatementGuard.isRowShortfall()) {
+            restatementGuard.refuse(LiveViewRebuildRestatementGuard.VERDICT_ROW_SHORTFALL);
+            throw LiveViewRebuildRefusedException.instance();
+        }
+        retireCheckpointStateOnO3(instance, true);
+    }
+
+    /**
+     * Stands the guard down for a rebuild over a view that has rows to lose, and says so. The
+     * rebuild that follows runs unchecked - exactly as every rebuild did before the guard - so
+     * a view that turns out restated afterwards has this line to explain why nothing stopped it.
+     */
+    private void standDownRestatementGuard(LiveViewInstance instance, int abstention) {
+        restatementGuard.disarm(abstention);
+        LOG.info().$("live view rebuild from the applied base runs without the restatement guard [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", reason=").$(LiveViewRebuildRestatementGuard.abstentionName(abstention)).I$();
     }
 
 
@@ -12438,6 +12712,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the caller has already handled the SEEDING state.
      * Returns {@code null} on success (records a refresh success), else the replay
      * error for the caller's flush-retry accounting.
+     * <p>
+     * A rebuild {@link LiveViewRebuildRestatementGuard} refuses also returns {@code null}:
+     * it is not an error to count, and the view is stopped rather than recovered. The
+     * caller can tell the two apart through {@link LiveViewInstance#isCheckpointRecoveryBlocked()}.
      */
     private Throwable rebuildActiveWindowStateFromAppliedBase(LiveViewInstance instance, String cause) {
         final String viewName = instance.getDefinition().getViewName();
@@ -12454,6 +12732,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.recordRefreshSuccess();
             LOG.info().$("live view recomputed window state from applied base [view=")
                     .$(viewName).$(", cause=").$(cause).I$();
+            return null;
+        } catch (LiveViewRebuildRefusedException refused) {
+            // The in-memory tier is left as it was: the refusal committed nothing, so the
+            // published slot still mirrors the view's table plus whatever lead it carried,
+            // and readers - which take the lead from the slot, never from the count zeroed
+            // above - keep serving what they served. Nothing flushes a stopped view.
+            blockRefusedRebuild(instance, cause);
             return null;
         } catch (Throwable t) {
             LOG.error().$("live view window-state recompute failed [view=")
@@ -13654,8 +13939,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * budget is already exhausted by the time this method runs, so nothing outside it would bound a
      * loop; and the retry cannot re-enter here, because
      * {@code rebuildActiveWindowStateFromAppliedBase} catches its own throwables and returns them.
+     * <p>
+     * The re-derive is a whole-view rebuild, so {@link LiveViewRebuildRestatementGuard} stands in
+     * front of its commit like any other. A base that has since lost rows the view retains is
+     * where a restored backup most often leaves one, and there the rebuild is refused and the
+     * view stopped rather than recomputed from what survives.
      *
-     * @return true when the view recovered and must not be invalidated
+     * @return true when the view recovered, or was stopped by a refused rebuild, and must not be
+     * invalidated
      */
     private boolean rederiveFromAppliedBaseAfterWalLoss(LiveViewInstance instance, CairoException cause) {
         final TableToken baseToken = instance.getDefinition().getBaseTableToken();
@@ -13704,6 +13995,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", head=").$(baseAppliedSeqTxn)
                     .$(", reason=").$safe(cause.getFlyweightMessage()).I$();
             return true;
+        } catch (LiveViewRebuildRefusedException refused) {
+            // The base no longer holds rows the view retains, so the re-derive would have
+            // replaced them with nothing. The view stops instead of recovering, and it must
+            // not be invalidated either: the block is not durable, and a restart that finds
+            // the base WAL it lost - a restore that brings it back - resumes it. Reported as
+            // handled, since invalidating is exactly what the caller does on false.
+            blockRefusedRebuild(instance, "base WAL segment missing");
+            return true;
         } catch (TableReferenceOutOfDateException drift) {
             // recoverFromBaseMetadataDrift only re-derives an ACTIVE view; for a SEEDING one it
             // re-arms the sweep and returns null WITHOUT rebuilding, so reporting that as a
@@ -13747,6 +14046,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", error=").$(recompiledError).I$();
                 return false;
             }
+            if (instance.isCheckpointRecoveryBlocked()) {
+                // The recompiled rebuild was refused rather than run, and the recovery that
+                // refused it has already stopped the view with its reason. Not a re-derive,
+                // so neither the counter nor the log line below may claim one.
+                return true;
+            }
             // The recompiled retry is the only thing separating this outcome from the plain success
             // path above - both leave the view valid over the same rows - so a test asserting the
             // outcome alone cannot tell them apart. Count the branch here, where it succeeded, and
@@ -13783,8 +14088,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // seal alike - ahead of every other guard, so no watermark advances and no
         // generic missing-timeline recovery below reaches the directory. The view
         // keeps serving the rows it has; see LiveViewCheckpointRecoveryPhase.
+        //
+        // A view whose rebuild from the applied base was refused is declined the
+        // same way: every turn that ran over it would ask for the same rebuild. Its
+        // route was recorded by the refusal, so only the format block names one here.
         if (instance.isCheckpointRecoveryBlocked()) {
-            instance.recordCheckpointUpgradeBlocked();
+            if (instance.isCheckpointFormatBlocked()) {
+                instance.recordCheckpointUpgradeBlocked();
+            }
             return false;
         }
         // Apply-lag back-off: a prior cycle deferred this view (raw-WAL O3 or coupled dedup
@@ -13960,6 +14271,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // advance ever reaching disk.
                             break refreshBody;
                         }
+                        if (instance.isCheckpointRecoveryBlocked()) {
+                            // The restore fell back to the applied-base rebuild and the
+                            // restatement guard refused it. Nothing moved and nothing is
+                            // invalid, but no recovery produced the accumulators either,
+                            // so the drain below must not feed rows over them.
+                            return attempted;
+                        }
                     }
                 }
                 // Seed phase: every view CREATEs in SEEDING state and stays there until the
@@ -13995,6 +14313,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         windowStateDirty = false;
                         invalidationReason = handleRefreshFailure(instance, rebuildErr);
                         break refreshBody;
+                    }
+                    if (instance.isCheckpointRecoveryBlocked()) {
+                        // Refused rather than rebuilt: the view stops here, its debt with it.
+                        return attempted;
                     }
                     windowStateDirty = instance.isWindowStateDirty();
                 }

@@ -29,16 +29,18 @@ package io.questdb.cairo.lv;
  * <p>
  * Derived state, not a persisted field. Registry visibility (locked / committed /
  * marked-dropped), {@code _lv.s.invalid}, {@code _lv.s.seedState} and the
- * checkpoint format block together determine the state.
+ * recovery block together determine the state.
  * <p>
- * Three of those four signals are durable. The fourth, the format block, is
- * re-derived from the checkpoint superblock on every start
- * ({@link LiveViewCheckpointRecoveryPhase#BLOCKED}), and it reports as
+ * Three of those four signals are durable. The fourth, the recovery block, is
+ * re-derived on every start - from the checkpoint superblock for a format block
+ * ({@link LiveViewCheckpointRecoveryPhase#BLOCKED}), by the restart's own
+ * recovery for a refused rebuild
+ * ({@link LiveViewCheckpointRecoveryPhase#REBUILD_BLOCKED}) - and it reports as
  * {@link #INVALID} because that is what it is to an operator: refresh has
  * stopped, the rows the view already has stay queryable, and the way back is a
  * re-CREATE. Reporting it under a status of its own would hide it from the
  * queries operators already run to find stopped views.
- * {@code live_views().checkpoint_recovery_phase} is what tells the two apart.
+ * {@code live_views().checkpoint_recovery_phase} is what tells them apart.
  */
 public enum LiveViewLifecycleState {
     /**
@@ -98,8 +100,10 @@ public enum LiveViewLifecycleState {
      * @param registryVisible        {@code true} iff the live view has a committed
      *                               registry entry not marked for drop
      * @param invalid                {@code _lv.s.invalid}
-     * @param checkpointFormatBlocked the view's checkpoint timeline declares a format
-     *                               version this build does not implement. Reports as
+     * @param recoveryBlocked        the view's recovery stopped rather than finished:
+     *                               its checkpoint timeline declares a format version
+     *                               this build does not implement, or its rebuild from
+     *                               the applied base was refused. Reports as
      *                               {@link #INVALID}: refresh is stopped either way, and
      *                               an operator looking for stopped views must find it
      * @param seeding                {@code _lv.s.seedState == SEEDING}
@@ -107,13 +111,13 @@ public enum LiveViewLifecycleState {
     public static LiveViewLifecycleState derive(
             boolean registryVisible,
             boolean invalid,
-            boolean checkpointFormatBlocked,
+            boolean recoveryBlocked,
             boolean seeding
     ) {
         if (!registryVisible) {
             return DROPPING;
         }
-        if (invalid || checkpointFormatBlocked) {
+        if (invalid || recoveryBlocked) {
             return INVALID;
         }
         return seeding ? SEEDING : ACTIVE;

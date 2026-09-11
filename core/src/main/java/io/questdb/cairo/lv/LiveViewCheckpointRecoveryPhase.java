@@ -25,7 +25,9 @@
 package io.questdb.cairo.lv;
 
 /**
- * Names where a live view stands against the checkpoint format boundary.
+ * Names why a live view's recovery stopped rather than finished: a checkpoint
+ * format this build cannot read, or a rebuild from the base table that would
+ * change output the view already retains.
  * <p>
  * A checkpoint timeline declares its layout in {@code _timeline}'s superblock
  * ({@link LiveViewCheckpointSuperblock#SLOT_FORMAT_VERSION}). A build that meets
@@ -37,10 +39,21 @@ package io.questdb.cairo.lv;
  * reads nor removes the directory: the view stops refreshing and everything it
  * has stays where it is, which is {@link #BLOCKED}.
  * <p>
- * The phase is derived, not persisted. Every restart re-reads the superblock and
- * re-reaches the same disposition, so a blocked view survives a restart without
- * a marker file of its own, and a build that does implement the version simply
- * never reaches the block.
+ * The same hazard reaches a view on this build's own format through every other
+ * route into the whole-view rebuild from the applied base: a restart that finds
+ * no usable timeline, a base schema change the view survives, a refresh that
+ * failed mid-drain, and a lost base WAL segment. There the build can look before
+ * it leaps, and {@link LiveViewRebuildRestatementGuard} does: when the evidence
+ * shows the rebuild would drop rows the view retains, the rebuild is refused
+ * before anything durable moves and the view stops the same way, which is
+ * {@link #REBUILD_BLOCKED}. The two phases behave alike and differ in what clears
+ * them.
+ * <p>
+ * Neither phase is persisted. A format block is re-derived from the superblock on
+ * every restart, so it survives a restart without a marker file of its own, and a
+ * build that does implement the version simply never reaches it. A rebuild block
+ * is re-derived by the restart's own recovery: the view restores from its timeline
+ * if it can, and otherwise meets the same rebuild and the same refusal.
  * <p>
  * {@link LiveViewInstance#getCheckpointRecoveryReason()} carries the operator
  * text that goes with the phase, and {@code live_views()} publishes both as
@@ -61,10 +74,15 @@ package io.questdb.cairo.lv;
  * <h3>The exit</h3>
  * {@code SHOW CREATE LIVE VIEW} reproduces the definition, {@code DROP LIVE
  * VIEW} clears the blocked timeline with the view, and re-CREATE rebuilds from
- * the base rows that survive today. There is no unblock command: the phase is
- * re-derived from the superblock on every start, so it clears when - and only
+ * the base rows that survive today. There is no unblock command. A format block
+ * is re-derived from the superblock on every start, so it clears when - and only
  * when - the format becomes readable, which is what makes an accidental
- * downgrade recoverable by going back rather than by re-creating anything.
+ * downgrade recoverable by going back rather than by re-creating anything. A
+ * rebuild block clears on a restart whose recovery no longer needs the rebuild -
+ * a view whose timeline survived the refusal restores from it while the base WAL
+ * its restore replays is still there - or once the operator turns
+ * {@code cairo.live.view.rebuild.restatement.guard.enabled} off to let rebuilds
+ * follow the base table.
  *
  * <h3>What the released WAL floor costs</h3>
  * A blocked view releases its base WAL floor, as an invalid view does. It has to:
@@ -75,7 +93,10 @@ package io.questdb.cairo.lv;
  * sweep no longer has that WAL, and a later readable build takes the applied-base
  * rebuild instead - recomputing the view from whatever source rows survive today,
  * which is the outcome the block existed to avoid. Blocking buys time to go back
- * to a build that reads the format; it is not a state to rest in.
+ * to a build that reads the format; it is not a state to rest in. A rebuild block
+ * pays the same price for the same reason: the restart that could have restored
+ * it from its timeline instead meets the missing WAL, and the rebuild it falls
+ * back to meets the same refusal.
  */
 public final class LiveViewCheckpointRecoveryPhase {
     /**
@@ -91,6 +112,16 @@ public final class LiveViewCheckpointRecoveryPhase {
      * ordinary lifecycle applies.
      */
     public static final int NONE = 0;
+    /**
+     * A whole-view rebuild from the applied base would have dropped rows the view
+     * retains, so {@link LiveViewRebuildRestatementGuard} refused it before it
+     * committed. Refresh is stopped exactly as for {@link #BLOCKED}: the view's rows
+     * and watermarks are as the refused rebuild found them, a timeline the rebuild
+     * would have retired is still on disk, and the view stays queryable, reports
+     * {@code invalid} and releases its base WAL floor. The reason names the route
+     * that asked for the rebuild and the evidence that refused it.
+     */
+    public static final int REBUILD_BLOCKED = 2;
 
     private LiveViewCheckpointRecoveryPhase() {
     }
@@ -101,6 +132,10 @@ public final class LiveViewCheckpointRecoveryPhase {
      * is the absence of a recovery rather than a phase of one
      */
     public static String name(int phase) {
-        return phase == BLOCKED ? "blocked" : null;
+        return switch (phase) {
+            case BLOCKED -> "blocked";
+            case REBUILD_BLOCKED -> "rebuild_blocked";
+            default -> null;
+        };
     }
 }

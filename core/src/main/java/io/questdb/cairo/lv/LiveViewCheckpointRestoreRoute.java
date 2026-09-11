@@ -48,9 +48,11 @@ package io.questdb.cairo.lv;
  * <p>
  * {@link #UPGRADE_BLOCKED} is the one route no restore ran for: the timeline declares
  * a format version this build does not implement, so the refresh worker declined the
- * attempt instead of making one. The upgrade rebuild that would follow a successful
- * source-history preflight has no code here yet - nothing can authorize a reset until
- * that preflight exists - and joins this list with it.
+ * attempt instead of making one. {@link #REBUILD_BLOCKED} is the other decision rather
+ * than outcome: the restore could not be used, the applied-base rebuild that covers for
+ * it started, and {@link LiveViewRebuildRestatementGuard} refused it before it committed.
+ * The upgrade rebuild that would follow a successful source-history preflight is
+ * withdrawn with that preflight and has no route.
  */
 public final class LiveViewCheckpointRestoreRoute {
     /**
@@ -83,6 +85,17 @@ public final class LiveViewCheckpointRestoreRoute {
      */
     public static final int NONE = 0;
     /**
+     * The timeline was absent, unusable, or fenced off by a repair marker, and the
+     * applied-base rebuild that covers for it was refused before it committed: the base
+     * no longer holds rows the view retains, so recomputing from it would have dropped
+     * them. {@link LiveViewCheckpointRecoveryPhase#REBUILD_BLOCKED} holds the view's
+     * refresh. Distinct from {@link #BLOCKED}, which is a rebuild that ran and failed and
+     * leaves a durable invalidation behind; here nothing durable moved, and
+     * {@link LiveViewInstance#getCheckpointRebuildAttempts()} counts the attempt that was
+     * refused.
+     */
+    public static final int REBUILD_BLOCKED = 5;
+    /**
      * The window state came back from a published timeline root.
      * {@link LiveViewInstance#getCheckpointRestoreGeneration()} and
      * {@link LiveViewInstance#getCheckpointRestoreCheckpointId()} name it.
@@ -103,6 +116,7 @@ public final class LiveViewCheckpointRestoreRoute {
             case FALLBACK_REBUILD -> "fallback_rebuild";
             case BLOCKED -> "blocked";
             case UPGRADE_BLOCKED -> "upgrade_blocked";
+            case REBUILD_BLOCKED -> "rebuild_blocked";
             default -> null;
         };
     }
