@@ -302,7 +302,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                         2, symbolDictEpoch);
 
                 Assert.assertTrue("fsnEpochBase must have rolled past the last organic FSN: base="
-                        + finalEpochBase + " lastOrganicFsn=" + lastOrganicFsn,
+                                + finalEpochBase + " lastOrganicFsn=" + lastOrganicFsn,
                         finalEpochBase > lastOrganicFsn);
                 // Anchored on the LAST organic batch, not the first: with the first
                 // (FSN 0) every epoch base satisfies the check, and with an epoch-0
@@ -312,8 +312,8 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                 // true, while any lost roll lands it at or above the final epoch's raw
                 // ack watermark -- which acked a single frame -- and the await fails.
                 Assert.assertTrue("post-recycle awaitAckedFsn(lastOrganicFsn) must return true via the "
-                        + "prior-epoch short-circuit: base=" + finalEpochBase
-                        + " lastOrganicFsn=" + lastOrganicFsn,
+                                + "prior-epoch short-circuit: base=" + finalEpochBase
+                                + " lastOrganicFsn=" + lastOrganicFsn,
                         sender.awaitAckedFsn(lastOrganicFsn, 5_000));
             }
 
