@@ -47,10 +47,10 @@ public class CheckWalTransactionsJob extends SynchronizedJob implements QuietClo
     private final long checkInterval;
     private final TableSequencerAPI.TableSequencerCallback checkNotifyOutstandingTxnInWalRef;
     private final CharSequence dbRoot;
-    private final long minScanInterval;
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final MillisecondClock millisecondClock;
+    private final long minScanInterval;
     private final long spinLockTimeout;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     // Empty list means that all tables should be checked.

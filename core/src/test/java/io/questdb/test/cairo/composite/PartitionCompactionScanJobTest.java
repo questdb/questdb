@@ -25,15 +25,20 @@
 package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnTopRecorder;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -111,6 +116,155 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                 setCurrentMicros(currentMicros + 10 * interval);
                 job.run();
                 Assert.assertTrue("expected a third sweep to have run", counter.get() > afterSecondTrigger);
+            }
+        });
+    }
+
+    /**
+     * Fairness across tables. A table whose swaps all sit queued on a busy writer keeps offering the same
+     * qualifying partitions to every sweep, so it spends the whole per-sweep dispatch budget over and over
+     * without ever draining. The sweep used to restart at table index 0 on every tick and end its table loop
+     * the moment the budget ran out, so every table behind that one was never opened at all - not "compacted
+     * later", but never scanned, for as long as the leader kept saturating the budget.
+     * <p>
+     * That order is stable rather than incidental: {@code CairoEngine.getTableTokens} walks a {@link
+     * io.questdb.std.ConcurrentHashMap} whose bin order is a pure function of the directory-name hashes, and
+     * {@code ObjHashSet.get(i)} reads that walk back out of a dense list in the order it went in. The same
+     * table therefore leads every sweep.
+     * <p>
+     * Three tables, each holding more idle composite partitions than one sweep can dispatch, all three
+     * writers held so nothing drains. Every table has to get its turn within three sweeps. The assertion is
+     * symmetric on purpose - which table the hash order puts first is not something a test can pick.
+     */
+    @Test
+    public void testSweepReachesTablesBehindOneThatSaturatesTheDispatchBudget() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+        // One sweep can hand a single table up to MAX_DISPATCH_PER_SWEEP swaps, and each one goes onto the
+        // held writer's command queue. The default queue is far shallower than that, and a full queue throws
+        // - which ends that table's scan early and hands the rest of the budget back, so the test would
+        // never reach the condition it is about.
+        node1.setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 64);
+
+        final ObjList<String> tableNames = new ObjList<>();
+        tableNames.add("ca");
+        tableNames.add("cb");
+        tableNames.add("cc");
+        final int tableCount = tableNames.size();
+        // Filled in as the tables are created; the facade below reads whatever is there at the time, which
+        // is nothing until the fixture is built.
+        final ObjList<TableToken> tokens = new ObjList<>();
+        final ObjList<AtomicInteger> stagedCopies = new ObjList<>();
+        for (int i = 0; i < tableCount; i++) {
+            stagedCopies.add(new AtomicInteger());
+        }
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Utf8s.containsAscii(path, TableUtils.COMPACTING_DIR_MARKER)) {
+                    for (int i = 0, n = tokens.size(); i < n; i++) {
+                        if (Utf8s.containsAscii(path, tokens.getQuick(i).getDirName())) {
+                            stagedCopies.getQuick(i).incrementAndGet();
+                            break;
+                        }
+                    }
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            // 41 day partitions of 288 rows each - over the 1K split floor, and small enough that 40 of them
+            // per table stay cheap to build and to copy.
+            final String base = "SELECT x::INT i, timestamp_sequence('2020-01-01', 300*1000000L) ts FROM long_sequence(11808)";
+            // One row inside each of the first 40 days, so every one of those turns composite while the 41st
+            // stays plain and active.
+            final String backfill = "SELECT x::INT + 70_000 i," +
+                    " ('2020-01-01T04:00:07'::timestamp + (x - 1) * 86_400_000_000L)::timestamp ts" +
+                    " FROM long_sequence(40)";
+
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            for (int i = 0; i < tableCount; i++) {
+                final String tableName = tableNames.getQuick(i);
+                execute("CREATE TABLE " + tableName + " AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                drainWalQueue();
+                execute("INSERT INTO " + tableName + " " + backfill);
+                drainWalQueue();
+                tokens.add(engine.verifyTableName(tableName));
+            }
+
+            // The dispatch budget is 32 per sweep; each table has to be able to soak up all of it on its own.
+            for (int i = 0; i < tableCount; i++) {
+                try (TableReader reader = engine.getReader(tokens.getQuick(i))) {
+                    final TxReader tx = reader.getTxFile();
+                    Assert.assertEquals(41, tx.getPartitionCount());
+                    int compositeCount = 0;
+                    for (int p = 0, n = tx.getPartitionCount(); p < n; p++) {
+                        if (tx.isPartitionComposite(p)) {
+                            compositeCount++;
+                        }
+                    }
+                    Assert.assertTrue(
+                            "table " + tableNames.getQuick(i) + " must offer more composite partitions than one"
+                                    + " sweep can dispatch, got " + compositeCount,
+                            compositeCount > 32
+                    );
+                }
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            final long interval = engine.getConfiguration().getPartitionCompactionCheckInterval() * 1000;
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-02-15T00:10:00.000000Z"));
+
+            // Holding every writer on this thread keeps each swap on a queue instead of applying it, so no
+            // table's backlog ever shrinks and the leader saturates the budget on every sweep rather than
+            // only the first. The sweeps run on a thread of their own, so the job sees those writers as busy,
+            // and on ONE job instance, so whatever the job carries between sweeps is exercised.
+            try (TableWriter wa = engine.getWriter(tokens.getQuick(0), "test");
+                 TableWriter wb = engine.getWriter(tokens.getQuick(1), "test");
+                 TableWriter wc = engine.getWriter(tokens.getQuick(2), "test")) {
+                Assert.assertNotNull(wa);
+                Assert.assertNotNull(wb);
+                Assert.assertNotNull(wc);
+                final Throwable[] failure = new Throwable[1];
+                final Thread sweeper = new Thread(() -> {
+                    try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, configuration.getMicrosecondClock())) {
+                        for (int sweep = 0; sweep < tableCount; sweep++) {
+                            setCurrentMicros(currentMicros + interval + 1);
+                            job.run();
+                        }
+                    } catch (Throwable e) {
+                        failure[0] = e;
+                    } finally {
+                        // What WorkerPool's worker-halt cleaners do for the compaction pool's own thread.
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+                        Path.clearThreadLocals();
+                    }
+                });
+                sweeper.start();
+                sweeper.join();
+                if (failure[0] != null) {
+                    throw new AssertionError("the sweep failed on its own thread", failure[0]);
+                }
+            }
+
+            for (int i = 0; i < tableCount; i++) {
+                Assert.assertTrue(
+                        "table " + tableNames.getQuick(i) + " was never dispatched in " + tableCount
+                                + " sweeps; staged copies per table were " + stagedCopies,
+                        stagedCopies.getQuick(i).get() > 0
+                );
+            }
+
+            // The queued swaps still land once the writers go back, and no rows move either way.
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            for (int i = 0; i < tableCount; i++) {
+                assertQuery("SELECT count() c FROM " + tableNames.getQuick(i))
+                        .noRandomAccess().expectSize().returns("c\n11848\n");
             }
         });
     }
@@ -1262,6 +1416,219 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
+     * The composite twin of {@code ParquetPartitionCompactionTest#testSwapInsideAnOpenTransactionIsRefused}:
+     * {@link TableWriter#swapCompactedCompositePartition} refuses to run while the writer holds uncommitted
+     * rows for the very partition the staged REWRITE replaces, rather than committing those rows to make room
+     * for it or swapping over them.
+     * <p>
+     * A writer can only hold an open transaction across calls on a non-WAL table - {@code
+     * TableUpdateDetails.commitIfMaxUncommittedRowsCountReached()} ticks it every {@code
+     * cairo.writer.tick.rows.count} rows WITHOUT committing first - and only a WAL table founds a composite
+     * partition ({@code O3PartitionJob}'s {@code isCompositeOrWal} gate: the pre-split that pays for the shape
+     * hangs off the WAL transaction block). So the table is built as WAL and then converted, which is what
+     * leaves a real deployment in this shape.
+     * <p>
+     * The background sweep no longer reaches a non-WAL table at all - see
+     * {@link #testIdleSweepLeavesANonWalCompositeTableAlone} - so nothing queues a swap here any more and the
+     * test calls the entry point directly. The guard itself stays: the entry point is public and its contract
+     * holds for whoever calls it.
+     */
+    @Test
+    public void testCompositeSwapInsideAnOpenTransactionIsRefused() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE cq AS (SELECT x::INT i," +
+                    " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later day, so 2020-01-01 is never the active partition and the backfill below is a real O3 write.
+            execute("INSERT INTO cq SELECT x::INT + 90000 i," +
+                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)");
+            drainWalQueue();
+            // Lands only inside 2020-01-01, cutting it into pieces - composite.
+            execute("INSERT INTO cq SELECT x::INT + 70000 i," +
+                    " timestamp_sequence('2020-01-01T04:00:07', 5*1000000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+
+            execute("ALTER TABLE cq SET TYPE BYPASS WAL");
+            engine.releaseInactive();
+            engine.load();
+
+            final TableToken token = engine.verifyTableName("cq");
+            Assert.assertFalse("the writer can only hold an open transaction on a non-WAL table", token.isWal());
+            final long partitionTs = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            final long nameTxnBefore;
+            final long writerTxnBefore;
+            final long liveRowsBefore;
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertTrue("2020-01-01 should still be composite after the conversion",
+                        reader.getTxFile().isPartitionComposite(0));
+                nameTxnBefore = reader.getTxFile().getPartitionNameTxn(0);
+                writerTxnBefore = reader.getGeometry().getWriterTxn(0);
+                liveRowsBefore = reader.getTxFile().getPartitionSize(0);
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
+                // An O3 row INSIDE the composite partition a staged copy would replace, left uncommitted:
+                // exactly the non-WAL lag a swap built off an older snapshot would drop.
+                final TableWriter.Row row = ownerWriter.newRow(MicrosFormatUtils.parseTimestamp("2020-01-01T04:00:03.000000Z"));
+                row.putInt(0, 55555);
+                row.append();
+                Assert.assertTrue("the fixture must leave the writer in a transaction", ownerWriter.inTransaction());
+
+                // Every argument below names the LIVE generation, so the open transaction is the only thing
+                // that can make this stale. processAsyncWriterCommand() reports the
+                // TableReferenceOutOfDateException as READER_OUT_OF_DATE - "rebuild and retry" - rather than
+                // as a command error, which is why a queued swap declines instead of failing the tick.
+                try {
+                    ownerWriter.swapCompactedCompositePartition(
+                            partitionTs,
+                            nameTxnBefore,
+                            writerTxnBefore,
+                            ownerWriter.getMetadataVersion(),
+                            liveRowsBefore,
+                            new ColumnTopRecorder()
+                    );
+                    Assert.fail("the swap ran inside an open transaction");
+                } catch (TableReferenceOutOfDateException ignore) {
+                    // The decline every stale swap raises.
+                }
+
+                // Declined, not committed: the transaction is still the owner's to finish.
+                Assert.assertTrue("the swap committed the writer's open transaction", ownerWriter.inTransaction());
+
+                ownerWriter.commit();
+            }
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals("a declined swap must not replace the live partition",
+                        nameTxnBefore, reader.getTxFile().getPartitionNameTxn(0));
+                Assert.assertTrue("a declined swap must leave the partition composite",
+                        reader.getTxFile().isPartitionComposite(0));
+            }
+            engine.releaseAllReaders();
+
+            // The lag row outlived the decline, landed in the right partition, and took nothing with it.
+            assertQuery("SELECT count() c FROM cq").noLeakCheck().noRandomAccess().expectSize().returns("c\n6011\n");
+            assertQuery("SELECT count() c FROM cq WHERE ts IN '2020-01-01'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n5961\n");
+            assertQuery("SELECT i, ts FROM cq WHERE i = 55555")
+                    .noLeakCheck().timestamp("ts")
+                    .returns("i\tts\n55555\t2020-01-01T04:00:03.000000Z\n");
+        });
+    }
+
+    /**
+     * The gate that makes the sweep WAL-only, pinned from both sides in one run so a gate that quietly
+     * disables compaction for everyone cannot pass: two tables with the same idle composite partition, one
+     * WAL and one converted to BYPASS WAL, swept together. The WAL one must be compacted; the non-WAL one
+     * must come out untouched - still composite, same nameTxn, no staging directory ever created.
+     * <p>
+     * Non-WAL tables are out of scope for the out-of-band sweep: their writer holds its transaction open
+     * across ticks, so a swap built off a reader snapshot can always arrive at a writer carrying rows that
+     * snapshot never saw (see {@link #testCompositeSwapInsideAnOpenTransactionIsRefused}).
+     */
+    @Test
+    public void testIdleSweepLeavesANonWalCompositeTableAlone() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+
+        final AtomicInteger stagingMkdirs = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Utf8s.containsAscii(path, TableUtils.COMPACTING_DIR_MARKER)) {
+                    stagingMkdirs.incrementAndGet();
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            createCompositeDayTable("cn");
+            createCompositeDayTable("cw");
+
+            // Only "cn" converts, so the two differ in nothing but the WAL flag.
+            execute("ALTER TABLE cn SET TYPE BYPASS WAL");
+            engine.releaseInactive();
+            engine.load();
+
+            final TableToken nonWalToken = engine.verifyTableName("cn");
+            final TableToken walToken = engine.verifyTableName("cw");
+            Assert.assertFalse(nonWalToken.isWal());
+            Assert.assertTrue(walToken.isWal());
+
+            final long nonWalNameTxnBefore;
+            try (TableReader reader = engine.getReader(nonWalToken)) {
+                Assert.assertTrue("the fixture lost its composite partition in the conversion",
+                        reader.getTxFile().isPartitionComposite(0));
+                nonWalNameTxnBefore = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            try (TableReader reader = engine.getReader(walToken)) {
+                Assert.assertTrue(reader.getTxFile().isPartitionComposite(0));
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+
+            // More passes than the WAL table needs, so "not yet" cannot pass for "never".
+            for (int i = 0; i < 3; i++) {
+                runSweepOnAnotherThread(ff);
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader(nonWalToken)) {
+                Assert.assertTrue("the sweep compacted a non-WAL table", reader.getTxFile().isPartitionComposite(0));
+                Assert.assertEquals("the sweep moved a non-WAL partition", nonWalNameTxnBefore, reader.getTxFile().getPartitionNameTxn(0));
+            }
+            try (TableReader reader = engine.getReader(walToken)) {
+                Assert.assertFalse("the gate disabled compaction for WAL tables too", reader.getTxFile().isPartitionComposite(0));
+                Assert.assertEquals(1, reader.getGeometry().getPieceCount(0));
+            }
+            engine.releaseAllReaders();
+
+            Assert.assertEquals("exactly one staged copy is expected - the WAL table's; a non-WAL partition must never be staged",
+                    1, stagingMkdirs.get());
+
+            assertQuery("SELECT count() c FROM cn").noLeakCheck().noRandomAccess().expectSize().returns("c\n6010\n");
+            assertQuery("SELECT count() c FROM cw").noLeakCheck().noRandomAccess().expectSize().returns("c\n6010\n");
+            TestUtils.assertSqlCursors(
+                    engine, sqlExecutionContext, "SELECT * FROM cn ORDER BY ts, i", "SELECT * FROM cw ORDER BY ts, i", LOG
+            );
+        });
+    }
+
+    /**
+     * A day made composite by a backfill into the middle of it, with a later day so the composite one is
+     * never the active partition.
+     */
+    private static void createCompositeDayTable(String tableName) throws Exception {
+        execute("CREATE TABLE " + tableName + " AS (SELECT x::INT i," +
+                " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760))" +
+                " TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO " + tableName + " SELECT x::INT + 90000 i," +
+                " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)");
+        drainWalQueue();
+        // Lands only inside 2020-01-01, cutting it into pieces - composite.
+        execute("INSERT INTO " + tableName + " SELECT x::INT + 70000 i," +
+                " timestamp_sequence('2020-01-01T04:00:07', 5*1000000L) ts FROM long_sequence(200)");
+        drainWalQueue();
+    }
+
+    /**
      * The same guard, under an idle timeout short enough to have expired the record that carries it. The
      * timeout says how long a partition must sit still before compacting it is worth it, and a fuzz run
      * sets it sub-millisecond; using it as the pending-swap window too dropped the record on the sweep
@@ -1514,6 +1881,30 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn);
             path.put(TableUtils.COMPACTING_DIR_MARKER).put(writerTxn);
             return path.toString();
+        }
+    }
+
+    /**
+     * One sweep from a thread of its own, so a writer the test thread holds is busy from the job's point of
+     * view and the swap goes to the writer's command queue instead of being applied on the spot.
+     */
+    private static void runSweepOnAnotherThread(FilesFacade ff) throws InterruptedException {
+        final Throwable[] failure = new Throwable[1];
+        final Thread sweeper = new Thread(() -> {
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, configuration.getMicrosecondClock())) {
+                job.run();
+            } catch (Throwable e) {
+                failure[0] = e;
+            } finally {
+                // What WorkerPool's worker-halt cleaners do for the compaction pool's own thread.
+                Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+                Path.clearThreadLocals();
+            }
+        });
+        sweeper.start();
+        sweeper.join();
+        if (failure[0] != null) {
+            throw new AssertionError("the sweep failed on its own thread", failure[0]);
         }
     }
 

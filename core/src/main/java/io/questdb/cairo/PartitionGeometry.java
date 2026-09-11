@@ -315,9 +315,15 @@ public class PartitionGeometry implements Closeable, Mutable {
 
     /**
      * The partition's last-modifying seqTxn, as recorded in its committed {@code _geometry} record, or -1 when unknown.
+     * <p>
+     * Resolves, like every other accessor here. A cache-only lookup would answer -1 for a partition the caller has not
+     * already opened - and {@code ShowPartitionsRecordCursorFactory} reads this BEFORE the accessors that do resolve, so
+     * the same query would report the stamp on a warm reader and null on a cold one. It would also miss a re-read: the
+     * cache is keyed on timestamp and name txn alone, so a slot left over from a superseded geometry generation answers
+     * with the stamp that generation carried.
      */
     public long getSeqTxn(int partitionIndex) {
-        final int res = findResolved(txReader.getPartitionTimestampByIndex(partitionIndex), txReader.getPartitionNameTxn(partitionIndex));
+        final int res = resolveInternal(partitionIndex);
         return res < 0 ? -1 : resolved.getQuick(res + RES_SEQ_TXN);
     }
 

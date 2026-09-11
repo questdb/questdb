@@ -1766,7 +1766,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * metadata-only swap.
      *
      * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the source partition's generation moved since
-     *                                                               the build snapshot
+     *                                                               the build snapshot, or the writer is in a
+     *                                                               transaction - either way the staged copy is
+     *                                                               removed and the next sweep decides again
      */
     public void swapCompactedParquetPartition(
             long partitionTimestamp,
@@ -1779,20 +1781,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
-        if (inTransaction()) {
-            commit();
-        }
-
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         final boolean isParquet = partitionIndex > -1 && txWriter.isPartitionParquet(partitionIndex);
         final long liveParquetFileSize = isParquet ? txWriter.getPartitionParquetFileSize(partitionIndex) : -1L;
         final long liveMetadataVersion = getMetadataVersion();
+        // An open transaction can hold non-WAL lag rows for this very partition, written after the reader
+        // snapshot the staged copy was built from - a swap would drop or misplace them. The writer's own
+        // owner commits them in its own time, and the next sweep rebuilds off a snapshot that has them.
+        final boolean isInTransaction = inTransaction();
         // Neither a freeze nor an upload moves the nameTxn, the file size or the metadata version, so
         // the triple below cannot see one that landed while the build ran; test the two bits directly.
         final boolean isReadOnly = isParquet && txWriter.isPartitionReadOnly(partitionIndex);
         final boolean isRemote = isParquet && txWriter.isPartitionRemote(partitionIndex);
-        final boolean stale = !isParquet
+        final boolean stale = isInTransaction
+                || !isParquet
                 || isReadOnly
                 || isRemote
                 || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
@@ -1812,6 +1815,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", liveMetadataVersion=").$(liveMetadataVersion)
                     .$(", readOnly=").$(isReadOnly)
                     .$(", remote=").$(isRemote)
+                    .$(", inTransaction=").$(isInTransaction)
                     .I$();
             if (ff.exists(other.$())) {
                 ff.rmdir(other, false);
@@ -3100,7 +3104,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Everything is re-checked here against the live state: the sweep decided off a {@code _txn} snapshot it read
      * without holding the writer, and a queued command can sit for a while before a busy writer applies it. Anything
      * that has moved on since simply ends the call - there is nothing staged to clean up, and the next sweep sees
-     * whatever the partition looks like then.
+     * whatever the partition looks like then. An open transaction on the writer ends the call the same way.
      */
     public void makePartitionPlainInPlace(
             long partitionTimestamp,
@@ -3108,13 +3112,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long expectedWriterTxn,
             long expectedMetadataVersion
     ) {
-        if (inTransaction()) {
-            throw CairoException.nonCritical().put("cannot make partition plain, in transaction [table=")
-                    .put(tableToken).put(']');
-        }
+        // See swapCompactedParquetPartition. MAKE-PLAIN is worse than a swap on this point: it commits
+        // the tx writer itself, and then TRIM-FILES cuts the column files back to the COMMITTED row
+        // count - which is exactly where a non-WAL append has already put its uncommitted rows.
+        final boolean isInTransaction = inTransaction();
         final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp);
         final long liveWriterTxn = partitionIndex < 0 ? -1L : getGeometry().getWriterTxn(partitionIndex);
-        if (partitionIndex < 0
+        if (isInTransaction
+                || partitionIndex < 0
                 || txWriter.isPartitionReadOnly(partitionIndex)
                 || txWriter.isPartitionRemote(partitionIndex)
                 || liveWriterTxn != expectedWriterTxn
@@ -3125,6 +3130,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .$(", expectedWriterTxn=").$(expectedWriterTxn)
                     .$(", liveWriterTxn=").$(liveWriterTxn)
+                    .$(", inTransaction=").$(isInTransaction)
                     .I$();
             return;
         }
@@ -3986,7 +3992,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * metadata-only swap.
      *
      * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the source partition's generation moved since
-     *                                                               the build snapshot
+     *                                                               the build snapshot, or the writer is in a
+     *                                                               transaction - either way the staged copy is
+     *                                                               removed and the next sweep decides again
      */
     public void swapCompactedCompositePartition(
             long partitionTimestamp,
@@ -3996,18 +4004,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long liveRows,
             ColumnTopRecorder columnTops
     ) {
-        if (inTransaction()) {
-            throw CairoException.nonCritical().put("cannot swap to compacted partition, in transaction [table=")
-                    .put(tableToken).put(']');
-        }
-
         final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp);
         final long liveWriterTxn = partitionIndex < 0 ? -1L : getGeometry().getWriterTxn(partitionIndex);
         final long liveMetadataVersion = getMetadataVersion();
+        // See swapCompactedParquetPartition: an open transaction can hold uncommitted rows for this
+        // partition that the build's snapshot never saw, so decline rather than swap over them.
+        final boolean isInTransaction = inTransaction();
         // See swapCompactedParquetPartition: a freeze or an upload moves none of the fields below.
         final boolean isReadOnly = partitionIndex > -1 && txWriter.isPartitionReadOnly(partitionIndex);
         final boolean isRemote = partitionIndex > -1 && txWriter.isPartitionRemote(partitionIndex);
-        final boolean stale = partitionIndex < 0
+        final boolean stale = isInTransaction
+                || partitionIndex < 0
                 || isReadOnly
                 || isRemote
                 || !txWriter.isPartitionComposite(partitionIndex)
@@ -4028,6 +4035,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", liveMetadataVersion=").$(liveMetadataVersion)
                     .$(", readOnly=").$(isReadOnly)
                     .$(", remote=").$(isRemote)
+                    .$(", inTransaction=").$(isInTransaction)
                     .I$();
             if (ff.exists(other.$())) {
                 ff.rmdir(other, false);
@@ -12316,9 +12324,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         && metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
                 // Merge-append tables take no LAG at all: a commit that turns the last partition COMPOSITE relocates a
                 // piece onto exactly the file rows the LAG is parked in, so the row count would adopt somebody else's.
+                // isMergeAppendTable() narrows this to PARTITIONED tables, which costs nothing: SqlParser and
+                // alterTableSetType refuse to make a non-partitioned table WAL (CairoEngine.createTable asserts it),
+                // and processWalCommit only ever runs on a WAL table. See MergeAppendLagGuardTest.
                 boolean noLag = lastPartitionBlocksAppend
                         || isParquetTableEmptyPlaceholder
-                        || configuration.isO3PartitionMergeAppendEnabled();
+                        || isMergeAppendTable();
                 boolean needFullCommit = forceFullCommit
                         // No LAG available (parquet partition or parquet table)
                         || noLag
@@ -15289,7 +15300,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // This fast append is the LAG mechanism run to completion inside one commit, parking the block in the same file
         // region a composite promotion relocates a piece onto - so a merge-append table refuses it for the same.
-        if (configuration.isO3PartitionMergeAppendEnabled()) {
+        // isMergeAppendTable() narrows this to PARTITIONED tables; a WAL table is always partitioned (see the
+        // note on the LAG guard in processWalCommit), and this method only runs on the WAL block-apply path.
+        if (isMergeAppendTable()) {
             return o3Lo;
         }
         final long blockRows = o3LoHi - o3Lo;
@@ -16525,6 +16538,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             } else {
                 targetFrame = firstPartitionFrame;
+                // The frame is opened at the extent, because that is where the appends have to land. A
+                // composite target's live rows stop short of it, and a column top - which describes a flat
+                // run from row 0 - cannot be extended over the dead rows in between. A plain target states
+                // the same number twice.
+                targetFrame.setLiveRowCount(targetLiveRows);
             }
 
             engine.getPartitionOverwriteControl().notifyPartitionMutates(

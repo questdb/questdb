@@ -697,6 +697,7 @@ public class WriterPool extends AbstractPool {
                 // to avoid race condition try to grab the writer before declaring it a
                 // free agent
                 if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                    e.ownershipReason = OWNERSHIP_REASON_RELEASED;
                     // Returning false makes TableWriter.close() run doClose(), which frees
                     // the command queue. Drain in-flight publishers first, just like
                     // closeWriter() does on the other free paths.
