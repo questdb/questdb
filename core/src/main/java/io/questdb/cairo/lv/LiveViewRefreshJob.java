@@ -2615,14 +2615,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code _txn}, reads {@code -1} until an apply warms it and again after
      * {@code notifyWalTxnRepublisher} resets it, and a rebuild is rare enough to afford the reader.
      * <p>
-     * Logs the first deferral on a given target, so a view that stays stopped on it has a line
-     * that says why, and stays quiet on the retries the back-off paces while the apply catches up.
+     * The first deferral on a given target logs a line and publishes the
+     * {@link LiveViewCheckpointRecoveryPhase#REBUILD_DEFERRED} phase, so a view that stays waiting
+     * on it says why in {@code live_views()} as well as in the log. The retries the back-off paces
+     * while the apply catches up keep both as they are, and a base found applied far enough ends
+     * the phase: from there the rebuild runs, and what it does next - recover, fail, or be refused -
+     * is reported by the rebuild.
      *
-     * @param cause the recovery that asked for the rebuild, for the log line
+     * @param cause the recovery that asked for the rebuild, for the log line and the reason
      */
     private void ensureBaseAppliedForRebuild(LiveViewInstance instance, long rebuildSeqTxn, CharSequence cause) {
         final TableToken baseToken = instance.getDefinition().getBaseTableToken();
         if (engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn() >= rebuildSeqTxn) {
+            instance.clearCheckpointRebuildDeferred();
             return;
         }
         final long appliedSeqTxn;
@@ -2630,14 +2635,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             appliedSeqTxn = reader.getSeqTxn();
         }
         if (appliedSeqTxn >= rebuildSeqTxn) {
+            instance.clearCheckpointRebuildDeferred();
             return;
         }
-        if (instance.getApplyLagDeferTargetSeqTxn() != rebuildSeqTxn) {
+        if (instance.getApplyLagDeferTargetSeqTxn() != rebuildSeqTxn || !instance.isCheckpointRebuildDeferred()) {
             LOG.info().$("live view rebuild from the applied base waits for the base table to apply what the view consumed [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", cause=").$(cause)
                     .$(", rebuildSeqTxn=").$(rebuildSeqTxn)
                     .$(", appliedSeqTxn=").$(appliedSeqTxn).I$();
+            final StringSink reason = Misc.getThreadLocalSink();
+            reason.put("rebuilding the view from its base table waits for the base table to apply what the view consumed [cause=")
+                    .put(cause)
+                    .put(", baseTable=").put(baseToken.getTableName())
+                    .put(", rebuildSeqTxn=").put(rebuildSeqTxn)
+                    .put("]: the view's table holds output of base commits the base table has not applied yet, ")
+                    .put("and nothing has moved. Refresh resumes on its own once the base table applies seqTxn ")
+                    .put(rebuildSeqTxn)
+                    .put("; a base table whose WAL apply is suspended (see wal_tables()) keeps the view waiting ")
+                    .put("until the apply resumes");
+            instance.markCheckpointRebuildDeferred(reason);
         }
         throw LiveViewApplyLagException.instance(baseToken, rebuildSeqTxn, appliedSeqTxn);
     }
@@ -14472,6 +14489,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // A view whose rebuild from the applied base was refused is declined the
         // same way: every turn that ran over it would ask for the same rebuild. Its
         // route was recorded by the refusal, so only the format block names one here.
+        // A rebuild that waits for the base's apply is not a block and passes: the
+        // apply-lag back-off below paces its retries.
         if (instance.isCheckpointRecoveryBlocked()) {
             if (instance.isCheckpointFormatBlocked()) {
                 instance.recordCheckpointUpgradeBlocked();

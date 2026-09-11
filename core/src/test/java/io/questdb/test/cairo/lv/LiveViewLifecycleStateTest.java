@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewLifecycleState;
@@ -58,6 +59,59 @@ import java.util.concurrent.atomic.AtomicReference;
 public class LiveViewLifecycleStateTest {
 
     @Test
+    public void testARebuildDeferralIsNotABlock() {
+        final LiveViewInstance instance = new LiveViewInstance((LiveViewDefinition) null, (TableToken) null, 1, false, -1);
+        instance.markCheckpointRebuildDeferred("waits");
+        // A view whose rebuild waits for its base's apply has not stopped: it reports active, and
+        // nothing that reads a block - the refresh gate, the WAL purge floor - takes it for one.
+        Assert.assertEquals(LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED, instance.getCheckpointRecoveryPhase());
+        Assert.assertTrue(instance.isCheckpointRebuildDeferred());
+        Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+        Assert.assertEquals(LiveViewLifecycleState.ACTIVE, instance.getLifecycleState());
+        Assert.assertEquals("waits", instance.getCheckpointRecoveryReason());
+
+        // A cycle that succeeded settled the debt the deferral was waiting to pay.
+        instance.recordRefreshSuccess();
+        Assert.assertEquals(LiveViewCheckpointRecoveryPhase.NONE, instance.getCheckpointRecoveryPhase());
+        Assert.assertNull(instance.getCheckpointRecoveryReason());
+
+        // A rebuild that ran after the wait and was refused replaces it with a block.
+        instance.markCheckpointRebuildDeferred("waits");
+        instance.markCheckpointRebuildBlocked("refused");
+        Assert.assertEquals(LiveViewCheckpointRecoveryPhase.REBUILD_BLOCKED, instance.getCheckpointRecoveryPhase());
+        Assert.assertEquals(LiveViewLifecycleState.INVALID, instance.getLifecycleState());
+        // Nothing that ends a deferral lifts a block, and no deferral displaces one.
+        instance.clearCheckpointRebuildDeferred();
+        instance.recordRefreshSuccess();
+        instance.markCheckpointRebuildDeferred("waits");
+        Assert.assertEquals(LiveViewCheckpointRecoveryPhase.REBUILD_BLOCKED, instance.getCheckpointRecoveryPhase());
+        Assert.assertEquals("refused", instance.getCheckpointRecoveryReason());
+    }
+
+    @Test
+    public void testAnInvalidatedOrDroppedViewWaitsForNothing() {
+        // The invalidation takes the view out of refresh, and the runtime-state free that follows
+        // it - under the refresh latch, after any cycle that could still have deferred - ends the
+        // wait with it. An invalid view reporting a rebuild that resumes on its own would be wrong
+        // twice over.
+        final LiveViewInstance invalidated = new LiveViewInstance((LiveViewDefinition) null, (TableToken) null, 1, false, -1);
+        invalidated.markCheckpointRebuildDeferred("waits");
+        invalidated.markInvalid("boom", 42);
+        invalidated.tryFreeRuntimeStateIfInvalid();
+        Assert.assertEquals(LiveViewLifecycleState.INVALID, invalidated.getLifecycleState());
+        Assert.assertEquals(LiveViewCheckpointRecoveryPhase.NONE, invalidated.getCheckpointRecoveryPhase());
+        Assert.assertNull(invalidated.getCheckpointRecoveryReason());
+
+        // The same for a drop, whose close runs under the same latch.
+        final LiveViewInstance dropped = new LiveViewInstance((LiveViewDefinition) null, (TableToken) null, 1, false, -1);
+        dropped.markCheckpointRebuildDeferred("waits");
+        dropped.markAsDropped();
+        dropped.tryCloseIfDropped();
+        Assert.assertEquals(LiveViewCheckpointRecoveryPhase.NONE, dropped.getCheckpointRecoveryPhase());
+        Assert.assertNull(dropped.getCheckpointRecoveryReason());
+    }
+
+    @Test
     public void testCatalogueNamesAreStableLowerCase() {
         // The exact strings surfaced by live_views().view_status. Locks all six, including the two
         // transient/internal states that no SQL query can observe.
@@ -67,6 +121,20 @@ public class LiveViewLifecycleStateTest {
         Assert.assertEquals("invalid", LiveViewLifecycleState.INVALID.catalogueName());
         Assert.assertEquals("dropping", LiveViewLifecycleState.DROPPING.catalogueName());
         Assert.assertEquals("version_unsupported", LiveViewLifecycleState.VERSION_UNSUPPORTED.catalogueName());
+    }
+
+    @Test
+    public void testCheckpointRecoveryPhaseNamesAreStable() {
+        // The exact strings surfaced by live_views().checkpoint_recovery_phase, and which of them
+        // stop the view.
+        Assert.assertNull(LiveViewCheckpointRecoveryPhase.name(LiveViewCheckpointRecoveryPhase.NONE));
+        Assert.assertEquals("blocked", LiveViewCheckpointRecoveryPhase.name(LiveViewCheckpointRecoveryPhase.BLOCKED));
+        Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRecoveryPhase.name(LiveViewCheckpointRecoveryPhase.REBUILD_BLOCKED));
+        Assert.assertEquals("rebuild_deferred", LiveViewCheckpointRecoveryPhase.name(LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED));
+        Assert.assertFalse(LiveViewCheckpointRecoveryPhase.isBlocked(LiveViewCheckpointRecoveryPhase.NONE));
+        Assert.assertTrue(LiveViewCheckpointRecoveryPhase.isBlocked(LiveViewCheckpointRecoveryPhase.BLOCKED));
+        Assert.assertTrue(LiveViewCheckpointRecoveryPhase.isBlocked(LiveViewCheckpointRecoveryPhase.REBUILD_BLOCKED));
+        Assert.assertFalse(LiveViewCheckpointRecoveryPhase.isBlocked(LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED));
     }
 
     @Test

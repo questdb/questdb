@@ -193,17 +193,23 @@ import io.questdb.std.ObjList;
  *     than writing a ladder no reader could detect, and that the timeline was retired -
  *     so the view keeps serving while a restart or an out-of-order correction rebuilds
  *     the recovery state from the base.</li>
- *     <li>Where the view stands against the checkpoint format boundary -
- *     {@code checkpoint_recovery_phase} and {@code checkpoint_recovery_reason}. Both are
- *     NULL for a view whose timeline is on this build's own format, which is every view
- *     until a directory another build wrote turns up. A {@code blocked} phase means this
- *     build read a layout version it does not implement and stopped the view's refresh
- *     with its checkpoints, rows and watermarks all intact; the reason carries the
- *     version it read and the way out. Such a view reports {@code view_status} as
- *     {@code invalid} and repeats the reason through {@code invalidation_reason}, so the
- *     queries operators already run to find stopped views find it; the phase is what
- *     says it is a format block rather than a durable invalidation, and so may clear on
- *     its own under a build that reads the format. See
+ *     <li>Where the view's recovery stands - {@code checkpoint_recovery_phase} and
+ *     {@code checkpoint_recovery_reason}. Both are NULL for a view whose recovery finished
+ *     or never had to run, which is the steady state. A {@code blocked} phase means this
+ *     build read a checkpoint layout version it does not implement, and
+ *     {@code rebuild_blocked} that a rebuild from the base table would have dropped rows
+ *     the view retains; either way refresh stopped with the view's checkpoints, rows and
+ *     watermarks all intact, and the reason carries the evidence and the way out. Such a
+ *     view reports {@code view_status} as {@code invalid} and repeats the reason through
+ *     {@code invalidation_reason}, so the queries operators already run to find stopped
+ *     views find it; the phase is what says it is a block rather than a durable
+ *     invalidation, and so may clear on its own. A {@code rebuild_deferred} phase is not a
+ *     block: the view owes a rebuild that waits for its base table to apply commits the
+ *     view already holds output of, stays {@code active}, and resumes by itself once the
+ *     base applies them. The reason names the base and the commit, which is what tells a
+ *     view waiting on a base whose WAL apply is suspended apart from one merely lagging.
+ *     Both are read once per row, phase first, so a row never pairs a phase with a
+ *     reason from before it, and a NULL phase always comes with a NULL reason. See
  *     {@link io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase}.</li>
  * </ul>
  */
@@ -417,6 +423,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             }
 
             private static class LiveViewsRecord implements Record {
+                private int checkpointRecoveryPhase;
+                private String checkpointRecoveryReason;
                 private long[] checkpointRepair;
                 private long checkpointRepairOutcome;
                 private long[] checkpointTimeline;
@@ -428,6 +436,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                 private long o3ResumeReplayRows;
 
                 public void clear() {
+                    checkpointRecoveryPhase = LiveViewCheckpointRecoveryPhase.NONE;
+                    checkpointRecoveryReason = null;
                     checkpointRepair = null;
                     checkpointRepairOutcome = 0;
                     checkpointTimeline = null;
@@ -749,20 +759,26 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // off the instance rather than written into _lv.s:
                         // LiveViewInstance.getInvalidationReason stays the durable
                         // field, so a state copy cannot persist a derived block as a
-                        // terminal invalidation.
+                        // terminal invalidation. A deferred rebuild is not mirrored:
+                        // the view is active, and nothing about it is invalid.
                         case COLUMN_INVALIDATION_REASON -> {
                             final CharSequence reason = instance.getInvalidationReason();
-                            yield reason != null ? reason : instance.getCheckpointRecoveryReason();
+                            if (reason != null) {
+                                yield reason;
+                            }
+                            yield LiveViewCheckpointRecoveryPhase.isBlocked(checkpointRecoveryPhase)
+                                    ? checkpointRecoveryReason
+                                    : null;
                         }
                         // Why the view's recovery stopped - blocked on a format this
                         // build cannot read, or rebuild_blocked on a rebuild that would
                         // have dropped rows it retains - and what tells a blocked view
                         // apart from a durably invalidated one under the same
-                        // view_status. Both NULL for a view whose recovery finished or
-                        // never had to run.
-                        case COLUMN_CHECKPOINT_RECOVERY_PHASE ->
-                                LiveViewCheckpointRecoveryPhase.name(instance.getCheckpointRecoveryPhase());
-                        case COLUMN_CHECKPOINT_RECOVERY_REASON -> instance.getCheckpointRecoveryReason();
+                        // view_status; or why it has not finished yet, rebuild_deferred
+                        // on a rebuild waiting for its base table's apply. Both NULL for
+                        // a view whose recovery finished or never had to run.
+                        case COLUMN_CHECKPOINT_RECOVERY_PHASE -> LiveViewCheckpointRecoveryPhase.name(checkpointRecoveryPhase);
+                        case COLUMN_CHECKPOINT_RECOVERY_REASON -> checkpointRecoveryReason;
                         // The dependency plans a localized repair would union, read off
                         // the compiled SELECT. NULL until the view compiles one.
                         case COLUMN_CHECKPOINT_REPAIR_PLAN ->
@@ -813,6 +829,17 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     // totals, which is what the column comments promise it cannot.
                     this.checkpointRepair = instance.getCheckpointRepair();
                     this.checkpointTimeline = instance.getCheckpointTimeline();
+                    // The recovery phase, then its reason, once per row. Every writer puts
+                    // a reason down before the phase it goes with and clears it before
+                    // clearing the phase, so this order reads the phase's own reason - or,
+                    // when a transition lands between the two reads, the next phase's or
+                    // none - but never a reason left over from before the phase. The gate on
+                    // NONE drops the one read the order cannot rule out alone: a reason
+                    // whose phase this read came too early to see.
+                    this.checkpointRecoveryPhase = instance.getCheckpointRecoveryPhase();
+                    this.checkpointRecoveryReason = checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.NONE
+                            ? null
+                            : instance.getCheckpointRecoveryReason();
                     // The last repair's outcome and the rows it replayed, in that order
                     // and no other. The refresh worker bumps the o3_* counters and only
                     // then publishes the outcome word, so an outcome read here was

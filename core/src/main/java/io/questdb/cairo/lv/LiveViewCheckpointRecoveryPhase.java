@@ -25,9 +25,10 @@
 package io.questdb.cairo.lv;
 
 /**
- * Names why a live view's recovery stopped rather than finished: a checkpoint
+ * Names why a live view's recovery stopped rather than finished - a checkpoint
  * format this build cannot read, or a rebuild from the base table that would
- * change output the view already retains.
+ * change output the view already retains - or why it has not finished yet: a
+ * rebuild that waits for its base table to apply what the view consumed.
  * <p>
  * A checkpoint timeline declares its layout in {@code _timeline}'s superblock
  * ({@link LiveViewCheckpointSuperblock#SLOT_FORMAT_VERSION}). A build that meets
@@ -51,18 +52,32 @@ package io.questdb.cairo.lv;
  * {@link #REBUILD_BLOCKED}. The two phases behave alike and differ in what clears
  * them.
  * <p>
- * Neither phase is persisted. A format block is re-derived from the superblock on
+ * A third phase is not a block. A running view's rebuild pins a base snapshot that
+ * holds every commit the view's table has output of, and a view that flushed output
+ * of raw WAL its base has not applied yet has to wait for that apply before the
+ * rebuild can run. The refresh worker defers it cooperatively and retries on the
+ * apply-lag back-off, which is {@link #REBUILD_DEFERRED}: the view keeps its status,
+ * its base WAL floor and its place in the refresh rotation, and resumes on its own
+ * once the base applies. It is reported because the wait has no bound of its own - a
+ * base table whose WAL apply is suspended keeps the view waiting until the apply
+ * resumes, and without the phase that would show only as a lag behind the base.
+ * <p>
+ * No phase is persisted. A format block is re-derived from the superblock on
  * every restart, so it survives a restart without a marker file of its own, and a
  * build that does implement the version simply never reaches it. A rebuild block
  * is re-derived by the restart's own recovery: the view restores from its timeline
- * if it can, and otherwise meets the same rebuild and the same refusal.
+ * if it can, and otherwise meets the same rebuild and the same refusal. A deferral
+ * lives only as long as the process: a restart recovers through its own restore and
+ * rebuild, which wait for the apply in place rather than defer.
  * <p>
  * {@link LiveViewInstance#getCheckpointRecoveryReason()} carries the operator
  * text that goes with the phase, and {@code live_views()} publishes both as
  * {@code checkpoint_recovery_phase} and {@code checkpoint_recovery_reason}. A
  * blocked view also reports {@code view_status} as {@code invalid} and repeats
  * the reason through {@code invalidation_reason}: it is a stopped view, and the
- * queries operators already run to find stopped views must find it.
+ * queries operators already run to find stopped views must find it. A deferred
+ * view does neither - it is not stopped - so the two recovery columns are where it
+ * shows.
  *
  * <h3>Why the block is where this ends, rather than a recovery</h3>
  * A recovery would have to prove that replaying the source history still
@@ -124,8 +139,31 @@ public final class LiveViewCheckpointRecoveryPhase {
      * that asked for the rebuild and the evidence that refused it.
      */
     public static final int REBUILD_BLOCKED = 2;
+    /**
+     * A running view owes a whole-view rebuild from the applied base, and the base
+     * table has not yet applied every commit the view's table holds output of. The
+     * rebuild waits for that apply rather than pin a snapshot that lacks them, and
+     * nothing has moved: the rows, the watermarks and the timeline are as the fault
+     * that asked for the rebuild left them. Not a block - the view stays
+     * {@code active}, keeps its base WAL floor and is retried on the apply-lag
+     * back-off - and it clears on its own: the rebuild runs once the base applies,
+     * or a retry restores the view from its timeline first. The reason names the
+     * recovery that asked for the rebuild, the base table and the commit it waits
+     * for.
+     */
+    public static final int REBUILD_DEFERRED = 3;
 
     private LiveViewCheckpointRecoveryPhase() {
+    }
+
+    /**
+     * @param phase one of the {@code LiveViewCheckpointRecoveryPhase} constants
+     * @return true for the phases that stop the view - {@link #BLOCKED} and
+     * {@link #REBUILD_BLOCKED} - as opposed to {@link #NONE} and the wait that is
+     * {@link #REBUILD_DEFERRED}
+     */
+    public static boolean isBlocked(int phase) {
+        return phase == BLOCKED || phase == REBUILD_BLOCKED;
     }
 
     /**
@@ -137,6 +175,7 @@ public final class LiveViewCheckpointRecoveryPhase {
         return switch (phase) {
             case BLOCKED -> "blocked";
             case REBUILD_BLOCKED -> "rebuild_blocked";
+            case REBUILD_DEFERRED -> "rebuild_deferred";
             default -> null;
         };
     }

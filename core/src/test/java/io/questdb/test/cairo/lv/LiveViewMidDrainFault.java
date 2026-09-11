@@ -38,8 +38,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  * pass. Install {@link #facade()} through {@code assertMemoryLeak(FilesFacade, ...)}, name the
  * base table's directory with {@link #of}, and {@link #arm} the fault right before the turn that
  * should fail.
+ * <p>
+ * {@link #armAppliedScan} fails the whole-view rebuild instead: the next open of the base's own
+ * {@code amount} column outside the WAL, which is what the rebuild's scan of the applied base
+ * reads and the raw-WAL drain never does.
  */
 final class LiveViewMidDrainFault {
+    private final AtomicBoolean appliedScanArmed = new AtomicBoolean();
+    private final AtomicBoolean appliedScanFired = new AtomicBoolean();
     // -1 disarmed; otherwise the number of reads still to skip before the one to fail.
     private final AtomicInteger countdown = new AtomicInteger(-1);
     private final AtomicBoolean fired = new AtomicBoolean();
@@ -50,11 +56,25 @@ final class LiveViewMidDrainFault {
         countdown.set(skip);
     }
 
+    void armAppliedScan() {
+        appliedScanFired.set(false);
+        appliedScanArmed.set(true);
+    }
+
     FilesFacade facade() {
         return new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 final String dir = baseDir;
+                if (appliedScanArmed.get()
+                        && dir != null
+                        && Utf8s.containsAscii(name, dir)
+                        && !Utf8s.containsAscii(name, "wal")
+                        && Utf8s.endsWithAscii(name, "amount.d")
+                        && appliedScanArmed.compareAndSet(true, false)) {
+                    appliedScanFired.set(true);
+                    return -1;
+                }
                 if (countdown.get() >= 0
                         && dir != null
                         && Utf8s.containsAscii(name, dir)
@@ -68,6 +88,10 @@ final class LiveViewMidDrainFault {
                 return super.openRO(name);
             }
         };
+    }
+
+    boolean hasAppliedScanFired() {
+        return appliedScanFired.get();
     }
 
     boolean hasFired() {

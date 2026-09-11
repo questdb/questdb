@@ -40,7 +40,10 @@ package io.questdb.cairo.lv;
  * stopped, the rows the view already has stay queryable, and the way back is a
  * re-CREATE. Reporting it under a status of its own would hide it from the
  * queries operators already run to find stopped views.
- * {@code live_views().checkpoint_recovery_phase} is what tells them apart.
+ * {@code live_views().checkpoint_recovery_phase} is what tells them apart. A
+ * rebuild that waits for its base table's apply
+ * ({@link LiveViewCheckpointRecoveryPhase#REBUILD_DEFERRED}) is not a block and
+ * does not enter here: the view has not stopped, so it reports {@link #ACTIVE}.
  */
 public enum LiveViewLifecycleState {
     /**

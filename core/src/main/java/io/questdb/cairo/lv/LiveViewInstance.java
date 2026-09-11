@@ -428,16 +428,17 @@ public class LiveViewInstance implements QuietCloseable {
     private volatile int checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.NONE;
     private volatile long checkpointRestoreCheckpointId = Numbers.LONG_NULL;
     private volatile long checkpointRestoreGeneration = Numbers.LONG_NULL;
-    // Why this view's recovery stopped rather than finished, as a
-    // LiveViewCheckpointRecoveryPhase constant, and the operator text that goes
-    // with it. Derived rather than persisted: the catalogue load re-reads the
-    // superblock on every restart and reaches the same format disposition, and the
-    // restart's own recovery re-reaches a refused rebuild, so a blocked view stays
-    // blocked without a marker of its own. A format block is written on the
-    // catalogue thread, before the refresh worker has seen the instance and before
-    // any repair could be parked on it; a rebuild block by the refresh worker under
-    // the refresh latch, from the rebuild it refused. Volatile because every other
-    // reader - the WAL purge job, live_views() - is another thread.
+    // Why this view's recovery stopped rather than finished, or why it has not
+    // finished yet, as a LiveViewCheckpointRecoveryPhase constant, and the operator
+    // text that goes with it. Derived rather than persisted: the catalogue load
+    // re-reads the superblock on every restart and reaches the same format
+    // disposition, and the restart's own recovery re-reaches a refused rebuild, so a
+    // blocked view stays blocked without a marker of its own. A format block is
+    // written on the catalogue thread, before the refresh worker has seen the
+    // instance and before any repair could be parked on it; a rebuild block, and a
+    // rebuild deferral with its clearing, by the refresh worker under the refresh
+    // latch. Volatile because every other reader - the WAL purge job, live_views() -
+    // is another thread.
     private volatile int checkpointRecoveryPhase = LiveViewCheckpointRecoveryPhase.NONE;
     private volatile String checkpointRecoveryReason;
     // Lifetime counts of the two destructive events a restart witness has to rule
@@ -1478,7 +1479,8 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * @return the {@code LiveViewCheckpointRecoveryPhase} constant naming why this
-     * view's recovery stopped, which is {@link LiveViewCheckpointRecoveryPhase#NONE}
+     * view's recovery stopped, or - {@link LiveViewCheckpointRecoveryPhase#REBUILD_DEFERRED}
+     * - why it has not finished yet; {@link LiveViewCheckpointRecoveryPhase#NONE}
      * for a view whose recovery finished or never had to run. See
      * {@link #checkpointRecoveryPhase}
      */
@@ -2020,10 +2022,23 @@ public class LiveViewInstance implements QuietCloseable {
      * invalid view does. Distinct from {@link #isInvalid()} in one way that matters:
      * the block is re-derived on every start rather than written to {@code _lv.s},
      * so a start whose recovery no longer meets it resumes the view without
-     * operator action. {@link #getCheckpointRecoveryPhase()} says which block it is
+     * operator action. {@link #getCheckpointRecoveryPhase()} says which block it is.
+     * A rebuild that waits for the base's apply is not a block; see
+     * {@link #isCheckpointRebuildDeferred()}
      */
     public boolean isCheckpointRecoveryBlocked() {
-        return checkpointRecoveryPhase != LiveViewCheckpointRecoveryPhase.NONE;
+        return LiveViewCheckpointRecoveryPhase.isBlocked(checkpointRecoveryPhase);
+    }
+
+    /**
+     * @return true while this view's whole-view rebuild from the applied base waits
+     * for the base table to apply commits the view's table already holds output of.
+     * The view is not stopped: it keeps its status and its base WAL floor, and the
+     * refresh worker retries the recovery on the apply-lag back-off until the rebuild
+     * can run. See {@link LiveViewCheckpointRecoveryPhase#REBUILD_DEFERRED}
+     */
+    public boolean isCheckpointRebuildDeferred() {
+        return checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED;
     }
 
     public boolean isInvalid() {
@@ -2185,6 +2200,26 @@ public class LiveViewInstance implements QuietCloseable {
         markBlocked(LiveViewCheckpointRecoveryPhase.REBUILD_BLOCKED, reason);
     }
 
+    /**
+     * Records that this view's whole-view rebuild from the applied base waits for the
+     * base table to apply commits the view's table holds output of. The refresh
+     * worker calls this under the refresh latch, from the deferral itself, once per
+     * target: the retries the apply-lag back-off paces keep the reason it published.
+     * <p>
+     * Unlike the two blocks this cuts nothing short and stops nothing - the deferral
+     * already ended the turn before anything moved - and it never replaces a block:
+     * a blocked view's refresh is declined before any recovery could defer.
+     * {@link #clearCheckpointRebuildDeferred()} ends it.
+     */
+    public void markCheckpointRebuildDeferred(CharSequence reason) {
+        if (isCheckpointRecoveryBlocked()) {
+            return;
+        }
+        // Reason first, as for a block: a reader that sees the phase sees its reason.
+        checkpointRecoveryReason = reason.toString();
+        checkpointRecoveryPhase = LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED;
+    }
+
     public void markAsDropped() {
         dropped = true;
         cancelRefresh();
@@ -2272,6 +2307,22 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void recordCheckpointRestoreMicros(long durationUs) {
         this.headCheckpointRestoreMicros = durationUs;
+    }
+
+    /**
+     * Ends a rebuild deferral, leaving any other phase as it is. The refresh worker
+     * calls this under the refresh latch whenever the deferral stops describing the
+     * view: the base applied far enough for the rebuild to run, a recovery succeeded,
+     * or the view was invalidated or dropped and so waits for nothing.
+     */
+    public void clearCheckpointRebuildDeferred() {
+        if (checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED) {
+            // Reason first, as on the way in. A reader that reads the phase before the
+            // reason can then see the phase without its reason, which says less than it
+            // should, but never a reason once the phase is gone.
+            checkpointRecoveryReason = null;
+            checkpointRecoveryPhase = LiveViewCheckpointRecoveryPhase.NONE;
+        }
     }
 
     /**
@@ -2561,7 +2612,7 @@ public class LiveViewInstance implements QuietCloseable {
      * clears any armed apply-lag defer floor: a cycle that drained cleanly proves the
      * transient base-apply lag has passed, so the pre-latch throttle in
      * {@link io.questdb.cairo.lv.LiveViewRefreshJob#refreshInstance} should stop
-     * short-circuiting this view.
+     * short-circuiting this view - and ends a rebuild deferral, for the same reason.
      * <p>
      * Does <em>not</em> clear {@code writerStallStartUs}: stall is a property of
      * the in-mem tier's slot pinning, not of refresh-cycle success. A zero-row
@@ -2577,6 +2628,9 @@ public class LiveViewInstance implements QuietCloseable {
         flushRetryStartUs = Numbers.LONG_NULL;
         applyLagDeferUntilUs = Numbers.LONG_NULL;
         applyLagDeferTargetSeqTxn = Numbers.LONG_NULL;
+        // A rebuild deferral is the same lag seen from a recovery, and a cycle that
+        // succeeded settled the debt it was waiting to pay.
+        clearCheckpointRebuildDeferred();
     }
 
     /**
@@ -3098,6 +3152,9 @@ public class LiveViewInstance implements QuietCloseable {
                 discardSuspendedRepair();
                 freeSeedBaseReader();
                 freeCachedRefreshState();
+                // Under the latch, after the last cycle that could have deferred: a
+                // dropped view waits for nothing.
+                clearCheckpointRebuildDeferred();
             }
         } finally {
             refreshLatch.set(false);
@@ -3137,6 +3194,10 @@ public class LiveViewInstance implements QuietCloseable {
             discardSuspendedRepair();
             freeSeedBaseReader();
             freeCachedRefreshState();
+            // Under the latch, so after any cycle that deferred before it saw the
+            // invalidation; every later one returns before its recovery could defer.
+            // An invalid view waits for nothing.
+            clearCheckpointRebuildDeferred();
         } finally {
             refreshLatch.set(false);
         }

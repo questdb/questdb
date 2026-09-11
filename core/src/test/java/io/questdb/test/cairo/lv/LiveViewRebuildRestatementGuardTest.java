@@ -507,6 +507,8 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 // to the next drain.
                 Assert.assertEquals(baseApplied + 4, instance.getLastProcessedSeqTxn());
                 Assert.assertFalse(instance.isWindowStateDirty());
+                // The rebuild ran, so the view no longer waits for anything, and says so.
+                assertLiveViewsReportsNoRecovery(instance);
                 driveRefreshToQuiescence(job);
             }
 
@@ -538,6 +540,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 // Pinned where the base had applied, the rebuild would have stood the guard down and
                 // replaced the view with what the surviving days produce. It waits instead.
                 assertRebuildDeferred(job, instance, baseApplied);
+                final String deferralReason = instance.getCheckpointRecoveryReason();
                 assertViewRows(ALL_ROWS + rowsAheadOutput(2));
 
                 // The back-off only paces the retries. Once it has elapsed, a later commit's
@@ -563,6 +566,10 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 );
                 Assert.assertEquals(baseApplied + 1, instance.getLastProcessedSeqTxn());
                 assertViewRows(ALL_ROWS + rowsAheadOutput(2));
+                // Still waiting, and still saying so with the reason the first deferral published:
+                // a retry on the same target builds nothing new.
+                Assert.assertTrue(instance.isCheckpointRebuildDeferred());
+                Assert.assertSame(deferralReason, instance.getCheckpointRecoveryReason());
 
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
@@ -587,6 +594,129 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             assertLiveViewsReportsTheBlock();
             // A view stopped at a running door keeps serving its in-memory lead.
             assertViewRows(ALL_ROWS + rowsAheadOutput(2));
+        });
+    }
+
+    @Test
+    public void testARebuildWaitingOnASuspendedBaseApplyReportsTheWaitUntilTheApplyResumes() throws Exception {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            fault.of(engine.verifyTableName("tx").getDirName());
+            final TableToken baseToken = engine.verifyTableName("tx");
+            final LiveViewInstance instance = instance("lv");
+            final long baseApplied = instance.getLastProcessedSeqTxn();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushAheadOfTheBaseApply(job);
+                writeRepairMarker(instance);
+                // The base's WAL apply stops with the view's table holding output of a commit it
+                // never applied - an operator's SUSPEND WAL here, a failed apply in the wild. Nothing
+                // on the view's side bounds the wait that follows: a deferral charges no retry, so
+                // only the apply ends it.
+                execute("ALTER TABLE tx SUSPEND WAL");
+                failMidDrainAheadOfTheBaseApply(job, fault, 1);
+                assertRebuildDeferred(job, instance, baseApplied);
+                final String deferralReason = instance.getCheckpointRecoveryReason();
+
+                // Retry after retry, the view waits and keeps saying what it waits for. Before the
+                // phase existed, this stretch showed only as a lag behind the base.
+                for (int i = 0; i < 3; i++) {
+                    drainWalQueue();
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    engine.getLiveViewStateStore().notifyBaseTableCommit(baseToken, baseApplied + 4);
+                    drainJob(job);
+                }
+                Assert.assertTrue(engine.isWalApplySuspended(baseToken));
+                Assert.assertEquals(baseApplied, engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn());
+                capture.drain();
+                capture.assertOnlyOnce("live view rebuild from the applied base waits for the base table to apply what the view consumed");
+                Assert.assertTrue(instance.isCheckpointRebuildDeferred());
+                Assert.assertSame(deferralReason, instance.getCheckpointRecoveryReason());
+                Assert.assertTrue(instance.isWindowStateDirty());
+                Assert.assertEquals(1, instance.getRefreshFaultCount());
+                Assert.assertEquals(0, instance.getFlushRetryCount());
+                Assert.assertFalse(instance.isInvalid());
+                Assert.assertEquals(baseApplied + 1, instance.getLastProcessedSeqTxn());
+                assertViewRows(ALL_ROWS + rowsAheadOutput(2));
+
+                // The apply resumes and lands the four commits, which ends the wait whatever the
+                // rebuild then does. Here its first run fails on the applied base's scan: the view
+                // owes the recovery still, and is charged for the failure, but no longer reports a
+                // wait the base has already satisfied.
+                execute("ALTER TABLE tx RESUME WAL");
+                drainWalQueue();
+                // A fresh base reader, so the rebuild's scan opens the column the fault fails. One
+                // pass of the job rather than a drain, because the turn after the failure heals.
+                engine.releaseInactive();
+                fault.armAppliedScan();
+                job.run();
+                Assert.assertTrue("the rebuild's scan must have been failed once", fault.hasAppliedScanFired());
+                capture.drain();
+                capture.assertLogged("live view window-state recompute failed [view=lv, cause=mid-drain refresh failure");
+                Assert.assertTrue(instance.isWindowStateDirty());
+                Assert.assertEquals(2, instance.getRefreshFaultCount());
+                Assert.assertEquals(1, instance.getFlushRetryCount());
+                assertLiveViewsReportsNoRecovery(instance);
+
+                // The next turn's rebuild pins a snapshot holding all four commits, compares,
+                // finds every row the view holds, and heals.
+                driveRefreshToQuiescence(job);
+            }
+
+            capture.drain();
+            capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=mid-drain refresh failure]");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+            assertLiveViewsReportsNoRecovery(instance);
+            Assert.assertFalse(instance.isWindowStateDirty());
+            Assert.assertEquals(baseApplied + 4, instance.getLastProcessedSeqTxn());
+            assertViewRows(ALL_ROWS + rowsAheadOutput(4));
+        });
+    }
+
+    @Test
+    public void testARetryThatRestoresFromTheTimelineEndsTheWaitBeforeTheBaseApplies() throws Exception {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            fault.of(engine.verifyTableName("tx").getDirName());
+            final TableToken baseToken = engine.verifyTableName("tx");
+            final LiveViewInstance instance = instance("lv");
+            final long baseApplied = instance.getLastProcessedSeqTxn();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushAheadOfTheBaseApply(job);
+                writeRepairMarker(instance);
+                failMidDrainAheadOfTheBaseApply(job, fault, 1);
+                assertRebuildDeferred(job, instance, baseApplied);
+
+                // What kept the recovery off the timeline goes away while the base is still behind.
+                // A retry tries the restore before the rebuild, so this one restores in place, which
+                // needs nothing from the base's apply, and the wait ends without the apply landing.
+                try (Path dir = checkpointsDir(instance)) {
+                    LiveViewCheckpointRepairMarker.clear(engine.getConfiguration().getFilesFacade(), dir);
+                }
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                engine.getLiveViewStateStore().notifyBaseTableCommit(baseToken, baseApplied + 4);
+                drainJob(job);
+
+                capture.drain();
+                capture.assertLogged("live view restored its runtime from the checkpoint timeline [view=lv, cause=mid-drain refresh failure");
+                capture.assertNotLogged("live view recomputed window state from applied base");
+                Assert.assertEquals(1, instance.getCheckpointRuntimeRestores());
+                Assert.assertEquals(
+                        "no whole-view rebuild may have run",
+                        LiveViewRebuildRestatementGuard.ABSTAIN_NOT_EVALUATED,
+                        job.rebuildRestatementGuardForTest().getAbstention()
+                );
+                Assert.assertEquals(baseApplied, engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn());
+                Assert.assertFalse(instance.isWindowStateDirty());
+                assertLiveViewsReportsNoRecovery(instance);
+
+                driveRefreshToQuiescence(job);
+            }
+
+            Assert.assertEquals("the mid-drain fault is the one fault", 1, instance.getRefreshFaultCount());
+            assertLiveViewsReportsNoRecovery(instance);
+            assertViewRows(ALL_ROWS + rowsAheadOutput(4));
         });
     }
 
@@ -790,6 +920,18 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     /**
+     * The operator text a mid-drain recovery's deferred rebuild publishes, waiting for the base to
+     * apply {@code rebuildSeqTxn}.
+     */
+    private static String deferralReason(long rebuildSeqTxn) {
+        return "rebuilding the view from its base table waits for the base table to apply what the view consumed "
+                + "[cause=mid-drain refresh failure, baseTable=tx, rebuildSeqTxn=" + rebuildSeqTxn + "]: the view's table "
+                + "holds output of base commits the base table has not applied yet, and nothing has moved. Refresh "
+                + "resumes on its own once the base table applies seqTxn " + rebuildSeqTxn + "; a base table whose WAL "
+                + "apply is suspended (see wal_tables()) keeps the view waiting until the apply resumes";
+    }
+
+    /**
      * The view rows the first {@code count} of {@link #ROWS_AHEAD} produce, in order.
      */
     private static String rowsAheadOutput(int count) {
@@ -798,6 +940,24 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             sb.append(ROWS_AHEAD_OUTPUT[i]);
         }
         return sb.toString();
+    }
+
+    /**
+     * Asserts a view whose deferred rebuild ran, or whose recovery otherwise finished, reports no
+     * recovery at all: both recovery columns NULL beside an {@code active} status.
+     */
+    private void assertLiveViewsReportsNoRecovery(LiveViewInstance instance) throws Exception {
+        Assert.assertFalse(instance.isCheckpointRebuildDeferred());
+        Assert.assertEquals(LiveViewCheckpointRecoveryPhase.NONE, instance.getCheckpointRecoveryPhase());
+        Assert.assertNull(instance.getCheckpointRecoveryReason());
+        assertQuery("SELECT view_status, checkpoint_recovery_phase, invalidation_reason, checkpoint_recovery_reason "
+                + "FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        view_status\tcheckpoint_recovery_phase\tinvalidation_reason\tcheckpoint_recovery_reason
+                        active\t\t\t
+                        """);
     }
 
     private void assertLiveViewsReportsTheBlock() throws Exception {
@@ -816,9 +976,11 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
      * Asserts the whole-view rebuild a mid-drain recovery asked for waited for the base's apply
      * instead of running: nothing pinned a snapshot, nothing was refused, rebuilt or charged to the
      * retry budget, and the window-state debt stands on the instance behind an apply-lag back-off
-     * that names the commit the view flushed past the base's applied head.
+     * that names the commit the view flushed past the base's applied head. The wait is reported:
+     * the view is not stopped, so {@code live_views()} keeps it {@code active} and says what it
+     * waits for through the two recovery columns alone.
      */
-    private void assertRebuildDeferred(LiveViewRefreshJob job, LiveViewInstance instance, long baseApplied) {
+    private void assertRebuildDeferred(LiveViewRefreshJob job, LiveViewInstance instance, long baseApplied) throws Exception {
         capture.drain();
         capture.assertLogged("live view rebuild from the applied base waits for the base table to apply what the view consumed "
                 + "[view=lv, cause=mid-drain refresh failure, rebuildSeqTxn=" + (baseApplied + 1)
@@ -836,6 +998,16 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         Assert.assertEquals("the mid-drain fault is the one fault", 1, instance.getRefreshFaultCount());
         Assert.assertEquals("a deferral charges no retry", 0, instance.getFlushRetryCount());
         Assert.assertEquals(baseApplied + 1, instance.getLastProcessedSeqTxn());
+
+        Assert.assertTrue("the wait must be reported", instance.isCheckpointRebuildDeferred());
+        Assert.assertEquals(LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED, instance.getCheckpointRecoveryPhase());
+        Assert.assertEquals(deferralReason(baseApplied + 1), instance.getCheckpointRecoveryReason());
+        assertQuery("SELECT view_status, checkpoint_recovery_phase, invalidation_reason, checkpoint_recovery_reason "
+                + "FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\tcheckpoint_recovery_phase\tinvalidation_reason\tcheckpoint_recovery_reason\n"
+                        + "active\trebuild_deferred\t\t" + deferralReason(baseApplied + 1) + "\n");
     }
 
     private void assertViewRows(String expected) throws Exception {

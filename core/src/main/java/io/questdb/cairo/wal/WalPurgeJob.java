@@ -570,6 +570,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // bound, and it grows the base table WAL that every other writer and view
         // on that base shares. See LiveViewCheckpointRecoveryPhase for what that
         // costs a view whose recovery could later have resumed from its timeline.
+        // A view whose rebuild waits for the base's apply is not blocked and keeps
+        // its floor, as any refreshing view does. Its hold is bounded where a block's
+        // is not: the wait ends once the base applies the commit it names, so the
+        // applied WAL it keeps from purge never runs past that commit.
         // Skip the LV arm when no LiveViewRefreshJob will run - the feature is off, or the
         // dedicated live view refresh pool has no workers. In either case nothing advances
         // lvConsumedSeqTxn / headCheckpointBaseSeqTxn, and clamping to those frozen values would
