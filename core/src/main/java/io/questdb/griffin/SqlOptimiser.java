@@ -1880,6 +1880,7 @@ public class SqlOptimiser implements Mutable {
     // - predicates on both or right table may be added to post join clause as long as they're marked properly (via ExpressionNode.isOuterJoinPredicate)
     private void analyseEquals(IQueryModel parent, ExpressionNode node, boolean innerPredicate, IQueryModel joinModel, int joinIndex) throws SqlException {
         traverseNamesAndIndices(parent, node);
+        rewriteStringJoinCasts(parent, node);
         int aSize = literalCollectorAIndexes.size();
         int bSize = literalCollectorBIndexes.size();
         // Record predicate origin so later stages (assignFilters, moveWhereInsideSubQueries)
@@ -3423,6 +3424,7 @@ public class SqlOptimiser implements Mutable {
                     break;
                 case JOIN_OP_EQUAL:
                     traverseNamesAndIndices(parent, n);
+                    rewriteStringJoinCasts(parent, n);
                     if (literalCollector.functionCount == 0
                             && literalCollector.nullCount == 0
                             && literalCollectorAIndexes.size() == 1
@@ -11979,6 +11981,32 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void rewriteStringJoinCasts(IQueryModel parent, ExpressionNode node) {
+        if (literalCollector.functionCount == 0
+                || literalCollectorAIndexes.size() != 1
+                || literalCollectorBIndexes.size() != 1
+                || literalCollectorAIndexes.get(0) == literalCollectorBIndexes.get(0)) {
+            return;
+        }
+        final IQueryModel lhsModel = parent.getJoinModels().getQuick(literalCollectorAIndexes.get(0));
+        final IQueryModel rhsModel = parent.getJoinModels().getQuick(literalCollectorBIndexes.get(0));
+        final int lhsType = getQueryColumnType(lhsModel, lhsModel.getAliasToColumnMap().get(literalCollectorANames.getQuick(0)));
+        final int rhsType = getQueryColumnType(rhsModel, rhsModel.getAliasToColumnMap().get(literalCollectorBNames.getQuick(0)));
+        // Hash joins encode STRING/SYMBOL keys as UTF-8 when comparing them with VARCHAR keys.
+        // The equality function compares UTF-16 to UTF-8 directly and can produce different matches.
+        if (ColumnType.isVarchar(lhsType) != ColumnType.isVarchar(rhsType)) {
+            return;
+        }
+        final ExpressionNode lhs = stripStringJoinCast(node.lhs, lhsType);
+        final ExpressionNode rhs = stripStringJoinCast(node.rhs, rhsType);
+        if (lhs != null && rhs != null) {
+            // analyseEquals() needs column references to extract equi-join keys.
+            node.lhs = lhs;
+            node.rhs = rhs;
+            literalCollector.functionCount = 0;
+        }
+    }
+
     /**
      * Rewrites column references in the expression from the virtual timestamp alias to the source column.
      */
@@ -12305,6 +12333,25 @@ public class SqlOptimiser implements Mutable {
             model = model.getNestedModel();
         }
         return model;
+    }
+
+    private ExpressionNode stripStringJoinCast(ExpressionNode node, int columnType) {
+        if (!ColumnType.isSymbolOrStringOrVarchar(columnType)) {
+            return null;
+        }
+        ExpressionNode literal = node;
+        while (literal != null && literal.type == FUNCTION && isCastKeyword(literal.token) && literal.paramCount == 2) {
+            if (literal.rhs == null || literal.rhs.type != CONSTANT) {
+                return null;
+            }
+            final int castType = ColumnType.typeOf(literal.rhs.token);
+            // Utf8s replaces unpaired UTF-16 surrogates with '?', so removing these casts can change matches.
+            if (castType != columnType && !(ColumnType.isSymbolOrString(columnType) && ColumnType.isSymbolOrString(castType))) {
+                return null;
+            }
+            literal = literal.lhs;
+        }
+        return literal != null && literal.type == LITERAL ? literal : null;
     }
 
     private ExpressionNode substituteLateralCountPlaceholder(ExpressionNode node, ExpressionNode replacement) {
