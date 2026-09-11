@@ -46,6 +46,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
@@ -614,6 +615,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      */
     @Test
     public void testRecoverSkipsEpochAheadOfRestoredTxn() throws Exception {
+        // The epoch-ahead-of-live guard is platform-neutral, but this test's physical restore simulation
+        // is not: it reads a live _txn QuestDB holds locked (Windows ReadFile fails on the byte-0 lock)
+        // and copies over an existing destination (Windows ff.copy refuses one). Covered by POSIX legs.
+        org.junit.Assume.assumeFalse("restore simulation rewrites live files, which Windows forbids", Os.isWindows());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         try {
@@ -870,6 +875,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      */
     @Test
     public void testRecoverDirectorySyncFailurePoisonsEngineAndPropagates() throws Exception {
+        // The injected fault point does not exist on Windows: RecoveryCoordinator skips the recovery
+        // directory fsync there (no directory handles to fsync), so fsyncAndClose is never reached and
+        // recover() has nothing to classify. POSIX-only by the shape of the product code.
+        org.junit.Assume.assumeFalse("recovery takes no directory fsync on Windows", Os.isWindows());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         final AtomicBoolean isCounting = new AtomicBoolean();
@@ -918,6 +927,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
     @Test
     public void testRecoverAbortsOnRestoreIoErrorBeforeServingSiblings() throws Exception {
+        // The fault is injected on the openRW + copyData in-place transfer -- the POSIX branch of
+        // TableUtils.replaceFileContent. Windows takes the removeQuiet + copy route instead, so the
+        // seam this facade arms is never exercised there. POSIX-only by the shape of the product code.
+        org.junit.Assume.assumeFalse("restore transfer fault seam is POSIX-only", Os.isWindows());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         // A path-targeted transfer fault: fail ONLY the target table's live _txn restore
@@ -993,6 +1006,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      */
     @Test
     public void testRestoreCvFailureAbortsStartupAndFailsLoud() throws Exception {
+        // Same POSIX-only seam as testRecoverAbortsOnRestoreIoErrorBeforeServingSiblings, and the
+        // torn-destination window under test (truncate-then-transfer) exists only in that branch of
+        // TableUtils.replaceFileContent; Windows replaces the file whole via removeQuiet + copy.
+        org.junit.Assume.assumeFalse("restore transfer fault seam is POSIX-only", Os.isWindows());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         final int simErrno = 28;

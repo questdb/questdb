@@ -273,12 +273,18 @@ public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
      * unique nonsense string and every {@code contains()} lookup would silently return 0 -- a harness that
      * reports "no barriers" for everything, which reads exactly like a passing "must not flush" assertion.
      * Test paths are ASCII temp dirs, so a byte-wise decode is exact.
+     * <p>
+     * Separators are normalized to {@code '/'}: {@code Path} renders {@code '\'} on Windows, while every
+     * caller keys its counters with {@code '/'}-joined needles (as this class's own javadoc documents).
+     * Without the normalization every lookup silently returns 0 on Windows -- the "must not flush"
+     * assertions pass vacuously and the "must flush" assertions all fail.
      */
     private static String pathToString(LPSZ name) {
         final int n = name.size();
         final StringBuilder sb = new StringBuilder(n);
         for (int i = 0; i < n; i++) {
-            sb.append((char) (name.byteAt(i) & 0xFF));
+            final char c = (char) (name.byteAt(i) & 0xFF);
+            sb.append(c == '\\' ? '/' : c);
         }
         return sb.toString();
     }

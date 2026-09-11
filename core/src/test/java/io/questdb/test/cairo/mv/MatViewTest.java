@@ -991,6 +991,14 @@ public class MatViewTest extends AbstractCairoTest {
         // it the view never caches its refresh intervals, so WalPurgeJob keeps every base table WAL
         // segment from the view's last refreshed txn onwards -- unbounded disk growth on the base
         // table, not on the view.
+        //
+        // The suite runs the ADAPTIVE commit mode, under which WalPurgeJob keeps a second, unrelated
+        // floor: WAL segments above the last durable epoch are retained so adaptive crash-recovery can
+        // re-apply from it. This test freezes the clock (currentMicros below), so after the first apply
+        // the default 60s epoch cadence can never fire again and that floor -- not the refresh gate
+        // under test -- would pin wal1 at the final purge assertion. Epoch on every apply so the purge
+        // behaves as it does under the per-commit-durability modes.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +

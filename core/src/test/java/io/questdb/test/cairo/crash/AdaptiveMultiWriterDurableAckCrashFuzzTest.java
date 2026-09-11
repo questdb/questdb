@@ -222,6 +222,9 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
     }
 
     private void runOneSeed(long s0, long s1, long ops) throws Exception {
+        // Each seed run installs its own facade and ends in markDurableBaseline() + crash(), so it must
+        // take the harness's POSIX gate itself (it does not go through runWithCrashFacade).
+        assumeCrashHarnessSupported();
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
         // Epoch every apply batch so the crash recovery can rebuild the applied columns from the durable WAL.

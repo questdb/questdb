@@ -202,12 +202,15 @@ public class AdaptiveEnrollmentOrderTest extends AbstractCairoTest {
          * identity hash — every {@code contains()} lookup would then miss and the ordering assertions would
          * report "nothing recorded" for everything. Same decode, and same reason, as
          * {@code SyncAttributingFilesFacade}. Test paths are ASCII temp dirs, so this is exact.
+         * Separators are normalized to {@code '/'} for the same reason as there: the assertion needles
+         * are {@code '/'}-joined, while {@code Path} renders {@code '\'} on Windows.
          */
         private static String pathToString(LPSZ name) {
             final int n = name.size();
             final StringBuilder sb = new StringBuilder(n);
             for (int i = 0; i < n; i++) {
-                sb.append((char) (name.byteAt(i) & 0xFF));
+                final char c = (char) (name.byteAt(i) & 0xFF);
+                sb.append(c == '\\' ? '/' : c);
             }
             return sb.toString();
         }

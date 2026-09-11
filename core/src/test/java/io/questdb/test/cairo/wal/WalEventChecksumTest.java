@@ -177,6 +177,10 @@ public class WalEventChecksumTest extends AbstractCairoTest {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
             TableToken tt = engine.verifyTableName("x");
+            // Release the pooled WalWriter before mutating _event: it still holds the file mapped, and
+            // Windows refuses to write to a file with a user-mapped section open. Same pattern as
+            // testMissingSidecarReadsUnverifiedRatherThanSuspending below.
+            engine.releaseInactive();
             Path eventPath = findWalFile(tt.getDirName(), WalUtils.EVENT_FILE_NAME);
             byte[] event = Files.readAllBytes(eventPath);
             event[WalUtils.WALE_HEADER_SIZE + Integer.BYTES + Long.BYTES + 1] ^= 0x40;
@@ -192,6 +196,8 @@ public class WalEventChecksumTest extends AbstractCairoTest {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
             TableToken tt = engine.verifyTableName("x");
+            // Release the pooled WalWriter before mutating the sidecar -- see testCorruptBodySuspendsTable.
+            engine.releaseInactive();
             Path checksumPath = findWalFile(tt.getDirName(), WalUtils.EVENT_CHECKSUM_FILE_NAME);
             byte[] checksum = Files.readAllBytes(checksumPath);
             checksum[WalUtils.WALE_CHECKSUM_HEADER_SIZE + WalUtils.WALE_CHECKSUM_ENTRY_VALUE_OFFSET] ^= 0x40;

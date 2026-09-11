@@ -20,22 +20,35 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
     protected CrashFaultFilesFacade crashFf;
 
     /**
-     * Run {@code body} with the crash facade installed as the engine's FilesFacade.
+     * The harness simulates power loss by reading and rewriting files UNDER a live engine that still
+     * holds them open, mapped and locked. Both halves of that are POSIX-only:
+     * <ul>
+     *   <li>{@code markDurableBaseline()} reads every file; QuestDB's Windows lock is
+     *       {@code LockFile(h, 0, 0, 1, 0)}, an exclusive lock on byte 0, so ReadFile fails with
+     *       ERROR_LOCK_VIOLATION.</li>
+     *   <li>{@code crash()} truncates files back to their durable prefix; Windows refuses to resize a
+     *       file with a user-mapped section open.</li>
+     * </ul>
+     * Neither is a property of the code under test, and neither can be worked around without closing
+     * the mappings first -- which would destroy the very thing the harness models. Gate to POSIX; the
+     * durability logic itself stays covered by the Linux and macOS legs.
+     * <p>
+     * Every test that calls {@code markDurableBaseline()}/{@code crash()} must pass this gate -- also
+     * the ones that install their own {@link CrashFaultFilesFacade} subclass instead of going through
+     * {@link #runWithCrashFacade}.
      */
-    protected void runWithCrashFacade(TestUtils.LeakProneCode body) throws Exception {
-        // The harness simulates power loss by reading and rewriting files UNDER a live engine that still
-        // holds them open, mapped and locked. Both halves of that are POSIX-only:
-        //   - markDurableBaseline() reads every file; QuestDB's Windows lock is LockFile(h, 0, 0, 1, 0),
-        //     an exclusive lock on byte 0, so ReadFile fails with ERROR_LOCK_VIOLATION.
-        //   - crash() truncates files back to their durable prefix; Windows refuses to resize a file with
-        //     a user-mapped section open.
-        // Neither is a property of the code under test, and neither can be worked around without closing
-        // the mappings first -- which would destroy the very thing the harness models. Gate to POSIX; the
-        // durability logic itself stays covered by the Linux and macOS legs.
+    protected static void assumeCrashHarnessSupported() {
         Assume.assumeFalse(
                 "crash-consistency harness rewrites files under a live engine, which Windows forbids",
                 Os.isWindows()
         );
+    }
+
+    /**
+     * Run {@code body} with the crash facade installed as the engine's FilesFacade.
+     */
+    protected void runWithCrashFacade(TestUtils.LeakProneCode body) throws Exception {
+        assumeCrashHarnessSupported();
         crashFf = new CrashFaultFilesFacade();
         // Scope process-death fd reclamation to per-table files; engine-root files (tables.d, the table-id
         // generator, config) are owned by long-lived singletons that outlive releaseEngineHandles().

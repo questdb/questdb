@@ -116,6 +116,9 @@ public class RebaseWalPublishDurabilityCrashTest extends AbstractCrashConsistenc
      */
     @Test
     public void testCrashOnTheFirstOpAfterThePublishRenameKeepsTheTableDir() throws Exception {
+        // This test installs its own facade subclass instead of going through runWithCrashFacade, so it
+        // must take the harness's POSIX gate itself: it ends in crashAndReopen().
+        assumeCrashHarnessSupported();
         configureRebase();
         final int[] renameOp = new int[]{-1};
         crashFf = new CrashFaultFilesFacade() {
@@ -181,6 +184,8 @@ public class RebaseWalPublishDurabilityCrashTest extends AbstractCrashConsistenc
      */
     @Test
     public void testAdoptedPublishOrphanCarriesItsOwnValidEpochAnchor() throws Exception {
+        // Manual facade install; ends in crashAndReopen() -- take the harness's POSIX gate.
+        assumeCrashHarnessSupported();
         configureRebase();
         final int[] renameOp = new int[]{-1};
         crashFf = new CrashFaultFilesFacade() {
