@@ -206,7 +206,16 @@ public class TableWriterSegmentFileCache {
         int fdCacheKey = walFdCache.keyIndex(walSegmentId);
         LongList fds = null;
         if (fdCacheKey < 0) {
-            fds = walFdCache.valueAt(fdCacheKey);
+            if (configuration.getBypassWalFdCache()) {
+                // Caching turned off while these descriptors were in hand: the segment files can
+                // now be replaced by a rename, which leaves them reading an unlinked file.
+                final LongList staleFds = walFdCache.valueAt(fdCacheKey);
+                discardCachedFds(staleFds);
+                staleFds.clear();
+                walFdCacheListPool.push(staleFds);
+            } else {
+                fds = walFdCache.valueAt(fdCacheKey);
+            }
         }
         int initialSize = walMappedColumns.size();
 
@@ -349,6 +358,15 @@ public class TableWriterSegmentFileCache {
             }
         } finally {
             path.trimTo(pathSize1);
+        }
+    }
+
+    private void discardCachedFds(LongList fds) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        for (int i = 0, n = fds.size(); i < n; i++) {
+            final long fd = fds.get(i);
+            LOG.debug().$("closing wal fd cache [fd=").$(fd).I$();
+            ff.close(fd);
         }
     }
 

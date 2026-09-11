@@ -130,6 +130,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getBypassWalFdCache() {
+        return getDelegate().getBypassWalFdCache();
+    }
+
+    @Override
     public boolean getCairoSqlLegacyOperatorPrecedence() {
         return getDelegate().getCairoSqlLegacyOperatorPrecedence();
     }
