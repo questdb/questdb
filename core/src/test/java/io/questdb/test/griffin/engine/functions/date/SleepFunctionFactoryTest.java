@@ -38,6 +38,7 @@ import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -67,7 +68,12 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
 
                     setCurrentMicros(200_000);
                     Assert.assertTrue(registry.cancel(queryId, sqlExecutionContext));
-                    Assert.assertEquals(1, runtime.drain(1));
+                    // Advancing the clock past the sleep deadline also makes the armed timer entry
+                    // due, so the timer shard thread races this thread's cancel for the wake. When
+                    // the timer thread wins it unparks the Fiber on its own thread and publishes it
+                    // to the run queue a moment later, so a single-shot drain here can legitimately
+                    // see an empty queue. Drain until the Fiber shows up instead.
+                    drainUntilResumed(runtime);
 
                     Assert.assertTrue(task.isDone());
                     Assert.assertNotNull("cancellation at the sleep deadline must fail the query", task.error);
@@ -279,6 +285,17 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertTrue("zero sleep should be near-instant, elapsed=" + elapsedMs + "ms",
                     elapsedMs < 200);
         });
+    }
+
+    private static void drainUntilResumed(FiberRuntime runtime) {
+        final long deadline = System.nanoTime() + 30_000_000_000L;
+        while (System.nanoTime() < deadline) {
+            if (runtime.drain(1) == 1) {
+                return;
+            }
+            Os.pause();
+        }
+        Assert.fail("fiber did not resume within 30s");
     }
 
     private static void close(FiberRuntime runtime) {
