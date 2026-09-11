@@ -11678,12 +11678,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testMidDrainRebuildFailureDoesNotDrainOverWipedWindowState() throws Exception {
-        // The sibling test above covers a mid-drain fault whose rebuild SUCCEEDS. This
-        // one covers the rebuild itself failing, which is where the accumulators are
-        // left wiped: o3HeadMissReplay calls clearWindowState and then throws on the
-        // applied-base scan, so the runtime sits at identity while the durable tier
-        // still holds the full history.
+    public void testMidDrainRecoveryFailureDoesNotDrainOverWipedWindowState() throws Exception {
+        // The sibling test below covers a mid-drain fault whose recovery SUCCEEDS. This
+        // one covers the recovery itself failing, which is where the accumulators are
+        // left wiped. The restore from the timeline is tried first and fails on its
+        // timeline read; the rebuild that covers for it calls clearWindowState and then
+        // throws on the applied-base scan, so the runtime sits at identity while the
+        // durable tier still holds the full history.
         //
         // Two things then conspire. refreshInstance assigns windowStateDirty = false at
         // every turn entry, so the dirtiness handleRefreshFailure recorded cannot
@@ -11693,16 +11694,19 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // therefore commits a running sum that restarts mid-view and can never
         // invalidate itself out of it.
         //
-        // Both faults self-clear, so the retry has clean files: any wrong output is the
-        // stale runtime's doing, not a lingering fault.
+        // All three faults self-clear, so the retry has clean files: any wrong output is
+        // the stale runtime's doing, not a lingering fault.
         final String[] baseDir = new String[1];
         // -1 disarmed; >= 0 skip this many base WAL ts.d opens, then fail the next and
         // disarm. Armed with 2 it fails the seqTxn-4 commit's segment read once the
         // seqTxn-3 row is already fed - the same mid-drain shape as the sibling test.
         final AtomicInteger armBaseTsRead = new AtomicInteger(-1);
-        // Armed by the mid-drain fault above. The rebuild it triggers scans the APPLIED
-        // base table rather than the WAL, so this fails one of that scan's column opens
-        // and lands strictly after clearWindowState.
+        // Armed by the mid-drain fault above. The restore the recovery tries first maps
+        // the view's _timeline superblock before it reads a root, so this fails that open.
+        final AtomicBoolean failRestoreRead = new AtomicBoolean(false);
+        // Armed by the mid-drain fault above as well. The rebuild that covers for the
+        // failed restore scans the APPLIED base table rather than the WAL, so this fails
+        // one of that scan's column opens and lands strictly after clearWindowState.
         final AtomicBoolean failRebuildScan = new AtomicBoolean(false);
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -11714,6 +11718,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         && Utf8s.containsAscii(name, "wal")) {
                     if (armBaseTsRead.get() == 0) {
                         armBaseTsRead.set(-1);
+                        failRestoreRead.set(true);
                         failRebuildScan.set(true);
                         return -1;
                     }
@@ -11728,6 +11733,15 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     return -1;
                 }
                 return super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failRestoreRead.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+                    failRestoreRead.set(false);
+                    return -1;
+                }
+                return super.openRW(name, opts);
             }
         };
 
@@ -11764,6 +11778,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainWalQueue();
                 Assert.assertEquals("the mid-drain segment read must have been failed exactly once",
                         -1, armBaseTsRead.get());
+                Assert.assertFalse("the restore's timeline read must have been failed exactly once",
+                        failRestoreRead.get());
                 Assert.assertFalse("the rebuild scan must have been failed exactly once",
                         failRebuildScan.get());
 
@@ -11780,14 +11796,19 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // sum mid-view, which this catches.
             assertRunningSumLvMatchesRecompute();
 
-            // The recovering commit must also settle the debt. If it did not, the output
-            // would still be correct - the gate would just rebuild the whole view on every
+            // The recovery must also settle the debt. If it did not, the output would
+            // still be correct - the gate would just recover the whole view on every
             // turn, forever, and report work each time so the worker never idles.
             final LiveViewInstance recovered = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(recovered);
             Assert.assertFalse(
-                    "the rebuild's commit must clear the window-state debt",
+                    "the recovery must clear the window-state debt",
                     recovered.isWindowStateDirty()
+            );
+            Assert.assertEquals(
+                    "the later turn's gate must have restored the window from the timeline",
+                    1,
+                    recovered.getCheckpointRuntimeRestores()
             );
 
             execute("DROP LIVE VIEW lv");
@@ -11799,7 +11820,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Resilience test (it passes both before and after the windowStateDirty
         // fix in drainAppliedBase - see below), covering a drain path that had no
         // fault-injection coverage at all: the coupled applied-base drain.
-        // testMidDrainRefreshFailureRebuildsWindowState covers the sibling raw-WAL
+        // testMidDrainRefreshFailureRecoversWindowState covers the sibling raw-WAL
         // drain (drainBaseWal); this one faults drainAppliedBase, which feeds the
         // SAME incremental window cursor and so advances the same accumulators.
         //
@@ -11820,7 +11841,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Two independent mechanisms now restore the accumulators, and the test
         // pins the outcome rather than either mechanism:
         //   1. drainAppliedBase raises windowStateDirty (this branch previously did
-        //      not), so handleRefreshFailure rebuilds from the applied base before
+        //      not), so handleRefreshFailure restores the accumulators from the
+        //      checkpoint timeline, or rebuilds them from the applied base, before
         //      the retry - matching drainBaseWal.
         //   2. Failing that, the retry's own overlap detection fires: the partial
         //      feed left latestSeenTs at or above the pending range's min ts, so
@@ -11899,9 +11921,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertFalse(armHour02Read.get());
                 drainWalQueue();
 
-                // Recovery is transparent: the window was recomputed from the applied
-                // base, so the view stays valid with a clean tier and its watermark
-                // advances past every commit.
+                // Recovery is transparent: the window was put back where the durable
+                // output is and the retry drained every commit, so the view stays valid
+                // with a clean tier and its watermark advances past every commit.
                 Assert.assertFalse("mid-drain recovery must keep the view valid", instance.isInvalid());
                 Assert.assertFalse("recovery must leave the tier clean", instance.isTierStale());
                 Assert.assertEquals("recovery must advance the watermark past every commit",
@@ -11925,17 +11947,19 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testMidDrainRefreshFailureRebuildsWindowState() throws Exception {
+    public void testMidDrainRefreshFailureRecoversWindowState() throws Exception {
         // Regression: a refresh cycle that feeds >= 1 row through the incremental
         // window cursor - advancing the running-sum accumulator - but then throws
         // BEFORE any durable LV commit must not leave the accumulator
         // double-advanced. handleRefreshFailure observes windowStateDirty == true
-        // and calls rebuildWindowStateAfterMidDrainFailure ->
-        // rebuildActiveWindowStateFromAppliedBase, which recomputes the whole
-        // window from the applied base so the accumulators restart clean. Without
-        // that rebuild the retry re-drains the same base commits and feeds their
-        // rows a second time: with the fix reverted, the mid-drain row's running
-        // sum lands at 9 instead of 6 (fed twice), and this assertion catches it.
+        // and calls recoverWindowStateAfterMidDrainFailure ->
+        // recoverActiveWindowState, which restores the accumulators from the
+        // checkpoint timeline and the base WAL above its root, as a restart does, so
+        // they stand where the durable output does; the next turn drains the
+        // interrupted commits again. Without that recovery the retry re-drains the
+        // same base commits and feeds their rows a second time: with the fix
+        // reverted, the mid-drain row's running sum lands at 9 instead of 6 (fed
+        // twice), and this assertion catches it.
         //
         // The fault is a genuine mid-drain one, not a post-commit one. The lead
         // drain stages rows in RAM and never touches the LV WAL, so a throw during
@@ -11948,7 +11972,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // once the worker finishes seqTxn 2, and that re-enqueued task drains
         // seqTxn 3 AND 4 in a single pass. We fail the base WAL ts.d open of the
         // seqTxn-4 commit once, after the seqTxn-3 row is already fed; the fault
-        // self-clears so the rebuild's applied-base recompute reads cleanly.
+        // self-clears so the recovery's replay and the drain after it read cleanly.
         // assertMemoryLeak covers the base readers the throwing path closes.
         final String[] baseDir = new String[1];
         // -1 disarmed; >= 0 skip this many base WAL ts.d opens, then fail the next
@@ -12014,23 +12038,26 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         -1, armBaseTsRead.get());
                 drainWalQueue();
 
-                // The rebuild recomputed the whole window from the applied base
-                // (all four commits) and recorded success, so recovery is
-                // transparent: the view stays valid with a clean tier, its
-                // watermark advances past every commit, and the budget is untouched.
-                Assert.assertFalse("mid-drain rebuild must keep the view valid", instance.isInvalid());
-                Assert.assertFalse("rebuild must leave the tier clean", instance.isTierStale());
-                Assert.assertEquals("mid-drain rebuild recovers without charging the retry budget",
+                // The recovery restored the window from the timeline rather than
+                // rebuilding it, recorded success, and the turn after it drained the
+                // interrupted commits into the lead again. So recovery is transparent:
+                // the view stays valid with a clean tier, it has refreshed past every
+                // commit, and the budget is untouched.
+                Assert.assertFalse("mid-drain recovery must keep the view valid", instance.isInvalid());
+                Assert.assertFalse("recovery must leave the tier clean", instance.isTierStale());
+                Assert.assertEquals("mid-drain recovery charges no retry budget",
                         0, instance.getFlushRetryCount());
-                Assert.assertEquals("rebuild must advance the watermark past every commit",
-                        4, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals("the recovery must restore the window from the timeline",
+                        1, instance.getCheckpointRuntimeRestores());
+                Assert.assertEquals("the view must refresh past every commit",
+                        4, instance.getRefreshedUpToSeqTxn());
                 // The decisive check: the running sum equals a from-scratch
                 // recompute. A double-advanced mid-drain row inflates it (9 instead
                 // of 6 at the seqTxn-3 row when the fix is reverted).
                 assertRunningSumLvMatchesRecompute();
 
-                // Steady state resumes cleanly: the rebuild advanced the watermark
-                // past all four commits, so a later commit does not re-feed them.
+                // Steady state resumes cleanly: the view refreshed past all four
+                // commits, so a later commit does not re-feed them.
                 setCurrentMicros(4_000_000L);
                 execute("INSERT INTO base VALUES ('2026-04-01T00:00:04.000000Z', 'a', 5)");
                 drainWalQueue();

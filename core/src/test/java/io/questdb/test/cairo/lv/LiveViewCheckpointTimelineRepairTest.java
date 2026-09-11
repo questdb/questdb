@@ -1760,8 +1760,8 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 Assert.assertNotNull("the first turn must park the repair", instance.getSuspendedRepair());
                 Assert.assertEquals(1, repairDescriptorCount());
 
-                // What recoverFromBaseMetadataDrift does before it rebuilds.
-                instance.prepareForBaseSchemaRecompile();
+                // What recoverFromBaseMetadataDrift does before it restores or rebuilds.
+                instance.prepareForRecompile();
 
                 Assert.assertNull("a recompile must let go of the candidate", instance.getSuspendedRepair());
                 Assert.assertEquals(

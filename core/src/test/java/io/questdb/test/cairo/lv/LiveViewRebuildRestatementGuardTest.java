@@ -56,11 +56,16 @@ import java.io.File;
  * rows from is dropped, and the incremental path walks past the DROP PARTITION as it always
  * has - the view keeps its rows for that day, which is the frozen-prefix contract. Then a
  * route into the whole-view rebuild opens: a restart with no timeline, a restart behind a
- * live repair marker, a base schema change, a lost base WAL segment. Before the guard, each
- * of them recomputed the view from the surviving base rows and replaced its output - the
- * dropped day's rows gone, silently, with the view valid throughout. Now each of them stops
- * the view instead, and the case asserts that everything the rebuild would have replaced is
- * still there.
+ * live repair marker, a base schema change the view cannot restore its accumulators past in
+ * place, a lost base WAL segment. Before the guard, each of them recomputed the view from the
+ * surviving base rows and replaced its output - the dropped day's rows gone, silently, with
+ * the view valid throughout. Now each of them stops the view instead, and the case asserts
+ * that everything the rebuild would have replaced is still there.
+ * <p>
+ * A base schema change that can restore in place never gets that far: it puts the
+ * accumulators back from the view's own timeline and keeps refreshing, with the dropped day
+ * still in the view. That case is here too, because it is the refusal the restore removes;
+ * the restore itself is {@link LiveViewRuntimeRestoreTest}'s subject.
  * <p>
  * The two checks are witnessed apart. Dropping the OLDEST day moves the base's earliest row
  * above the view's, which the history floor sees before the rebuild reads a row. Dropping a
@@ -103,13 +108,17 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     @Test
-    public void testABaseSchemaChangeRebuildIsRefusedAndTheRestartResumesFromTheTimeline() throws Exception {
+    public void testABaseSchemaChangeBehindALiveRepairMarkerIsRefused() throws Exception {
         assertMemoryLeak(() -> {
             // A deduplicating base, because its drain reads the applied base through the
             // compiled factory, and that is where a base metadata change surfaces as drift. The
             // view has no filter, so dedup cannot drop an output row and the guard compares.
             seedSixRows("DEDUP UPSERT KEYS(created_at, account_id)");
             dropPartitionAndRefresh("2026-01-01");
+            // A repair whose truncated head is not yet re-sealed. It is what keeps the drift's
+            // own recovery - restoring the accumulators from the timeline in place - off the
+            // timeline, and so what sends it to the whole-view rebuild.
+            writeRepairMarker(instance("lv"));
             final int boundariesBefore = countSealedBoundaries("lv");
             final long generationBefore = newestGeneration(instance("lv"));
             final long processedBefore = instance("lv").getLastProcessedSeqTxn();
@@ -131,19 +140,20 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             }
 
             capture.drain();
+            capture.assertLogged("live view cannot restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                    + "[view=lv, cause=base table metadata change, reason=prefix preservation repair marker present]");
             capture.assertLogged("live view rebuild from the applied base refused, it would drop rows the view retains");
             capture.assertNotLogged("live view recomputed window state from applied base");
             final LiveViewInstance instance = instance("lv");
             assertRebuildBlocked(instance, "base table metadata change");
+            Assert.assertEquals(0, instance.getCheckpointRuntimeRestores());
             Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
             TestUtils.assertContains(
                     instance.getCheckpointRecoveryReason(),
                     "the view holds rows from 2026-01-01T09:00:00.000000Z but the base table's earliest row is at 2026-01-02T09:00:00.000000Z"
             );
 
-            // Nothing moved: not the rows, not the watermark, not the timeline. The timeline is the
-            // one thing that has to survive, because it is the way back - the same generation,
-            // addressing the same ladder, rather than the retire a whole-view rebuild owes.
+            // Nothing moved: not the rows, not the watermark, not the timeline, not the marker.
             assertViewRows(ALL_ROWS);
             Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
             Assert.assertEquals(0, instance.getCheckpointTimelineResets());
@@ -153,18 +163,65 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                     newestGeneration(instance)
             );
             Assert.assertEquals(boundariesBefore, countSealedBoundaries("lv"));
+            try (Path dir = checkpointsDir(instance)) {
+                Assert.assertTrue(LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), dir));
+            }
             assertLiveViewsReportsTheBlock();
 
-            // The block is not durable. A restart takes the ordinary restore off the preserved
-            // ladder - no rebuild, so no refusal - and the view resumes with the day the base
-            // lost still in it, consuming the commit that arrived while it was stopped.
+            // The block is not durable, and neither is it lifted by one: the restart runs the
+            // recovery again, meets the same marker, and the same evidence refuses its rebuild.
             shutdown();
             restart();
-            final LiveViewInstance resumed = instance("lv");
-            Assert.assertFalse(resumed.isCheckpointRecoveryBlocked());
+            assertRebuildBlocked(instance("lv"), "prefix preservation repair marker present");
+            assertViewRows(ALL_ROWS);
+        });
+    }
+
+    @Test
+    public void testABaseSchemaChangeRestoresInsteadOfRebuildingAndKeepsTheDayTheBaseLost() throws Exception {
+        assertMemoryLeak(() -> {
+            // The same drift as above, with nothing standing over the timeline. The recovery
+            // restores the accumulators the recompile lost from the view's own newest root
+            // rather than rebuilding the view from what its base holds today, so it never asks
+            // the question the guard would have answered with a refusal.
+            seedSixRows("DEDUP UPSERT KEYS(created_at, account_id)");
+            dropPartitionAndRefresh("2026-01-01");
+
+            execute("ALTER TABLE tx ADD COLUMN note INT");
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
+                    + "('2026-01-03T10:00:00.000000Z', 'acct-1', 30.0), "
+                    + "('2026-01-03T10:00:00.000000Z', 'acct-1', 64.0)");
+            drainWalQueue();
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            capture.drain();
+            capture.assertLogged("live view restored its runtime from the checkpoint timeline [view=lv, cause=base table metadata change");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+            capture.assertNotLogged("live view recomputed window state from applied base");
+            Assert.assertEquals(
+                    "no whole-view rebuild may have been asked for",
+                    LiveViewRebuildRestatementGuard.ABSTAIN_NOT_EVALUATED,
+                    guard.getAbstention()
+            );
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertFalse("the view must keep refreshing", instance.isCheckpointRecoveryBlocked());
+            Assert.assertEquals(1, instance.getCheckpointRuntimeRestores());
+            Assert.assertEquals(0, instance.getCheckpointTimelineResets());
+            Assert.assertFalse(instance.isInvalid());
+            // The day the base lost is still in the view, and the commit that met the drift is
+            // materialized on top of the accumulation the restore put back - with no restart.
+            final String resumedRows = ALL_ROWS + "2026-01-03T10:00:00.000000Z\tacct-1\t80.0\t2\n";
+            assertViewRows(resumedRows);
+
+            shutdown();
+            restart();
             assertRestoredFromTimeline("lv");
             assertNoRefreshFaults("lv");
-            assertViewRows(ALL_ROWS + "2026-01-03T10:00:00.000000Z\tacct-1\t80.0\t2\n");
+            assertViewRows(resumedRows);
         });
     }
 

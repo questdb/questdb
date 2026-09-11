@@ -41,11 +41,13 @@ package io.questdb.cairo.lv;
  * <p>
  * The same hazard reaches a view on this build's own format through every other
  * route into the whole-view rebuild from the applied base: a restart that finds
- * no usable timeline, a base schema change the view survives, a refresh that
- * failed mid-drain, and a lost base WAL segment. There the build can look before
- * it leaps, and {@link LiveViewRebuildRestatementGuard} does: when the evidence
- * shows the rebuild would drop rows the view retains, the rebuild is refused
- * before anything durable moves and the view stops the same way, which is
+ * no usable timeline, a lost base WAL segment, and a base schema change the view
+ * survives or a refresh that failed mid-drain - those two only when the view
+ * could not first restore its accumulators from its own timeline in place, the
+ * way a restart does. There the build can look before it leaps, and
+ * {@link LiveViewRebuildRestatementGuard} does: when the evidence shows the
+ * rebuild would drop rows the view retains, the rebuild is refused before
+ * anything durable moves and the view stops the same way, which is
  * {@link #REBUILD_BLOCKED}. The two phases behave alike and differ in what clears
  * them.
  * <p>

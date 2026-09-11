@@ -450,6 +450,14 @@ public class LiveViewInstance implements QuietCloseable {
     // reset on restart, like the counters above.
     private volatile long checkpointRebuildAttempts;
     private volatile long checkpointTimelineResets;
+    // Lifetime count of restores from the checkpoint timeline this instance ran while
+    // refreshing, rather than at restart: a base schema change or a mid-drain failure lost
+    // the accumulators, and the refresh worker put them back from the view's own newest
+    // root and the base WAL above it instead of rebuilding the view's output from the
+    // applied base. The restart route above does not move for one. Bumped only on the
+    // refresh worker, by the branch that finished the restore; volatile for the reader
+    // that samples it. In-memory only, like the counters above.
+    private volatile long checkpointRuntimeRestores;
     // Lifetime capture ledger: what every publication this instance made walked, split into
     // the window root's captures and the function roots'. Nothing in the published artifacts
     // separates an incremental capture from a complete one - both leave a root naming the
@@ -645,11 +653,12 @@ public class LiveViewInstance implements QuietCloseable {
     // Lifetime count of refresh cycles that threw, incremented once per entry into
     // LiveViewRefreshJob.handleRefreshFailure. Unlike flushRetryCount this is never reset, because
     // most refresh faults are invisible after the fact: the job self-heals a mid-drain fault by
-    // recomputing the window from the applied base and calls recordRefreshSuccess(), which zeroes
-    // flushRetryCount, so a view that faults on every cycle and recomputes its way back to the right
-    // answer is indistinguishable from one that never faulted. Tests that mean to assert the
-    // incremental path was actually exercised (rather than silently falling back to a full
-    // recompute) assert this is zero. Written under the refresh latch, read from test threads.
+    // restoring the window from its checkpoint timeline, or recomputing it from the applied base,
+    // and calls recordRefreshSuccess(), which zeroes flushRetryCount, so a view that faults on every
+    // cycle and recovers its way back to the right answer is indistinguishable from one that never
+    // faulted. Tests that mean to assert the incremental path was actually exercised (rather than
+    // silently falling back to a recovery) assert this is zero. Written under the refresh latch,
+    // read from test threads.
     private volatile long refreshFaultCount;
     // In-RAM refresh cursor: the highest base seqTxn whose rows have been refreshed
     // into the in-mem tier (the lead), which leads the flushed/applied point
@@ -1507,6 +1516,16 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return restores from the checkpoint timeline this instance ran while
+     * refreshing, each one a base schema change or a mid-drain failure recovered
+     * without rebuilding the view from its base table; see
+     * {@link #checkpointRuntimeRestores}
+     */
+    public long getCheckpointRuntimeRestores() {
+        return checkpointRuntimeRestores;
+    }
+
+    /**
      * @return cadence seals this view has failed since the process started. A
      * non-zero and growing value means the view is serving correct results while
      * its restart recovery state is stale; see {@link #checkpointSealFailures}
@@ -2202,20 +2221,27 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Prepares the view for a recompile after the base table's metadata version
-     * drifted from the cached compiled factory (a schema change that does not
-     * touch referenced columns - those invalidate the view instead). Frees the
-     * compiled-SQL artifacts so the next factory use ({@code ensureCompiledFactory})
-     * recompiles them against the base table's current metadata. Window state
-     * accumulated in the old factory's functions is lost with it; the caller
-     * must rebuild it (head-miss replay, seed resume, or restart-restore)
+     * Prepares the view for a recompile of its SELECT. Frees the compiled-SQL
+     * artifacts so the next factory use ({@code ensureCompiledFactory}) recompiles
+     * them against the base table's current metadata, at identity. Two callers
+     * need that:
+     * <ul>
+     *     <li>a base metadata version that drifted from the cached compiled factory
+     *     (a schema change that does not touch referenced columns - those invalidate
+     *     the view instead), whose factory no longer matches the base reader's
+     *     column layout;</li>
+     *     <li>a restore from the checkpoint timeline while the view is refreshing,
+     *     which needs the runtime a restart starts from.</li>
+     * </ul>
+     * Window state accumulated in the old factory's functions is lost with it; the
+     * caller must put it back (timeline restore, head-miss replay or seed resume)
      * before resuming incremental processing. The in-memory tier is deliberately
-     * kept: the view's own projection is unchanged and reads keep serving
-     * through it.
+     * kept: the view's own projection is unchanged and reads keep serving through
+     * it.
      * <p>
      * Must be called on the refresh worker under the refresh latch.
      */
-    public void prepareForBaseSchemaRecompile() {
+    public void prepareForRecompile() {
         // Before anything is freed. A parked repair borrowed the very window functions and
         // anchor window below, both to replay through and to hold the pre-repair state its
         // overlay took aside; a session outliving them would restore into freed objects, and
@@ -2431,6 +2457,15 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Records one restore from the checkpoint timeline that the refresh worker ran
+     * while refreshing, called only from the branch that finished it. See
+     * {@link #checkpointRuntimeRestores}.
+     */
+    public void recordCheckpointRuntimeRestore() {
+        checkpointRuntimeRestores++;
+    }
+
+    /**
      * Records that this view retired its whole timeline, whichever seam did it. See
      * {@link #checkpointTimelineResets}.
      */
@@ -2620,7 +2655,7 @@ public class LiveViewInstance implements QuietCloseable {
     /**
      * Re-arms the seed sweep's single-shot resume setup (see
      * {@link #isSeedResumeAttempted()}). Called by the refresh worker after
-     * {@link #prepareForBaseSchemaRecompile()} on a SEEDING view so the next
+     * {@link #prepareForRecompile()} on a SEEDING view so the next
      * sweep turn restores window state and the data offset from the timeline's
      * newest root against the recompiled factory, or re-sweeps from offset 0
      * behind the skip-write floor. Mutated under the refresh latch only.
@@ -3207,7 +3242,7 @@ public class LiveViewInstance implements QuietCloseable {
      * non-zero balance returns it to the pool dirty, and PerQueryMemoryTracker.init() then trips
      * its recycle assert in whichever unrelated query next acquires it. Every FULL teardown path
      * (drop, invalidate, runtime-state free) routes through here, so the order is stated once; a
-     * base-schema recompile frees only the artifacts (see {@link #freeCompiledArtifacts}).
+     * recompile frees only the artifacts (see {@link #freeCompiledArtifacts}).
      */
     private void freeCachedRefreshState() {
         inMemoryTier = Misc.free(inMemoryTier);
@@ -3218,7 +3253,7 @@ public class LiveViewInstance implements QuietCloseable {
     /**
      * Frees the compiled-SQL artifacts that charge the per-view {@link #memoryTracker}: the
      * factory's per-partition function maps and the anchor window's anchor map. Does NOT free the
-     * tracker or the in-memory tier, so {@link #prepareForBaseSchemaRecompile} can drop and
+     * tracker or the in-memory tier, so {@link #prepareForRecompile} can drop and
      * rebuild the factory while the tier keeps serving and the tracker keeps accounting the tier's
      * retained footprint (the next factory recharges the same tracker).
      */
@@ -3243,7 +3278,7 @@ public class LiveViewInstance implements QuietCloseable {
         // that state dies with them. A head still claiming a root over state nothing
         // holds must not outlive them: whoever rebuilds re-seals, and only that seal
         // may re-stamp. Clearing here rather than at each caller covers the full
-        // teardown as well as the base-schema recompile, whose rebuild can fail.
+        // teardown as well as the recompile, whose rebuild can fail.
         headCheckpointRootId = Numbers.LONG_NULL;
         headCheckpointRootWindowFactory = null;
     }

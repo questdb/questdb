@@ -38,7 +38,9 @@ import org.jetbrains.annotations.NotNull;
  * the timeline absent (a directory reset for its format, a history-epoch replacement, a
  * timeline an earlier failure retired), a restore that fails, a surviving repair marker, a
  * base schema change the view survives, a refresh that failed mid-drain, and a lost base WAL
- * segment.
+ * segment. The two running routes - the schema change and the mid-drain failure - try the
+ * restart's own recovery in place first and reach the rebuild only when it cannot restore the
+ * accumulators from the view's timeline.
  * The rebuild recomputes the view from the rows its pinned base snapshot holds and replaces
  * the view's whole output, from its lower bound up, with the result. Incremental refresh does
  * not treat base history that way. TTL, DROP/DETACH PARTITION and TRUNCATE are non-DATA
