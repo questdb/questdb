@@ -160,11 +160,11 @@ public class FrameAlgebra {
     /**
      * One column's share of {@link #append}, which is what a frame runs per column task.
      *
-     * @param targetRowCount      the target's physical extent {@code E}: the file row this append writes at
-     * @param targetLiveRowCount  how many of those rows are LIVE. Equal to {@code targetRowCount} for a PLAIN
-     *                            target; smaller for a COMPOSITE one, whose pieces have moved off part of its
-     *                            extent. A column top describes a flat run from row 0, so it can only stand in
-     *                            for the source's leading NULLs while the two agree - see below.
+     * @param targetRowCount     the target's physical extent {@code E}: the file row this append writes at
+     * @param targetLiveRowCount how many of those rows are LIVE. Equal to {@code targetRowCount} for a PLAIN
+     *                           target; smaller for a COMPOSITE one, whose pieces have moved off part of its
+     *                           extent. A column top describes a flat run from row 0, so it can only stand in
+     *                           for the source's leading NULLs while the two agree - see below.
      */
     public static void appendColumn(FrameColumn targetColumn, long targetRowCount, long targetLiveRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         int columnType = sourceColumn.getColumnType();
