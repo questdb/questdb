@@ -117,8 +117,6 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             // The first writer to open the table enrols it: baseline at the LIVE cut, then the record.
             try (io.questdb.cairo.TableWriter writer = getWriter(token)) {
                 Assert.assertEquals(CommitMode.ADAPTIVE, writer.getEffectiveCommitMode());
-                Assert.assertEquals("enrollment must not disturb the declared per-table override",
-                        CommitMode.UNSET, writer.getMetadata().getCommitMode());
             }
             engine.releaseAllWriters();
 
@@ -555,9 +553,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      * {@code CreateViewOperationImpl}), so it slips past the loop's {@code !isWal()} filter. But a view has
      * no {@code _meta}/{@code _txn}/{@code _cv}/data/epoch, and its {@code ViewState} is NOT hydrated when
      * {@code recover()} runs (at {@code CairoEngine.completeInit}, right after the name registry is loaded
-     * but BEFORE views are compiled). Before the fix, {@code resolveEffectiveCommitMode -> getTableMetadata
-     * -> getViewMetadata} threw {@code view does not exist} on the view token and failed boot. {@code
-     * recover()} must skip regular views (mat-views, {@code isView()==false}, are still recovered).
+     * but BEFORE views are compiled). Before the fix, resolving the view's metadata threw
+     * {@code view does not exist} on the view token and failed boot. {@code recover()} must skip regular
+     * views (mat-views, {@code isView()==false}, are still recovered).
      */
     @Test
     public void testRecoverSkipsRegularViewWithUnhydratedState() throws Exception {
@@ -574,22 +572,15 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             Assert.assertTrue("precondition: v must be a regular VIEW", viewToken.isView());
             Assert.assertTrue("precondition: view token is WAL", viewToken.isWal());
 
-            // Reproduce the boot condition precisely. At completeInit, recover() runs against:
-            //  (1) an enumerable view token (the name registry is loaded) whose ViewState is NOT yet
-            //      hydrated — views compile lazily, after recover() — so getViewMetadata() returns null;
+            // Reproduce the boot condition precisely. At completeInit, recover() runs against an
+            // enumerable view token (the name registry is loaded) whose ViewState is NOT yet hydrated —
+            // views compile lazily, after recover() — so getViewMetadata() returns null.
             engine.getViewStateStore().removeViewState(viewToken);
             Assert.assertNull("view state must be absent (pre-hydration boot condition)",
                     engine.getViewStateStore().getViewState(viewToken));
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
-
-            //  (2) a fresh in-memory SeqTxnTracker whose commit mode is UNSET (trackers reset on restart),
-            //      so resolveEffectiveCommitMode() cannot early-return a cached mode and MUST read the
-            //      table metadata — which, for a view, throws. Set UNSET last so nothing re-warms it.
-            engine.getTableSequencerAPI().getTxnTracker(viewToken).setCommitMode(CommitMode.UNSET);
-            Assert.assertEquals("precondition: tracker commit mode UNSET (fresh-boot state)",
-                    CommitMode.UNSET, engine.getTableSequencerAPI().getTxnTracker(viewToken).getCommitMode());
 
             // ACT: before the fix this threw `view does not exist [view=v]` and failed boot.
             new RecoveryCoordinator(engine).recover();

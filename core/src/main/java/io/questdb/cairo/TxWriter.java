@@ -74,11 +74,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private int readBaseOffset;
     private long readRecordSize;
     private long recordStructureVersion = 0;
-    // The owning table's PER-TABLE EFFECTIVE commit mode, pushed in by TableWriter via setCommitMode().
-    // CommitMode.UNSET (the default) means "defer to the instance-global cairo.commit.mode", so a TxWriter
-    // that is never threaded a mode behaves exactly as before. See resolveCommitMode() for why this must be
-    // the per-table mode and not configuration.getCommitMode().
-    private int tableCommitMode = CommitMode.UNSET;
+    // The commit mode this writer flushes _txn under. Seeded from the instance-global cairo.commit.mode
+    // and overridden by TableWriter via setCommitMode() while a table is not yet enrolled in adaptive.
+    private int commitMode;
     private MemoryCMARW txMemBase;
     private int txPartitionCount;
     private int writeAreaSize;
@@ -87,40 +85,30 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public TxWriter(FilesFacade ff, CairoConfiguration configuration) {
         super(ff);
         this.configuration = configuration;
+        this.commitMode = configuration.getCommitMode();
     }
 
     /**
-     * Publishes the owning table's EFFECTIVE commit mode (already resolved against the instance-global mode
-     * via {@link CommitMode#effectiveCommitMode(int, int)}). Pass {@link CommitMode#UNSET} to revert to
-     * deferring to the global mode.
+     * Overrides the mode this writer flushes {@code _txn} under. TableWriter uses it to hold a table at
+     * SYNC grade until its adaptive enrolment baseline exists, then to hand it ADAPTIVE.
      */
     public void setCommitMode(int commitMode) {
-        this.tableCommitMode = commitMode;
+        this.commitMode = commitMode;
     }
 
     /**
      * The commit-mode gate for the per-commit {@code _txn} flush.
      * <p>
-     * TWO things are load-bearing here:
-     * <ol>
-     *   <li><b>Per-table, not global.</b> Every other adaptive decision point (WAL-commit durability, the
-     *       apply lazy gate, the epoch trigger, the WAL-purge floor, recovery) resolves the table's own
-     *       {@code _meta} mode against the global one. Reading only {@code configuration.getCommitMode()}
-     *       here inverted the polarity: a {@code WITH commit_mode='sync'} table on a {@code nosync} instance
-     *       silently skipped its {@code _txn} flush (a real crash-loss window for a table that explicitly
-     *       asked for durability), while a {@code nosync} table on a {@code sync} instance paid for one it
-     *       had opted out of.</li>
-     *   <li><b>ADAPTIVE is lazy, like the columns.</b> {@link CommitMode#appliesColumnSync} is true only for
-     *       SYNC/ASYNC. Under ADAPTIVE the materialized table — {@code _txn} and {@code _cv} included — is a
-     *       rebuildable cache of the durable WAL: {@link RecoveryCoordinator} restores both files from the
-     *       epoch's immutable {@code .epoch} copies and replays {@code (epoch.seqTxn, frontier]} on top.
-     *       Flushing {@code _txn} on every apply is exactly the per-commit cost the lazy-apply gate exists to
-     *       avoid, and it is not what makes ADAPTIVE crash-safe. The epoch's own
-     *       {@link #fsync()} forces the flush regardless of mode.</li>
-     * </ol>
+     * <b>ADAPTIVE is lazy, like the columns.</b> {@link CommitMode#appliesColumnSync} is true only for
+     * SYNC/ASYNC. Under ADAPTIVE the materialized table — {@code _txn} and {@code _cv} included — is a
+     * rebuildable cache of the durable WAL: {@link RecoveryCoordinator} restores both files from the
+     * epoch's immutable {@code .epoch} copies and replays {@code (epoch.seqTxn, frontier]} on top.
+     * Flushing {@code _txn} on every apply is exactly the per-commit cost the lazy-apply gate exists to
+     * avoid, and it is not what makes ADAPTIVE crash-safe. The epoch's own {@link #fsync()} forces the
+     * flush regardless of mode.
      */
     private int resolveCommitMode() {
-        return CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
+        return commitMode;
     }
 
     public void append() {

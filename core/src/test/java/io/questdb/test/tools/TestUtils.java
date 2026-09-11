@@ -1614,10 +1614,8 @@ public final class TestUtils {
         // a markerless adaptive table, failing the whole engine on the next startup rather than just that
         // table. Tests that create a table this way and then restart a server would blame the restart.
         if (structure.isWalEnabled() && !structure.isView()) {
-            final int declaredMode = structure.getCommitMode();
             final CairoConfiguration configuration = engine.getConfiguration();
-            final int effectiveMode = declaredMode == CommitMode.UNSET ? configuration.getCommitMode() : declaredMode;
-            if (effectiveMode == CommitMode.ADAPTIVE) {
+            if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
                 final int timestampIndex = structure.getTimestampIndex();
                 final int timestampType = timestampIndex < 0 ? ColumnType.TIMESTAMP : structure.getColumnType(timestampIndex);
                 DurableEpochManifest.publishInitial(

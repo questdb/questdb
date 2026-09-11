@@ -52,32 +52,32 @@ public class MemoryPMARImplTest {
     public static TemporaryFolder temp = new TemporaryFolder();
 
     /**
-     * MEDIUM review fix: {@link MemoryPMARImpl#release(long)} must msync completed/flipped pages according
-     * to the per-table EFFECTIVE commit mode threaded via {@code setCommitMode()}, NOT the instance-global
-     * mode. A {@code WITH commit_mode='sync'} column on a {@code nosync} instance would otherwise skip the
-     * release msync and crash-lose committed rows. {@code release()} consults the global configuration only
-     * as the {@link CommitMode#UNSET} fallback, so a {@code null} configuration (equivalent to a NOSYNC
-     * global) lets the per-table override be proven in isolation: with a SYNC override the completed pages
-     * must be msync'd even though the "global" resolves to NOSYNC.
+     * {@link MemoryPMARImpl#release(long)} must msync completed/flipped pages according to the commit mode
+     * threaded in via {@code setCommitMode()}, NOT the instance-global mode. TableWriter threads its own
+     * grade because a table that is not yet enrolled in adaptive runs at SYNC while the instance runs
+     * ADAPTIVE, and its completed pages must still be msync'd on release. {@code release()} consults the
+     * global configuration only as the {@link CommitMode#UNSET} ("never threaded") fallback, so a
+     * {@code null} configuration (equivalent to a NOSYNC global) lets the threaded mode be proven in
+     * isolation: with SYNC threaded in, the completed pages must be msync'd even though the "global"
+     * resolves to NOSYNC.
      *
-     * <p>RED before the fix (release read the global NOSYNC and skipped msync); GREEN after release()
-     * prefers the threaded per-table mode. Negative controls pin: UNSET/explicit-NOSYNC skip, ASYNC uses
-     * {@code msync(async=true)}, and an adaptive {@code applyLazy} column still skips even under a SYNC
-     * override (its durability is the epoch + WAL roll-forward, not the release msync).
+     * <p>Negative controls pin: UNSET/explicit-NOSYNC skip, ASYNC uses {@code msync(async=true)}, and an
+     * adaptive {@code applyLazy} column still skips even with SYNC threaded in (its durability is the
+     * epoch + WAL roll-forward, not the release msync).
      */
     @Test
-    public void testReleaseHonorsPerTableCommitModeOverGlobalNosync() throws Exception {
+    public void testReleaseHonorsThreadedCommitModeOverGlobalNosync() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final long pageSize = Files.PAGE_SIZE;
-            // (a) per-table SYNC override, "global" == NOSYNC (null config): completed pages MUST msync.
+            // (a) SYNC threaded in, "global" == NOSYNC (null config): completed pages MUST msync.
             assertReleaseMsync(pageSize, CommitMode.SYNC, false, true, false);
-            // (b) negative control — no override (UNSET) defers to the (null==NOSYNC) global => NO msync.
+            // (b) negative control — never threaded (UNSET) defers to the (null==NOSYNC) global => NO msync.
             assertReleaseMsync(pageSize, CommitMode.UNSET, false, false, false);
-            // (c) explicit NOSYNC override => NO msync.
+            // (c) NOSYNC threaded in => NO msync.
             assertReleaseMsync(pageSize, CommitMode.NOSYNC, false, false, false);
-            // (d) per-table ASYNC override => msync(async=true).
+            // (d) ASYNC threaded in => msync(async=true).
             assertReleaseMsync(pageSize, CommitMode.ASYNC, false, true, true);
-            // (e) adaptive lazy-apply column still skips even with a SYNC override.
+            // (e) adaptive lazy-apply column still skips even with SYNC threaded in.
             assertReleaseMsync(pageSize, CommitMode.SYNC, true, false, false);
         });
     }

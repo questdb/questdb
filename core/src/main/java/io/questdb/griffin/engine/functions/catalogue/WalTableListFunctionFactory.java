@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -67,7 +66,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "wal_tables()";
     private static final int bufferedTxnSizeColumn;
-    private static final int commitModeColumn;
     private static final int durableEpochSeqTxnColumn;
     private static final int errorMessageColumn;
     private static final int errorTagColumn;
@@ -110,9 +108,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         private final TableListRecordCursor cursor;
         private final FilesFacade ff;
         private final SqlExecutionContext sqlExecutionContext;
-        // The global cairo.commit.mode, used as the fallback when a table has no per-table override
-        // published on its SeqTxnTracker (CommitMode.UNSET).
-        private final int globalCommitMode;
         private CairoEngine engine;
         private Path rootPath;
 
@@ -122,7 +117,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             this.rootPath = new Path();
             rootPath.of(configuration.getDbRoot());
             this.sqlExecutionContext = sqlExecutionContext;
-            this.globalCommitMode = configuration.getCommitMode();
             this.cursor = new TableListRecordCursor();
         }
 
@@ -204,7 +198,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             public class TableListRecord implements Record {
                 private long bufferedTxnSize;
-                private String commitMode;
                 private long durableEpochSeqTxn;
                 private String errorMessage;
                 private String errorTag;
@@ -270,9 +263,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     if (col == errorMessageColumn) {
                         return errorMessage;
                     }
-                    if (col == commitModeColumn) {
-                        return commitMode;
-                    }
                     return null;
                 }
 
@@ -293,13 +283,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                         memoryPressureLevel = seqTxnTracker.getMemPressureControl().getMemoryPressureLevel();
                         tableName = tableToken.getTableName();
-                        // Per-table EFFECTIVE commit mode: the override published on the tracker, else the
-                        // global mode. Deferred 1 — a WITH commit_mode='adaptive' table reports 'adaptive'
-                        // even when the instance default is 'nosync'.
-                        commitMode = CommitMode.toString(
-                                CommitMode.effectiveCommitMode(seqTxnTracker.getCommitMode(), globalCommitMode)
-                        );
-
                         if (seqTxnTracker.isInitialised()) {
                             suspendedFlag = seqTxnTracker.isSuspended();
                             sequencerTxn = seqTxnTracker.getSeqTxn();
@@ -399,8 +382,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("memoryPressure", ColumnType.INT));
         memoryPressureLevelColumn = metadata.getColumnCount() - 1;
         // Plan 4 adaptive observability columns (appended — existing positional consumers unaffected)
-        metadata.add(new TableColumnMetadata("commitMode", ColumnType.STRING));
-        commitModeColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("durableEpochSeqTxn", ColumnType.LONG));
         durableEpochSeqTxnColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("recoveryIncarnation", ColumnType.LONG));

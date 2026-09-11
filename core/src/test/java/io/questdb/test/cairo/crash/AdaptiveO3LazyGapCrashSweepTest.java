@@ -248,8 +248,7 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
                 final String table = "o3_lazygap_ab";
                 execute("drop table if exists " + table);
                 drainWalQueue();
-                execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal "
-                        + "with commit_mode='adaptive'");
+                execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal");
                 final TableToken tt = engine.verifyTableName(table);
 
                 // K rows + durable epoch, then disable the epoch (the sustained lazy gap begins).
@@ -419,8 +418,7 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
             execute("drop table if exists " + table);
             drainWalQueue();
-            execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal "
-                    + "with commit_mode='adaptive'");
+            execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal");
             tt = engine.verifyTableName(table);
 
             // K rows, out-of-order among themselves -> apply -> durable epoch at seqTxn=K.

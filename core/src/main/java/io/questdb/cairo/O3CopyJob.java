@@ -650,9 +650,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
             }
 
-            // Per-table EFFECTIVE commit mode (Deferred 1), not the global one: an ADAPTIVE table's O3
-            // merge stays lazy even under a SYNC instance default, and a SYNC table flushes even under an
-            // ADAPTIVE default.
+            // The writer's own grade, not the raw global mode: a table held at SYNC pending adaptive
+            // enrolment must flush here even though the instance runs ADAPTIVE.
             final int commitMode = tableWriter.getEffectiveCommitMode();
             // Apply-path destination-column sync. Gated on appliesColumnSync (SYNC/ASYNC only): under
             // ADAPTIVE this O3-merged column is a rebuildable cache of the durable WAL, so it is left

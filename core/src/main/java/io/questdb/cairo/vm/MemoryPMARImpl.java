@@ -52,11 +52,10 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     // partition columns under adaptive; never for WAL segment columns (explicit per-commit fdatasync)
     // nor under any other mode, so all those paths are byte-identical. Default false.
     private boolean applyLazy = false;
-    // The per-table EFFECTIVE commit mode (CommitMode.*) threaded in by the opening caller
-    // (TableWriter.configureColumn), mirroring applyLazy. CommitMode.UNSET (default) => defer to the
-    // instance-global configuration.getCommitMode(), so any PMAR that is never threaded a mode (WAL
-    // segment columns, the @TestOnly ctor) stays byte-identical to the original global-mode read. release()
-    // uses THIS so a WITH commit_mode='sync' column on a nosync instance still msyncs its completed pages.
+    // The commit mode threaded in by the opening caller (TableWriter.configureColumn), mirroring
+    // applyLazy. CommitMode.UNSET (default) => never threaded, so read the instance-global
+    // configuration.getCommitMode() instead. TableWriter threads its own grade because a table that is
+    // not yet enrolled in adaptive runs at SYNC while the instance runs ADAPTIVE.
     private int commitMode = CommitMode.UNSET;
     private long fd = -1;
     private FilesFacade ff;
@@ -309,10 +308,8 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
             // MemoryCMARWImpl.close (which unmaps before its fd sync); without it a sync fault here strands the
             // mapped page until process exit (the MMAP_TABLE_WAL_WRITER leak a crash mid drop-close produced).
             try {
-                // Prefer the per-table EFFECTIVE mode threaded in via setCommitMode(); fall back to the
-                // instance-global mode only when it was never set (UNSET), so untouched memories stay
-                // byte-identical. A WITH commit_mode='sync' column on a nosync instance MUST msync its
-                // completed pages here even though the global mode is NOSYNC.
+                // Prefer the mode threaded in via setCommitMode(); fall back to the instance-global mode
+                // only when it was never set (UNSET), so untouched memories stay byte-identical.
                 int commitMode = this.commitMode != CommitMode.UNSET
                         ? this.commitMode
                         : (configuration != null ? configuration.getCommitMode() : CommitMode.NOSYNC);

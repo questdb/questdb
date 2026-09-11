@@ -4333,9 +4333,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         filesystemCreated = true;
 
                         if (struct.isWalEnabled() && !struct.isView()) {
-                            final int declaredMode = struct.getCommitMode();
-                            final int effectiveMode = declaredMode == CommitMode.UNSET ? configuration.getCommitMode() : declaredMode;
-                            if (effectiveMode == CommitMode.ADAPTIVE) {
+                            if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
                                 try {
                                     final int timestampIndex = struct.getTimestampIndex();
                                     final int timestampType = timestampIndex < 0 ? ColumnType.TIMESTAMP : struct.getColumnType(timestampIndex);

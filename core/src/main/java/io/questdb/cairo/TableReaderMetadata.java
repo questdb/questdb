@@ -52,7 +52,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private boolean isSoftLink;
     private int maxUncommittedRows;
     private MemoryCARW metaCopyMem; // used when loadFrom() called
-    private int commitMode = CommitMode.UNSET;
     private int enrolledCommitMode = CommitMode.UNSET;
     private MemoryMR metaMem;
     private long metadataVersion;
@@ -131,7 +130,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         o3MaxLag = 0;
         ttlHoursOrMonths = 0;
         tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
-        commitMode = CommitMode.UNSET;
         enrolledCommitMode = CommitMode.UNSET;
         writerColumnCount = 0;
     }
@@ -227,15 +225,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return tableToken;
     }
 
-    @Override
-    public int getCommitMode() {
-        return commitMode;
-    }
-
     /**
      * The commit mode this table's materialized state is enrolled under — see
-     * {@link TableUtils#META_OFFSET_ENROLLED_COMMIT_MODE}. Distinct from {@link #getCommitMode()}, which is
-     * the declared per-table override.
+     * {@link TableUtils#META_OFFSET_ENROLLED_COMMIT_MODE}. It is not the mode the table is written under;
+     * that is instance-wide.
      */
     public int getEnrolledCommitMode() {
         return enrolledCommitMode;
@@ -342,7 +335,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = mem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
         this.tableFormat = TableUtils.getTableFormat(mem);
-        this.commitMode = TableUtils.getCommitMode(mem);
         this.enrolledCommitMode = TableUtils.getEnrolledCommitMode(mem);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
@@ -415,7 +407,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = newMetaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
         this.tableFormat = TableUtils.getTableFormat(newMetaMem);
-        this.commitMode = TableUtils.getCommitMode(newMetaMem);
         this.enrolledCommitMode = TableUtils.getEnrolledCommitMode(newMetaMem);
 
         int shiftLeft = 0, existingIndex = 0;

@@ -72,9 +72,6 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
-    // Per-table EFFECTIVE commit mode for the sequencer-record flush; UNSET => defer to the global mode.
-    // Pushed by TableSequencerImpl from its SeqTxnTracker. See setCommitMode / sync0 (Deferred 1).
-    private volatile int tableCommitMode = CommitMode.UNSET;
 
     public TableTransactionLogV1(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -254,11 +251,6 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         return maxStructureVersion;
     }
 
-    @Override
-    public void setCommitMode(int commitMode) {
-        this.tableCommitMode = commitMode;
-    }
-
     /**
      * Records the CRC for {@code txn} and makes it durable BEFORE the caller publishes the txn in the
      * header. The order is the invariant: a header that advertises a txn whose CRC never reached the
@@ -272,7 +264,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private void recordCrcBeforePublish(long txn) {
         final long recordOffset = HEADER_SIZE + (txn - 1) * RECORD_SIZE;
         crcSidecar.append(txn, txnMem.addressOf(recordOffset), RECORD_SIZE);
-        final int commitMode = CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
+        final int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
             // Mirror the grade sync0() gives the header, rather than always taking MS_SYNC. Under
             // adaptive group commit (W>0) the header deliberately takes MS_ASYNC and defers the device
@@ -288,7 +280,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     }
 
     private void sync0() {
-        int commitMode = CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
+        int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
             // Deferred 2 (group commit, W>0): push the V1 sequencer header to the page cache with
             // msync(MS_ASYNC) — writeback-only, NO device flush — and DEFER the fdatasync to the batched

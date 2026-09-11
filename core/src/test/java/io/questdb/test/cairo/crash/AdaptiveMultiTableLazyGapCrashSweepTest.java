@@ -80,13 +80,6 @@ import java.util.Set;
  * independently tracked (see {@code t1RecoveredByK}/{@code t2RecoveredByK}) so a fault is pinned to a
  * specific table at a specific crash point, not just visible in a summed count that could mask one table's
  * dip behind the other's rise.
- *
- * <h3>Relationship to {@link PerTableAdaptiveIsolationCrashTest}</h3>
- * That test deliberately stayed single-table for its CRASH half because a nosync SIBLING's {@code txn_seq}/
- * columns are genuinely torn by the simulated power cut and the harness cannot cleanly close a torn nosync
- * sequencer on teardown. Both tables here are ALL-ADAPTIVE (no nosync sibling), so that specific teardown
- * hazard should not apply — but see the report for whether 2-table teardown is empirically stable across a
- * full sweep (many crash/recover/drop cycles) regardless.
  */
 public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
@@ -372,10 +365,8 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
                 execute("drop table if exists " + t1);
                 execute("drop table if exists " + t2);
                 drainWalQueue();
-                execute("create table " + t1 + " (ts timestamp, v long) timestamp(ts) partition by day wal "
-                        + "with commit_mode='adaptive'");
-                execute("create table " + t2 + " (ts timestamp, v long) timestamp(ts) partition by day wal "
-                        + "with commit_mode='adaptive'");
+                execute("create table " + t1 + " (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("create table " + t2 + " (ts timestamp, v long) timestamp(ts) partition by day wal");
                 final TableToken tt1 = engine.verifyTableName(t1);
                 final TableToken tt2 = engine.verifyTableName(t2);
 
@@ -594,10 +585,8 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
             execute("drop table if exists " + T1);
             execute("drop table if exists " + T2);
             drainWalQueue();
-            execute("create table " + T1 + " (ts timestamp, v long) timestamp(ts) partition by day wal "
-                    + "with commit_mode='adaptive'");
-            execute("create table " + T2 + " (ts timestamp, v long) timestamp(ts) partition by day wal "
-                    + "with commit_mode='adaptive'");
+            execute("create table " + T1 + " (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("create table " + T2 + " (ts timestamp, v long) timestamp(ts) partition by day wal");
             tt1 = engine.verifyTableName(T1);
             tt2 = engine.verifyTableName(T2);
 

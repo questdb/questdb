@@ -98,8 +98,9 @@ public class RecoveryCoordinator {
      * after the table registry is loaded and before any WAL apply.
      */
     public void recover() {
-        // Durable epochs are a per-table property. Do not short-circuit on the global mode: a table-level
-        // ADAPTIVE override on a NOSYNC instance still has a creation baseline and must be recovered.
+        // Do not short-circuit on the global mode: a table whose _meta records it as enrolled in adaptive
+        // may be lazily ahead of its durable epoch even when the instance now runs nosync, and must still
+        // be recovered.
         // Every adaptive WAL table must have a trustworthy marker/generation; absence fails startup closed.
         final ObjHashSet<TableToken> tokens = new ObjHashSet<>();
         final ObjList<TableToken> checkpointEnrollments = new ObjList<>();
@@ -110,9 +111,8 @@ public class RecoveryCoordinator {
                 final TableToken token = tokens.get(i);
                 // Skip regular views: a view token is isWal()==true but has no _meta/_txn/_cv/data and no
                 // durable epoch, and its ViewState is not yet hydrated at this point in completeInit()
-                // (views compile lazily, after recover()) — so resolveEffectiveCommitMode()'s metadata read
-                // would throw `view does not exist` and fail boot. Mat-views (isView()==false) keep their
-                // on-disk _meta and are still recovered.
+                // (views compile lazily, after recover()). Mat-views (isView()==false) keep their on-disk
+                // _meta and are still recovered.
                 if (!token.isWal() || token.isView()) {
                     continue;
                 }
@@ -122,9 +122,7 @@ public class RecoveryCoordinator {
                     final boolean metadataBoundEpoch = hasMetadataBoundEpoch(token, dir);
                     final boolean enrolledAdaptive;
                     try {
-                        final int effectiveMode = metadataBoundEpoch
-                                ? resolveEffectiveCommitModeNoRetry(token, dir)
-                                : engine.getTableSequencerAPI().resolveEffectiveCommitMode(token);
+                        final int effectiveMode = configuration.getCommitMode();
                         // The effective mode says how this table will be written NEXT; the enrolled record
                         // says how its materialized state was LEFT. A table applied lazily under adaptive is
                         // torn ahead of its durable epoch no matter what the config file says on the way back
@@ -263,14 +261,6 @@ public class RecoveryCoordinator {
     private boolean isMarkedForRestoreEnrolment(TableToken token, Path dir) {
         tablePath(dir, token).concat(RESTORE_ENROL_FILE_NAME);
         return ff.exists(dir.$());
-    }
-
-    private int resolveEffectiveCommitModeNoRetry(TableToken token, Path metaPath) {
-        tablePath(metaPath, token).concat(TableUtils.META_FILE_NAME);
-        try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
-            metadata.loadMetadata(metaPath.$());
-            return CommitMode.effectiveCommitMode(metadata.getCommitMode(), configuration.getCommitMode());
-        }
     }
 
     /**
