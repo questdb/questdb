@@ -85,7 +85,9 @@ import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
  * Used by both DatabaseCheckpointAgent and BackupRestoreAgent.
  */
 public class TableSnapshotRestore implements QuietCloseable {
-    private static final Log LOG = LogFactory.getLog(TableSnapshotRestore.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(TableSnapshotRestore.class);
     private final AtomicBoolean abortParallelTasks = new AtomicBoolean(false);
     private final CairoConfiguration configuration;
     private final ExecutorService executor;

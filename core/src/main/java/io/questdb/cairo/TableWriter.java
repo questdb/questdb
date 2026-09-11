@@ -210,7 +210,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // next commit can reach JOIN or MOVE-TAIL the moment their shape appears.
     private static final int COMPACTION_SKIPPED_HOT = 5;
     private static final long IGNORE = -1L;
-    private static final Log LOG = LogFactory.getLog(TableWriter.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(TableWriter.class);
     /*
         The most recent logical partition is allowed to have up to cairo.o3.last.partition.max.splits (20 by default) splits.
         Any other partition is allowed to have cairo.o3.mid.partition.max.splits (1 by default) splits.
