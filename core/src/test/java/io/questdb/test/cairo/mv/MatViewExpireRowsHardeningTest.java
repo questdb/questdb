@@ -1253,6 +1253,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
     @Test
     public void testPendingUnrelatedSourceDoesNotDeferLiveViewRefresh() throws Exception {
+        // Force the seed turn to yield with its base reader pinned, even on fast hosts.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
             execute("create table policy_base (v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("create table lv_base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
@@ -1273,10 +1275,13 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 final long baseWriterTxn = engine.getTableSequencerAPI().getTxnTracker(lvBase).getWriterTxn();
                 Assert.assertTrue("an unrelated steady marker must not defer a live-view seed turn",
                         job.refreshInstanceForTest(instance, baseWriterTxn));
+                Assert.assertNotNull(instance.getSeedBaseReader());
                 Assert.assertEquals(0L, instance.getRefreshFaultCount());
                 Assert.assertFalse(instance.isInvalid());
             } finally {
                 engine.getMetadataCache().cancelExpiryPolicyUpdate(pendingSource.getTableId());
+                // The instance owns the seed reader across turns; closing the job does not release it.
+                execute("DROP LIVE VIEW unrelated_lv");
             }
         });
     }
