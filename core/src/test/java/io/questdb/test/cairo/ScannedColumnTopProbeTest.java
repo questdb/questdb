@@ -593,7 +593,173 @@ public class ScannedColumnTopProbeTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUpdatedHistoryRecordReadsAreBoundedByIntervals() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int partitionCount : new int[]{100, 1_000}) {
+                final String table = "t_updated_" + partitionCount;
+                execute("CREATE TABLE " + table + " (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE(val),"
+                        + " val DOUBLE, z0 LONG, z1 LONG, z2 LONG, z3 LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO " + table + " SELECT timestamp_sequence(0,86_400_000_000L),"
+                        + " NULL,x::DOUBLE,0L,0L,0L,0L FROM long_sequence(" + partitionCount + ")");
+                execute("UPDATE " + table + " SET z0=1L,z1=2L,z2=3L,z3=4L");
+                releaseAll();
+                try (TableReader reader = engine.getReader(table)) {
+                    final LongList records = reader.getColumnVersionReader().getCachedColumnVersionList();
+                    Assert.assertEquals(4 * partitionCount, records.size() / ColumnVersionReader.BLOCK_SIZE);
+                    for (int i = 0; i < records.size(); i += ColumnVersionReader.BLOCK_SIZE) {
+                        Assert.assertEquals(0, records.getQuick(i + ColumnVersionReader.COLUMN_TOP_OFFSET));
+                        Assert.assertNotEquals(writerIndexOf(reader, "sym"), records.getQuick(i + ColumnVersionReader.COLUMN_INDEX_OFFSET));
+                    }
+                    final long last = (partitionCount - 1L) * DAY;
+                    assertBoundedRecordReads(reader, intervals(last, last + DAY - 1), 16, 1);
+                    assertBoundedRecordReads(reader, intervals(DAY, DAY + 1, last, last + 1), 32, 2);
+                    // Disjoint timestamp ranges in one physical partition must not re-read its records.
+                    final LongList samePartition = new LongList();
+                    for (int i = 0; i < 100; i++) {
+                        samePartition.add(DAY + 2L * i, DAY + 2L * i);
+                    }
+                    assertBoundedRecordReads(reader, samePartition, 16, 1);
+                    assertBoundedRecordReads(reader, new LongList(), 0, 0);
+                    assertBoundedRecordReads(reader, intervals(-2 * DAY, -DAY), 0, 0);
+                    assertBoundedRecordReads(reader, intervals(last + DAY, last + 2 * DAY), 0, 0);
+                }
+                final String day = java.time.Instant.ofEpochSecond((partitionCount - 1L) * 86_400).toString().substring(0, 10);
+                for (int hintMode = 0; hintMode < 2; hintMode++) {
+                    final String hint = hintMode == 0 ? "" : "/*+ force_use_covering */ ";
+                    assertQuery("SELECT " + hint + "val FROM " + table + " WHERE sym=NULL AND ts IN '" + day + "' LIMIT 1")
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("val\n" + partitionCount + ".0\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPreAddWalkSkipsIntervalGapsAndRepeatedPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_walk_gaps (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_walk_gaps SELECT timestamp_sequence(" + (JAN1 + DAY / 2) + ",86_400_000_000L),"
+                    + " x::DOUBLE FROM long_sequence(6)");
+            execute("ALTER TABLE t_walk_gaps ADD COLUMN sym SYMBOL");
+            execute("""
+                    INSERT INTO t_walk_gaps VALUES
+                    ('2024-01-01T06:00:00', 11.0, 'A'),
+                    ('2024-01-05T06:00:00', 51.0, 'A')
+                    """);
+            releaseAll();
+            try (TableReader reader = engine.getReader("t_walk_gaps")) {
+                final LongList scan = intervals(JAN1, JAN1 + 1, JAN1 + 2, JAN1 + 3,
+                        JAN1 + 4 * DAY, JAN1 + 5 * DAY - 1);
+                final ColumnVersionReader cv = reader.getColumnVersionReader();
+                final int wi = writerIndexOf(reader, "sym");
+                Assert.assertEquals(0, cv.getColumnTop(JAN1, wi));
+                Assert.assertEquals(0, cv.getColumnTop(JAN1 + 4 * DAY, wi));
+                Assert.assertFalse(before(reader, scan));
+                Assert.assertEquals("visit only the two backfilled selected partitions", 2, countWalkSteps(reader, scan));
+                assertProbe(reader, false, scan);
+                assertProbe(reader, true, intervals(JAN1, JAN1 + 5 * DAY - 1));
+            }
+        });
+    }
+
+    @Test
+    public void testSparseBroadScansDoNotWalkPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_sparse (ts TIMESTAMP, sym SYMBOL, z LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_sparse SELECT timestamp_sequence(0,86_400_000_000L), NULL, 0L FROM long_sequence(1_000)");
+            execute("UPDATE t_sparse SET z=1L WHERE ts IN '1972-09-26'");
+            releaseAll();
+            try (TableReader reader = engine.getReader("t_sparse")) {
+                Assert.assertEquals(1, reader.getColumnVersionReader().getCachedColumnVersionList().size() / ColumnVersionReader.BLOCK_SIZE);
+                for (int mode = 0; mode < 2; mode++) {
+                    final LongList scan = mode == 0 ? null : intervals(-DAY, 1_001 * DAY);
+                    try (CountingTxReader tx = new CountingTxReader(reader.getTxFile());
+                         CountingColumnVersionReader cv = new CountingColumnVersionReader(reader.getColumnVersionReader())) {
+                        Assert.assertFalse(ScannedColumnTopProbe.hasAnyColumnTop(cv, tx, writerIndexOf(reader, "sym"), scan));
+                        Assert.assertTrue("partition reads=" + tx.partitionReads, tx.partitionReads <= 8);
+                        Assert.assertTrue("record reads=" + cv.records.reads, cv.records.reads <= 2);
+                        Assert.assertTrue("record searches=" + cv.records.searches, cv.records.searches <= 1);
+                    }
+                }
+            }
+        });
+    }
+
     // ---------- helpers ----------
+
+    private static class CountingTxReader extends TxReader {
+        private final TxReader source;
+        private int partitionReads;
+
+        private CountingTxReader(TxReader source) {
+            super(configuration.getFilesFacade());
+            this.source = source;
+        }
+
+        @Override
+        public int findAttachedPartitionIndexByLoTimestamp(long timestamp) {
+            return source.findAttachedPartitionIndexByLoTimestamp(timestamp);
+        }
+
+        @Override
+        public long getNextLogicalPartitionTimestamp(long timestamp) {
+            return source.getNextLogicalPartitionTimestamp(timestamp);
+        }
+
+        @Override
+        public int getPartitionCount() {
+            return source.getPartitionCount();
+        }
+
+        @Override
+        public long getPartitionTimestampByIndex(int index) {
+            partitionReads++;
+            return source.getPartitionTimestampByIndex(index);
+        }
+    }
+
+    private static void assertBoundedRecordReads(TableReader reader, LongList scan, int maxReads, int maxSearches) {
+        try (CountingColumnVersionReader cv = new CountingColumnVersionReader(reader.getColumnVersionReader())) {
+            Assert.assertFalse(ScannedColumnTopProbe.hasAnyColumnTop(cv, reader.getTxFile(), writerIndexOf(reader, "sym"), scan));
+            Assert.assertTrue("cached record reads=" + cv.records.reads + ", bound=" + maxReads, cv.records.reads <= maxReads);
+            Assert.assertTrue("record searches=" + cv.records.searches, cv.records.searches <= maxSearches);
+        }
+    }
+
+    private static class CountingColumnVersionReader extends ColumnVersionReader {
+        private final CountingLongList records = new CountingLongList();
+
+        private CountingColumnVersionReader(ColumnVersionReader source) {
+            cachedColumnVersionList.addAll(source.getCachedColumnVersionList());
+            records.addAll(cachedColumnVersionList);
+        }
+
+        @Override
+        public LongList getCachedColumnVersionList() {
+            return records;
+        }
+    }
+
+    // Count explicit field reads separately from searches, whose implementation reads its own
+    // backing array. Neither assertion claims zero metadata reads inside a binary search.
+    private static class CountingLongList extends LongList {
+        private int reads;
+        private int searches;
+
+        @Override
+        public int binarySearchBlock(int shl, long value, int scanDir) {
+            searches++;
+            return super.binarySearchBlock(shl, value, scanDir);
+        }
+
+        @Override
+        public long getQuick(int index) {
+            reads++;
+            return super.getQuick(index);
+        }
+    }
 
     /**
      * Runs the walk with the counter on and answers how many partitions it visited.

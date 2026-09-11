@@ -26,6 +26,7 @@ package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.ScannedColumnTopProbe;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
@@ -140,6 +141,12 @@ public class CoveringIndexColumnTopProbeTest extends AbstractCairoTest {
             try (TableReader reader = engine.getReader("t_probe_none")) {
                 Assert.assertEquals(1, reader.getPartitionCount());
                 Assert.assertEquals(0L, reader.getPartitionTimestampByIndex(0));
+                final int wi = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("sym"));
+                final LongList scan = new LongList();
+                Assert.assertFalse(ScannedColumnTopProbe.hasAnyColumnTop(reader.getColumnVersionReader(), reader.getTxFile(), wi, scan));
+                scan.add(1L, 2L);
+                scan.add(Long.MAX_VALUE - 1, Long.MAX_VALUE);
+                Assert.assertTrue(ScannedColumnTopProbe.hasAnyColumnTop(reader.getColumnVersionReader(), reader.getTxFile(), wi, scan));
             }
             assertProbeMatchesSearchWalk("t_probe_none", "TOP_RECORD@0");
         });
@@ -410,6 +417,75 @@ public class CoveringIndexColumnTopProbeTest extends AbstractCairoTest {
                 );
             }
             assertProbeMatchesSearchWalk("t_probe_split", "NO_TOP@4");
+            try (TableReader reader = engine.getReader("t_probe_split")) {
+                final int wi = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("sym2"));
+                final long prefix = reader.getPartitionTimestampByIndex(2);
+                final long split = reader.getPartitionTimestampByIndex(3);
+                final LongList scan = new LongList();
+                scan.add(split, split);
+                scan.add(split + 1, split + 2);
+                Assert.assertFalse(ScannedColumnTopProbe.hasAnyColumnTop(reader.getColumnVersionReader(), reader.getTxFile(), wi, scan));
+                scan.clear();
+                scan.add(prefix, split - 1);
+                Assert.assertTrue(ScannedColumnTopProbe.hasAnyColumnTop(reader.getColumnVersionReader(), reader.getTxFile(), wi, scan));
+                scan.clear();
+                scan.add(prefix + 86_400_000_000L, prefix + 2 * 86_400_000_000L);
+                Assert.assertFalse(ScannedColumnTopProbe.hasAnyColumnTop(reader.getColumnVersionReader(), reader.getTxFile(), wi, scan));
+            }
+        });
+    }
+
+    @Test
+    public void testOrderedIntervalsExcludeMiddleTopAcrossTimestampAndWalModes() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int mode = 0; mode < 4; mode++) {
+                final boolean isNano = (mode & 1) != 0;
+                final boolean isWal = (mode & 2) != 0;
+                final String table = "t_interval_modes_" + mode;
+                execute("CREATE TABLE " + table + " (ts " + (isNano ? "TIMESTAMP_NS" : "TIMESTAMP")
+                        + ", val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+                execute("INSERT INTO " + table + " VALUES ('2024-01-02T12:00:00', 2.0)");
+                drainWalQueue();
+                execute("ALTER TABLE " + table + " ADD COLUMN sym SYMBOL");
+                execute("INSERT INTO " + table + " VALUES ('2024-01-01T12:00:00', 1.0, NULL), ('2024-01-03T12:00:00', 3.0, NULL)");
+                drainWalQueue();
+                execute("ALTER TABLE " + table + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE(val)");
+                drainWalQueue();
+                releaseAll();
+                try (TableReader reader = engine.getReader(table)) {
+                    final int wi = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("sym"));
+                    final long first = reader.getPartitionTimestampByIndex(0);
+                    final long day = 86_400_000_000L * (isNano ? 1_000 : 1);
+                    final LongList scan = new LongList();
+                    scan.add(first, first + day - 1);
+                    scan.add(first + 2 * day, first + 3 * day - 1);
+                    Assert.assertFalse(ScannedColumnTopProbe.hasAnyColumnTop(reader.getColumnVersionReader(), reader.getTxFile(), wi, scan));
+                    scan.clear();
+                    scan.add(first, first + 3 * day - 1);
+                    Assert.assertTrue(ScannedColumnTopProbe.hasAnyColumnTop(reader.getColumnVersionReader(), reader.getTxFile(), wi, scan));
+                    scan.clear();
+                    scan.add(first + 2 * day, first + 2 * day);
+                    Assert.assertFalse(ScannedColumnTopProbe.hasAnyColumnTop(reader.getColumnVersionReader(), reader.getTxFile(), wi, scan));
+                    scan.clear();
+                    scan.add(first + 2 * day - 1, first + 2 * day - 1);
+                    Assert.assertTrue(ScannedColumnTopProbe.hasAnyColumnTop(reader.getColumnVersionReader(), reader.getTxFile(), wi, scan));
+                }
+                for (int hintMode = 0; hintMode < 2; hintMode++) {
+                    final String hint = hintMode == 0 ? "" : "/*+ force_use_covering */ ";
+                    assertQuery("SELECT " + hint + "val FROM " + table
+                            + " WHERE sym=NULL AND (ts IN '2024-01-01' OR ts IN '2024-01-03')")
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("CoveringIndex")
+                            .returns("val\n1.0\n3.0\n");
+                }
+                assertQuery("SELECT val FROM " + table + " WHERE sym=NULL AND ts IN '2024-01-02'")
+                        .noRandomAccess()
+                        // The covering factory declares no random access, but returns the index
+                        // backup's cursor on this top; that cursor implements recordAt().
+                        .skipRandomAccessProbe()
+                        .returns("val\n2.0\n");
+            }
         });
     }
 

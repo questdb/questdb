@@ -102,11 +102,10 @@ public final class ScannedColumnTopProbe {
      * record is decided by that record, not here: an out-of-order write can back-fill a partition
      * that came before the add, which leaves a zero top and means the column is there in full.
      * <p>
-     * Two bounds end the walk, and the filter's is the one that matters on a long history: a scan
-     * pinned to a few old days must not go on reading metadata for the thousands of partitions
-     * between them and a column added last week. Both are optimisations -- an unbounded walk
-     * answers the same, because {@link #isPartitionScanned} rejects every partition the filter
-     * excludes -- which is why {@link #testPartitionWalkSteps} exists to hold them.
+     * Each interval's end and the column's add time bound the walk. Between intervals, seek to
+     * the next opening rather than reading metadata for excluded partitions. A partition already
+     * checked for an earlier interval needs no second lookup. {@link #testPartitionWalkSteps}
+     * pins this work independently of the answer, including on zero-top backfilled partitions.
      */
     public static boolean hasPartitionBeforeColumn(
             ColumnVersionReader cv,
@@ -115,40 +114,42 @@ public final class ScannedColumnTopProbe {
             @Nullable LongList intervals
     ) {
         final int partitionCount = txReader.getPartitionCount();
-        if (partitionCount == 0) {
+        if (partitionCount == 0 || (intervals != null && intervals.size() == 0)) {
             return false;
         }
         final long addedAtPartition = cv.getColumnTopPartitionTimestamp(writerIndex);
         final long firstPartitionTimestamp = txReader.getPartitionTimestampByIndex(0);
-        final long scanStart = intervals == null || intervals.size() == 0
+        final long scanStart = intervals == null
                 ? firstPartitionTimestamp
                 : intervals.getQuick(0);
         final int firstScannedPartition = firstScannedPartitionIndex(txReader, scanStart);
         if (addedAtPartition <= txReader.getPartitionTimestampByIndex(firstScannedPartition)) {
             return false;
         }
-        if (intervals != null && intervals.size() == 0) {
-            // The filter admits nothing, so the scan reads no partition to have a top.
-            return false;
-        }
-        // The last interval's own end. Partitions ascend, so one starting after it is outside every
-        // interval, and so is every partition after it. Without this the walk ran on to the column's
-        // add time -- every partition in between, each costing a _cv search and an overlap test --
-        // to decide partitions the filter had already excluded.
-        final long scanEnd = intervals == null ? Long.MAX_VALUE : intervals.getQuick(intervals.size() - 1);
-        for (int p = firstScannedPartition; p < partitionCount; p++) {
-            final long partitionTimestamp = txReader.getPartitionTimestampByIndex(p);
-            if (partitionTimestamp >= addedAtPartition || partitionTimestamp > scanEnd) {
-                // Partitions ascend, so no later one came before the column, or is scanned, either.
-                return false;
+        int p = firstScannedPartition;
+        for (int interval = 0, n = intervals == null ? 2 : intervals.size(); interval < n; interval += 2) {
+            final long scanEnd = intervals == null ? Long.MAX_VALUE : intervals.getQuick(interval + 1);
+            if (intervals != null) {
+                // Seek over gaps; p also prevents repeated work when intervals share a partition.
+                p = Math.max(p, firstScannedPartitionIndex(txReader, intervals.getQuick(interval)));
             }
-            if (isPartitionWalkCounterEnabled) {
-                testPartitionWalkSteps.incrementAndGet();
-            }
-            if (cv.getRecordIndex(partitionTimestamp, writerIndex) < 0
-                    && txReader.getPartitionSize(p) > 0
-                    && isPartitionScanned(txReader, partitionCount, partitionTimestamp, intervals)) {
-                return true;
+            for (; p < partitionCount; p++) {
+                final long partitionTimestamp = txReader.getPartitionTimestampByIndex(p);
+                if (partitionTimestamp >= addedAtPartition) {
+                    return false;
+                }
+                if (partitionTimestamp > scanEnd) {
+                    break;
+                }
+                if (intervals != null && partitionEndTimestamp(txReader, partitionCount, p) < intervals.getQuick(interval)) {
+                    continue;
+                }
+                if (isPartitionWalkCounterEnabled) {
+                    testPartitionWalkSteps.incrementAndGet();
+                }
+                if (cv.getRecordIndex(partitionTimestamp, writerIndex) < 0 && txReader.getPartitionSize(p) > 0) {
+                    return true;
+                }
             }
         }
         return false;
@@ -170,7 +171,10 @@ public final class ScannedColumnTopProbe {
 
     /**
      * Whether the scan reads a partition whose {@code _cv} record states a non-zero top for this
-     * column. One pass over the records, testing only this column's.
+     * column. Seek to each interval's first actual partition, then read only records through its
+     * upper bound. Keep the record-driven whole-table path: sparse records must not cause a walk
+     * over every attached partition. Ordered intervals avoid rescanning records from partitions
+     * already covered, including when intervals share a physical (possibly O3-split) partition.
      */
     public static boolean hasScannedTopRecord(
             ColumnVersionReader cv,
@@ -179,27 +183,53 @@ public final class ScannedColumnTopProbe {
             int writerIndex,
             @Nullable LongList intervals
     ) {
+        if (partitionCount == 0) {
+            return false;
+        }
         final LongList records = cv.getCachedColumnVersionList();
-        for (int i = 0, n = records.size(); i < n; i += ColumnVersionReader.BLOCK_SIZE) {
-            if (records.getQuick(i + ColumnVersionReader.COLUMN_INDEX_OFFSET) != writerIndex) {
-                continue;
+        int i = 0;
+        int lastScannedPartition = -1;
+        for (int interval = 0, n = intervals == null ? 2 : intervals.size(); interval < n && i < records.size(); interval += 2) {
+            final long scanEnd = intervals == null ? Long.MAX_VALUE : intervals.getQuick(interval + 1);
+            if (intervals != null) {
+                final long scanStart = intervals.getQuick(interval);
+                int first = Math.max(lastScannedPartition + 1, firstScannedPartitionIndex(txReader, scanStart));
+                if (first < partitionCount && partitionEndTimestamp(txReader, partitionCount, first) < scanStart) {
+                    first++;
+                }
+                if (first >= partitionCount || txReader.getPartitionTimestampByIndex(first) > scanEnd) {
+                    continue;
+                }
+                lastScannedPartition = firstScannedPartitionIndex(txReader, scanEnd);
+                final int found = records.binarySearchBlock(
+                        ColumnVersionReader.BLOCK_SIZE_MSB, txReader.getPartitionTimestampByIndex(first), Vect.BIN_SEARCH_SCAN_UP
+                );
+                i = Math.max(i, found < 0 ? -found - 1 : found);
             }
-            final long partitionTimestamp = records.getQuick(i);
-            // Neither pseudo-partition record is a partition, and COL_TOP_DEFAULT_PARTITION keeps
-            // the column's ADD TIME in the column-top slot, which a plain "top > 0" test would read
-            // as a top. Skipping them is an early-out rather than a correctness requirement:
-            // isPartitionScanned below rejects both anyway, since no partition starts at
-            // Long.MIN_VALUE or Long.MIN_VALUE + 1. They go by name because timestamps can be
-            // negative, so a sign test would not separate them from real partitions.
-            if (partitionTimestamp == ColumnVersionReader.COL_TOP_DEFAULT_PARTITION
-                    || partitionTimestamp == ColumnVersionReader.SYMBOL_TABLE_VERSION_PARTITION) {
-                continue;
-            }
-            if (records.getQuick(i + ColumnVersionReader.COLUMN_TOP_OFFSET) <= 0) {
-                continue;
-            }
-            if (isPartitionScanned(txReader, partitionCount, partitionTimestamp, intervals)) {
-                return true;
+            for (; i < records.size(); i += ColumnVersionReader.BLOCK_SIZE) {
+                if (intervals != null && records.getQuick(i) > scanEnd) {
+                    break;
+                }
+                if (records.getQuick(i + ColumnVersionReader.COLUMN_INDEX_OFFSET) != writerIndex) {
+                    continue;
+                }
+                final long partitionTimestamp = records.getQuick(i);
+                // Neither pseudo-partition record is a partition, and COL_TOP_DEFAULT_PARTITION keeps
+                // the column's ADD TIME in the column-top slot, which a plain "top > 0" test would read
+                // as a top. Skipping them is an early-out rather than a correctness requirement:
+                // isPartitionScanned below rejects both anyway, since no partition starts at
+                // Long.MIN_VALUE or Long.MIN_VALUE + 1. They go by name because timestamps can be
+                // negative, so a sign test would not separate them from real partitions.
+                if (partitionTimestamp == ColumnVersionReader.COL_TOP_DEFAULT_PARTITION
+                        || partitionTimestamp == ColumnVersionReader.SYMBOL_TABLE_VERSION_PARTITION) {
+                    continue;
+                }
+                if (records.getQuick(i + ColumnVersionReader.COLUMN_TOP_OFFSET) <= 0) {
+                    continue;
+                }
+                if (isPartitionScanned(txReader, partitionCount, partitionTimestamp, intervals)) {
+                    return true;
+                }
             }
         }
         return false;
