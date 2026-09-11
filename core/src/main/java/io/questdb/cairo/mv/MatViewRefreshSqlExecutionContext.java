@@ -35,6 +35,7 @@ import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.ExpiryReadPolicy;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -43,6 +44,7 @@ import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
     private final boolean coveringIndexEnabled;
@@ -82,6 +84,26 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return false;
     }
 
+    @Override
+    public boolean isExpiryReadFilterEnabled() {
+        return false;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy() {
+        return ExpiryReadPolicy.REJECT;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy(TableToken tableToken) {
+        return ExpiryReadPolicy.REJECT;
+    }
+
+    @Override
+    public CharSequence getExpiryMaterializingViewName() {
+        return viewTableToken != null ? viewTableToken.getTableName() : null;
+    }
+
     public void clearReader() {
         this.viewTableToken = null;
         this.baseTableReader = null;
@@ -92,6 +114,8 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return getSimpleCircuitBreaker(); // mat view refresh should use cancellable circuit breaker instead of no-op
     }
 
+    // Only the declared base uses the fixed refresh snapshot. Other referenced
+    // tables use current readers and may change while the refresh runs.
     @Override
     public TableReader getReader(TableToken tableToken, long version) {
         if (tableToken.equals(baseTableReader.getTableToken())) {
@@ -111,6 +135,7 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return getCairoEngine().getReader(tableToken, version, this.getReaderPoolSupervisor());
     }
 
+    // As in the versioned overload, this does not fix snapshots across all sources.
     @Override
     public TableReader getReader(TableToken tableToken) {
         if (tableToken.equals(baseTableReader.getTableToken())) {
@@ -130,9 +155,14 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return tableToken == baseTableReader.getTableToken();
     }
 
-    public void of(TableReader baseTableReader) {
-        this.viewTableToken = baseTableReader.getTableToken();
+    public void of(TableReader baseTableReader, TableToken viewTableToken) {
+        this.viewTableToken = viewTableToken;
         this.baseTableReader = baseTableReader;
+    }
+
+    @TestOnly
+    public void of(TableReader baseTableReader) {
+        of(baseTableReader, baseTableReader.getTableToken());
     }
 
     @Override

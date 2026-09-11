@@ -73,6 +73,7 @@ public class QueryModel implements IQueryModel {
     private final IntIntHashMap correlatedDepths = new IntIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
+    private final ObjList<ExpressionNode> expiryWindowPartitionBy = new ObjList<>();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> hintsMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -142,11 +143,13 @@ public class QueryModel implements IQueryModel {
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
     private boolean isCteModel;
-    private ExpressionNode lateralCountCoalesceGuard;
+    private boolean isExpiryKeepFilter;
+    private boolean isExpiryWindowBarrier;
     private boolean isLateralCountCoalesceRequired;
     // LateralJoinRewriter marks the final lateral output so SqlOptimiser can hide
     // synthesized alignment columns after wildcard expansion assigns final aliases.
     private boolean isOuterRefWildcardExcluded;
+    private boolean isScalarExpiryRead;
     // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
@@ -154,6 +157,7 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode joinCriteria;
     private int joinKeywordPosition;
     private int joinType = JOIN_NONE;
+    private ExpressionNode lateralCountCoalesceGuard;
     private int latestByType = LATEST_BY_NONE;
     private ExpressionNode limitAdviceHi;
     private ExpressionNode limitAdviceLo;
@@ -399,6 +403,7 @@ public class QueryModel implements IQueryModel {
         orderByDirectionAdvice.clear();
         orderByPosition = 0;
         orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
+        isScalarExpiryRead = false;
         isSelectTranslation = false;
         groupBy.clear();
         dependencies.clear();
@@ -446,6 +451,7 @@ public class QueryModel implements IQueryModel {
         tableId = -1;
         metadataVersion = -1;
         wildcardColumnNames.clear();
+        expiryWindowPartitionBy.clear();
         expressionModels.clear();
         distinct = false;
         nestedModelIsSubQuery = false;
@@ -460,6 +466,8 @@ public class QueryModel implements IQueryModel {
         //  default is SELECT
         isUpdateModel = false;
         isCteModel = false;
+        isExpiryKeepFilter = false;
+        isExpiryWindowBarrier = false;
         isLateralCountCoalesceRequired = false;
         lateralCountCoalesceGuard = null;
         isOuterRefWildcardExcluded = false;
@@ -755,6 +763,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public IntHashSet getDependencies() {
         return dependencies;
+    }
+
+    @Override
+    public ObjList<ExpressionNode> getExpiryWindowPartitionBy() {
+        return expiryWindowPartitionBy;
     }
 
     @Override
@@ -1319,6 +1332,16 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public boolean isExpiryKeepFilter() {
+        return isExpiryKeepFilter;
+    }
+
+    @Override
+    public boolean isExpiryWindowBarrier() {
+        return isExpiryWindowBarrier;
+    }
+
+    @Override
     public boolean isForceBackwardScan() {
         return forceBackwardScan;
     }
@@ -1370,6 +1393,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public boolean isPivotGroupByColumnHasNoAlias() {
         return pivotGroupByColumnHasNoAlias;
+    }
+
+    @Override
+    public boolean isScalarExpiryRead() {
+        return isScalarExpiryRead;
     }
 
     @Override
@@ -1700,6 +1728,16 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public void setExpiryKeepFilter(boolean isExpiryKeepFilter) {
+        this.isExpiryKeepFilter = isExpiryKeepFilter;
+    }
+
+    @Override
+    public void setExpiryWindowBarrier(boolean isExpiryWindowBarrier) {
+        this.isExpiryWindowBarrier = isExpiryWindowBarrier;
+    }
+
+    @Override
     public void setFillFrom(ExpressionNode fillFrom) {
         this.fillFrom = fillFrom;
     }
@@ -1898,6 +1936,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
         this.sampleByTimezoneName = sampleByTimezoneName;
+    }
+
+    @Override
+    public void setScalarExpiryRead(boolean isScalarExpiryRead) {
+        this.isScalarExpiryRead = isScalarExpiryRead;
     }
 
     @Override

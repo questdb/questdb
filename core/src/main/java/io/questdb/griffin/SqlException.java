@@ -40,6 +40,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     private static final int EXCEPTION_VIEW_DOES_NOT_EXIST = EXCEPTION_TABLE_DOES_NOT_EXIST - 1;
     private static final int EXCEPTION_MAT_VIEW_DOES_NOT_EXIST = EXCEPTION_VIEW_DOES_NOT_EXIST - 1;
     private static final int EXCEPTION_WAL_RECOVERABLE = EXCEPTION_MAT_VIEW_DOES_NOT_EXIST - 1;
+    private static final int EXCEPTION_MATERIALIZATION_EXPIRY_CONFLICT = EXCEPTION_WAL_RECOVERABLE - 1;
     private static final CarrierLocal<SqlException> tlException = new CarrierLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
     private final StringSink tableName = new StringSink();
@@ -118,6 +119,18 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException matViewDoesNotExist(int position, CharSequence tableName) {
         return position(position).errorCode(EXCEPTION_MAT_VIEW_DOES_NOT_EXIST).put("materialized view does not exist [view=").put(tableName).put(']');
+    }
+
+    public static SqlException materializationExpiryConflict(
+            int position,
+            CharSequence dependentName,
+            CharSequence sourceName
+    ) {
+        return position(position)
+                .errorCode(EXCEPTION_MATERIALIZATION_EXPIRY_CONFLICT)
+                .put("cannot materialize view '").put(dependentName)
+                .put("': source materialized view '").put(sourceName)
+                .put("' has an active EXPIRE ROWS policy");
     }
 
     public static SqlException nonDeterministicColumn(int position, CharSequence column, CharSequence objectKind) {
@@ -225,6 +238,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public boolean isTableDoesNotExist() {
         return error == EXCEPTION_TABLE_DOES_NOT_EXIST;
+    }
+
+    public boolean isMaterializationExpiryConflict() {
+        return error == EXCEPTION_MATERIALIZATION_EXPIRY_CONFLICT;
     }
 
     public boolean isWalRecoverable() {

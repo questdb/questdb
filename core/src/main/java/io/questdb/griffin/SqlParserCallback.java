@@ -121,6 +121,15 @@ public interface SqlParserCallback {
         return new ShowCreateViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
     }
 
+    /**
+     * Returns whether {@code tok} starts an edition-specific clause following an {@code EXPIRE ROWS}
+     * body. Implementations that use lookahead must restore every token they read so the trailing-clause
+     * parser can consume it normally.
+     */
+    default boolean isExpireRowsClauseBoundary(GenericLexer lexer, CharSequence tok) throws SqlException {
+        return false;
+    }
+
     default RecordCursorFactory generateShowSqlFactory(IQueryModel model) {
         assert false;
         return null;

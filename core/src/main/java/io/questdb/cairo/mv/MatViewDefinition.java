@@ -72,6 +72,9 @@ public class MatViewDefinition implements Mutable {
     private long fixedOffset;
     private String matViewSql;
     private volatile TableToken matViewToken;
+    // When true, this is a non-aggregating "passthrough" view (e.g. SELECT * FROM base) with no SAMPLE BY;
+    // samplingInterval/samplingIntervalUnit then describe the refresh commit chunk, not an aggregation bucket.
+    private boolean passthrough;
     private int periodDelay;
     private char periodDelayUnit;
     private int periodLength;
@@ -128,6 +131,7 @@ public class MatViewDefinition implements Mutable {
         block.putChar(matViewDefinition.periodLengthUnit);
         block.putInt(matViewDefinition.periodDelay);
         block.putChar(matViewDefinition.periodDelayUnit);
+        block.putBool(matViewDefinition.passthrough);
     }
 
     public static void readFrom(
@@ -186,6 +190,7 @@ public class MatViewDefinition implements Mutable {
         deferred = false;
         samplingInterval = 0;
         samplingIntervalUnit = 0;
+        passthrough = false;
         refreshLimitHoursOrMonths = 0;
         timerInterval = 0;
         timerUnit = 0;
@@ -262,6 +267,10 @@ public class MatViewDefinition implements Mutable {
         return samplingIntervalUnit;
     }
 
+    public boolean isPassthrough() {
+        return passthrough;
+    }
+
     public @Nullable String getTimeZone() {
         return timeZone;
     }
@@ -317,7 +326,8 @@ public class MatViewDefinition implements Mutable {
             int periodLength,
             char periodLengthUnit,
             int periodDelay,
-            char periodDelayUnit
+            char periodDelayUnit,
+            boolean passthrough
     ) {
         initDefinition(
                 refreshType,
@@ -340,7 +350,8 @@ public class MatViewDefinition implements Mutable {
                 periodLength,
                 periodLengthUnit,
                 periodDelay,
-                periodDelayUnit
+                periodDelayUnit,
+                passthrough
         );
     }
 
@@ -378,7 +389,8 @@ public class MatViewDefinition implements Mutable {
                 periodLength,
                 periodLengthUnit,
                 periodDelay,
-                periodDelayUnit
+                periodDelayUnit,
+                passthrough
         );
         return newDefinition;
     }
@@ -414,7 +426,8 @@ public class MatViewDefinition implements Mutable {
                 periodLength,
                 periodLengthUnit,
                 periodDelay,
-                periodDelayUnit
+                periodDelayUnit,
+                passthrough
         );
         return newDefinition;
     }
@@ -440,7 +453,8 @@ public class MatViewDefinition implements Mutable {
                 periodLength,
                 periodLengthUnit,
                 periodDelay,
-                periodDelayUnit
+                periodDelayUnit,
+                passthrough
         );
         return newDefinition;
     }
@@ -568,6 +582,14 @@ public class MatViewDefinition implements Mutable {
         offset += Integer.BYTES;
 
         final char periodDelayUnit = block.getChar(offset);
+        offset += Character.BYTES;
+
+        // Backwards compatible: _mv extra blocks written before passthrough views existed do not
+        // carry this flag, so default to false when the block ends here.
+        boolean passthrough = false;
+        if (offset < block.length()) {
+            passthrough = block.getBool(offset);
+        }
 
         destDefinition.initDefinitionExtra(
                 refreshLimitHoursOrMonths,
@@ -578,7 +600,8 @@ public class MatViewDefinition implements Mutable {
                 periodLength,
                 periodLengthUnit,
                 periodDelay,
-                periodDelayUnit
+                periodDelayUnit,
+                passthrough
         );
     }
 
@@ -644,8 +667,10 @@ public class MatViewDefinition implements Mutable {
             int periodLength,
             char periodLengthUnit,
             int periodDelay,
-            char periodDelayUnit
+            char periodDelayUnit,
+            boolean passthrough
     ) {
+        this.passthrough = passthrough;
         this.refreshLimitHoursOrMonths = refreshLimitHoursOrMonths;
         this.timerInterval = timerInterval;
         this.timerUnit = timerUnit;

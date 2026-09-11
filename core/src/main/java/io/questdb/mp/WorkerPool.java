@@ -241,6 +241,11 @@ public class WorkerPool implements Closeable {
         freeOnExit.add(resource);
     }
 
+    @TestOnly
+    public int getAssignedJobCount() {
+        return assignedJobs.size();
+    }
+
     public int getFiberMaxLiveCount() {
         return fiberRuntime != null ? fiberRuntime.getMaxLiveFiberCount() : 0;
     }
@@ -258,6 +263,11 @@ public class WorkerPool implements Closeable {
             throw new IllegalStateException("worker pool does not host fibers [pool=" + poolName + ']');
         }
         return fiberRuntime;
+    }
+
+    @TestOnly
+    public int getFreeOnExitJobCount() {
+        return freeOnExit.size();
     }
 
     public String getPoolName() {
