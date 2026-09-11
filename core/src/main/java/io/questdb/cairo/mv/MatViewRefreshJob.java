@@ -1080,6 +1080,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             LOG.debug().$("could not lock materialized view for full refresh, will retry [view=").$(viewToken).I$();
             return false;
         }
+        viewState.noteRefreshLocked(microsecondClock.getTicks());
 
         // Capture the marker identity BEFORE the base reader snapshot is fixed. A marker observed
         // here describes base commits that predate its publication, so the rebuild below covers
@@ -2224,6 +2225,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             stateStore.enqueueRangeRefresh(viewToken, rangeFrom, rangeTo);
             return false;
         }
+        viewState.noteRefreshLocked(microsecondClock.getTicks());
 
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             runHoldingLockSeamForTesting();
@@ -2392,6 +2394,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     stateStore.enqueueIncrementalRefresh(viewToken);
                     continue;
                 }
+                viewState.noteRefreshLocked(microsecondClock.getTicks());
 
                 try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                     try {
@@ -2542,6 +2545,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             stateStore.enqueueIncrementalRefresh(viewToken);
             return false;
         }
+        viewState.noteRefreshLocked(microsecondClock.getTicks());
 
         final MatViewDefinition viewDefinition = viewState.getViewDefinition();
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
@@ -2799,10 +2803,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return;
             }
             if (!viewState.tryLock()) {
+                // Do not re-enqueue into the refresh queue: that hot-spins processNotifications while
+                // a refresh holds the latch. Mark pending so the intervals timer retries next tick.
                 LOG.debug().$("skipping refresh intervals update, locked by a refresh run [view=").$(viewToken).I$();
-                stateStore.enqueueUpdateRefreshIntervals(viewToken);
+                viewState.markPendingRefreshIntervalsUpdate();
                 return;
             }
+            viewState.noteRefreshLocked(microsecondClock.getTicks());
 
             final MatViewDefinition viewDefinition = viewState.getViewDefinition();
             try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
@@ -2816,11 +2823,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
                 final long lastTxn = baseSeqTracker.getWriterTxn();
                 updateRefreshIntervals0(lastTxn, baseTableToken, viewDefinition, viewState, walWriter);
+                viewState.clearPendingRefreshIntervalsUpdate();
             } catch (Throwable th) {
                 if (isTableSuspendedError(th)) {
                     // The view was suspended between the isViewWriteSuspended gate and the getWalWriter
-                    // acquire. Skip without invalidating; resume re-triggers the interval update.
+                    // acquire. Skip without invalidating; the intervals timer retries via pending.
                     LOG.info().$("skipping refresh intervals update, materialized view is suspended [view=").$(viewToken).I$();
+                    viewState.markPendingRefreshIntervalsUpdate();
                     return;
                 }
                 if (handleErrorRetryRefresh(th, viewToken, stateStore, refreshTask)) {

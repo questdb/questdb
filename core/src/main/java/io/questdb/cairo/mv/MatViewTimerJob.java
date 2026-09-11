@@ -59,6 +59,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     private static final Comparator<Timer> timerComparator = Comparator.comparingLong(Timer::getDeadlineMicros);
     private final MicrosecondClock clock;
     private final CairoConfiguration configuration;
+    private final CairoEngine engine;
     private final ObjList<Timer> expired = new ObjList<>();
     private final Predicate<Timer> filterByDirName;
     private final DependentViewGraph dependentViewGraph;
@@ -75,6 +76,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     private String filteredDirName; // temporary value used by filterByDirName
 
     public MatViewTimerJob(CairoEngine engine) {
+        this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
         this.timerTaskQueue = engine.getMatViewTimerQueue();
@@ -234,6 +236,33 @@ public class MatViewTimerJob extends SynchronizedJob {
         return filteredDirName != null && filteredDirName.equals(timer.getMatViewToken().getDirName());
     }
 
+    private boolean isViewBehindBaseTable(MatViewState state) {
+        try {
+            final MatViewDefinition definition = state.getViewDefinition();
+            final TableToken baseTableToken = engine.verifyTableName(definition.getBaseTableName());
+            if (!baseTableToken.isWal()) {
+                return false;
+            }
+            final long baseTxn = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn();
+            return baseTxn > state.getLastRefreshBaseTxn();
+        } catch (CairoException e) {
+            return false;
+        }
+    }
+
+    private void maybeWarnStalledRefresh(TableToken viewToken, MatViewState state, long nowMicros) {
+        final long lockTs = state.getRefreshLockTimestampUs();
+        if (lockTs == Numbers.LONG_NULL || !isViewBehindBaseTable(state)) {
+            return;
+        }
+        // QuestDB's Log has no warn level; error is the default-visible channel for this stall.
+        // ASCII only: the log infrastructure does not reliably render non-ASCII punctuation.
+        LOG.error().$("materialized view refresh appears stalled [view=").$(viewToken)
+                .$(", lockedForMs=").$((nowMicros - lockTs) / 1000)
+                .$(", refreshBaseTxn=").$(state.getLastRefreshBaseTxn())
+                .I$();
+    }
+
     private boolean processExpiredTimers(long nowMicros) {
         expired.clear();
         boolean ran = false;
@@ -252,12 +281,18 @@ public class MatViewTimerJob extends SynchronizedJob {
                 } else if (!state.hasPendingInvalidationReason() && !state.isInvalid()) {
                     switch (timer.getType()) {
                         case Timer.INCREMENTAL_REFRESH_TYPE:
-                            // Check if the view has refreshed since the last timer expiration.
-                            // If not, don't schedule refresh to avoid unbounded growth of the queue.
+                            // Enqueue when refreshSeq advanced (a prior refresh finished). If seq is
+                            // unchanged, either a refresh still holds the latch (do not pile up; log
+                            // if stalled while behind), or the last task returned before tryLock
+                            // without bumping seq (re-drive when the view is behind its base table).
                             final long refreshSeq = state.getRefreshSeq();
                             if (timer.getKnownSeq() != refreshSeq) {
                                 matViewStateStore.enqueueIncrementalRefresh(viewToken);
                                 timer.setKnownSeq(refreshSeq);
+                            } else if (state.isLocked()) {
+                                maybeWarnStalledRefresh(viewToken, state, nowMicros);
+                            } else if (isViewBehindBaseTable(state)) {
+                                matViewStateStore.enqueueIncrementalRefresh(viewToken);
                             }
                             break;
                         case Timer.PERIOD_REFRESH_TYPE:
@@ -267,10 +302,11 @@ public class MatViewTimerJob extends SynchronizedJob {
                             matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, periodHi);
                             break;
                         case Timer.UPDATE_REFRESH_INTERVALS_TYPE:
-                            // Enqueue refresh intervals update only if the base table had new transactions
-                            // since the last caching.
+                            // Enqueue when the base table had new transactions since the last caching,
+                            // or when a prior attempt deferred because the refresh latch was held.
                             final long refreshIntervalsSeq = state.getRefreshIntervalsSeq();
-                            if (timer.getKnownSeq() != refreshIntervalsSeq) {
+                            if (timer.getKnownSeq() != refreshIntervalsSeq
+                                    || state.isPendingRefreshIntervalsUpdate()) {
                                 matViewStateStore.enqueueUpdateRefreshIntervals(viewToken);
                                 timer.setKnownSeq(refreshIntervalsSeq);
                             }
