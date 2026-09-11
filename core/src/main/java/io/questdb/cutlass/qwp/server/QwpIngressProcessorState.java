@@ -136,6 +136,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private final CairoEngine engine;
     private final StringSink error = new StringSink();
     private final CharSequenceLongHashMap lastDurableSeqTxns = new CharSequenceLongHashMap();
+    // Watermark of the additive LOCAL stream (LOCAL|REPLICATED grants only):
+    // highest local-fsync seqTxn already reported per table via
+    // STATUS_LOCAL_DURABLE_ACK. Never consulted for coverage and never pruned
+    // by the local stream itself -- see onDurableAckSent.
+    private final CharSequenceLongHashMap lastLocalDurableSeqTxns = new CharSequenceLongHashMap();
+    // Snapshot of the additive LOCAL stream's progress, sibling of
+    // durableProgressSnapshot; populated by collectDurableProgress when both
+    // tiers are granted.
+    private final CharSequenceLongHashMap localDurableProgressSnapshot = new CharSequenceLongHashMap();
     private final long maxBufferSize;
     private final int maxResponseErrorMessageLength;
     private final CharSequenceLongHashMap pendingAckSeqTxns = new CharSequenceLongHashMap();
@@ -160,9 +169,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private long deferredErrorSequence = -1;
     private byte deferredErrorStatus;
     private boolean durableAckEnabled;
-    // Connection's negotiated durability tier (DurabilityTier.NONE/LOCAL/REPLICATED/
-    // DEFAULT). Selects which frontier collectDurableProgress reads -- see its Javadoc.
-    private int durableAckTier = DurabilityTier.NONE;
+    // Connection's granted durability tier set (DurabilityTier bitmask). The
+    // strongest granted tier drives the primary durable-ack cycle -- frontier
+    // selection, coverage, pruning. When both tiers are granted, an additive
+    // LOCAL stream reports the local-fsync frontier separately via
+    // STATUS_LOCAL_DURABLE_ACK -- see collectDurableProgress.
+    private int durableAckTiers = DurabilityTier.NONE;
     private long fd = -1;
     // Whether onHeadersReady wrote the 101 bytes into the send buffer but
     // deferred the actual rawSocket.send to onRequestComplete. Set true in
@@ -174,6 +186,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private boolean handshakeFlushPending;
     private long highestProcessedSequence = -1;
     private boolean isDurableProgressSnapshotFullyUploaded;
+    // True while the durable-ack frame being sent (or parked mid-send) belongs
+    // to the additive LOCAL stream of a LOCAL|REPLICATED grant. onDurableAckSent
+    // consults it to advance the correct stream's watermark; it survives a
+    // blocked send so the resume path advances the right stream too.
+    private boolean isSendingLocalDurableAck;
     private long lastAckedSequence = -1;
     private long messageSequence;
     private byte negotiatedVersion = QwpConstants.VERSION;
@@ -392,10 +409,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * {@link #isDurableProgressSnapshotFullyUploaded()} until the next call.
      * The caller must consume the map before the next call.
      * <p>
-     * Selects the frontier for this connection's negotiated {@link #durableAckTier}
-     * instead of taking the max of both tiers:
+     * The primary snapshot reads the frontier of the strongest granted tier
+     * ({@link #durableAckTiers}) instead of taking the max of both tiers:
      * <ul>
-     *   <li>{@link DurabilityTier#REPLICATED}: {@link DurableAckRegistry#getReplicatedDurableSeqTxn(CharSequence)} —
+     *   <li>{@link DurabilityTier#REPLICATED} granted: {@link DurableAckRegistry#getReplicatedDurableSeqTxn(CharSequence)} —
      *       uploaded to an object store (Enterprise replication only)</li>
      *   <li>otherwise ({@link DurabilityTier#LOCAL}): {@link DurableAckRegistry#getLocalDurableSeqTxn(CharSequence)} —
      *       fdatasync'd to local disk (ADAPTIVE tables, OSS + Enterprise)</li>
@@ -403,17 +420,25 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * No {@code max()}: {@code localDurableSeqTxn >= replicatedDurableSeqTxn} always holds, so a blind
      * max would silently resolve to the local frontier and downgrade a REPLICATED
      * (failover-safe) client's guarantee to mere LOCAL (power-loss-safe) durability.
-     * Selecting the requested tier is exactly the requested guarantee.
+     * <p>
+     * When BOTH tiers are granted, the same traversal also fills the additive
+     * LOCAL stream's snapshot ({@link #getLocalDurableProgressSnapshot()}) from
+     * the local-fsync frontier. That stream is an early progress signal ahead
+     * of the replicated ack: it is never consulted for coverage and never
+     * prunes the pending set -- the replicated (laggard) stream owns both.
      * <p>
      * Only iterates tables with outstanding durable work, not every table
      * the connection has ever written to.
      */
     public CharSequenceLongHashMap collectDurableProgress(DurableAckRegistry registry) {
         durableProgressSnapshot.clear();
+        localDurableProgressSnapshot.clear();
         isDurableProgressSnapshotFullyUploaded = true;
         if (!durableAckEnabled) {
             return durableProgressSnapshot;
         }
+        final boolean isReplicatedPrimary = DurabilityTier.hasReplicated(durableAckTiers);
+        final boolean hasAdditiveLocalStream = isReplicatedPrimary && DurabilityTier.hasLocal(durableAckTiers);
         ObjList<CharSequence> tableNames = pendingDurableSeqTxns.keys();
         for (int i = 0, n = tableNames.size(); i < n; i++) {
             CharSequence tableName = tableNames.getQuick(i);
@@ -422,13 +447,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 isDurableProgressSnapshotFullyUploaded = false;
                 continue;
             }
-            // Durability frontier for this connection's negotiated tier. REPLICATED reads the
-            // replicated frontier; LOCAL reads the local-fsync frontier. No max(): selecting the
-            // requested tier is exactly the requested guarantee (local >= replicated), so a
-            // REPLICATED client is never advanced by the weaker local tier.
+            // Primary frontier: the strongest granted tier. REPLICATED reads the
+            // replicated frontier; a LOCAL-only grant reads the local-fsync frontier.
+            // No max(): the strongest granted tier is exactly the requested guarantee
+            // (local >= replicated), so a REPLICATED client is never advanced by the
+            // weaker local tier.
             // The same selection as isDurableWorkFullyCovered, so the fused coverage result below
             // answers the same question that predicate does.
-            long durableSeqTxn = (durableAckTier == DurabilityTier.REPLICATED)
+            long durableSeqTxn = isReplicatedPrimary
                     ? registry.getReplicatedDurableSeqTxn(dirName)
                     : registry.getLocalDurableSeqTxn(dirName);
             if (durableSeqTxn < pendingDurableSeqTxns.get(tableName)) {
@@ -438,6 +464,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 long lastSent = lastDurableSeqTxns.get(tableName);
                 if (durableSeqTxn > lastSent) {
                     durableProgressSnapshot.put(tableName, durableSeqTxn);
+                }
+            }
+            if (hasAdditiveLocalStream) {
+                long localSeqTxn = registry.getLocalDurableSeqTxn(dirName);
+                if (localSeqTxn >= 0 && localSeqTxn > lastLocalDurableSeqTxns.get(tableName)) {
+                    localDurableProgressSnapshot.put(tableName, localSeqTxn);
                 }
             }
         }
@@ -489,6 +521,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return size;
     }
 
+    public int computeLocalDurableAckPayloadSize() {
+        int size = 1 + 2;
+        ObjList<CharSequence> keys = localDurableProgressSnapshot.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            size += 2 + Utf8s.utf8Bytes(keys.getQuick(i)) + 8;
+        }
+        return size;
+    }
+
     public int getDeferredCloseCode() {
         return deferredCloseCode;
     }
@@ -511,6 +552,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public CharSequenceLongHashMap getDurableProgressSnapshot() {
         return durableProgressSnapshot;
+    }
+
+    public CharSequenceLongHashMap getLocalDurableProgressSnapshot() {
+        return localDurableProgressSnapshot;
     }
 
     public String getErrorText() {
@@ -770,7 +815,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     /**
      * True when every seqTxn this connection has committed but not yet durably
      * acked is covered by the durability frontier of THIS connection's
-     * negotiated {@link #durableAckTier} -- i.e. a durable ack flushed right now
+     * strongest granted tier ({@link #durableAckTiers}) -- i.e. a durable ack flushed right now
      * would advance the client's replay watermark past ALL of this connection's
      * committed work, leaving no replay window.
      * Trivially true when nothing is pending (or durable ack is disabled:
@@ -800,7 +845,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             if (dirName == null) {
                 return false;
             }
-            final long durableSeqTxn = (durableAckTier == DurabilityTier.REPLICATED)
+            final long durableSeqTxn = DurabilityTier.hasReplicated(durableAckTiers)
                     ? registry.getReplicatedDurableSeqTxn(dirName)
                     : registry.getLocalDurableSeqTxn(dirName);
             if (durableSeqTxn < pendingDurableSeqTxns.get(tableName)) {
@@ -1050,6 +1095,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Marks which stream the next durable-ack frame belongs to. Set before
+     * each send attempt; a blocked send keeps the value so the resume path
+     * advances the right stream's watermark in {@link #onDurableAckSent()}.
+     */
+    public void setSendingLocalDurableAck(boolean isLocalStream) {
+        this.isSendingLocalDurableAck = isLocalStream;
+    }
+
+    /**
      * Records a successful durable-ack send. Updates lastDurableSeqTxns
      * from the current durableProgressSnapshot so that the next
      * collectDurableProgress() only reports further advances. Removes
@@ -1057,6 +1111,18 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * up to or exceeded the committed seqTxn.
      */
     public void onDurableAckSent() {
+        if (isSendingLocalDurableAck) {
+            // Additive LOCAL stream: advance its watermark only. Pruning of the
+            // pending set belongs to the replicated (laggard) stream -- the
+            // local frontier always runs ahead of replicated coverage.
+            ObjList<CharSequence> localKeys = localDurableProgressSnapshot.keys();
+            for (int i = 0, n = localKeys.size(); i < n; i++) {
+                CharSequence tableName = localKeys.getQuick(i);
+                lastLocalDurableSeqTxns.put(tableName, localDurableProgressSnapshot.get(tableName));
+            }
+            isSendingLocalDurableAck = false;
+            return;
+        }
         ObjList<CharSequence> keys = durableProgressSnapshot.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             CharSequence tableName = keys.getQuick(i);
@@ -1083,6 +1149,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 int ldsIdx = lastDurableSeqTxns.keyIndex(tableName);
                 if (ldsIdx < 0) {
                     lastDurableSeqTxns.removeAt(ldsIdx);
+                }
+                int llsIdx = lastLocalDurableSeqTxns.keyIndex(tableName);
+                if (llsIdx < 0) {
+                    lastLocalDurableSeqTxns.removeAt(llsIdx);
                 }
             } else {
                 // Pending still ahead of durable watermark — remember
@@ -1124,14 +1194,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         // Drop any durable-ack state; the connection is going away, so even if
         // uploads complete later, there is nobody left to notify.
         durableAckEnabled = false;
-        durableAckTier = DurabilityTier.NONE;
+        durableAckTiers = DurabilityTier.NONE;
         pendingAckSeqTxns.clear();
         pendingDurableDirNames.clear();
         pendingDurableSeqTxns.clear();
         resumeAckSeqTxns.clear();
         lastDurableSeqTxns.clear();
+        lastLocalDurableSeqTxns.clear();
         durableProgressSnapshot.clear();
+        localDurableProgressSnapshot.clear();
         isDurableProgressSnapshotFullyUploaded = false;
+        isSendingLocalDurableAck = false;
         tableDirNames.clear();
 
         // Log cache stats before clearing (only if there were any lookups)
@@ -1466,12 +1539,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         this.durableAckEnabled = durableAckEnabled;
     }
 
-    public void setDurableAckTier(int tier) {
-        this.durableAckTier = tier;
+    public void setDurableAckTiers(int tiers) {
+        this.durableAckTiers = tiers;
     }
 
-    public int getDurableAckTier() {
-        return durableAckTier;
+    public int getDurableAckTiers() {
+        return durableAckTiers;
     }
 
     public void setHandshakeFlushPending(boolean pending) {

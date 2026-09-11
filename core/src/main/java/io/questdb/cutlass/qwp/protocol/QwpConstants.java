@@ -168,6 +168,20 @@ public final class QwpConstants {
      */
     public static final byte STATUS_LIMIT_EXCEEDED = 0x0B;
     /**
+     * Status: Per-table local-durability acknowledgment.
+     * <p>
+     * Sent by the server (only when the client's granted durable-ack tier set
+     * includes {@code local}) when the tables' sequencer records have been
+     * fdatasync'd to the local disk -- the acked transactions survive power
+     * loss. Same payload layout as {@link #STATUS_DURABLE_ACK}:
+     * 1-byte status + 2-byte tableCount +
+     * [1-byte nameLen + nameLen bytes UTF-8 table name + 8-byte seqTxn] per table.
+     * Only tables whose local-durable seqTxn progressed since the last local
+     * durable ack are included. Weaker than {@link #STATUS_DURABLE_ACK}: local
+     * durability does not survive the loss of the server's disk.
+     */
+    public static final byte STATUS_LOCAL_DURABLE_ACK = 0x0E;
+    /**
      * Status: Reserved. Node cannot accept writes (read-only replica /
      * demoting primary). Servers currently signal this state with a
      * reconnect-eligible {@code NORMAL_CLOSURE} close instead of a NACK (see

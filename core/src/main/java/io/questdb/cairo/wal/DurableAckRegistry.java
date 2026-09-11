@@ -98,15 +98,12 @@ public interface DurableAckRegistry {
     }
 
     /**
-     * The strongest tier this server can offer, or {@link DurabilityTier#NONE}.
+     * True when this registry can serve every tier in the requested set. The
+     * QWP handshake grants all-or-nothing: a request naming a tier this
+     * server cannot serve is denied in full, never partially granted.
      */
-    default int strongestAvailableTier() {
-        if (isTierAvailable(DurabilityTier.REPLICATED)) {
-            return DurabilityTier.REPLICATED;
-        }
-        if (isTierAvailable(DurabilityTier.LOCAL)) {
-            return DurabilityTier.LOCAL;
-        }
-        return DurabilityTier.NONE;
+    default boolean isTierSetAvailable(int tiers) {
+        return (!DurabilityTier.hasLocal(tiers) || isTierAvailable(DurabilityTier.LOCAL))
+                && (!DurabilityTier.hasReplicated(tiers) || isTierAvailable(DurabilityTier.REPLICATED));
     }
 }

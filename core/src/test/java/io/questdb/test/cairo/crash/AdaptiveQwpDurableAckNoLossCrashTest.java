@@ -414,7 +414,7 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
         try {
             state.of(-1, AllowAllSecurityContext.INSTANCE);
             state.setDurableAckEnabled(true);              // as negotiated via X-QWP-Request-Durable-Ack
-            state.setDurableAckTier(DurabilityTier.LOCAL); // OSS local-fsync tier
+            state.setDurableAckTiers(DurabilityTier.LOCAL); // OSS local-fsync tier
             recordCommittedTable(state, tableName, dirName, committedSeqTxn);
             final CharSequenceLongHashMap snapshot = state.collectDurableProgress(registry);
             Assert.assertTrue("durable-ack path must report the pending adaptive table",

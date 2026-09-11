@@ -4480,7 +4480,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         // state directly (bypassing the handshake) and pins the tier the same
         // way that negotiation would resolve it, to isolate
         // collectDurableProgress's tier-selection behavior.
-        state.setDurableAckTier(DurabilityTier.REPLICATED);
+        state.setDurableAckTiers(DurabilityTier.REPLICATED);
         getLV().set(context, state);
         return state;
     }
@@ -4508,7 +4508,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         // state directly (bypassing the handshake) and pins the tier the same
         // way that negotiation would resolve it, to isolate
         // collectDurableProgress's tier-selection behavior.
-        state.setDurableAckTier(DurabilityTier.REPLICATED);
+        state.setDurableAckTiers(DurabilityTier.REPLICATED);
         getLV().set(context, state);
         return state;
     }

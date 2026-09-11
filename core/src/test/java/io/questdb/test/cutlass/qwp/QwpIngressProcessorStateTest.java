@@ -948,7 +948,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             QwpIngressProcessorState replicated = newStateWithPendingTable("t", "t~1");
             try {
                 replicated.setDurableAckEnabled(true);
-                replicated.setDurableAckTier(DurabilityTier.REPLICATED);
+                replicated.setDurableAckTiers(DurabilityTier.REPLICATED);
                 Assert.assertEquals(4, replicated.collectDurableProgress(registry).get("t"));
             } finally {
                 replicated.onDisconnected();
@@ -959,7 +959,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             QwpIngressProcessorState local = newStateWithPendingTable("t", "t~1");
             try {
                 local.setDurableAckEnabled(true);
-                local.setDurableAckTier(DurabilityTier.LOCAL);
+                local.setDurableAckTiers(DurabilityTier.LOCAL);
                 Assert.assertEquals(10, local.collectDurableProgress(registry).get("t"));
             } finally {
                 local.onDisconnected();
@@ -1002,7 +1002,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             // past everything it committed, so the close may complete immediately.
             QwpIngressProcessorState local = newStateWithPendingTable("t", "t~1");
             try {
-                local.setDurableAckTier(DurabilityTier.LOCAL);
+                local.setDurableAckTiers(DurabilityTier.LOCAL);
                 Assert.assertTrue(
                         "a LOCAL-tier connection must be judged covered by the LOCAL frontier",
                         local.isDurableWorkFullyCovered(registry));
@@ -1016,7 +1016,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             // numerically higher) local frontier either.
             QwpIngressProcessorState replicated = newStateWithPendingTable("t", "t~1");
             try {
-                replicated.setDurableAckTier(DurabilityTier.REPLICATED);
+                replicated.setDurableAckTiers(DurabilityTier.REPLICATED);
                 Assert.assertFalse(
                         "a REPLICATED-tier connection must NOT be satisfied by the weaker LOCAL frontier",
                         replicated.isDurableWorkFullyCovered(registry));
@@ -1044,7 +1044,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             };
             QwpIngressProcessorState caught = newStateWithPendingTable("t", "t~1");
             try {
-                caught.setDurableAckTier(DurabilityTier.REPLICATED);
+                caught.setDurableAckTiers(DurabilityTier.REPLICATED);
                 Assert.assertTrue(
                         "a REPLICATED connection must be covered once the replicated frontier reaches its work",
                         caught.isDurableWorkFullyCovered(caughtUp));

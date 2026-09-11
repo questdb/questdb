@@ -431,16 +431,26 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
                         replicatedOnLocalOnly.response().contains("X-QWP-Durable-Ack"));
                 Assert.assertEquals(DurabilityTier.NONE, replicatedOnLocalOnly.durableAckTier());
 
-                // Legacy "true" resolves to the server's strongest available tier
-                // (LOCAL here) and must echo the legacy "enabled" token verbatim --
-                // byte-identical to the pre-tier-negotiation response -- so
-                // existing clients see no change on the wire.
+                // Legacy "true" means REPLICATED -- its shipped meaning -- and
+                // this local-only server cannot serve it. All-or-nothing: the
+                // request is denied outright (no confirmation header), exactly
+                // as released OSS servers deny it, never downgraded to LOCAL.
                 HandshakeResult legacyTrue = doHandshake("true");
-                Assert.assertTrue(
-                        "legacy true handshake must carry the legacy X-QWP-Durable-Ack: enabled "
-                                + "confirmation, got: " + legacyTrue.response(),
-                        legacyTrue.response().contains("\r\nX-QWP-Durable-Ack: enabled\r\n"));
-                Assert.assertEquals(DurabilityTier.LOCAL, legacyTrue.durableAckTier());
+                Assert.assertFalse(
+                        "legacy true on a local-only server must carry no X-QWP-Durable-Ack "
+                                + "header, got: " + legacyTrue.response(),
+                        legacyTrue.response().contains("X-QWP-Durable-Ack"));
+                Assert.assertEquals(DurabilityTier.NONE, legacyTrue.durableAckTier());
+
+                // "local,replicated" includes a tier this server cannot serve;
+                // all-or-nothing denies the whole set rather than granting the
+                // local half of it.
+                HandshakeResult bothOnLocalOnly = doHandshake("local,replicated");
+                Assert.assertFalse(
+                        "local,replicated on a local-only server must carry no X-QWP-Durable-Ack "
+                                + "header, got: " + bothOnLocalOnly.response(),
+                        bothOnLocalOnly.response().contains("X-QWP-Durable-Ack"));
+                Assert.assertEquals(DurabilityTier.NONE, bothOnLocalOnly.durableAckTier());
 
                 // Explicit "local" is available on this registry -> granted
                 // verbatim, echoing the explicit tier token rather than the
@@ -612,7 +622,7 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     /**
      * Drives a single handshake with the given {@code X-QWP-Request-Durable-Ack}
      * header value (null omits the header) and captures both the raw response
-     * bytes and the negotiated {@link QwpIngressProcessorState#getDurableAckTier()},
+     * bytes and the negotiated {@link QwpIngressProcessorState#getDurableAckTiers()},
      * for tests that need to assert on the granted tier rather than just the
      * boolean enabled/disabled outcome. Assumes the caller has already installed
      * the desired {@link DurableAckRegistry} on {@code engine}.
@@ -645,7 +655,7 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             Assert.assertNotNull("state must be populated after successful handshake", state);
 
             String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
-            return new HandshakeResult(response, state.getDurableAckTier());
+            return new HandshakeResult(response, state.getDurableAckTiers());
         } finally {
             Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
@@ -677,13 +687,13 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             return true;
         }
 
-        // Mirrors LocalDurableAckRegistry: LOCAL is the only tier this fake
-        // offers. Needed so the DEFAULT (legacy "true") grant path -- which
-        // resolves via strongestAvailableTier(), not isEnabled() alone --
-        // actually grants a tier instead of falling through to NONE.
+        // Mirrors an Enterprise registry with primary replication enabled:
+        // REPLICATED is the tier this fake offers. Needed so the legacy
+        // "true" request -- whose shipped meaning is the replicated tier --
+        // is grantable here and echoes the historical "enabled" token.
         @Override
         public boolean isTierAvailable(int tier) {
-            return tier == DurabilityTier.LOCAL;
+            return tier == DurabilityTier.REPLICATED;
         }
     }
 
