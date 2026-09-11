@@ -100,6 +100,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int jitMode;
     private boolean liveViewCompile;
     private MemoryTracker memoryTracker;
+    private boolean metadataProbe;
     private long nowMicros;
     private long nowNanos;
     // Timestamp type only for now() function, used by NowFunctionFactory
@@ -435,6 +436,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isMetadataProbe() {
+        return metadataProbe;
+    }
+
+    @Override
     public boolean isParallelFilterEnabled() {
         return parallelFilterEnabled;
     }
@@ -541,6 +547,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         // but a reused per-connection context must never inherit a stale live-view flag.
         // setLiveViewCompile also clears the mirrored windowContext flag.
         setLiveViewCompile(false);
+        metadataProbe = false;
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error
         // unwinding between register() and unregister() cannot leak it into reuse.
         this.memoryTracker = null;
@@ -632,6 +639,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         this.memoryTracker = tracker;
+    }
+
+    @Override
+    public void setMetadataProbe(boolean value) {
+        this.metadataProbe = value;
     }
 
     @Override

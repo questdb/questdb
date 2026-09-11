@@ -97,6 +97,15 @@ public interface SecurityContext extends Mutable {
 
     void authorizeAlterView(TableToken tableToken);
 
+    /**
+     * Authorizes marking a view audited, or removing that marking. Audited views are an Enterprise
+     * feature, so the default refuses rather than silently permitting a compliance control that
+     * nothing downstream would enforce.
+     */
+    default void authorizeAuditView() {
+        throw CairoException.authorization().put("audited views are only available in QuestDB Enterprise").setCacheable(true);
+    }
+
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
 
     void authorizeDatabaseBackup();
