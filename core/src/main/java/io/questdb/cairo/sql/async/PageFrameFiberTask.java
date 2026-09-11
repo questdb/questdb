@@ -78,7 +78,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     void abortBeforeLaunch() {
         Throwable failure = null;
         try {
-            cancelFrameSequence(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+            cancelFrameSequence();
         } catch (Throwable th) {
             failure = th;
         }
@@ -145,7 +145,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
 
     @Override
     protected void onAbandoned() {
-        cancelFrameSequence(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+        cancelFrameSequence();
     }
 
     @Override
@@ -267,14 +267,14 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         return primary;
     }
 
-    private void cancelFrameSequence(int reason) {
+    private void cancelFrameSequence() {
         if (orderedFrameSequence != null) {
             if (orderedFrameSequence.isActive()) {
-                orderedFrameSequence.cancel(reason);
+                orderedFrameSequence.cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
             }
         } else if (unorderedFrameSequence != null) {
             if (unorderedFrameSequence.isActive()) {
-                unorderedFrameSequence.cancel(reason);
+                unorderedFrameSequence.cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
             }
         }
     }

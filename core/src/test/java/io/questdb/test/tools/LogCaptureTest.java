@@ -59,6 +59,59 @@ public class LogCaptureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAssertNotLoggedAcceptsAbsentMessage() {
+        LogCapture.assertNotLogged("forbidden", "");
+        LogCapture.assertNotLogged("forbidden", "before\nafter\n");
+    }
+
+    @Test
+    public void testAssertNotLoggedRejectsFirstLine() {
+        assertNotLoggedFailure("forbidden first\nafter\n", "forbidden first");
+    }
+
+    @Test
+    public void testAssertNotLoggedRejectsLastLine() {
+        assertNotLoggedFailure("before\nforbidden last\n", "forbidden last");
+    }
+
+    @Test
+    public void testAssertNotLoggedRejectsLoggedMessage() throws Exception {
+        assertMemoryLeak(() -> {
+            final String marker = "log-capture-forbidden-" + System.nanoTime();
+            capture.start();
+            LOG.info().$(marker).$();
+            capture.drain();
+
+            final AssertionError error = Assert.assertThrows(AssertionError.class, () -> capture.assertNotLogged(marker));
+            final String prefix = "Message '" + marker + "' was logged: ";
+            Assert.assertTrue(error.getMessage().startsWith(prefix));
+            TestUtils.assertContains(error.getMessage().substring(prefix.length()), marker);
+            capture.assertNotLogged(marker + "-absent");
+        });
+    }
+
+    @Test
+    public void testAssertNotLoggedRejectsMiddleLine() {
+        assertNotLoggedFailure("before\nprefix forbidden suffix\nafter\n", "prefix forbidden suffix");
+    }
+
+    @Test
+    public void testAssertNotLoggedRejectsNewlineMatch() {
+        final AssertionError error = Assert.assertThrows(AssertionError.class, () -> LogCapture.assertNotLogged("\n", "\n"));
+        Assert.assertEquals("Message '\n' was logged: ", error.getMessage());
+    }
+
+    @Test
+    public void testAssertNotLoggedRejectsUnterminatedFirstLine() {
+        assertNotLoggedFailure("prefix forbidden suffix", "prefix forbidden suffix");
+    }
+
+    @Test
+    public void testAssertNotLoggedRejectsUnterminatedLastLine() {
+        assertNotLoggedFailure("before\nprefix forbidden suffix", "prefix forbidden suffix");
+    }
+
+    @Test
     public void testAssertOnlyOnceAcceptsARegexWithCapturingGroups() {
         final String marker = "log-capture-one-group-" + System.nanoTime();
         final String barrier = "log-capture-barrier-" + System.nanoTime();
@@ -156,5 +209,13 @@ public class LogCaptureTest extends AbstractCairoTest {
             capture.setClockForTest(System::currentTimeMillis);
             capture.setSleeperForTest(Os::sleep);
         }
+    }
+
+    private static void assertNotLoggedFailure(String capturedLog, String expectedLine) {
+        final AssertionError error = Assert.assertThrows(
+                AssertionError.class,
+                () -> LogCapture.assertNotLogged("forbidden", capturedLog)
+        );
+        Assert.assertEquals("Message 'forbidden' was logged: " + expectedLine, error.getMessage());
     }
 }

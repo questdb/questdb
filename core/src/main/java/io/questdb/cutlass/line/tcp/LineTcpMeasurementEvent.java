@@ -54,6 +54,7 @@ import io.questdb.std.str.Utf8s;
 import java.io.Closeable;
 
 import static io.questdb.cutlass.line.LineUtils.from;
+import static io.questdb.cutlass.line.LineUtils.fromDesignatedTimestamp;
 import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
@@ -322,7 +323,12 @@ public class LineTcpMeasurementEvent implements Closeable {
         securityContext.authorizeInsert(tud.getTableToken());
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
-            timestamp = from(tud.getTimestampDriver(), timestamp, getOverloadTimestampUnit(parser.getTimestampUnit()));
+            timestamp = fromDesignatedTimestamp(
+                    tud.getTimestampDriver(),
+                    timestamp,
+                    getOverloadTimestampUnit(parser.getTimestampUnit()),
+                    tud.getTableNameUtf16()
+            );
         }
         buffer.addStructureVersion(buffer.getAddress(), localDetails.getMetadataVersion());
         // timestamp, entitiesWritten are written to the buffer after saving all fields
@@ -337,7 +343,13 @@ public class LineTcpMeasurementEvent implements Closeable {
             if (columnWriterIndex > -1) {
                 // column index found, processing column by index
                 if (columnWriterIndex == tud.getTimestampIndex()) {
-                    timestamp = from(tud.getTimestampDriver(), entity.getLongValue(), entity.getUnit());
+                    // the designated timestamp arrives as a named field, overriding the line timestamp
+                    timestamp = fromDesignatedTimestamp(
+                            tud.getTimestampDriver(),
+                            entity.getLongValue(),
+                            entity.getUnit(),
+                            tud.getTableNameUtf16()
+                    );
                     continue;
                 }
 
