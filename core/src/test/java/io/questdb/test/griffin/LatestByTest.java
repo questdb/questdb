@@ -2724,8 +2724,8 @@ public class LatestByTest extends AbstractCairoTest {
             // after EXPLAIN when the next test disables the setting; keep this compiler local.
             try (SqlCompiler compiler = new SqlCompilerImpl(engine)) {
                 assertQuery(query).withCompiler(compiler).returns(isWithinOptimised ? "v\n" : "v\n1.0\n");
-                TestUtils.printSql(compiler, sqlExecutionContext, "EXPLAIN " + query, sink);
-                TestUtils.assertContains(sink, "Filter filter: s='a'");
+                assertQuery(query).withCompiler(compiler).noLeakCheck()
+                        .assertsPlanContaining("Filter filter: s='a'");
             }
         });
     }
