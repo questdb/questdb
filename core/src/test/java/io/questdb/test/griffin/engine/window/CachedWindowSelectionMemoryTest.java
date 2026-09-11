@@ -35,6 +35,10 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
+import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -43,6 +47,69 @@ import org.junit.Test;
 
 public class CachedWindowSelectionMemoryTest extends AbstractCairoTest {
     private static final long ROW_COUNT = 1_000_000;
+
+    @Test
+    public void testBucketSelectionEnumeration() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "true");
+            for (int method = 0; method < 3; method++) {
+                final String name = switch (method) {
+                    case 0 -> "lttb";
+                    case 1 -> "m4";
+                    default -> "minmax";
+                };
+                final String table = "tab_" + name;
+                // Keep ts non-designated so the same factory can also encounter NULL timestamps.
+                execute("CREATE TABLE " + table + " AS (SELECT timestamp_sequence(0, 1000) ts, x v FROM long_sequence(5))");
+                bindVariableService.setLong(0, 5);
+                try (RecordCursorFactory factory = select("SELECT ts, v FROM " + table + " TIMESTAMP(ts) SUBSAMPLE " + name + "(v, $1)");
+                     DirectLongList selectedRows = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT)) {
+                    assertFusedPlan(factory, false);
+                    assertSelectedRows(factory, selectedRows, true, 0, 1, 2, 3, 4);
+                    bindVariableService.setLong(0, 2);
+                    assertSelectedRows(factory, selectedRows, false, 0, 4);
+                    bindVariableService.setLong(0, 10);
+                    assertSelectedRows(factory, selectedRows, true, 0, 1, 2, 3, 4);
+                    execute("UPDATE " + table + " SET v = NULL WHERE v = 3");
+                    assertSelectedRows(factory, selectedRows, false, 0, 1, 3, 4);
+                    execute("UPDATE " + table + " SET ts = NULL WHERE v = 1");
+                    assertSelectedRows(factory, selectedRows, false, 1, 3, 4);
+                    execute("UPDATE " + table + " SET v = NULL");
+                    assertSelectedRows(factory, selectedRows, false);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLttbSelectAllUnderQueryMemoryLimit() throws Exception {
+        assertBucketIdentityMemory("lttb");
+    }
+
+    @Test
+    public void testLttbSelectionModeReuse() throws Exception {
+        assertSelectionModeReuse("lttb", 5, 2, true);
+    }
+
+    @Test
+    public void testM4SelectAllUnderQueryMemoryLimit() throws Exception {
+        assertBucketIdentityMemory("m4");
+    }
+
+    @Test
+    public void testM4SelectionModeReuse() throws Exception {
+        assertSelectionModeReuse("m4", 5, 2, true);
+    }
+
+    @Test
+    public void testMinMaxSelectAllUnderQueryMemoryLimit() throws Exception {
+        assertBucketIdentityMemory("minmax");
+    }
+
+    @Test
+    public void testMinMaxSelectionModeReuse() throws Exception {
+        assertSelectionModeReuse("minmax", 5, 2, true);
+    }
 
     @Test
     public void testCadenceSelectAllUnderQueryMemoryLimit() throws Exception {
@@ -118,8 +185,14 @@ public class CachedWindowSelectionMemoryTest extends AbstractCairoTest {
             for (int rows = 0; rows <= 2; rows++) {
                 final String expected = "ts\tv\n" + (rows > 0 ? "1970-01-01T00:00:00.000000Z\t1\n" : "")
                         + (rows > 1 ? "1970-01-01T00:00:00.001000Z\t2\n" : "");
-                for (int method = 0; method < 3; method++) {
-                    final String selection = method == 0 ? "cadence(1)" : "uniform(" + (method + 1) + ")";
+                for (int method = 0; method < 6; method++) {
+                    final String selection = switch (method) {
+                        case 0 -> "cadence(1)";
+                        case 1, 2 -> "uniform(" + (method + 1) + ")";
+                        case 3 -> "lttb(v, 2)";
+                        case 4 -> "m4(v, 2)";
+                        default -> "minmax(v, 2)";
+                    };
                     try (RecordCursorFactory factory = select("SELECT ts, v FROM tab WHERE v <= " + rows + " SUBSAMPLE " + selection)) {
                         assertFusedPlan(factory, false);
                         for (int run = 0; run < 2; run++) {
@@ -304,6 +377,46 @@ public class CachedWindowSelectionMemoryTest extends AbstractCairoTest {
         assertIdentityMemory("uniform(1_000_000)", true, 0);
     }
 
+    private void assertBucketIdentityMemory(String method) throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "true");
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4096L);
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 33_554_432L);
+            execute("CREATE TABLE tab AS (SELECT timestamp_sequence(0, 1000) ts, x v FROM long_sequence(1_000_000)) TIMESTAMP(ts)");
+            // Pass1 still owns row IDs, a power-of-two (ts, value) buffer and a NULL bitset.
+            // Allow constant list backing, but not even one additional full ordinal list.
+            final long maxBytes = ROW_COUNT * Long.BYTES + 16_777_216L + 131_072L + 1024;
+            bindVariableService.setLong(0, ROW_COUNT);
+            try (RecordCursorFactory factory = select("SELECT ts, v FROM tab SUBSAMPLE " + method + "(v, $1)")) {
+                assertFusedPlan(factory, false);
+                assertDenseSelection(factory, 1, maxBytes);
+                bindVariableService.setLong(0, 2 * ROW_COUNT);
+                assertDenseSelection(factory, 1, maxBytes);
+
+                // Fail during pass1 buffer growth, then reopen the same factory in identity mode.
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 16_777_216L);
+                MemoryTracker tracker;
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    tracker = sqlExecutionContext.getMemoryTracker();
+                    try {
+                        cursor.hasNext();
+                        Assert.fail("expected query memory limit during pass1");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        assertFailureMethod(e, "ensureCapacity");
+                    }
+                }
+                Assert.assertEquals(0, tracker.getUsed());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 33_554_432L);
+                assertDenseSelection(factory, 1, maxBytes);
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+                assertDenseSelection(factory, 1, maxBytes);
+            }
+        });
+    }
+
     private static void assertFailureMethod(CairoException exception, String method) {
         for (StackTraceElement frame : exception.getStackTrace()) {
             if (frame.getMethodName().equals(method)) {
@@ -321,6 +434,12 @@ public class CachedWindowSelectionMemoryTest extends AbstractCairoTest {
     }
 
     private void assertDenseSelection(RecordCursorFactory factory, int stride, boolean isFused) throws Exception {
+        // Positional identity needs only row IDs and constant list backing. Sparse cadence
+        // needs its algorithm list and one executor output list, not a traversal copy.
+        assertDenseSelection(factory, stride, isFused ? (stride == 1 ? ROW_COUNT * Long.BYTES + 1024 : 16_390_000L) : 0);
+    }
+
+    private void assertDenseSelection(RecordCursorFactory factory, int stride, long maxBytes) throws Exception {
         Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
         Assert.assertEquals(2, factory.getMetadata().getColumnCount());
         Assert.assertEquals(0, factory.getMetadata().getTimestampIndex());
@@ -365,16 +484,38 @@ public class CachedWindowSelectionMemoryTest extends AbstractCairoTest {
                 counter.clear();
                 cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
                 Assert.assertEquals(expectedRows, counter.get());
-                if (isFused) {
-                    // Identity needs only base row IDs plus constant list backing. Even ONE full
-                    // identity list would exceed this bound. Sparse cadence needs its algorithm
-                    // list and ONE executor output list, not a third traversal copy.
-                    long maxBytes = stride == 1 ? ROW_COUNT * Long.BYTES + 1024 : 16_390_000L;
+                if (maxBytes > 0) {
                     Assert.assertTrue("selection charges " + tracker.getUsed() + " exceed " + maxBytes, tracker.getUsed() <= maxBytes);
                 }
             } finally {
                 if (tracker != null) {
                     Assert.assertEquals("cursor close must release query charges", 0, tracker.getUsed());
+                }
+            }
+        }
+    }
+
+    private void assertSelectedRows(RecordCursorFactory factory, DirectLongList selectedRows, boolean isAllRows, long... expected) throws Exception {
+        RecordCursorFactory base = factory;
+        while (base != null && !(base instanceof CachedWindowLightRecordCursorFactory)) {
+            base = base.getBaseFactory();
+        }
+        Assert.assertNotNull(base);
+        WindowFunction function = ((CachedWindowLightRecordCursorFactory) base).getSingleRowSelectingFunction();
+        Assert.assertNotNull(function);
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            RecordCursor.Counter counter = new RecordCursor.Counter();
+            cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+            Assert.assertEquals(expected.length, counter.get());
+            Assert.assertEquals(isAllRows, function.isSelectionAllRows());
+            // The executor skips enumeration for identity, but callers may still request it.
+            // Repeated calls must clear the destination and leave the selection unchanged.
+            for (int run = 0; run < 2; run++) {
+                selectedRows.add(-1);
+                function.getSelectedRows(selectedRows);
+                Assert.assertEquals(expected.length, selectedRows.size());
+                for (int i = 0; i < expected.length; i++) {
+                    Assert.assertEquals(expected[i], selectedRows.get(i));
                 }
             }
         }
@@ -389,6 +530,10 @@ public class CachedWindowSelectionMemoryTest extends AbstractCairoTest {
     }
 
     private void assertSelectionModeReuse(String method, long allParameter, long sparseParameter) throws Exception {
+        assertSelectionModeReuse(method, allParameter, sparseParameter, false);
+    }
+
+    private void assertSelectionModeReuse(String method, long allParameter, long sparseParameter, boolean hasValueArg) throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4096L);
             execute("CREATE TABLE tab AS (SELECT timestamp_sequence(0, 1000) ts, x v FROM long_sequence(5)) TIMESTAMP(ts)");
@@ -402,7 +547,7 @@ public class CachedWindowSelectionMemoryTest extends AbstractCairoTest {
                 for (int ordered = 0; ordered < 2; ordered++) {
                     final boolean isOrdered = ordered == 1;
                     final String source = isOrdered ? "(SELECT ts, v FROM tab ORDER BY ts DESC)" : "tab";
-                    final String query = "SELECT ts, v FROM " + source + " SUBSAMPLE " + method + "($1)";
+                    final String query = "SELECT ts, v FROM " + source + " SUBSAMPLE " + method + "(" + (hasValueArg ? "v, " : "") + "$1)";
                     bindVariableService.setLong(0, allParameter);
                     try (SqlCompiler compiler = engine.getSqlCompiler();
                          RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
@@ -417,6 +562,14 @@ public class CachedWindowSelectionMemoryTest extends AbstractCairoTest {
                             assertSelection(factory, isOrdered, allRows);
                             bindVariableService.setLong(0, sparseParameter);
                             assertSelection(factory, isOrdered, sparseRows);
+                        }
+                        if (hasValueArg) {
+                            bindVariableService.setLong(0, allParameter);
+                            execute("UPDATE tab SET v = NULL WHERE ts = 2000::TIMESTAMP");
+                            assertSelection(factory, isOrdered, "ts\tv\n" + (isOrdered
+                                    ? last + fourth + second + first : first + second + fourth + last));
+                            execute("UPDATE tab SET v = 3 WHERE ts = 2000::TIMESTAMP");
+                            assertSelection(factory, isOrdered, allRows);
                         }
                         // init() can fail after the cursor reopens its lists. The same factory must
                         // still accept an identity selection after the caller corrects the bind.

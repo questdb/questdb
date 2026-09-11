@@ -222,6 +222,13 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
     }
 
     @Override
+    public boolean isSelectionAllRows() {
+        // A target that covers the buffer still excludes any NULL rows pass1 dropped.
+        // Derive identity from the existing counters so resets and rebinds need no extra state.
+        return count == rowCount && count <= target;
+    }
+
+    @Override
     public boolean pass2NeedsBaseRecord() {
         // pass2 drives entirely off pass1's cached (ts,value) buffer, `selected`, and the
         // per-row null bitset; it never reads the base Record. Lets the cached executor skip
@@ -236,12 +243,19 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
 
     @Override
     public void getSelectedRows(DirectLongList dest) {
+        dest.clear();
+        if (isSelectionAllRows()) {
+            // Preserve the enumeration contract for callers that do not use the identity hint.
+            for (long row = 0; row < rowCount; row++) {
+                dest.add(row);
+            }
+            return;
+        }
         // Map `selected` (ascending non-null BUFFER ordinals chosen by preparePass2) back to
         // ascending pass1 traversal ordinals using pass1's null bitset. The o-th non-null row
         // in pass1 traversal order corresponds to buffer ordinal o; a single forward walk
         // over the null bitset advances both cursors monotonically, so this is byte-identical to
         // the rows pass2 would have flagged keep=true.
-        dest.clear();
         long selIdx = 0;
         long nonNullOrdinal = 0;
         final long selSize = selected.size();
@@ -377,10 +391,11 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
     @Override
     public void pass2(Record record, long recordOffset, WindowSPI spi) {
         final boolean keep;
-        // Consult pass1's cached null bitset in the same traversal order pass1 wrote it (both
-        // passes visit rows in the same order), so this stays byte-identical to the old
-        // isNullRow(record) path while needing no base-record re-read - see pass2NeedsBaseRecord().
-        if (nullFlag(pass2Row++)) {
+        // Outside identity mode, consult pass1's cached null bitset in the same traversal order
+        // pass1 wrote it. Neither path needs a base-record re-read; see pass2NeedsBaseRecord().
+        if (isSelectionAllRows()) {
+            keep = true;
+        } else if (nullFlag(pass2Row++)) {
             // Same row this was in pass1, so this stays aligned with the bufferCount pass1
             // assigned to non-null rows.
             keep = false;
@@ -408,12 +423,16 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
         if (count > Integer.MAX_VALUE || target > Integer.MAX_VALUE) {
             throw CairoException.nonCritical().put(name).put(" input exceeds maximum of ").put(Integer.MAX_VALUE).put(" rows");
         }
+        selected.clear();
+        if (isSelectionAllRows()) {
+            // The fused cursor emits every input row directly; pass2 writes true without a list.
+            return;
+        }
         if (count <= target) {
             // When the buffered row count already fits the target, keep every buffered row rather
             // than bucketing. Running algorithm.select here would dedup first/min/max/last and can drop
             // rows (e.g. a monotonic run collapses to just {first,last}). Null rows stay dropped
             // because they were never appended to the buffer.
-            selected.clear();
             for (long i = 0; i < count; i++) {
                 selected.add(i);
             }
