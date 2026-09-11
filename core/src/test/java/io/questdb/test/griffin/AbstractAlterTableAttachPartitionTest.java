@@ -39,7 +39,7 @@ import org.junit.Rule;
 import org.junit.rules.TestName;
 
 
-abstract class AbstractAlterTableAttachPartitionTest extends AbstractCairoTest {
+public abstract class AbstractAlterTableAttachPartitionTest extends AbstractCairoTest {
     final static StringSink partitions = new StringSink();
     @Rule
     public TestName testName = new TestName();
@@ -62,7 +62,7 @@ abstract class AbstractAlterTableAttachPartitionTest extends AbstractCairoTest {
         other = Misc.free(other);
     }
 
-    void copyPartitionAndMetadata(
+    protected void copyPartitionAndMetadata(
             CharSequence srcRoot,
             TableToken srcTableToken,
             String srcPartitionName,

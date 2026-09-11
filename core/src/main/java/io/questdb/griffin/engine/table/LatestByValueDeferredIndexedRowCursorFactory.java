@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
@@ -92,10 +93,14 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     @Override
     public void prepareCursor(PageFrameCursor pageFrameCursor) {
         final CharSequence symbol = symbolFunc.getStrA(null);
-        symbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbol);
-        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            symbolKey++;
-        }
+        final int key = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbol);
+        // Index keys are not symbol keys plus one: keyOf() answers VALUE_IS_NULL for a null
+        // value, which is Integer.MIN_VALUE, and the NULL key's index key is 0. toIndexKey()
+        // is what knows that, and every sibling factory resolves through it. Incrementing
+        // here instead sent a bound NULL key to an index key nothing matches, so
+        // "sym = $1 LATEST ON ts" with $1 bound to NULL silently returned no rows while the
+        // literal "sym = null" returned them.
+        symbolKey = key != SymbolTable.VALUE_NOT_FOUND ? TableUtils.toIndexKey(key) : SymbolTable.VALUE_NOT_FOUND;
     }
 
     @Override
