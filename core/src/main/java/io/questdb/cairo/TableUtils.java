@@ -2916,6 +2916,35 @@ public final class TableUtils {
     }
 
     /**
+     * The publish-by-rename counterpart of {@link #fsyncDirDurable}: renames {@code src} to {@code dst} so
+     * that the NEW NAME is durable by the time this returns.
+     * <p>
+     * Every publish site already pairs its rename with a {@link #fsyncDirDurable} of the parent, which is
+     * what makes the new dentry durable on POSIX -- and which {@code fsyncDirDurable} SKIPS on a restricted
+     * (Windows) file system, since a directory cannot be opened for fsync there. That left the rename with
+     * no barrier at all on Windows: a power loss could keep the already-fsynced file contents and the
+     * durable pointer naming them while losing the name itself, inverting data-before-pointer. Windows does
+     * offer the missing primitive for the move itself, so ask for it here; off Windows this is exactly
+     * {@link FilesFacade#rename(LPSZ, LPSZ)} and the parent fsync still does the work.
+     * <p>
+     * Fail-stop, matching {@link #renameOrFail}.
+     */
+    public static void renameDurableOrFail(FilesFacade ff, LPSZ src, LPSZ dst) {
+        if (ff.renameDurable(src, dst) != Files.FILES_RENAME_OK) {
+            throw CairoException.critical(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);
+        }
+    }
+
+    /**
+     * {@link #renameDurableOrFail} under a commit mode that asks for durability, a plain rename under
+     * {@link CommitMode#NOSYNC}. Use at publish sites whose companion directory fsync is itself
+     * mode-conditional, so NOSYNC keeps costing nothing.
+     */
+    public static int renamePublish(FilesFacade ff, LPSZ src, LPSZ dst, int commitMode) {
+        return commitMode == CommitMode.NOSYNC ? ff.rename(src, dst) : ff.renameDurable(src, dst);
+    }
+
+    /**
      * Replaces {@code dst}'s CONTENT with {@code src}'s. On POSIX this happens IN PLACE, so the destination
      * keeps its identity -- anything already holding it open or mapped observes the new bytes, and it never
      * stops existing. Windows cannot do that safely and takes an unlink-then-copy route instead; see the

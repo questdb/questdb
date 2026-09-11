@@ -245,6 +245,19 @@ public interface FilesFacade {
 
     int rename(LPSZ from, LPSZ to);
 
+    /**
+     * The publish-by-rename barrier: the rename itself is durable by the time this returns.
+     * <p>
+     * On POSIX this IS {@link #rename(LPSZ, LPSZ)} — the caller makes the new dentry durable by fsync'ing
+     * the parent directory afterwards, which it already does. Windows has no directory handle to fsync, so
+     * there the implementation asks the move itself to write through. Defaults to {@link #rename(LPSZ, LPSZ)}
+     * so existing implementations keep their current behaviour and every facade that intercepts
+     * {@code rename} keeps intercepting this too.
+     */
+    default int renameDurable(LPSZ from, LPSZ to) {
+        return rename(from, to);
+    }
+
     boolean rmdir(Path name);  // Implementation-specific laziness.
 
     boolean rmdir(Path name, boolean haltOnError);

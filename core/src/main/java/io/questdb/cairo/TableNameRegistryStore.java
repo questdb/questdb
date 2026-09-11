@@ -246,7 +246,9 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         // rename tmp to next version file, everyone will automatically switch to new file
         LPSZ path2 = Path.getThreadLocal2(configuration.getDbRoot())
                 .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion + 1).$();
-        if (ff.rename(path.$(), path2) == Files.FILES_RENAME_OK) {
+        // renameDurable, not rename: the fsyncDirDurable below is what publishes this new name, and it is a
+        // no-op on a restricted (Windows) file system -- so there the durable rename IS the barrier.
+        if (ff.renameDurable(path.$(), path2) == Files.FILES_RENAME_OK) {
             LOG.info().$("compacted tables file [path=").$(path2).I$();
             lastFileVersion++;
             currentOffset = newAppendOffset;

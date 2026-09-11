@@ -13523,7 +13523,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void recoverFromTodoWriteFailure() {
-        restoreMetaFrom(META_PREV_FILE_NAME, metaPrevIndex);
+        restoreMetaFrom(META_PREV_FILE_NAME, metaPrevIndex, effectiveCommitMode);
         // The compensating rename must reach the directory before the caller clears the restore marker.
         // Otherwise a crash could retain the failed forward rename, lose this rollback rename, and find no
         // _todo marker on restart. If this barrier also fails, runFragile distresses the writer while leaving
@@ -13942,7 +13942,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private int rename(int retries) {
+    private int rename(int retries, int commitMode) {
         try {
             int index = 0;
             other.concat(META_PREV_FILE_NAME).$();
@@ -13961,7 +13961,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     continue;
                 }
 
-                if (ff.rename(path.$(), other.$()) != FILES_RENAME_OK) {
+                // renamePublish: _meta -> _meta.prev is half of the metadata swap, whose durability the
+                // caller completes with a table-dir fsync -- skipped on Windows, where the durable rename is
+                // the only barrier available. NOSYNC asks for neither.
+                if (TableUtils.renamePublish(ff, path.$(), other.$(), commitMode) != FILES_RENAME_OK) {
                     LOG.info().$("could not rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
                     index++;
                     continue;
@@ -13981,18 +13984,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void renameMetaToMetaPrev() {
+    private void renameMetaToMetaPrev(int commitMode) {
         try {
-            this.metaPrevIndex = rename(fileOperationRetryCount);
+            this.metaPrevIndex = rename(fileOperationRetryCount, commitMode);
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_META_RENAME_FAILURE, e);
         }
     }
 
-    private void renameSwapMetaToMeta() {
+    private void renameSwapMetaToMeta(int commitMode) {
         // rename _meta.swp to _meta
         try {
-            restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
+            restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex, commitMode);
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_SWAP_RENAME_FAILURE, e);
         }
@@ -14306,7 +14309,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void restoreMetaFrom(CharSequence fromBase, int fromIndex) {
+    private void restoreMetaFrom(CharSequence fromBase, int fromIndex, int commitMode) {
         try {
             path.concat(fromBase);
             if (fromIndex > 0) {
@@ -14314,7 +14317,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             path.$();
 
-            renameOrFail(ff, path.$(), other.concat(META_FILE_NAME).$());
+            // The _meta.swp -> _meta publish (and the rollback restores that share this helper). The
+            // companion table-dir fsync is skipped on Windows, so make the rename itself durable there.
+            if (TableUtils.renamePublish(ff, path.$(), other.concat(META_FILE_NAME).$(), commitMode) != FILES_RENAME_OK) {
+                throw CairoException.critical(ff.errno()).put("could not rename ").put(path).put(" -> ").put(other);
+            }
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
@@ -14414,7 +14421,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         validateSwapMeta();
 
         // rename _meta to _meta.prev
-        renameMetaToMetaPrev();
+        renameMetaToMetaPrev(metadataEffectiveCommitMode);
 
         // After moving _meta to _meta.prev we must arm the _todo restore marker BEFORE any step
         // that can fail. If we abort while _meta has been renamed away but no _todo exists yet,
@@ -14447,7 +14454,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // rename _meta.swp to _meta
-        renameSwapMetaToMeta();
+        renameSwapMetaToMeta(metadataEffectiveCommitMode);
         if (!Os.isWindows() && metadataEffectiveCommitMode != CommitMode.NOSYNC) {
             try {
                 final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(pathSize).$(), LOG);

@@ -30,6 +30,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
@@ -238,6 +239,11 @@ public final class DurabilityEnvironmentCheck {
     private static String readWorstVirtioWriteCache(FilesFacade ff) {
         String last = null;
         final Utf8StringSink nameSink = new Utf8StringSink();
+        // Assemble the sysfs path with StringSink, NOT Path.concat: concat inserts Files.SEPARATOR, which is
+        // '\' on Windows, so the probe asked for "/sys/block\vda\queue\write_cache" and every read missed.
+        // These are literal Linux sysfs paths and the separator in them is always '/', on every platform the
+        // probe (or a test driving it through an injected FilesFacade) runs on.
+        final StringSink pathSink = new StringSink();
         try (Path path = new Path()) {
             path.of(SYS_BLOCK);
             final long findPtr = ff.findFirst(path.$());
@@ -255,8 +261,9 @@ public final class DurabilityEnvironmentCheck {
                     if (!Utf8s.startsWithAscii(nameSink, "vd")) {
                         continue;
                     }
-                    path.of(SYS_BLOCK).concat(nameSink).concat("queue").concat("write_cache");
-                    final String value = ProcFs.read(ff, path.toString(), SMALL_FILE_MAX_BYTES);
+                    pathSink.clear();
+                    pathSink.put(SYS_BLOCK).put('/').put(nameSink).put("/queue/write_cache");
+                    final String value = ProcFs.read(ff, pathSink.toString(), SMALL_FILE_MAX_BYTES);
                     if (value != null) {
                         last = value;
                         if (Chars.startsWith(trim(value), "write through")) {

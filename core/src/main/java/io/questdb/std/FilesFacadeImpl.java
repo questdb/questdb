@@ -543,6 +543,17 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int renameDurable(LPSZ from, LPSZ to) {
+        if (!Os.isWindows()) {
+            // Off Windows this IS rename(2) (see Files.renameDurable); delegate to the OVERRIDABLE method
+            // for the same reason as barrierFsync above -- a fault-injecting facade that intercepts rename()
+            // must keep intercepting the durable variant, or the harness goes quiet instead of red.
+            return rename(from, to);
+        }
+        return Files.renameDurable(from, to);
+    }
+
+    @Override
     public boolean rmdir(Path name, boolean haltOnError) {
         Path pathSecureCopy = SecurePath.PATH.get().of(name);
 

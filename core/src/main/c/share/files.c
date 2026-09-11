@@ -579,6 +579,15 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename
     return FILES_RENAME_ERR_OK;
 }
 
+/* POSIX: rename(2) carries no durability of its own, and none can be attached to the call itself -- the
+ * caller makes the new dentry durable by fsync'ing the parent DIRECTORY afterwards, which it already does.
+ * So this is literally rename() here, and the Windows build is where the two diverge (MoveFileExW gains
+ * MOVEFILE_WRITE_THROUGH, since Windows offers no directory handle to fsync instead). */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_renameDurable0
+        (JNIEnv *e, jclass cls, jlong lpszOld, jlong lpszNew) {
+    return Java_io_questdb_std_Files_rename(e, cls, lpszOld, lpszNew);
+}
+
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0
         (JNIEnv *e, jclass cls, jlong lpsz) {
     return access((const char *) lpsz, F_OK) == 0;

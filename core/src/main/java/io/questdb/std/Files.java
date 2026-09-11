@@ -599,6 +599,25 @@ public final class Files {
         return fdCache.rename(oldName, newName);
     }
 
+    /**
+     * Renames {@code oldName} to {@code newName} such that the rename itself is durable on return.
+     * <p>
+     * POSIX offers nothing to attach to the call: {@code rename(2)} is atomic but not durable, and the
+     * caller makes the new dentry durable by fsync'ing the parent DIRECTORY afterwards. This is therefore
+     * literally {@link #rename(LPSZ, LPSZ)} off Windows.
+     * <p>
+     * Windows is where it matters. {@code FlushFileBuffers} accepts file handles only, so there is no
+     * directory to fsync and the engine's directory barriers are all skipped there -- which left a rename
+     * that PUBLISHES an already-fsynced file with no barrier at all. {@code MOVEFILE_WRITE_THROUGH} is the
+     * documented equivalent: the move does not return until it is flushed to disk.
+     * <p>
+     * Failure semantics and the destination-exists behaviour are identical to {@link #rename(LPSZ, LPSZ)}
+     * on both platforms.
+     */
+    public static int renameDurable(LPSZ oldName, LPSZ newName) {
+        return fdCache.renameDurable(oldName, newName);
+    }
+
     @TestOnly
     public static boolean rmdir(Path path, boolean haltOnFail) {
         return rmdir(path, haltOnFail, 0, 10, null) > -1;
@@ -884,6 +903,8 @@ public final class Files {
     native static boolean remove(long lpsz);
 
     static native int rename(long lpszOld, long lpszNew);
+
+    static native int renameDurable0(long lpszOld, long lpszNew);
 
     /**
      * Removes directory recursively. When function fails the caller has to check Os.errno() for the diagnostics.

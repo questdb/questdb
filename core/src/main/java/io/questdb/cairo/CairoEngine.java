@@ -4774,7 +4774,10 @@ public class CairoEngine implements Closeable, WriterSource {
                 );
 
                 // Atomically move the completed clone into its final location.
-                if (ff.rename(src.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken).$(), dst.of(root).concat(newToken).$()) != Files.FILES_RENAME_OK) {
+                // renameDurable: the fsyncDirDurable below is the covering barrier on POSIX, but it is a
+                // no-op on a restricted (Windows) file system, where a durable move is the only barrier
+                // available for this publish.
+                if (ff.renameDurable(src.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken).$(), dst.of(root).concat(newToken).$()) != Files.FILES_RENAME_OK) {
                     throw CairoException.critical(ff.errno()).put("could not move rebased table into place [from=").put(src).put(", to=").put(dst).put(']');
                 }
                 renamed = true;
