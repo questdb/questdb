@@ -48,3 +48,24 @@ fi
 
 qemu_ver=$(qemu-system-x86_64 --version 2>/dev/null | head -1 | awk '{print $4}')
 echo "READY: kvm ok (no sudo), qemu ${qemu_ver}, ${avail_gb}G free at $STATE_DIR"
+
+# ---- PORT GUARD ---------------------------------------------------------------
+# The harness must never bind a HOST service port. A server that fails to bind does not
+# stop -- the next client simply talks to whatever already owns the port. That happened:
+# a probe server on 19000 silently lost the bind to a published container port and the
+# client ingested 20000 rows into a LIVE user database. Containers publish on 127.0.0.1
+# and do not appear as "our" processes, so `ps` is not enough -- check the socket table.
+#
+# The VM arms are unaffected (the guest binds its own 9000 inside the VM); this guards
+# anything that would bind on the host.
+host_port_free() {
+    local port="$1"
+    if ss -ltn 2>/dev/null | grep -q ":$port "; then
+        echo "REFUSING: host port $port is already bound -- a server started here would" >&2
+        echo "  silently lose the bind and any client would talk to the EXISTING owner." >&2
+        ss -ltn 2>/dev/null | grep ":$port " | sed 's/^/    /' >&2
+        docker ps --format '{{.Names}}: {{.Ports}}' 2>/dev/null | grep ":$port->" | sed 's/^/    container /' >&2
+        return 1
+    fi
+    return 0
+}

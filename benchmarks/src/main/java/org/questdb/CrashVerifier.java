@@ -81,6 +81,7 @@ import java.util.List;
  */
 public class CrashVerifier {
 
+    static final boolean QWP = Boolean.getBoolean("qwp");
     static final boolean REBASE = Boolean.getBoolean("rebase");
 
     public static void main(String[] args) throws Exception {
@@ -169,7 +170,14 @@ public class CrashVerifier {
 
         // Read the acknowledged watermark (bare committed row count) written by CrashIngestWriter.
         long watermark = 0L;
-        final File progressFile = new File(dbRoot, "_progress");
+        // The QWP arm records its own watermark: the client is a separate process from the server
+        // and never sees _progress. Its first line is the acked row count, so the SAME bar applies
+        // -- but only because this method is the SYNC/NOSYNC path. Under SYNC a commit fsyncs
+        // before the server acks, so the acked frontier IS durable; the adaptive path deliberately
+        // does not consult it, because there the acked frontier legitimately runs ahead of durable
+        // and asserting no-loss against it would claim a guarantee QWP does not make on OSS
+        // (durable ack is refused by an OSS server outright).
+        final File progressFile = QWP ? new File(dbRoot, "_qwp_progress") : new File(dbRoot, "_progress");
         if (progressFile.exists()) {
             try {
                 // First line is the bare committed row count in every mode.
@@ -178,12 +186,20 @@ public class CrashVerifier {
                 System.out.println("WARN: could not parse _progress file: " + e.getMessage());
             }
         } else {
-            System.out.println("WARN: no _progress file found (killed before first commit?)");
+            System.out.println("WARN: no " + progressFile.getName() + " found (killed before first commit?)");
         }
         System.out.println("watermark=" + watermark + " (acknowledged committed rows before kill)");
 
         final long count;
         try (CairoEngine engine = new CairoEngine(cfg)) {
+            // DRAIN THE WAL FIRST. This path was written for bypass-WAL tables, where the table IS
+            // the committed state. The qwp arm ingests into a WAL table via a real server, which
+            // applies asynchronously in its worker pool -- so at the cut a large committed-but-
+            // unapplied backlog exists, and counting without draining reports it as data loss
+            // (observed: count=12929000 vs watermark=22763000, entirely apply lag). Draining is
+            // what a restarted server does anyway, so this measures the recovered state, not a
+            // mid-apply snapshot.
+            drainWalQueue(engine);
             // load() swaps the default NO-OP mat view / live view stores for the
             // real ones. Without it matViewStateStore stays NoOpMatViewStateStore,
             // every notifyMatViewBaseTableCommit is silently discarded, and a
@@ -256,6 +272,18 @@ public class CrashVerifier {
         System.out.println("watermark rows=" + rowsWatermark
                 + " C=" + committedSeqTxn + " Wm=" + localDurableSeqTxn
                 + " (C=committed seqTxn, Wm=durable-ack frontier, captured pre-cut)");
+
+        if (QWP) {
+            // Deliberate refusal, not an oversight. The QWP acked frontier is a COMMIT frontier;
+            // under ADAPTIVE W>0 it runs ahead of what is durable, so neither F>=Wm nor
+            // "everything acked survives" can be asserted from it. Running the qwp arm here would
+            // either over-claim or report phantom loss. Use --mode=sync for the no-loss bar; the
+            // structural oracle (identity/contiguity/no-dup/ts-monotonic) still runs in both.
+            System.out.println("LOUD_FAILURE: qwp arm has no sound no-loss oracle under adaptive"
+                    + " (durable ack is refused by an OSS server; acked != durable when W>0)."
+                    + " Run the qwp arm with --mode=sync, or wait for the durable-ack accessor.");
+            System.exit(1);
+        }
 
         final long count;
         final boolean suspended;

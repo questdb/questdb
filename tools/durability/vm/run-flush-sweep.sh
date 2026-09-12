@@ -41,6 +41,10 @@ PROFILE="${QDB_SCHEMA_PROFILE:-bitmap}"
 # path adaptive recovery exists for -- a run with epochs every second never
 # builds a gap worth recovering from.
 EPOCH="${QDB_EPOCH_MS:-1000}"
+# QDB_ARM=qwp swaps the embedded-engine writer for a REAL server + REAL WebSocket client, so the
+# cut lands on the wire protocol's write path. Everything downstream -- replay, verify, oracle --
+# is arm-agnostic because both arms write the same deterministic payload.
+ARM="${QDB_ARM:-reference}"
 
 STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"
 BASE="$STATE_DIR/base"
@@ -56,7 +60,7 @@ truncate -s 40G "$RUN/data.raw"
 truncate -s 60G "$RUN/log.raw"
 
 echo "flush-boundary crash sweep — $STAMP"
-echo "  mode=$MODE W=$WINDOW profile=$PROFILE epoch=${EPOCH}ms sibling=${QDB_SIBLING_TABLE:-false} recoverAs=${QDB_RECOVER_AS:-same} ddlEvery=${QDB_DDL_EVERY_ROWS:--1} matView=${QDB_MAT_VIEW:-false} rebaseAt=${QDB_REBASE_AT_ROWS:--1}"
+echo "  arm=$ARM mode=$MODE W=$WINDOW profile=$PROFILE epoch=${EPOCH}ms sibling=${QDB_SIBLING_TABLE:-false} recoverAs=${QDB_RECOVER_AS:-same} ddlEvery=${QDB_DDL_EVERY_ROWS:--1} matView=${QDB_MAT_VIEW:-false} rebaseAt=${QDB_REBASE_AT_ROWS:--1}"
 
 keep() { echo "run state kept at $RUN" >&2; }
 
@@ -75,7 +79,7 @@ vm_ssh "$P" "$KEY" "sudo sync"
 vm_ssh "$P" "$KEY" "bash /opt/vmcrash/guest/prepare-device.sh --mode=log-writes" >/dev/null \
     || { keep; echo "LOUD_FAILURE: could not build the log-writes stack"; exit 1; }
 
-vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false} QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1} QDB_MAT_VIEW=${QDB_MAT_VIEW:-false} QDB_REBASE_AT_ROWS=${QDB_REBASE_AT_ROWS:--1} bash /opt/vmcrash/guest/run-workload.sh --arm=reference --mode=$MODE \
+vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false} QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1} QDB_MAT_VIEW=${QDB_MAT_VIEW:-false} QDB_REBASE_AT_ROWS=${QDB_REBASE_AT_ROWS:--1} QDB_QWP_DURABLE_ACK=${QDB_QWP_DURABLE_ACK:-off} QDB_QWP_BATCH=${QDB_QWP_BATCH:-1000} bash /opt/vmcrash/guest/run-workload.sh --arm=$ARM --mode=$MODE \
     --window-us=$WINDOW --epoch-ms=$EPOCH </dev/null >/mnt/qdb/workload.out 2>&1 &" || true
 
 # Let it build a real history: many commits means many flushes means many
@@ -86,7 +90,13 @@ for _ in $(seq 1 120); do
     sleep 0.2
 done
 sleep 8
-vm_ssh "$P" "$KEY" "pgrep -f '[C]rashIngestWriter' >/dev/null" || {
+# The liveness assertion must name the arm's OWN process: the qwp arm runs
+# QwpCrashIngestClient, so the reference-arm pattern would never match and every qwp run
+# would abort as "workload not running" -- a guard that fails closed on a healthy run is as
+# useless as one that never fires. Bracket idiom avoids pgrep matching its own ssh cmdline.
+LIVE_PAT="[C]rashIngestWriter"
+[ "$ARM" = qwp ] && LIVE_PAT="[Q]wpCrashIngestClient"
+vm_ssh "$P" "$KEY" "pgrep -f '$LIVE_PAT' >/dev/null" || {
     # CAPTURE THE GUEST LOGS. This assertion fires when the workload died, and the
     # reason is always in writer.log -- which used to require booting the VM again to
     # read. A failure path that discards its own evidence costs three VM boots to
@@ -126,7 +136,7 @@ for n in $(seq "$first" "$nflush"); do
         sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
         sudo mkdir -p /mnt/qdb; \
         if sudo mount /dev/vdb /mnt/qdb 2>/dev/null; then \
-            bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
+            bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --qwp=$([ "$ARM" = qwp ] && echo true || echo false) --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
         else echo 'MOUNT_FAILED'; fi")
     # Archive the FULL per-boundary output. The one-line verdict in $LOG is a summary,
     # not evidence: every time a result needed explaining, the explanation was in the
