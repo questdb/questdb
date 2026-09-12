@@ -19,7 +19,7 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
    cleanup/reopen behavior are tested. See [layout, ownership and measurements](docs/parallel-hash-join-group-by-build.md)
    and [all storage samples](docs/parallel-hash-join-group-by-build-results.csv).
 
-3. **Implement joined metadata, record access, and function initialization** — this update.
+3. **Implement joined metadata, record access, and function initialization** — commit `e7e5a2e510`.
    `HashJoinGroupByMetadata` composes candidate base indexes with actual compiled
    input projections and copied payload order. `HashJoinGroupByRecord` supplies
    slot-local logical/null getters and symbol routing. `HashJoinGroupByFunctions`
@@ -28,42 +28,47 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
    before parent initialization, and releases execution state through `cursorClosed()`.
    See [API, ownership and validation](docs/parallel-hash-join-group-by-functions.md).
 
-The branch does not yet execute a fused operator. Default plans, configuration and
-EXPLAIN selection remain unchanged. The RFC's 2× end-to-end gate is still pending.
+4. **Implement the keyed factory, atom, cursor lifecycle, and frame reducer** — this update.
+   `AsyncHashJoinGroupByRecordCursorFactory` now executes forced keyed INNER/LEFT
+   and normalized RIGHT plans using immutable build storage, independently
+   acquired slot state, logical frame access and an interruptible owner merge.
+   It drains tasks before cleanup and retains SYMBOL backing through output.
+   See [execution, ownership and validation](docs/parallel-hash-join-group-by-execution.md).
 
-## Next pending task: 4
+The branch executes the fused keyed operator through its explicit construction
+boundary. Default plans, configuration and automatic EXPLAIN selection remain
+unchanged. The RFC's 2× end-to-end gate is still pending.
 
-**Implement the keyed factory, atom, cursor lifecycle, and frame reducer.**
+## Next pending task: 5
 
-- Add `AsyncHashJoinGroupByRecordCursorFactory` and atom/cursor state using the
-  horizon-join and parallel-group-by patterns. Define child/function ownership,
-  construction rollback, execution cleanup and reuse before transferring resources.
-- Connect build → freeze/publication → probe → merge/output lifecycle. Consume the
-  filtered build cursor once. Skip an empty build's probe scan only for INNER;
-  LEFT and normalized RIGHT must still process preserved rows and WHERE filters.
-- Use `UnorderedPageFrameSequence`, `PerWorkerLocks` and existing frame/filter
-  helpers. Each acquired logical slot, including the owner, gets an independent
-  frozen probe, joined record, grouping sink/updater and aggregate map fragment.
-  Slot identity is independent of threads; preserve owner execution/work stealing.
-- Bind the task-3 metadata to compiled child projections. Construct joined records
-  and initialize functions after freeze, once per execution. Keep input filters
-  and the candidate's build-only ON extraction in the input path; post-join filters
-  run after matching/null extension. No replacement miss after rejected matches.
-- Initialize logical frame/decoder access inside the slot-release cleanup scope.
-  Use `PageFrameMemoryRecord` getters for every enabled format/conversion path.
-  Check cancellation in probe-row and duplicate loops. Stop dispatch and drain
-  tasks on failure/early close before releasing build or frame state.
-- Keep SYMBOL backing through aggregate output and parent initialization. Call
-  `functions.cursorClosed()` after draining and finishing output (also after init
-  failure), clear joined records, and then release execution backing. Define result
-  `toTop` and fresh execution state. Track all live map/frame/build allocations.
+**Connect keyed merging and the output cursor.**
 
-Completion requires forced keyed INNER/LEFT and normalized RIGHT results for
-empty inputs, misses, duplicates, nulls, filters and expressions, plus concurrent
-probing, cancellation in a long duplicate chain, exception-safe slot release,
-early close and reuse after failure. Task 5 completes keyed merge/output paths;
-task 6 wires planner selection/configuration/diagnostics. Default selection stays
-unchanged until that integration and storage qualification exist.
+- Complete `GroupByShardingContext` integration: task 4 uses its map fragments but
+  deliberately performs an interruptible owner merge only. Connect sharded update,
+  the existing parallel merge and final sharded cursor. Force both merge paths.
+- Merge intermediate states through `GroupByFunctionsUpdater`. Test SUM/AVG nulls
+  and unequal partial counts so averaging partial averages cannot pass. Preserve
+  the original capacity denominator once per joined reading.
+- Audit cancellation within long reused shard/merge loops, including transitions
+  from unsharded maps. Account for destination allocations while sources remain
+  live. Drain merge tasks before releasing their inputs after failure.
+- Verify final projection and ordering over the original query, high-cardinality
+  results, symbols and cursor metadata/capabilities. Output must not advertise
+  probe input ordering. Exercise `toTop`, random access and reuse after failures.
+
+Completion requires the original ordered query and a forced high-cardinality case
+matching the ordinary path, with both merge paths passing memory-leak, allocation,
+cancellation and cursor-reread tests. Planner selection/configuration/diagnostics
+remain task 6, and the performance gate remains task 7.
+
+Task-4 integration notes: compile ordinary child factories under **one enclosing
+query registration**; do not nest independently registered `QueryProgress` roots.
+The factory consumes children/functions/interpreted filter context on constructor
+entry, including failure, and borrows joined metadata only during construction.
+Functions/filter context must match its positive worker-slot count. Owner-only
+execution is supported by work stealing when no consumer threads are running;
+zero configured slots, unkeyed and compiled/JIT probe filters are not accepted by
+this construction boundary. Task 6 defines worker/control policy and filter takeover.
 
 ## Contracts to preserve
 
@@ -82,26 +87,19 @@ In particular, the 100k unique case probes more slowly. These measurements selec
 a safe initial boundary; they do not pass the later keyed pipeline's performance
 gate or justify default enablement.
 
-## Validation for task 3
+## Validation for task 4
 
-```bash
-mvn -pl core test \
-  -Dtest=HashJoinGroupByFunctionsTest,HashJoinGroupByCandidateTest,IntHashJoinBuildTest,SqlCodeGeneratorWorkerFunctionExtractionTest,GroupByUtilsTest,GroupByRewriteTest,HashJoinTest,JoinRecordMetadataTest
-mvn -pl benchmarks -am package -DskipTests -Dmaven.test.skip=true
-```
+See the [execution report](docs/parallel-hash-join-group-by-execution.md) for exact
+commands and scope. **159 tests passed**, including 15 new tests, and
+`mvn -pl benchmarks -am package -DskipTests -Dmaven.test.skip=true` passed.
+The new tests force the factory under one query tracker,
+compare ordinary SQL results, and use memory-leak checks. They cover semantics,
+concurrent acquired slots, bounded duplicate cancellation, worker/init failure,
+allocation/decoder cleanup, output reread and reuse. Mixed native/Parquet and
+logical conversion cases exercise the actual typed frame getter path.
 
-124 tests passed (14 new); benchmark package built successfully. The new tests
-compare constructed joined-pair aggregation with ordinary SQL for the owner and
-three worker function slots, and also cover owner-only execution. They exercise
-original grouping/SUM/AVG and parent ratio expressions, duplicates, all supported
-typed/null getters, empty-build SYMBOLs, post-join filters/counts/coalesce,
-filter-only payloads, swapped/reordered projections, probe and copied SYMBOLs,
-A/B view isolation, bind rebinding and dictionary replacement. Injected functions
-verify owner-state donation, initialization counts, partial compile cleanup,
-context restoration and successful reuse after initialization failure.
-
-Task 2's 98 tests and four final storage comparisons remain recorded in its
-[report](docs/parallel-hash-join-group-by-build.md). Each storage comparison used
-two rounds, three warmups and ten measured alternating executions per arm, with
-matching pair counts/checksums throughout; all 160 measured samples remain
-committed. Task 3 does not rerun or supersede those component measurements.
+Task 3's 124 tests (14 new) and successful benchmark package remain recorded in its
+[function-boundary guide](docs/parallel-hash-join-group-by-functions.md). Task 2's
+98 tests and four storage comparisons remain in its
+[report](docs/parallel-hash-join-group-by-build.md). All 160 measured storage samples
+are retained. Task 4 does not rerun or supersede those component measurements.

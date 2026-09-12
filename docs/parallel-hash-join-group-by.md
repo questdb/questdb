@@ -1,16 +1,16 @@
 # Parallel hash join / group by: phase 0 contract
 
-[RFC 130](https://github.com/questdb/rfc/discussions/130), implementation tasks 1–3.
+[RFC 130](https://github.com/questdb/rfc/discussions/130), implementation tasks 1–4.
 
 Task 1 defines eligibility and a comparison harness. Task 2 adds the
 [immutable build boundary](parallel-hash-join-group-by-build.md), including its
 storage comparison. Task 3 adds [joined metadata and function initialization](parallel-hash-join-group-by-functions.md).
+Task 4 adds the [forced keyed execution lifecycle](parallel-hash-join-group-by-execution.md).
 The [handoff](../PARALLEL_HASH_JOIN_HANDOFF.md) records completed work and the next
 task. These components do not yet select a fused execution operator. Default
 SQL plans, configuration, and EXPLAIN output remain unchanged. `SqlCodeGenerator.getHashJoinGroupByCandidate()` is the entry
 point to call on an optimized GROUP BY model **before** `generateSubQuery()`
-constructs the ordinary join. Phase 1 construction and phase 1/task 6 planner
-selection will consume this contract.
+constructs the ordinary join. Task 6 planner selection will connect this contract to the forced factory.
 
 ## Capability table
 

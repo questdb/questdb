@@ -2,7 +2,8 @@
 
 Implements [RFC 130](https://github.com/questdb/rfc/discussions/130) task 2 on top of
 [the phase 0 capability contract](parallel-hash-join-group-by.md). This component
-is not yet connected to SQL execution. Default plans remain unchanged.
+is now used by the [forced keyed execution factory](parallel-hash-join-group-by-execution.md)
+from task 4. Default plans remain unchanged.
 
 ## Representation decision
 

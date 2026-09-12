@@ -225,6 +225,10 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
         return valueTypes;
     }
 
+    public int getWorkerCount() {
+        return workerCount;
+    }
+
     /**
      * Sources are owner followed by worker slots. Each must already be bound to
      * its execution's frozen build and independent logical probe symbol source.
