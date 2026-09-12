@@ -26,6 +26,7 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -68,6 +69,48 @@ import java.util.List;
  * operation on the {@code _snapshot} marker.
  */
 public class AdaptiveEnrollmentOrderTest extends AbstractCairoTest {
+
+    /**
+     * CREATE under adaptive records the enrolment in {@code _meta} itself, right after publishing the
+     * generation-zero anchor. Two things follow, and both are asserted here.
+     *
+     * <p>The record is what lets recovery tell "never adaptive, so an absent anchor is fine" from "was
+     * adaptive, so an absent anchor is a lost cut" -- see
+     * {@code RecoveryCoordinatorTest#testEnrolledTableWithLostAnchorStillRefusesLiveStateFallback}. And
+     * because CREATE writes it, the first writer to open the table has nothing to enrol: without that, every
+     * newly created adaptive table would rewrite {@code _meta} and bump its metadata version on first open,
+     * for no gain. The metadata-version assertion below is what pins that.
+     */
+    @Test
+    public void testCreateUnderAdaptiveRecordsEnrolmentWithoutRewritingMetadata() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        assertMemoryLeak(() -> {
+            execute("create table enrolled_at_create (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("enrolled_at_create");
+            engine.releaseInactive();
+
+            final long versionAtCreate;
+            try (TableReaderMetadata md = new TableReaderMetadata(configuration, tt)) {
+                md.loadMetadata();
+                Assert.assertEquals("CREATE publishes the anchor, so it must record the enrolment with it",
+                        CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+                versionAtCreate = md.getMetadataVersion();
+            }
+
+            try (TableWriter w = getWriter(tt)) {
+                Assert.assertEquals(CommitMode.ADAPTIVE, w.getEffectiveCommitMode());
+            }
+            engine.releaseInactive();
+
+            try (TableReaderMetadata md = new TableReaderMetadata(configuration, tt)) {
+                md.loadMetadata();
+                Assert.assertEquals(CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+                Assert.assertEquals("an already-enrolled table must not be re-enrolled on open: that would"
+                                + " rewrite _meta and bump the metadata version of every adaptive table",
+                        versionAtCreate, md.getMetadataVersion());
+            }
+        });
+    }
 
     @Test
     public void testEnteringAdaptivePublishesTheAnchorBeforeRecordingIt() throws Exception {
@@ -202,12 +245,15 @@ public class AdaptiveEnrollmentOrderTest extends AbstractCairoTest {
          * identity hash — every {@code contains()} lookup would then miss and the ordering assertions would
          * report "nothing recorded" for everything. Same decode, and same reason, as
          * {@code SyncAttributingFilesFacade}. Test paths are ASCII temp dirs, so this is exact.
+         * Separators are normalized to {@code '/'} for the same reason as there: the assertion needles
+         * are {@code '/'}-joined, while {@code Path} renders {@code '\'} on Windows.
          */
         private static String pathToString(LPSZ name) {
             final int n = name.size();
             final StringBuilder sb = new StringBuilder(n);
             for (int i = 0; i < n; i++) {
-                sb.append((char) (name.byteAt(i) & 0xFF));
+                final char c = (char) (name.byteAt(i) & 0xFF);
+                sb.append(c == '\\' ? '/' : c);
             }
             return sb.toString();
         }

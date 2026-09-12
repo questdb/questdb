@@ -50,6 +50,11 @@ public class CrashModelRenameDurabilityTest extends AbstractCairoTest {
 
     @Test
     public void testDurableBytesSurviveARenameWithTheHandleStillOpen() throws Exception {
+        // POSIX-only, same gate as AbstractCrashConsistencyTest.assumeCrashHarnessSupported(): the test
+        // fsyncs an open PARENT DIRECTORY handle (Windows has none to open) and ends in crash(), which
+        // truncates files -- the harness's POSIX-only half. The re-keying under test is covered by the
+        // Linux and macOS legs.
+        org.junit.Assume.assumeFalse("crash harness is POSIX-only", io.questdb.std.Os.isWindows());
         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
         assertMemoryLeak(ff, () -> {
             final String root = engine.getConfiguration().getDbRoot().toString();

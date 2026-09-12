@@ -65,9 +65,11 @@ adaptive from per-commit column sync
 
 ## 2. Enabling it
 
-Adaptive can be set **globally** (the instance default) or **per table**. A
-per-table setting always wins over the global one, so mixed-mode databases are
-supported. Prefer enabling it per table first — smaller blast radius.
+Adaptive is an **instance-wide** setting. Every table in a database shares one
+durability grade, and it is fixed for the life of the process: `cairo.commit.mode`
+is read once at startup. There is no per-table override — the durability promise a
+server makes has to be answerable at connect time, before any table is named (see
+section 4).
 
 ### Global default
 
@@ -76,57 +78,18 @@ cairo.commit.mode=adaptive
 ```
 
 Accepted values: `nosync`, `sync`, `async`, `adaptive` (default; Enterprise uses `nosync` when
-replication is configured). This affects
-every table that has **not** set an explicit per-table override.
+replication is configured). An unrecognized value aborts startup rather than
+silently downgrading durability.
 
-### Per table — at creation
-
-```sql
-CREATE TABLE trades (
-    ts TIMESTAMP, sym SYMBOL, px DOUBLE
-) TIMESTAMP(ts) PARTITION BY DAY WAL
-WITH commit_mode='adaptive';
-```
-
-### Per table — on an existing table
-
-```sql
-ALTER TABLE trades SET PARAM commit_mode='adaptive';
-```
-
-Takes effect on the next commit. From then on the table's WAL commits are made
-durable and it begins taking durable epochs.
-
-### Reverting a table to the global default
-
-```sql
-ALTER TABLE trades SET PARAM commit_mode='unset';   -- fall back to cairo.commit.mode
-```
-
-The accepted `commit_mode` tokens for both `WITH` and `SET PARAM` are:
-`nosync`, `sync`, `async`, `adaptive`, `unset` (case-insensitive). An unrecognized
-value is rejected with a precise SQL error.
-
-Verify the effective mode of any table:
-
-```sql
-SELECT name, commitMode FROM wal_tables();
-```
-
-`commitMode` reports the **effective** mode (per-table override if set, else the
-global) — so a `WITH commit_mode='adaptive'` table reads `adaptive` even when the
-instance default is `nosync`.
+Changing the mode requires a restart. Turning adaptive **off** is covered in
+section 7; the first writer to open each table after the restart reconciles its
+materialized state out of adaptive before anything else touches it.
 
 Confirmed in source: global key `cairo.commit.mode`
 (`PropertyKey.java:48`), default `adaptive` (Enterprise: `nosync` when replication is configured,
 see `EntPropServerConfiguration.PropCairoConfiguration#getCommitMode`)
-(`PropServerConfiguration.java:2605`; an unrecognized database-wide value aborts startup
-rather than silently downgrading durability); `CREATE TABLE ... WITH
-commit_mode='...'` (`SqlParser.java:1780`); `ALTER TABLE ... SET PARAM
-commit_mode='...'` (`SqlCompilerImpl.java:1722`); token parsing incl. `unset`
-(`CommitMode.fromString`, `CommitMode.java:101`); per-table-wins resolution
-(`CommitMode.effectiveCommitMode`, `CommitMode.java:91`); `wal_tables().commitMode`
-value (`WalTableListFunctionFactory.java:304`).
+(`PropServerConfiguration.java`, `getCommitMode`); token parsing
+(`CommitMode.fromString`).
 
 ---
 
@@ -223,8 +186,7 @@ Read it this way:
 - What costs ~2 orders of magnitude is **durability itself, not `adaptive`** — `sync` pays it
   too. A small-commit workload upgrading from a pre-adaptive release will feel this, because the
   default now provides a guarantee it previously did not. **Batch your rows first** (see below);
-  if the workload genuinely cannot, set `cairo.commit.mode=nosync` globally or scope the exception
-  per table with `WITH commit_mode='nosync'`.
+  if the workload genuinely cannot, set `cairo.commit.mode=nosync`.
 - **Batch your rows.** The cost is per commit, so it amortises as rows-per-commit grows. One row
   per commit is the pathological floor, not typical ingestion.
 
@@ -244,12 +206,28 @@ are documented at `PropertyKey.java:57-63`.
 
 ## 4. QWP durable acknowledgements
 
-A client receives durable-ack frames only when it opts in with the
-`X-QWP-Request-Durable-Ack` handshake header. Without the header, no durable-ack frames
-flow, so the client cannot safely retry within the group-commit window `W` (a retried
-commit could double-apply). Durable-ack progress advances only for tables whose effective
-commit mode is `adaptive`; on other modes an opted-in client receives the handshake but no
-frames.
+A client opts in with the `X-QWP-Request-Durable-Ack` handshake header, naming the tier
+set it wants: `local`, `replicated`, or `local,replicated`. The server grants the full
+requested set -- echoing it back in `X-QWP-Durable-Ack` -- or denies the whole request by
+omitting the confirmation header; it never substitutes a weaker guarantee than the client
+asked for. The legacy value `true` keeps its shipped meaning (the replicated tier,
+confirmed with the historical `enabled` token), so an OSS server denies it exactly as
+released servers do.
+
+A grant opens up to two independent ack streams:
+
+- `STATUS_LOCAL_DURABLE_ACK` (the `local` tier) reports `localDurableSeqTxn`: the
+  commit's sequencer record is fdatasync-durable and survives power loss. OSS serves
+  this tier for adaptive tables.
+- `STATUS_DURABLE_ACK` (the `replicated` tier) reports the replicated frontier: the
+  commit reached the object store (Enterprise primary replication only).
+
+A store-and-forward client trims its local copy on the strongest requested tier's ack;
+with both tiers requested, local acks arrive earlier as progress signals only. Without
+any opt-in, no durable-ack frames flow, so the client cannot safely retry within the
+group-commit window `W` (a retried commit could double-apply). Durable-ack progress
+advances only for tables whose effective commit mode is `adaptive`; on other modes an
+opted-in client receives the handshake but no frames.
 
 ---
 
@@ -261,15 +239,17 @@ per-table drill-down, and **Prometheus** for process-level aggregates.
 ### 5.1 `wal_tables()` columns
 
 ```sql
-SELECT name, commitMode, sequencerTxn, writerTxn,
+SELECT name, sequencerTxn, writerTxn,
        localDurableSeqTxn, durableEpochSeqTxn,
        lastEpochTs, recoveryIncarnation
 FROM wal_tables();
 ```
 
+The commit mode is not a column: it is instance-wide, so every row would carry the
+same value. Read it from `cairo.commit.mode` (or the startup log line).
+
 | Column | Type | Meaning |
 |---|---|---|
-| `commitMode` | STRING | Effective commit mode for the table (`adaptive`, `nosync`, …). |
 | `sequencerTxn` | LONG | The latest acked (sequenced) transaction — the visible/apply frontier's upper bound. |
 | `writerTxn` | LONG | The transaction the table writer has applied. |
 | `localDurableSeqTxn` | LONG | The **local durable frontier**: the highest seqTxn whose WAL is device-durable (`fdatasync`'d). Advances only on adaptive tables. |
@@ -283,15 +263,14 @@ stored column:
 ```sql
 -- per-table durable-frontier lag: acked txns not yet locally durable
 SELECT name, sequencerTxn - localDurableSeqTxn AS durable_lag
-FROM wal_tables()
-WHERE commitMode = 'adaptive';
+FROM wal_tables();
 
 -- per-table epoch/retention lag: how far recovery would have to replay
 SELECT name, sequencerTxn - durableEpochSeqTxn AS epoch_lag
 FROM wal_tables();
 ```
 
-Confirmed in source (`WalTableListFunctionFactory.java`): `commitMode` STRING,
+Confirmed in source (`WalTableListFunctionFactory.java`):
 `durableEpochSeqTxn` LONG, `recoveryIncarnation` LONG, `localDurableSeqTxn` LONG,
 `lastEpochTs` TIMESTAMP (`NULL` when no epoch); plus existing `sequencerTxn` and
 `writerTxn`.
@@ -322,13 +301,12 @@ lives in exactly one place, the query):
 questdb_wal_apply_seq_txn - questdb_wal_apply_local_durable_seq_txn
 ```
 
-> **Caveat — this global lag OVERSTATES on mixed adaptive + `nosync` deployments.**
+> **Caveat — this global lag reads high until every table has been enrolled.**
 > `questdb_wal_apply_seq_txn` advances for **all** WAL tables, but
-> `questdb_wal_apply_local_durable_seq_txn` advances **only** on adaptive tables'
-> durable flushes. So on an instance running both modes, `nosync` tables inflate
-> the numerator and the global difference reads higher than the real adaptive-table
-> lag. For an accurate figure, use the **per-table** `wal_tables()` computation in
-> §5.1, filtered to `commitMode = 'adaptive'`.
+> `questdb_wal_apply_local_durable_seq_txn` advances only once a table's durable
+> flushes start. Right after enabling adaptive on an existing database, tables that
+> no writer has opened yet inflate the numerator. For a per-table figure, use the
+> `wal_tables()` computation in §5.1.
 
 Confirmed in source (`WalMetrics.java`): registrations
 `wal_apply_local_durable_seq_txn` gauge (`:52`), `wal_adaptive_epoch_advances`
@@ -363,8 +341,8 @@ caveat); epoch-advances at `ApplyWal2TableJob.java:791`; recovery-events at
   (`sequencerTxn - localDurableSeqTxn` on adaptive tables) stays elevated and
   growing rather than oscillating around `W`. A persistently rising lag means the
   batched WAL flush is not keeping up — investigate device saturation or a stalled
-  flush. (Remember §5.1: use per-table, not the global Prometheus difference, on
-  mixed deployments.)
+  flush. (Remember §5.1: use per-table, not the global Prometheus difference, while
+  tables are still being enrolled.)
 - **`lastEpochTs` stale / `questdb_wal_adaptive_epoch_advances_total` flat** while a
   table is actively ingesting means epochs are not advancing — recovery time and WAL
   retention will grow unbounded. Check that `cairo.adaptive.epoch.interval` is not
@@ -501,7 +479,7 @@ Recommended order for a multi-node / load-balanced deployment:
 
 1. **Roll the new binary** across all nodes with commit mode unchanged.
 2. **Verify** the cluster is healthy on the new binary.
-3. **Enable adaptive** (per table first, then globally if desired — §2).
+3. **Enable adaptive**: set `cairo.commit.mode=adaptive` and restart (§2).
 
 Existing tables are untouched on disk until their next commit. Once adaptive, a
 table's WAL commits are made durable, it begins taking durable epochs (the
@@ -510,13 +488,7 @@ WAL segments are retained back to the last durable epoch (the recovery floor).
 
 ### Turning adaptive off (downgrade)
 
-```sql
-ALTER TABLE trades SET PARAM commit_mode='nosync';   -- or 'sync' / 'async'
--- or revert to the global default:
-ALTER TABLE trades SET PARAM commit_mode='unset';
-```
-
-Globally, set `cairo.commit.mode` back to `nosync`.
+Set `cairo.commit.mode` back to `nosync` (or `sync` / `async`) and restart.
 
 What happens:
 
@@ -548,16 +520,15 @@ Every adaptive artifact is **inert to a binary that does not understand it**:
 
 - `_snapshot`, `_txn.epoch`, `_cv.epoch` are **separate files** an old binary never
   opens.
-- The `_meta` `commit_mode` field lives in reserved header space an old binary never
-  reads — it defers to its own global `cairo.commit.mode`.
+- The `_meta` adaptive enrolment record lives in reserved header space an old binary
+  never reads.
 - The `_txn` / `_cv` / `_event` body/record checksums are magic/zero-gated trailers
   an old binary never inspects.
 
 So an old binary boots on an adaptive-written database, reads all tables, and serves
-correct data. What it does **not** do is honor the per-table `commit_mode` override
-(it has no such concept) or run adaptive recovery. This is why you should **finish
-the binary upgrade before flipping commit mode**: flipping earlier is safe but the
-old nodes simply won't act adaptively.
+correct data. What it does **not** do is run adaptive recovery. This is why you should
+**finish the binary upgrade before flipping commit mode**: flipping earlier is safe but
+the old nodes simply won't act adaptively.
 
 **Rollback order:** (1) turn adaptive off (above); (2) roll back binaries. Turning
 adaptive off first keeps the mental model simple — the epoch artifacts are already
@@ -568,9 +539,8 @@ inert to the old binary (they would be inert regardless).
 
 Per-artifact inertness is gated in-suite by `AdaptiveUpgradeCompatTest`, and the claim above was
 additionally verified against **real released binaries**: cores **9.4.3, 9.4.0, 9.3.5 and 9.2.3** each
-opened and read an adaptive-written database cleanly — both a plain adaptive/WAL table and one with a
-per-table `commit_mode='adaptive'` override — leaving all six adaptive artifacts byte-identical (only
-`_upgrade.d` re-stamped). Downgrade-skips-roll-forward gate confirmed at `RecoveryCoordinator.java:89`.
+opened and read an adaptive-written database cleanly, leaving all six adaptive artifacts
+byte-identical (only `_upgrade.d` re-stamped). Downgrade-skips-roll-forward gate confirmed at `RecoveryCoordinator.java:89`.
 
 ---
 
@@ -586,10 +556,6 @@ per-table `commit_mode='adaptive'` override — leaving all six adaptive artifac
 | `cairo.adaptive.epoch.flush.on.close` | `true` | A clean writer close flushes a final epoch over any un-epoched tail, so a restart after an orderly shutdown has nothing to roll forward. `false` leaves the tail for the next boot's WAL replay (bounded by the epoch cadence above). |
 | `cairo.adaptive.epoch.column.sync.batched` | `true` | Epoch column-flush strategy: one batched `syncfs` vs a per-file `msync` walk. Operator override / safety valve. The batched path is Linux-only. |
 | `cairo.wal.commit.writeback.drain` | `true` | Drain writeback (`sync_file_range`) across the whole WAL segment *before* the per-file `fdatasync` barriers, so the device works on every file at once. Advisory only — every barrier still runs, so this moves throughput, never durability. |
-
-Per-table override (wins over the global): `WITH commit_mode='…'` at `CREATE TABLE`,
-or `ALTER TABLE … SET PARAM commit_mode='…'`. Tokens: `nosync`, `sync`, `async`,
-`adaptive`, `unset`.
 
 ---
 

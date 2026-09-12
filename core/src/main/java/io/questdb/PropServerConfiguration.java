@@ -2924,20 +2924,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         // must not be null because we provided non-null default value
         assert commitMode != null;
 
-        if (Chars.equalsLowerCaseAscii(commitMode, "nosync")) {
-            return CommitMode.NOSYNC;
-        }
-
-        if (Chars.equalsLowerCaseAscii(commitMode, "async")) {
-            return CommitMode.ASYNC;
-        }
-
-        if (Chars.equalsLowerCaseAscii(commitMode, "sync")) {
-            return CommitMode.SYNC;
-        }
-
-        if (Chars.equalsLowerCaseAscii(commitMode, "adaptive")) {
-            return CommitMode.ADAPTIVE;
+        final int mode = CommitMode.fromString(commitMode);
+        if (mode != CommitMode.UNKNOWN) {
+            return mode;
         }
 
         if (key == PropertyKey.CAIRO_COMMIT_MODE) {

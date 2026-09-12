@@ -80,12 +80,12 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                 // are covered deterministically by the adaptive-epoch suites; this clean-start
                 // smoke check asserts the stable frontier instead.
                 new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
-                }, "select name, suspended, writerTxn, bufferedTxnSize, sequencerTxn, errorTag, errorMessage, memoryPressure, commitMode, recoveryIncarnation, localDurableSeqTxn from wal_tables order by 1")
+                }, "select name, suspended, writerTxn, bufferedTxnSize, sequencerTxn, errorTag, errorMessage, memoryPressure, recoveryIncarnation, localDurableSeqTxn from wal_tables order by 1")
                         .noLeakCheck()
                         .returns("""
-                                name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\trecoveryIncarnation\tlocalDurableSeqTxn
-                                x\tfalse\t0\t0\t0\t\t\t0\tadaptive\t0\t-1
-                                y\tfalse\t2\t0\t2\t\t\t0\tadaptive\t0\t2
+                                name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\trecoveryIncarnation\tlocalDurableSeqTxn
+                                x\tfalse\t0\t0\t0\t\t\t0\t0\t-1
+                                y\tfalse\t2\t0\t2\t\t\t0\t0\t2
                                 """);
 
 

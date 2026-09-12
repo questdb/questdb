@@ -219,7 +219,6 @@ public class WalUtils {
         // Reset _txn (seqTxn=0, lag, structure version=0) and _meta (new tableId, metadataVersion=0) in
         // the staging dir - exactly as WAL conversion does (TableConverter) - then create the sequencer
         // files so the rename carries a complete table into place.
-        final int effectiveCommitMode;
         final int timestampType;
         final int partitionBy;
         try (
@@ -235,8 +234,8 @@ public class WalUtils {
             metaMem.putInt(TableUtils.META_OFFSET_TABLE_ID, newTableId);
             // Through resetMetadataVersion, never a raw putLong: the metadataVersion is checksummed into the
             // meta-format minor-version field, so rewriting it in place otherwise switches off every
-            // version-gated tail field and the clone silently loses its TTL, table format, per-table commit
-            // mode and adaptive enrolment record.
+            // version-gated tail field and the clone silently loses its TTL, table format and adaptive
+            // enrolment record.
             TableUtils.resetMetadataVersion(metaMem, 0);
             txWriter.resetStructureVersionUnsafe();
 
@@ -244,7 +243,6 @@ public class WalUtils {
             try (TableWriterMetadata metadata = new TableWriterMetadata(newToken)) {
                 metadata.reload(dstDir.trimTo(dstLen), metaMem);
                 TableSequencerImpl.createSequencerFiles(configuration, walDirectoryPolicy, dstDir.trimTo(dstLen), metadata, newToken, newTableId);
-                effectiveCommitMode = CommitMode.effectiveCommitMode(metadata.getCommitMode(), configuration.getCommitMode());
                 timestampType = metadata.getTimestampIndex() < 0
                         ? ColumnType.TIMESTAMP
                         : metadata.getColumnType(metadata.getTimestampIndex());
@@ -258,9 +256,8 @@ public class WalUtils {
         // metadata this table no longer has. Publish generation zero HERE, in the staging dir, so the atomic
         // rename below carries a table that is self-consistent from the first instant it is visible: a boot
         // that finds the published dir - as the live table after the registry swap, or as a crash-orphan the
-        // root-directory scan adopts - can always validate its epoch instead of refusing to start. Uses the
-        // NEW table's effective mode, not the global one, so a table-level override decides.
-        if (effectiveCommitMode == CommitMode.ADAPTIVE) {
+        // root-directory scan adopts - can always validate its epoch instead of refusing to start.
+        if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
             DurableEpochManifest.publishInitialAt(
                     configuration,
                     newToken,
@@ -296,10 +293,9 @@ public class WalUtils {
         // fsync of the DESTINATION parent, which the caller issues right after the rename. Recursively MS_SYNC + fdatasync
         // every file so a power loss cannot publish a table with a size-0 _meta (which recovery would suspend on).
         // Sync-BEFORE-rename is required: startup adopts the new dir by its presence at the final path, so it must
-        // already be durable when the rename makes it adoptable. Gated on the NEW table's EFFECTIVE mode, the same
-        // one that decided the epoch baseline above: an adaptive table on a nosync instance would otherwise publish
-        // a baseline that a crash can lose, which is the state recovery refuses to start on.
-        if (effectiveCommitMode == CommitMode.ADAPTIVE) {
+        // already be durable when the rename makes it adoptable. Gated on the same mode that decided the epoch
+        // baseline above, so the two cannot disagree.
+        if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
             dstDir.trimTo(dstLen);
             syncStagingTreeDurable(ff, dstDir, configuration.getWriterFileOpenOpts());
             dstDir.trimTo(dstLen);

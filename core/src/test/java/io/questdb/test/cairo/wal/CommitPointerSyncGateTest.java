@@ -26,7 +26,6 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
-import io.questdb.cairo.TableToken;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.SyncAttributingFilesFacade;
 import org.junit.Assert;
@@ -36,21 +35,13 @@ import org.junit.Test;
  * The COMMIT-POINTER sync gate: {@code _txn} ({@code TxWriter.commit}), {@code _cv}
  * ({@code ColumnVersionWriter.doCommit}) and the index files ({@code BitmapIndexWriter.commit} /
  * {@code PostingIndexWriter.commit}) must make their per-commit durability decision from
- * {@link CommitMode#appliesColumnSync} applied to the table's EFFECTIVE mode -- exactly like the column
- * data they describe.
+ * {@link CommitMode#appliesColumnSync} -- exactly like the column data they describe.
  *
- * <p>Historically all four sites read the INSTANCE-GLOBAL {@code cairo.commit.mode} and branched on
- * {@code != NOSYNC}, which produced two distinct defects:
- * <ol>
- *   <li><b>Inverted per-table polarity (a correctness bug).</b> A {@code WITH commit_mode='sync'} table on
- *       a {@code nosync} instance silently skipped its {@code _txn}/{@code _cv} flush -- a real crash-loss
- *       window for a table that had explicitly asked for durability -- while a {@code nosync} table on a
- *       {@code sync} instance paid for a flush it had opted out of.</li>
- *   <li><b>ADAPTIVE treated as SYNC-grade (a cost bug on the DEFAULT path).</b> Under ADAPTIVE the
- *       materialized table is a rebuildable cache of the durable WAL, so the apply path is deliberately
- *       lazy; flushing {@code _txn}/{@code _cv}/indexes on every apply is precisely the per-commit cost the
- *       lazy-apply gate exists to remove, and is not what makes ADAPTIVE crash-safe.</li>
- * </ol>
+ * <p>Historically all four sites branched on {@code != NOSYNC}, which treated ADAPTIVE as SYNC-grade: a
+ * cost bug on the default path. Under ADAPTIVE the materialized table is a rebuildable cache of the
+ * durable WAL, so the apply path is deliberately lazy; flushing {@code _txn}/{@code _cv}/indexes on every
+ * apply is precisely the per-commit cost the lazy-apply gate exists to remove, and is not what makes
+ * ADAPTIVE crash-safe.
  *
  * <p>Every assertion below is scoped to ONE table's directory via
  * {@link SyncAttributingFilesFacade}, so sibling tables (telemetry, etc.) cannot pollute the counts.
@@ -164,21 +155,17 @@ public class CommitPointerSyncGateTest extends AbstractCairoTest {
 
     /**
      * Pure-function contract for {@code CommitMode.fromString}: an UNRECOGNISED token must be
-     * {@link CommitMode#UNKNOWN}, distinctly from the two inputs that genuinely mean "defer to the global
-     * default". The javadoc used to claim UNSET, which -- had a caller believed it -- would have turned a
-     * typo'd {@code commit_mode='syncc'} into a silent "inherit the instance default" instead of the
-     * precise SQL error both DDL call sites raise.
+     * {@link CommitMode#UNKNOWN}, never a mode. {@code PropServerConfiguration} turns that into a startup
+     * failure, so a typo'd {@code cairo.commit.mode=syncc} cannot silently select a weaker durability
+     * grade than the operator asked for.
      */
     @Test
-    public void testFromStringDistinguishesUnknownFromUnset() {
+    public void testFromStringRejectsUnrecognisedTokens() {
         Assert.assertEquals(CommitMode.UNKNOWN, CommitMode.fromString("syncc"));
         Assert.assertEquals(CommitMode.UNKNOWN, CommitMode.fromString(""));
         Assert.assertEquals(CommitMode.UNKNOWN, CommitMode.fromString("adaptive2"));
-        Assert.assertNotEquals(CommitMode.UNSET, CommitMode.UNKNOWN);
-
-        // The only two inputs that mean "defer to the global default".
-        Assert.assertEquals(CommitMode.UNSET, CommitMode.fromString(null));
-        Assert.assertEquals(CommitMode.UNSET, CommitMode.fromString("unset"));
+        Assert.assertEquals(CommitMode.UNKNOWN, CommitMode.fromString("unset"));
+        Assert.assertEquals(CommitMode.UNKNOWN, CommitMode.fromString(null));
 
         // Recognised modes, case-insensitively.
         Assert.assertEquals(CommitMode.NOSYNC, CommitMode.fromString("NoSync"));
@@ -188,76 +175,57 @@ public class CommitPointerSyncGateTest extends AbstractCairoTest {
     }
 
     /**
-     * A {@code nosync} table on an {@code adaptive} instance must not be flushed either: the per-table
-     * mode wins in BOTH directions. This is the mirror of
-     * {@link #testPerTableSyncIsHonouredOnNosyncInstance} and pins that the fix reads the table's mode
-     * rather than merely swapping which global mode is privileged.
+     * A {@code nosync} instance must not flush the commit pointers at all. The paired arm is
+     * {@link #testSyncInstanceFlushesCommitPointers}; between them they pin the polarity of the gate, so a
+     * regression that inverts it fails one arm or the other rather than passing both.
      */
     @Test
-    public void testPerTableNosyncIsHonouredOnSyncInstance() throws Exception {
+    public void testNosyncInstanceDoesNotFlushCommitPointers() throws Exception {
         final SyncAttributingFilesFacade facade = new SyncAttributingFilesFacade();
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(facade, () -> {
-            execute("create table lazy (ts timestamp, v long) timestamp(ts) partition by day wal " +
-                    "with commit_mode='nosync'");
-            execute("create table eager (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("create table lazy (ts timestamp, v long) timestamp(ts) partition by day wal");
             final String lazyDir = engine.verifyTableName("lazy").getDirName();
-            final String eagerDir = engine.verifyTableName("eager").getDirName();
 
             execute("insert into lazy values ('2024-01-01T00:00:00.000000Z', 1)");
-            execute("insert into eager values ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();
 
             facade.clearCounters();
             execute("insert into lazy values ('2024-01-01T00:00:01.000000Z', 2)");
-            execute("insert into eager values ('2024-01-01T00:00:01.000000Z', 2)");
             drainWalQueue();
 
             Assert.assertEquals(
-                    "a per-table NOSYNC table must not flush _txn even on a SYNC instance",
+                    "a NOSYNC instance must not flush _txn",
                     0, facade.barrierCount(lazyDir + "/_txn"));
-            // Control on the SAME run: the sibling that inherits the global SYNC mode still flushes, so a
-            // zero above cannot be an artefact of the harness missing barriers entirely.
-            Assert.assertTrue(
-                    "control: a table inheriting the global SYNC mode must still flush _txn",
-                    facade.barrierCount(eagerDir + "/_txn") > 0);
+            Assert.assertEquals(
+                    "a NOSYNC instance must not flush _cv",
+                    0, facade.barrierCount(lazyDir + "/_cv"));
         });
     }
 
     /**
-     * THE CORRECTNESS CASE. A table created {@code WITH commit_mode='sync'} on a {@code nosync} instance
-     * must flush its {@code _txn}/{@code _cv} on commit. Reading the global mode meant it did not -- the
-     * table asked for per-commit durability and silently got none.
+     * A {@code sync} instance must flush its {@code _txn} on every commit -- the historical eager grade,
+     * which ADAPTIVE deliberately does not inherit (see
+     * {@link #testAdaptiveIsLazyPerApplyButForcedByEpoch}).
      */
     @Test
-    public void testPerTableSyncIsHonouredOnNosyncInstance() throws Exception {
+    public void testSyncInstanceFlushesCommitPointers() throws Exception {
         final SyncAttributingFilesFacade facade = new SyncAttributingFilesFacade();
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         assertMemoryLeak(facade, () -> {
-            execute("create table eager (ts timestamp, v long) timestamp(ts) partition by day wal " +
-                    "with commit_mode='sync'");
-            execute("create table lazy (ts timestamp, v long) timestamp(ts) partition by day wal");
-            final TableToken eager = engine.verifyTableName("eager");
-            final String eagerDir = eager.getDirName();
-            final String lazyDir = engine.verifyTableName("lazy").getDirName();
+            execute("create table eager (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final String eagerDir = engine.verifyTableName("eager").getDirName();
 
             execute("insert into eager values ('2024-01-01T00:00:00.000000Z', 1)");
-            execute("insert into lazy values ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();
 
             facade.clearCounters();
             execute("insert into eager values ('2024-01-01T00:00:01.000000Z', 2)");
-            execute("insert into lazy values ('2024-01-01T00:00:01.000000Z', 2)");
             drainWalQueue();
 
             Assert.assertTrue(
-                    "a per-table SYNC table MUST flush _txn even on a NOSYNC instance",
+                    "a SYNC instance MUST flush _txn on every commit",
                     facade.barrierCount(eagerDir + "/_txn") > 0);
-            // Control on the SAME run: the sibling that inherits the global NOSYNC mode must stay lazy, so
-            // the assertion above cannot pass by the harness simply counting every table's barriers.
-            Assert.assertEquals(
-                    "control: a table inheriting the global NOSYNC mode must not flush _txn",
-                    0, facade.barrierCount(lazyDir + "/_txn"));
         });
     }
 

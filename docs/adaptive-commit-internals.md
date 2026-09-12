@@ -27,26 +27,31 @@ Adaptive commit is three independent ideas stacked on QuestDB's existing WAL:
 
 | Frontier | Advances when | Consumed by |
 |---|---|---|
-| **`localDurableSeqTxn`** | the WAL commit's `fdatasync` completes (W=0: every commit; W>0: after the ≤W batch flush) | the QWP client durable‑ack frame + observability |
+| **`localDurableSeqTxn`** | the WAL commit's `fdatasync` completes (W=0: every commit; W>0: after the ≤W batch flush) | the QWP client's `STATUS_LOCAL_DURABLE_ACK` frame + observability |
 | **`durableEpochSeqTxn`** | a durable epoch publishes | **only** `WalPurgeJob` (the WAL‑purge floor) + `wal_tables()` observability |
 
-QWP durable-ack frames gate on **`localDurableSeqTxn`** — never on the epoch. Ordinary table
+QWP `STATUS_LOCAL_DURABLE_ACK` frames gate on **`localDurableSeqTxn`** — never on the epoch
+(the replicated `STATUS_DURABLE_ACK` stream gates on the Enterprise upload frontier instead). Ordinary table
 visibility follows WAL apply and may therefore include the configured W>0 loss window. The epoch
 (`durableEpochSeqTxn`) is *only* the WAL‑purge floor and the recovery‑replay start point.
 Consequently the epoch cadence affects WAL disk retention, recovery‑replay lag, and
 `syncfs` frequency — but **not** ordinary read freshness, durable‑ack, or ingest throughput. Both
 frontiers live on `SeqTxnTracker` (per table).
 
-### Effective vs global commit mode
+### One commit mode per instance
 
-The effective mode of a table is its per‑table `_meta` override, else the global
-`cairo.commit.mode` (`CommitMode.effectiveCommitMode`). **Every apply‑path durability decision uses
-the effective mode**: the WAL‑commit path (`WalWriter.walCommitMode`), the WAL‑purge floor, the epoch
-trigger, the column memories, and the commit pointers / indexes (`TxWriter.commit`,
-`ColumnVersionWriter.commit`, `BitmapIndexWriter.commit`, `PostingIndexWriter.commit`). The last four
-are threaded the mode by `TableWriter` (`setCommitMode`, republished by `reapplyColumnCommitMode` and
-`populateDenseIndexerList`) and default to `CommitMode.UNSET` ⇒ "defer to the global mode" for any
-transient writer that is never threaded one.
+The commit mode is instance-wide: `cairo.commit.mode` is a final field read once at construction, so
+every table answers the same grade and no commit can straddle a change. **Every apply-path durability
+decision reads it**: the WAL-commit path (`WalWriter.walCommitMode`), the sequencer flush, the WAL-purge
+floor, the epoch trigger, the column memories, and the commit pointers / indexes (`TxWriter.commit`,
+`ColumnVersionWriter.commit`, `BitmapIndexWriter.commit`, `PostingIndexWriter.commit`).
+
+The one writer-scoped deviation is adaptive **enrolment**. `TableWriter.getEffectiveCommitMode()` is the
+grade the writer applies under: SYNC while an ADAPTIVE instance has a table whose `_meta` does not yet
+record it as enrolled, ADAPTIVE once the baseline epoch is published. The commit pointers, indexers and
+column memories seed their own grade from the global mode and take the writer's via `setCommitMode`
+(published at construction, republished by `reapplyColumnCommitMode` and `populateDenseIndexerList`),
+so the enrolment window is honoured at every site the writer owns.
 
 **The remaining global‑mode reads are deliberate:** structural sites that are outside the epoch's
 coverage — the partition‑dir fsync in `openPartition`, `_meta`/`_todo`, and the one‑shot
@@ -203,12 +208,11 @@ tables** (the cost scales with column-file count) and for latency-driven small c
 `_txn_parts/<part>`; **V1** in `_txnlog.meta.i` + `_txnlog.meta.d`; plus sequencer `_meta`
 and `_wal_index.d`.
 
-`WalWriter.getSequencerTxn` → `TableSequencerImpl.nextTxn` → `pushCommitModeToLog()` (records
-the per‑table effective mode onto the log) → append txn → `sync0()`:
+`WalWriter.getSequencerTxn` → `TableSequencerImpl.nextTxn` → append txn → `sync0()`:
 
 ```text
-TableTransactionLogV2.sync0(tableCommitMode, global):
-  mode = effectiveCommitMode(tableCommitMode, global)
+TableTransactionLogV2.sync0():
+  mode = configuration.getCommitMode()
   if mode == NOSYNC: return
   deferDeviceFlush = (mode == ADAPTIVE) && (W > 0)
   async            = (mode == ASYNC) || deferDeviceFlush
@@ -345,7 +349,8 @@ materialized columns, indexes, and symbols is deferred to the next **epoch**.
 ## 8. The durable epoch + recovery
 
 `ApplyWal2TableJob.maybeAdvanceDurableEpoch` runs after each applied batch. It bails if the
-table's effective mode isn't `ADAPTIVE`, or if local durability is disabled (an Enterprise
+writer's commit mode isn't `ADAPTIVE` (the instance mode, or SYNC while the table's adaptive
+enrolment is still pending), or if local durability is disabled (an Enterprise
 replica — the materialized state is a rebuildable cache of object‑store truth). It fires when
 the **cadence interval has elapsed OR the un‑epoched applied‑row backlog reaches the cap**
 (`getAdaptiveEpochIntervalMs()` / `getAdaptiveEpochMaxRows()`; a negative interval disables
@@ -418,7 +423,7 @@ server exits via `Runtime.halt(55)` without graceful writer cleanup.
 
 ### WAL‑purge floor
 
-`WalPurgeJob.getSafeToPurgeUpToTxn`: after the mat‑view floors, if the table's effective mode
+`WalPurgeJob.getSafeToPurgeUpToTxn`: after the mat‑view floors, if the instance commit mode
 is `ADAPTIVE`, `safeToPurgeTxn = min(safeToPurgeTxn, getDurableEpochSeqTxn())`. A fresh table
 (epoch 0) retains all WAL until its first epoch; a downgraded replica (NOSYNC) doesn't apply
 the floor. This is *why* the epoch bounds WAL disk: segments before the last epoch can be
@@ -461,13 +466,16 @@ epoch forces all of them (`TxWriter.fsync`, `ColumnVersionWriter.fsync`, and an 
 
 ## 9. Caveats & gotchas
 
-1. **Effective mode is used everywhere on the apply path** — WAL‑commit, the WAL‑purge floor, the
-   epoch trigger, the column memories, and (since the commit‑pointer gate fix) `TxWriter.commit`,
-   `ColumnVersionWriter.commit`, `BitmapIndexWriter.commit` and `PostingIndexWriter.commit`. Those
-   four used to read the **global** `configuration.getCommitMode()` and branch on `!= NOSYNC`, which
-   inverted the polarity (`WITH commit_mode='sync'` on a nosync instance silently skipped its `_txn`
-   flush) and made ADAPTIVE pay a SYNC‑grade msync on every apply. They now use
-   `CommitMode.appliesColumnSync(effective)`, the same predicate as the column data.
+1. **The commit mode is instance‑wide and fixed for the life of the process.**
+   `cairo.commit.mode` is a final field read once at construction, so no commit can straddle a
+   change. The one writer‑scoped deviation is adaptive **enrolment**: a table whose `_meta` does not
+   yet record an enrolled state runs at SYNC grade until its baseline epoch is published, then
+   `TableWriter.reapplyColumnCommitMode` hands ADAPTIVE to the already‑open column memories, the
+   commit‑pointer writers and the indexers.
+   *The commit‑pointer gate:* `TxWriter.commit`, `ColumnVersionWriter.commit`,
+   `BitmapIndexWriter.commit` and `PostingIndexWriter.commit` used to branch on `!= NOSYNC`, which
+   made ADAPTIVE pay a SYNC‑grade msync on every apply. They now use
+   `CommitMode.appliesColumnSync`, the same predicate as the column data.
    *Still global by design:* one‑shot **structural** writers that run outside a table writer and
    outside the epoch's coverage — `TableConverter`, `WalUtils` staging, `TableSnapshotRestore` — take
    `CommitMode.structuralCommitMode`, which maps ADAPTIVE onto SYNC so they keep their historical

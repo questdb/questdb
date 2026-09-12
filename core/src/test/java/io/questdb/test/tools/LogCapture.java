@@ -55,12 +55,8 @@ public class LogCapture {
     @SuppressWarnings("unused")
     // used in the Ent
     public void assertNotLogged(String message) {
-        final int idx = sink.indexOf(message);
-        if (idx > -1) {
-            int lo = sink.lastIndexOf("\n", idx);
-            int hi = sink.indexOf("\n", idx);
-            Assert.fail("Message '" + message + "' was logged: " + sink.subSequence(lo, hi));
-        }
+        // The logging worker may still be appending the final line. Inspect one stable snapshot.
+        assertNotLogged(message, sink.toString());
     }
 
     public void assertOnlyOnce(String regex) {
@@ -86,9 +82,9 @@ public class LogCapture {
      */
     public void drain() {
         final String sentinel = "log-capture-drain-" + SENTINEL_SEQ.incrementAndGet();
+        // advisory() waits for a ring slot, so a full ring cannot drop the sentinel;
+        // the deadline only bounds delivery once the record is queued
         LOG.advisory().$(sentinel).$();
-        // a full ring silently drops the sentinel, and a backed-up writer is what
-        // fills it -- give up rather than fail on the symptom
         final long deadline = System.currentTimeMillis() + DRAIN_TIMEOUT_MS;
         while (sink.indexOf(sentinel) == -1 && System.currentTimeMillis() < deadline) {
             Os.sleep(1);
@@ -142,6 +138,16 @@ public class LogCapture {
             }
             sleeper.accept(1);
             m = pattern.matcher(sink.toString());
+        }
+    }
+
+    static void assertNotLogged(String message, String capturedLog) {
+        final int idx = capturedLog.indexOf(message);
+        if (idx > -1) {
+            final int lo = capturedLog.lastIndexOf('\n', idx - 1) + 1;
+            final int hi = capturedLog.indexOf('\n', idx);
+            Assert.fail("Message '" + message + "' was logged: "
+                    + capturedLog.substring(lo, hi > -1 ? hi : capturedLog.length()));
         }
     }
 

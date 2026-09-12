@@ -712,80 +712,6 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
-    // ---------- Task 2b: ALTER commit_mode re-applies appendOnly to already-open columns ----------
-
-    /**
-     * ADAPTIVE -> SYNC via {@code ALTER TABLE ... SET PARAM commit_mode}: table-partition data
-     * columns opened while the table was ADAPTIVE have {@code appendOnly=true} (see
-     * {@code TableWriter.openColumnFiles}). {@code TableWriter.setMetaCommitMode} must re-apply
-     * {@code setAppendOnly(effectiveCommitMode == ADAPTIVE)} to those ALREADY-OPEN columns
-     * immediately, or a subsequent legacy commit keeps taking the ADAPTIVE-only narrowed
-     * {@code msync} (range = appended bytes) instead of master's full-extent one (range = the
-     * column's mapped size) until the column is next reopened — a transient violation of "legacy
-     * sync() == master" (design spec S2).
-     *
-     * <p>The table-partition column page size is shrunk to exactly one OS page
-     * ({@code Files.PAGE_SIZE}) so a column's full mapped extent is a small, exact, known constant,
-     * cleanly distinguishable from the tiny number of bytes appended by a single row.
-     * {@code SyscallCountingFacade.tableColumnMsyncLengths} isolates msync lengths to TABLE
-     * PARTITION COLUMN files only (excluding WAL-segment and {@code _txn}/{@code _cv}/{@code _meta}
-     * control-file syncs — see {@code isTablePartitionColumnFile}), so the assertion is unambiguous.
-     *
-     * <p>RED before the {@code setMetaCommitMode} fix (recorded length == appended bytes, far below
-     * the page size); GREEN after (recorded length == the full page size).
-     */
-    @Test
-    public void testAlterCommitModeToSyncReappliesAppendOnly() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
-        // Shrink the table-partition column page size to exactly one OS page so its full mapped
-        // extent is a small, exact, known constant (see javadoc above).
-        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(Files.PAGE_SIZE));
-
-        final SyscallCountingFacade ff = new SyscallCountingFacade();
-        assertMemoryLeak(ff, () -> {
-            execute("create table cm_alt (ts timestamp, v long) timestamp(ts) partition by day wal " +
-                    "with commit_mode='adaptive'");
-            // Warmup: materialize the partition and open its columns under ADAPTIVE (appendOnly=true).
-            execute("insert into cm_alt values ('2024-10-01T00:00:00.000000Z', 1)");
-            drainWalQueue();
-
-            // Flip to SYNC on the ALREADY-OPEN writer. Before the fix, the open columns keep
-            // appendOnly=true (stale) until their next reopen.
-            execute("alter table cm_alt set param commit_mode='sync'");
-            drainWalQueue();
-
-            ff.reset();
-            // A tiny follow-up commit: 1 row, comfortably inside the already-mapped single page (no
-            // real extend()), so a legacy full-extent msync and a narrowed appended-bytes msync are
-            // sharply different lengths.
-            execute("insert into cm_alt values ('2024-10-01T00:01:00.000000Z', 2)");
-            drainWalQueue();
-
-            Assert.assertTrue(
-                    "expected at least one table-column msync; got none",
-                    ff.tableColumnMsyncLengths.size() > 0
-            );
-            long maxLen = 0;
-            for (int i = 0, n = ff.tableColumnMsyncLengths.size(); i < n; i++) {
-                maxLen = Math.max(maxLen, ff.tableColumnMsyncLengths.get(i));
-            }
-            Assert.assertEquals(
-                    "post-ALTER SYNC commit must msync the column's FULL mapped extent (one OS page), " +
-                            "not a narrowed appended-bytes range; got lengths: " + ff.tableColumnMsyncLengths,
-                    Files.PAGE_SIZE, maxLen
-            );
-
-            // Durability + correctness after the ALTER: both rows are present.
-            assertQuery("select * from cm_alt order by ts")
-                    .timestamp("ts")
-                    .expectSize()
-                    .returns("ts\tv\n" +
-                            "2024-10-01T00:00:00.000000Z\t1\n" +
-                            "2024-10-01T00:01:00.000000Z\t2\n");
-        });
-    }
-
     // ---------- Task 3: S1 — remove SYNC batched-syncfs routing (SYNC apply == master msync) ----------
 
     /**
@@ -1200,10 +1126,9 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
      * <p>Also tracks, in {@link #tableColumnMsyncLengths}, the {@code len} argument of every
      * non-async {@code msync} against a TABLE PARTITION COLUMN file (per
      * {@link #isTablePartitionColumnFile}, reusing the same fd/path/addr tracking as
-     * {@link TableSyncTrackingFacade}) — used by the Task 2b ALTER commit_mode re-apply test to
-     * distinguish a narrowed (appended-bytes-only) msync from a full-extent (mapped-size) one
-     * without being confused by WAL-segment or table control-file ({@code _txn}/{@code _cv}/
-     * {@code _meta}) msyncs.
+     * {@link TableSyncTrackingFacade}), so a test can distinguish a narrowed (appended-bytes-only)
+     * msync from a full-extent (mapped-size) one without being confused by WAL-segment or table
+     * control-file ({@code _txn}/{@code _cv}/{@code _meta}) msyncs.
      */
     static class SyscallCountingFacade extends TestFilesFacadeImpl {
         final LongList tableColumnMsyncLengths = new LongList();

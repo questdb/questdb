@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -162,6 +163,13 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
                 src.of(engine.getConfiguration().getDbRoot()).concat(tt)
                         .concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(1);
                 dst.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME);
+                if (Os.isWindows()) {
+                    // ff.copy refuses an existing destination on Windows, so the emulated pre-C1 restore
+                    // takes the same unlink-then-copy route TableUtils.replaceFileContent documents there.
+                    // The end state is identical: the live _txn is replaced by the 0-byte torn copy.
+                    Assert.assertTrue("emulated unvalidated restore must remove the live _txn first",
+                            ff.removeQuiet(dst.$()));
+                }
                 Assert.assertTrue("emulated unvalidated restore (the pre-C1 bug) must copy",
                         ff.copy(src.$(), dst.$()) >= 0);
             }

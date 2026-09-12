@@ -152,7 +152,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_MISSING_UPGRADE_HEADER);
     private static final byte[] BAD_REQUEST_RESPONSE_ORIGIN_HEADER_NOT_ALLOWED =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_ORIGIN_HEADER_NOT_ALLOWED);
-    private static final Log LOG = LogFactory.getLog(QwpIngressUpgradeProcessor.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(QwpIngressUpgradeProcessor.class);
     private static final LocalValue<QwpIngressProcessorState> LV = new LocalValue<>();
     // Worst-case WebSocket frame header size (2-byte base + 8-byte 64-bit
     // extended length + 4-byte mask for client->server frames). Subtracted
@@ -412,41 +414,34 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         // Resolve durable-ack tier negotiation before sizing the 101 response,
         // since the X-QWP-Durable-Ack confirmation header affects the response
-        // size. An opted-in client whose requested tier this server cannot
-        // grant (registry disabled entirely, or an explicit tier the registry
+        // size. An opted-in client whose requested tier set this server cannot
+        // grant in full (registry disabled entirely, or a tier the registry
         // does not offer) receives a 101 with NO confirmation header at all --
         // fail-loud, so the client can react instead of waiting forever for
-        // STATUS_DURABLE_ACK frames that will never arrive.
+        // durable-ack frames that will never arrive.
         Utf8Sequence durableAckHeader = requestHeader.getHeader(
                 QwpIngressHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
-        int requestedTier = DurabilityTier.fromHeaderValue(durableAckHeader);
+        int requestedTiers = DurabilityTier.fromHeaderValue(durableAckHeader);
         DurableAckRegistry ackRegistry = engine.getDurableAckRegistry();
-        int grantedTier;
-        if (requestedTier == DurabilityTier.NONE || !ackRegistry.isEnabled()) {
-            grantedTier = DurabilityTier.NONE;
-        } else if (requestedTier == DurabilityTier.DEFAULT) {
-            // Legacy "true" opt-in: grant the server's strongest available tier
-            // (OSS -> LOCAL, Enterprise with primary replication -> REPLICATED)
-            // instead of a fixed tier, so legacy clients get the best guarantee
-            // this server can offer.
-            grantedTier = ackRegistry.strongestAvailableTier();
+        int grantedTiers;
+        if (requestedTiers == DurabilityTier.NONE || !ackRegistry.isEnabled()) {
+            grantedTiers = DurabilityTier.NONE;
         } else {
-            // Explicit tier request: grant exactly that tier, or NONE if this
-            // server cannot offer it. Never silently substitute a different
-            // (e.g. weaker) tier than what was explicitly requested -- that
-            // would silently downgrade the client's durability guarantee.
-            grantedTier = ackRegistry.isTierAvailable(requestedTier) ? requestedTier : DurabilityTier.NONE;
+            // All-or-nothing: grant the full requested set, or nothing. Never
+            // grant a subset -- a client that asked for "replicated" must not
+            // be silently downgraded to a local-only guarantee. The legacy
+            // "true" request means REPLICATED (its shipped meaning), so an OSS
+            // server denies it, exactly as released servers do.
+            grantedTiers = ackRegistry.isTierSetAvailable(requestedTiers & DurabilityTier.TIERS_MASK)
+                    ? requestedTiers
+                    : DurabilityTier.NONE;
         }
-        boolean durableAckEnabled = grantedTier != DurabilityTier.NONE;
-        // Echo the legacy "enabled" token for a DEFAULT (legacy "true") grant so
-        // existing clients see a byte-identical response to before tier
-        // negotiation existed; echo the explicit tier token ("local" /
-        // "replicated") for an explicit grant; omit the header entirely when
-        // disabled.
-        Utf8Sequence durableAckConfirmToken = !durableAckEnabled ? null
-                : (requestedTier == DurabilityTier.DEFAULT
-                   ? QwpIngressHttpProcessor.RESPONSE_DURABLE_ACK_TOKEN_ENABLED
-                   : DurabilityTier.responseToken(grantedTier));
+        boolean durableAckEnabled = grantedTiers != DurabilityTier.NONE;
+        // Echo the granted set ("local", "replicated" or "local,replicated");
+        // a legacy "true" grant echoes the historical "enabled" token so
+        // released clients see a byte-identical response. Omit the header
+        // entirely when nothing was granted.
+        Utf8Sequence durableAckConfirmToken = DurabilityTier.responseToken(grantedTiers);
 
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, null, durableAckConfirmToken, roleBytes,
@@ -472,7 +467,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         state.of(context.getFd(), context.getSecurityContext());
         state.setNegotiatedVersion((byte) negotiatedVersion);
         state.setDurableAckEnabled(durableAckEnabled);
-        state.setDurableAckTier(grantedTier);
+        state.setDurableAckTiers(grantedTiers);
 
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
@@ -2527,18 +2522,51 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         assert state.isSendReady() : "trySendCollectedDurableAck called in wrong state";
 
+        // Additive LOCAL stream first (LOCAL|REPLICATED grants only): the local
+        // frontier runs ahead of the replicated one, so its progress frame is
+        // the earlier signal. A blocked send parks with the stream marker set
+        // (see setSendingLocalDurableAck); the RESUME_DURABLE_ACK continuation
+        // re-enters trySendDurableAck, which re-collects both streams
+        // idempotently and sends whatever remains.
+        // KNOWN GAP (Ent follow-up): the composite RESUME_DURABLE_ACK_THEN_*
+        // continuations complete only the parked frame. A parked LOCAL frame
+        // with a close deferred behind it would resume into the close without
+        // the final primary (replicated) ack. OSS cannot grant both tiers, so
+        // this path is unreachable until Ent enables LOCAL|REPLICATED grants;
+        // the Ent change must extend those continuations.
+        CharSequenceLongHashMap localProgress = state.getLocalDurableProgressSnapshot();
+        if (localProgress.size() > 0) {
+            state.setSendingLocalDurableAck(true);
+            trySendDurableAckFrame(context, state, STATUS_LOCAL_DURABLE_ACK, localProgress,
+                    state.computeLocalDurableAckPayloadSize());
+        }
+
         CharSequenceLongHashMap progress = state.getDurableProgressSnapshot();
         if (progress.size() == 0) {
             return;
         }
+        state.setSendingLocalDurableAck(false);
+        // A LOCAL-only grant's primary stream reports the local-fsync frontier
+        // and must carry the matching status byte; any grant that includes
+        // REPLICATED reports the replicated frontier as STATUS_DURABLE_ACK.
+        byte status = DurabilityTier.hasReplicated(state.getDurableAckTiers())
+                ? STATUS_DURABLE_ACK
+                : STATUS_LOCAL_DURABLE_ACK;
+        trySendDurableAckFrame(context, state, status, progress, state.computeDurableAckPayloadSize());
+    }
 
+    private void trySendDurableAckFrame(
+            HttpConnectionContext context,
+            QwpIngressProcessorState state,
+            byte status,
+            CharSequenceLongHashMap progress,
+            int payloadLen
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         HttpRawSocket rawSocket = context.getRawResponseSocket();
         long bufferAddr = rawSocket.getBufferAddress();
         int bufferSize = rawSocket.getBufferSize();
 
-        int payloadLen = state.computeDurableAckPayloadSize();
         int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
-
         if (frameSize > bufferSize) {
             LOG.critical().$("Buffer too small for durable ACK response [fd=").$(context.getFd())
                     .$(", required=").$(frameSize)
@@ -2548,13 +2576,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
         long writeAddr = bufferAddr + headerLen;
-        Unsafe.putByte(writeAddr, STATUS_DURABLE_ACK);
+        Unsafe.putByte(writeAddr, status);
         QwpIngressProcessorState.writeTableSeqTxnEntries(writeAddr + 1, progress);
 
         try {
             rawSocket.send(headerLen + payloadLen);
             state.onDurableAckSent();
             LOG.debug().$("Sent durable ACK [fd=").$(context.getFd())
+                    .$(", status=").$(status)
                     .$(", numOfTables=").$(progress.size()).I$();
         } catch (PeerIsSlowToReadException e) {
             state.onDurableAckBlocked();

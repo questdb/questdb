@@ -76,6 +76,18 @@ public class O3AuxVectorShortfallTest extends AbstractCairoTest {
 
     @Test
     public void testO3AppendNamesShortAuxVectorInsteadOfReadingZeros() throws Exception {
+        // POSIX-only. The staged shortfall cannot be produced on Windows: the truncated aux file must
+        // STAY short until the O3 append's length check reads it, but Windows will not shrink a file
+        // while any mapped section of it is live, and the engine's mapping machinery grows a file to
+        // match a larger mapping request -- so by the time the check runs the file is back at (or was
+        // never below) the required length, the zeros the diagnostic exists to name are real bytes, and
+        // the "aux vector is shorter" log line legitimately never appears (observed on windows-other-2
+        // across consecutive CI runs). The diagnostic itself is platform-neutral and stays covered by
+        // the Linux and macOS legs.
+        org.junit.Assume.assumeFalse(
+                "Windows cannot keep a mapped aux file truncated; the staged shortfall never holds",
+                io.questdb.std.Os.isWindows()
+        );
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             // Two rows in 2024-06-10, then a later partition so 2024-06-10 is no longer the active

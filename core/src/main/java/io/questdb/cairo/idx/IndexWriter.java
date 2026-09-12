@@ -65,7 +65,7 @@ public interface IndexWriter extends Closeable, Mutable {
     void closeNoTruncate();
 
     /**
-     * Publishes buffered index writes and flushes them according to the EFFECTIVE commit mode
+     * Publishes buffered index writes and flushes them according to the owning writer's commit mode
      * (see {@link #setCommitMode(int)}).
      */
     void commit();
@@ -75,12 +75,9 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
-     * Publishes the owning table's EFFECTIVE commit mode (already resolved against the instance-global
-     * {@code cairo.commit.mode} via {@link io.questdb.cairo.CommitMode#effectiveCommitMode(int, int)}) so
-     * {@link #commit()} flushes on the table's own terms rather than the instance default.
-     * <p>
-     * {@link io.questdb.cairo.CommitMode#UNSET} (the default) means "defer to the global mode", so an
-     * implementation or call site that is never threaded a mode keeps its historical behavior.
+     * Threads the owning writer's commit mode into this indexer so {@link #commit()} flushes on the grade
+     * that writer commits under. A table that is not yet enrolled in adaptive runs at SYNC while the
+     * instance runs ADAPTIVE. Implementations seed it from the instance-global {@code cairo.commit.mode}.
      * <p>
      * Under {@link io.questdb.cairo.CommitMode#ADAPTIVE} {@link #commit()} publishes buffered writes but
      * does NOT flush: index files are re-derivable from the durable WAL exactly like the column data they
@@ -88,7 +85,7 @@ public interface IndexWriter extends Closeable, Mutable {
      * {@code sync(false)} on every indexer, then a filesystem-wide {@code syncfs}) plus recovery
      * roll-forward. This keeps the index consistent with {@code CommitMode.appliesColumnSync}.
      *
-     * @param commitMode the resolved effective mode, or {@code CommitMode.UNSET} to defer to the global one
+     * @param commitMode the mode the owning writer commits under
      */
     default void setCommitMode(int commitMode) {
     }

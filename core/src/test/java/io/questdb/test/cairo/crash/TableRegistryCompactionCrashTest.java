@@ -26,6 +26,7 @@ package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
@@ -58,6 +59,7 @@ public class TableRegistryCompactionCrashTest extends AbstractCrashConsistencyTe
         setProperty(PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 0);
         final int[] renameSyncMark = new int[]{-1}; // getSyncOrder() size when the new version is published
         final int[] unlinkSyncMark = new int[]{-1}; // ... and when the old version is unlinked
+        final boolean[] publishWasDurable = new boolean[]{false}; // the publish went through renameDurable
         crashFf = new CrashFaultFilesFacade() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
@@ -68,6 +70,17 @@ public class TableRegistryCompactionCrashTest extends AbstractCrashConsistencyTe
                     renameSyncMark[0] = getSyncOrder().size();
                 }
                 return rc;
+            }
+
+            @Override
+            public int renameDurable(LPSZ from, LPSZ to) {
+                if (Utf8String.newInstance(from).toString().endsWith(".tmp")
+                        && Utf8String.newInstance(to).toString().contains(WalUtils.TABLE_REGISTRY_NAME_FILE)) {
+                    publishWasDurable[0] = true;
+                }
+                // FilesFacadeImpl routes this back through the overridable rename() on every platform, so
+                // the renameSyncMark bookkeeping above still fires.
+                return super.renameDurable(from, to);
             }
 
             @Override
@@ -97,6 +110,20 @@ public class TableRegistryCompactionCrashTest extends AbstractCrashConsistencyTe
             Assert.assertTrue("compaction never published a new registry version — test is vacuous", renameSyncMark[0] >= 0);
             Assert.assertTrue("compaction never unlinked the old registry version — test is vacuous", unlinkSyncMark[0] >= 0);
 
+            if (Os.isWindows()) {
+                // Windows has no directory handle to fsync (TableUtils.fsyncDirDurable is a no-op there),
+                // so the barrier between the two namespace changes is the publish rename itself writing
+                // through: renameDurable is MoveFileEx with MOVEFILE_WRITE_THROUGH. Assert the publish
+                // took the durable variant; with it, at least one registry version is always durably
+                // present when the unlink runs.
+                Assert.assertTrue(
+                        "the registry publish did not go through renameDurable: on Windows the "
+                                + "write-through move is the only barrier between publishing tables.d.<N+1> "
+                                + "and unlinking tables.d.<N>",
+                        publishWasDurable[0]
+                );
+                return;
+            }
             final String dbRoot = Paths.get(engine.getConfiguration().getDbRoot().toString()).toAbsolutePath().toString();
             final List<String> order = crashFf.getSyncOrder();
             boolean rootFsynced = false;

@@ -38,6 +38,17 @@ public class FilesFacadeImpl implements FilesFacade {
     public static final int _16M = 16 * 1024 * 1024;
     private final static Log LOG = LogFactory.getLog(FilesFacadeImpl.class);
     private static final long ZFS_MAGIC_NUMBER = 0x2fc12fc1;
+    // Per-thread upgrade flags that keep the fault-injection seam intact on the one platform where a
+    // durable primitive is a DIFFERENT syscall from the overridable method it otherwise delegates to
+    // (barrierFsync/fsyncDurable on Darwin, renameDurable on Windows). The strong method sets its flag
+    // around a call to the OVERRIDABLE weak method (fdatasync/fsync/rename); when that call reaches this
+    // class's implementation, the flag swaps in the real strong syscall. A fault-injecting facade that
+    // overrides only the weak method keeps intercepting the durable variant on every platform -- calling
+    // the static directly instead makes the harness go quiet rather than red on exactly the platform the
+    // bypass targets (see DurableRenamePublishTest).
+    private static final ThreadLocal<Boolean> BARRIER_FSYNC_VIA_FDATASYNC = ThreadLocal.withInitial(() -> Boolean.FALSE);
+    private static final ThreadLocal<Boolean> FSYNC_DURABLE_VIA_FSYNC = ThreadLocal.withInitial(() -> Boolean.FALSE);
+    private static final ThreadLocal<Boolean> RENAME_DURABLE_VIA_RENAME = ThreadLocal.withInitial(() -> Boolean.FALSE);
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
     private long mapPageSize = 0;
@@ -189,6 +200,16 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public void fdatasync(long fd) {
+        if (Os.isOSX() && BARRIER_FSYNC_VIA_FDATASYNC.get()) {
+            // barrierFsync routed here with the upgrade flag set: on Darwin the barrier is its own
+            // fcntl (F_BARRIERFSYNC), not fdatasync.
+            int res = Files.barrierFsync(fd);
+            if (res == 0) {
+                return;
+            }
+            final int errno = errno();
+            throw CairoException.dataSyncFailure(errno, "barrierFsync").put("could not barrierFsync [fd=").put(fd).put(']');
+        }
         int res = Files.fdatasync(fd);
         if (res == 0) {
             return;
@@ -209,6 +230,16 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public void fsync(long fd) {
+        if (Os.isOSX() && FSYNC_DURABLE_VIA_FSYNC.get()) {
+            // fsyncDurable routed here with the upgrade flag set: on Darwin the durable flush is
+            // F_FULLFSYNC, not fsync.
+            int res = Files.fsyncDurable(fd);
+            if (res == 0) {
+                return;
+            }
+            final int errno = errno();
+            throw CairoException.dataSyncFailure(errno, "fsyncDurable").put("could not fsyncDurable [fd=").put(fd).put(']');
+        }
         int res = Files.fsync(fd);
         if (res == 0) {
             return;
@@ -228,12 +259,17 @@ public class FilesFacadeImpl implements FilesFacade {
             fdatasync(fd);
             return;
         }
-        int res = Files.barrierFsync(fd);
-        if (res == 0) {
-            return;
+        // On Darwin the barrier is a DIFFERENT fcntl, so it cannot simply delegate -- but calling the
+        // static directly would bypass every facade that overrides fdatasync, breaking the very seam the
+        // comment above protects, on the one platform where the barrier fcntl matters. Set the per-thread
+        // upgrade flag and route through the OVERRIDABLE fdatasync; when the call reaches this class's
+        // fdatasync, the flag swaps in the real barrier syscall.
+        BARRIER_FSYNC_VIA_FDATASYNC.set(Boolean.TRUE);
+        try {
+            fdatasync(fd);
+        } finally {
+            BARRIER_FSYNC_VIA_FDATASYNC.set(Boolean.FALSE);
         }
-        final int errno = errno();
-        throw CairoException.dataSyncFailure(errno, "barrierFsync").put("could not barrierFsync [fd=").put(fd).put(']');
     }
 
     @Override
@@ -244,12 +280,14 @@ public class FilesFacadeImpl implements FilesFacade {
             fsync(fd);
             return;
         }
-        int res = Files.fsyncDurable(fd);
-        if (res == 0) {
-            return;
+        // Darwin needs F_FULLFSYNC; same seam-preserving pattern as barrierFsync above -- route through
+        // the OVERRIDABLE fsync with the upgrade flag set.
+        FSYNC_DURABLE_VIA_FSYNC.set(Boolean.TRUE);
+        try {
+            fsync(fd);
+        } finally {
+            FSYNC_DURABLE_VIA_FSYNC.set(Boolean.FALSE);
         }
-        final int errno = errno();
-        throw CairoException.dataSyncFailure(errno, "fsyncDurable").put("could not fsyncDurable [fd=").put(fd).put(']');
     }
 
     @Override
@@ -539,6 +577,11 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public int rename(LPSZ from, LPSZ to) {
+        if (Os.isWindows() && RENAME_DURABLE_VIA_RENAME.get()) {
+            // renameDurable routed here with the upgrade flag set: on Windows the durable move is
+            // MoveFileEx with MOVEFILE_WRITE_THROUGH, not a plain rename.
+            return Files.renameDurable(from, to);
+        }
         return Files.rename(from, to);
     }
 
@@ -550,7 +593,17 @@ public class FilesFacadeImpl implements FilesFacade {
             // must keep intercepting the durable variant, or the harness goes quiet instead of red.
             return rename(from, to);
         }
-        return Files.renameDurable(from, to);
+        // On Windows the durable move is a DIFFERENT syscall, so it cannot simply delegate -- but calling
+        // the static directly would bypass every fault-injecting facade that overrides rename(), and the
+        // suite-wide ADAPTIVE commit mode routes every metadata swap through this method. Same
+        // seam-preserving pattern as barrierFsync: set the per-thread upgrade flag and route through the
+        // OVERRIDABLE rename; this class's rename swaps in the write-through move.
+        RENAME_DURABLE_VIA_RENAME.set(Boolean.TRUE);
+        try {
+            return rename(from, to);
+        } finally {
+            RENAME_DURABLE_VIA_RENAME.set(Boolean.FALSE);
+        }
     }
 
     @Override

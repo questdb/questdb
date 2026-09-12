@@ -248,7 +248,7 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
                 execute("drop table if exists t");
                 drainWalQueue();
                 execute("create table t (id long, v long, s symbol index, ts timestamp) timestamp(ts) "
-                        + "partition by day wal with commit_mode='adaptive'");
+                        + "partition by day wal");
                 TableToken tt = engine.verifyTableName("t");
                 drainWalQueue(); // materialize the create; first durable epoch
                 final TableToken[] tokens = {tt};

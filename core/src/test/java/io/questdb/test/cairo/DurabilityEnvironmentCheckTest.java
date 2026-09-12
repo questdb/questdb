@@ -255,7 +255,7 @@ public class DurabilityEnvironmentCheckTest {
 
         @Override
         public long findFirst(io.questdb.std.str.LPSZ path) {
-            if (!io.questdb.std.str.Utf8s.equalsAscii("/sys/block", path)) {
+            if (!"/sys/block".equals(unixPath(path))) {
                 return 0;
             }
             listing = new java.util.ArrayList<>(devices.keySet()).iterator();
@@ -282,17 +282,35 @@ public class DurabilityEnvironmentCheckTest {
         public long openRONoCache(io.questdb.std.str.LPSZ name) {
             // NOT name.toString(): an LPSZ renders as its identity hash, so string comparison silently
             // never matches and the whole fake goes quiet.
-            if (io.questdb.std.str.Utf8s.equalsAscii("/sys/class/dmi/id/sys_vendor", name)) {
+            final String path = unixPath(name);
+            if ("/sys/class/dmi/id/sys_vendor".equals(path)) {
                 pending = bytesOrNull(dmiSysVendor);
                 return pending == null ? -1 : 7;
             }
             for (java.util.Map.Entry<String, String> e : devices.entrySet()) {
-                if (io.questdb.std.str.Utf8s.equalsAscii("/sys/block/" + e.getKey() + "/queue/write_cache", name)) {
+                if (("/sys/block/" + e.getKey() + "/queue/write_cache").equals(path)) {
                     pending = bytesOrNull(e.getValue());
                     return pending == null ? -1 : 7;
                 }
             }
             return -1;
+        }
+
+        /**
+         * Decode the LPSZ bytes with {@code '\'} normalized to {@code '/'}. The probe assembles literal
+         * Linux sysfs paths, but they reach the facade through {@code Path}, which renders {@code '\'} on
+         * Windows -- so an exact ASCII compare goes quiet there and the probe reads nothing. The fake
+         * sysfs accepts either separator, keeping the probe testable on every platform, which is the
+         * whole point of driving it through an injected facade.
+         */
+        private static String unixPath(io.questdb.std.str.LPSZ name) {
+            final int n = name.size();
+            final StringBuilder sb = new StringBuilder(n);
+            for (int i = 0; i < n; i++) {
+                final char c = (char) (name.byteAt(i) & 0xFF);
+                sb.append(c == '\\' ? '/' : c);
+            }
+            return sb.toString();
         }
 
         @Override

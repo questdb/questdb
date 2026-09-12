@@ -5706,9 +5706,8 @@ public class WalWriterTest extends AbstractCairoTest {
      * REBASE clones {@code _meta} and then resets its metadataVersion in place. That field is checksummed
      * into the meta-format minor-version word, so rewriting it without re-stamping the checksum switches
      * off the version gate, and every gated tail field then reads as absent on the clone: TTL becomes 0,
-     * the table format reverts to NATIVE, the per-table commit mode and the adaptive enrolment record
-     * revert to UNSET. Nothing fails -- the rebased table quietly comes back with different properties
-     * from the one that went in.
+     * the table format reverts to NATIVE, the adaptive enrolment record reverts to UNSET. Nothing fails --
+     * the rebased table quietly comes back with different properties from the one that went in.
      *
      * <p>The ADD COLUMN is load-bearing, not decoration: it lifts metadataVersion off 0 so that resetting
      * it to 0 actually changes the value the checksum covers. Without it the reset is a no-op and the gate
@@ -5720,8 +5719,7 @@ public class WalWriterTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         try {
             assertMemoryLeak(() -> {
-                execute("create table t (ts timestamp, x int) timestamp(ts) partition by day ttl 3 days wal"
-                        + " with commit_mode='sync'");
+                execute("create table t (ts timestamp, x int) timestamp(ts) partition by day ttl 3 days wal");
                 execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
                 drainWalQueue();
                 // Lift metadataVersion off zero, so the clone's reset genuinely changes it.
@@ -5733,8 +5731,6 @@ public class WalWriterTest extends AbstractCairoTest {
                 try (TableReaderMetadata md = new TableReaderMetadata(configuration, oldToken)) {
                     md.loadMetadata();
                     Assert.assertEquals("precondition: TTL is set before the rebase", 72, md.getTtlHoursOrMonths());
-                    Assert.assertEquals("precondition: the per-table commit mode is set before the rebase",
-                            CommitMode.SYNC, md.getCommitMode());
                     Assert.assertTrue("precondition: metadataVersion must be off 0, or the reset changes nothing",
                             md.getMetadataVersion() > 0);
                 }
@@ -5748,8 +5744,6 @@ public class WalWriterTest extends AbstractCairoTest {
                 try (TableReaderMetadata md = new TableReaderMetadata(configuration, newToken)) {
                     md.loadMetadata();
                     Assert.assertEquals("REBASE must not silently drop TTL", 72, md.getTtlHoursOrMonths());
-                    Assert.assertEquals("REBASE must not silently drop the per-table commit mode",
-                            CommitMode.SYNC, md.getCommitMode());
                 }
                 assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
             });

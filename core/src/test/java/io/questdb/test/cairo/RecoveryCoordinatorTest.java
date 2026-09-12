@@ -46,6 +46,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
@@ -117,8 +118,6 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             // The first writer to open the table enrols it: baseline at the LIVE cut, then the record.
             try (io.questdb.cairo.TableWriter writer = getWriter(token)) {
                 Assert.assertEquals(CommitMode.ADAPTIVE, writer.getEffectiveCommitMode());
-                Assert.assertEquals("enrollment must not disturb the declared per-table override",
-                        CommitMode.UNSET, writer.getMetadata().getCommitMode());
             }
             engine.releaseAllWriters();
 
@@ -555,9 +554,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      * {@code CreateViewOperationImpl}), so it slips past the loop's {@code !isWal()} filter. But a view has
      * no {@code _meta}/{@code _txn}/{@code _cv}/data/epoch, and its {@code ViewState} is NOT hydrated when
      * {@code recover()} runs (at {@code CairoEngine.completeInit}, right after the name registry is loaded
-     * but BEFORE views are compiled). Before the fix, {@code resolveEffectiveCommitMode -> getTableMetadata
-     * -> getViewMetadata} threw {@code view does not exist} on the view token and failed boot. {@code
-     * recover()} must skip regular views (mat-views, {@code isView()==false}, are still recovered).
+     * but BEFORE views are compiled). Before the fix, resolving the view's metadata threw
+     * {@code view does not exist} on the view token and failed boot. {@code recover()} must skip regular
+     * views (mat-views, {@code isView()==false}, are still recovered).
      */
     @Test
     public void testRecoverSkipsRegularViewWithUnhydratedState() throws Exception {
@@ -574,22 +573,15 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             Assert.assertTrue("precondition: v must be a regular VIEW", viewToken.isView());
             Assert.assertTrue("precondition: view token is WAL", viewToken.isWal());
 
-            // Reproduce the boot condition precisely. At completeInit, recover() runs against:
-            //  (1) an enumerable view token (the name registry is loaded) whose ViewState is NOT yet
-            //      hydrated — views compile lazily, after recover() — so getViewMetadata() returns null;
+            // Reproduce the boot condition precisely. At completeInit, recover() runs against an
+            // enumerable view token (the name registry is loaded) whose ViewState is NOT yet hydrated —
+            // views compile lazily, after recover() — so getViewMetadata() returns null.
             engine.getViewStateStore().removeViewState(viewToken);
             Assert.assertNull("view state must be absent (pre-hydration boot condition)",
                     engine.getViewStateStore().getViewState(viewToken));
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
-
-            //  (2) a fresh in-memory SeqTxnTracker whose commit mode is UNSET (trackers reset on restart),
-            //      so resolveEffectiveCommitMode() cannot early-return a cached mode and MUST read the
-            //      table metadata — which, for a view, throws. Set UNSET last so nothing re-warms it.
-            engine.getTableSequencerAPI().getTxnTracker(viewToken).setCommitMode(CommitMode.UNSET);
-            Assert.assertEquals("precondition: tracker commit mode UNSET (fresh-boot state)",
-                    CommitMode.UNSET, engine.getTableSequencerAPI().getTxnTracker(viewToken).getCommitMode());
 
             // ACT: before the fix this threw `view does not exist [view=v]` and failed boot.
             new RecoveryCoordinator(engine).recover();
@@ -614,6 +606,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      */
     @Test
     public void testRecoverSkipsEpochAheadOfRestoredTxn() throws Exception {
+        // The epoch-ahead-of-live guard is platform-neutral, but this test's physical restore simulation
+        // is not: it reads a live _txn QuestDB holds locked (Windows ReadFile fails on the byte-0 lock)
+        // and copies over an existing destination (Windows ff.copy refuses one). Covered by POSIX legs.
+        org.junit.Assume.assumeFalse("restore simulation rewrites live files, which Windows forbids", Os.isWindows());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         try {
@@ -870,6 +866,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      */
     @Test
     public void testRecoverDirectorySyncFailurePoisonsEngineAndPropagates() throws Exception {
+        // The injected fault point does not exist on Windows: RecoveryCoordinator skips the recovery
+        // directory fsync there (no directory handles to fsync), so fsyncAndClose is never reached and
+        // recover() has nothing to classify. POSIX-only by the shape of the product code.
+        org.junit.Assume.assumeFalse("recovery takes no directory fsync on Windows", Os.isWindows());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         final AtomicBoolean isCounting = new AtomicBoolean();
@@ -918,6 +918,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
     @Test
     public void testRecoverAbortsOnRestoreIoErrorBeforeServingSiblings() throws Exception {
+        // The fault is injected on the openRW + copyData in-place transfer -- the POSIX branch of
+        // TableUtils.replaceFileContent. Windows takes the removeQuiet + copy route instead, so the
+        // seam this facade arms is never exercised there. POSIX-only by the shape of the product code.
+        org.junit.Assume.assumeFalse("restore transfer fault seam is POSIX-only", Os.isWindows());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         // A path-targeted transfer fault: fail ONLY the target table's live _txn restore
@@ -993,6 +997,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      */
     @Test
     public void testRestoreCvFailureAbortsStartupAndFailsLoud() throws Exception {
+        // Same POSIX-only seam as testRecoverAbortsOnRestoreIoErrorBeforeServingSiblings, and the
+        // torn-destination window under test (truncate-then-transfer) exists only in that branch of
+        // TableUtils.replaceFileContent; Windows replaces the file whole via removeQuiet + copy.
+        org.junit.Assume.assumeFalse("restore transfer fault seam is POSIX-only", Os.isWindows());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         final int simErrno = 28;

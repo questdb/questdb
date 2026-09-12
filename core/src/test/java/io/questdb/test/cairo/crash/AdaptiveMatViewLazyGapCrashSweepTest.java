@@ -277,18 +277,16 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
             execute("drop table if exists base");
             drainWalAndMatViewQueues();
 
-            execute("create table base (ts timestamp, v long) timestamp(ts) partition by day wal "
-                    + "with commit_mode='adaptive'");
+            execute("create table base (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("create materialized view mv as (select ts, count() cnt from base sample by 1h) partition by day");
             baseTt = engine.verifyTableName("base");
             mvTt = engine.verifyTableName("mv");
 
-            // The mv must be an ADAPTIVE table for the epoch/recovery machinery to engage — it inherits the
-            // global adaptive mode (no explicit per-table override). Assert it so a silent mode regression
-            // (mv not adaptive => never epoch'd => this whole sweep would be vacuous) fails loudly.
+            // The instance must be ADAPTIVE for the epoch/recovery machinery to engage. Assert it so a silent
+            // mode regression (never epoch'd => this whole sweep would be vacuous) fails loudly.
             Assert.assertEquals(
-                    "mat-view must resolve to ADAPTIVE effective commit mode (else the sweep is vacuous)",
-                    CommitMode.ADAPTIVE, engine.getTableSequencerAPI().resolveEffectiveCommitMode(mvTt)
+                    "instance must run ADAPTIVE (else the sweep is vacuous)",
+                    CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode()
             );
 
             // K base rows -> apply + refresh mv -> durable epoch at seqTxn=K for both tables.
@@ -435,8 +433,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                 execute("drop materialized view if exists mv");
                 execute("drop table if exists base");
                 drainWalAndMatViewQueues();
-                execute("create table base (ts timestamp, v long) timestamp(ts) partition by day wal "
-                        + "with commit_mode='adaptive'");
+                execute("create table base (ts timestamp, v long) timestamp(ts) partition by day wal");
                 execute("create materialized view mv as (select ts, count() cnt from base sample by 1h) partition by day");
                 final TableToken baseTt = engine.verifyTableName("base");
                 final TableToken mvTt = engine.verifyTableName("mv");

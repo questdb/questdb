@@ -310,34 +310,6 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     /**
-     * Returns the table's EFFECTIVE per-table commit mode (the {@code _meta} override resolved against the
-     * global {@code cairo.commit.mode}), populating the per-table {@link SeqTxnTracker} cache on first use.
-     * This is the single accessor every WAL-side adaptive decision point uses (WAL-commit durability, the
-     * WAL-purge floor, the durable-epoch trigger, recovery). The tracker is normally pre-populated at
-     * CREATE ({@code registerTable}) and on each writer open; this lazy path covers a post-restart WAL
-     * commit that may precede the first apply for the table. The physical {@code _meta} read goes through
-     * the engine's pooled table metadata (cheap, cached) and may briefly observe a pre-ALTER value across
-     * an {@code ALTER ... SET PARAM commit_mode} — acceptable for a durability-policy knob.
-     */
-    public int resolveEffectiveCommitMode(TableToken tableToken) {
-        final SeqTxnTracker tracker = getSeqTxnTracker(tableToken);
-        int mode = tracker.getCommitMode();
-        if (mode != io.questdb.cairo.CommitMode.UNSET) {
-            return mode;
-        }
-        // Read the per-table _meta override via a pooled metadata handle and CLOSE it (the pool would
-        // otherwise report the tenant "left behind on shutdown"). Do not delegate to
-        // TableUtils.getCommitMode(metadata, engine) here — that opens a SECOND handle.
-        final int tableMode;
-        try (io.questdb.cairo.sql.TableMetadata meta = engine.getTableMetadata(tableToken)) {
-            tableMode = meta.getCommitMode();
-        }
-        final int effective = io.questdb.cairo.CommitMode.effectiveCommitMode(tableMode, configuration.getCommitMode());
-        tracker.setCommitMode(effective);
-        return effective;
-    }
-
-    /**
      * Non-creating counterpart to {@link #getTxnTracker(TableToken)}: returns the tracker only if
      * one has already been installed, and never allocates or installs one on a miss. A caller that
      * only needs to inspect suspension state, and for which "no tracker yet" means "never
@@ -514,12 +486,6 @@ public class TableSequencerAPI implements QuietCloseable {
         ) {
             SeqTxnTracker seqTxnTracker = getSeqTxnTracker(tableToken);
             seqTxnTracker.initTxns(0, 0, false);
-            // Publish the new table's effective commit mode from its CREATE-time structure so WAL-side
-            // durability (which can run before any TableWriter opens) sees the per-table override
-            // immediately. Resolved against the global mode here (UNSET => global).
-            seqTxnTracker.setCommitMode(
-                    io.questdb.cairo.CommitMode.effectiveCommitMode(tableDescriptor.getCommitMode(), configuration.getCommitMode())
-            );
             tableSequencer.unlockWrite();
         }
     }

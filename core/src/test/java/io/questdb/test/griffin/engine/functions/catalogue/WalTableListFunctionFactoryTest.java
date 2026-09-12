@@ -121,9 +121,9 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
-                            B\tfalse\t0\t0\t0\t\t\t0\tnosync\t0\t0\t-1\t
-                            C\tfalse\t0\t0\t0\t\t\t0\tnosync\t0\t0\t-1\t
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            B\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
+                            C\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
                             """);
         });
     }
@@ -143,9 +143,9 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         println(factory, cursor);
                         TestUtils.assertEquals("""
-                                name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
-                                B\tfalse\t0\t0\t0\t\t\t0\tnosync\t0\t0\t-1\t
-                                C\tfalse\t0\t0\t0\t\t\t0\tnosync\t0\t0\t-1\t
+                                name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                                B\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
+                                C\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
                                 """, sink);
                     }
                 }
@@ -194,10 +194,10 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             assertQuery("wal_tables() order by name")
                     .noLeakCheck()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
-                            "B\ttrue\t1\t0\t3\t\tcould not open read-write [file=" + root + SEPARATOR + "B~2" + SEPARATOR + "2022-12-05" + SEPARATOR + "x.d.1]\t0\tnosync\t0\t0\t-1\t\n" +
-                            "C\tfalse\t2\t0\t2\t\t\t0\tnosync\t0\t0\t-1\t\n" +
-                            "D\tfalse\t1\t0\t1\t\t\t0\tnosync\t0\t0\t-1\t\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            "B\ttrue\t1\t0\t3\t\tcould not open read-write [file=" + root + SEPARATOR + "B~2" + SEPARATOR + "2022-12-05" + SEPARATOR + "x.d.1]\t0\t0\t0\t-1\t\n" +
+                            "C\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t\n" +
+                            "D\tfalse\t1\t0\t1\t\t\t0\t0\t0\t-1\t\n");
 
             assertQuery("select name, suspended, writerTxn from wal_tables() order by name")
                     .noLeakCheck()
@@ -259,15 +259,6 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             drainWalQueue();
 
             final TableToken token = engine.verifyTableName("T1");
-
-            // --- commitMode = adaptive ---
-            assertQuery("select name, commitMode from wal_tables() where name = 'T1'")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .returns("""
-                            name\tcommitMode
-                            T1\tadaptive
-                            """);
 
             // --- durableEpochSeqTxn: 0 by default ---
             assertQuery("select name, durableEpochSeqTxn from wal_tables() where name = 'T1'")
@@ -387,8 +378,8 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
-                            "B\ttrue\t1\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\tnosync\t0\t0\t-1\t\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            "B\ttrue\t1\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\t0\t0\t-1\t\n");
 
             execute("alter table B resume wal");
 
@@ -400,8 +391,8 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
-                            B\tfalse\t2\t0\t2\t\t\t0\tnosync\t0\t0\t-1\t
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            B\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t
                             """);
 
             dropTable("A");

@@ -32,19 +32,31 @@ import org.junit.Test;
 public class DurabilityTierTest {
     @Test
     public void testFromHeaderValue() {
-        Assert.assertEquals(DurabilityTier.DEFAULT, DurabilityTier.fromHeaderValue(new Utf8String("true")));
-        Assert.assertEquals(DurabilityTier.DEFAULT, DurabilityTier.fromHeaderValue(new Utf8String("TRUE")));
+        Assert.assertEquals(DurabilityTier.REPLICATED | DurabilityTier.LEGACY_TRUE, DurabilityTier.fromHeaderValue(new Utf8String("true")));
+        Assert.assertEquals(DurabilityTier.REPLICATED | DurabilityTier.LEGACY_TRUE, DurabilityTier.fromHeaderValue(new Utf8String("TRUE")));
         Assert.assertEquals(DurabilityTier.LOCAL, DurabilityTier.fromHeaderValue(new Utf8String("local")));
         Assert.assertEquals(DurabilityTier.REPLICATED, DurabilityTier.fromHeaderValue(new Utf8String("replicated")));
+        Assert.assertEquals(DurabilityTier.LOCAL | DurabilityTier.REPLICATED, DurabilityTier.fromHeaderValue(new Utf8String("local,replicated")));
+        Assert.assertEquals(DurabilityTier.LOCAL | DurabilityTier.REPLICATED, DurabilityTier.fromHeaderValue(new Utf8String("replicated,local")));
         Assert.assertEquals(DurabilityTier.NONE, DurabilityTier.fromHeaderValue(new Utf8String("bogus")));
         Assert.assertEquals(DurabilityTier.NONE, DurabilityTier.fromHeaderValue(null));
+    }
+
+    @Test
+    public void testHasTier() {
+        Assert.assertTrue(DurabilityTier.hasLocal(DurabilityTier.LOCAL));
+        Assert.assertTrue(DurabilityTier.hasLocal(DurabilityTier.LOCAL | DurabilityTier.REPLICATED));
+        Assert.assertFalse(DurabilityTier.hasLocal(DurabilityTier.REPLICATED));
+        Assert.assertTrue(DurabilityTier.hasReplicated(DurabilityTier.REPLICATED | DurabilityTier.LEGACY_TRUE));
+        Assert.assertFalse(DurabilityTier.hasReplicated(DurabilityTier.LOCAL));
     }
 
     @Test
     public void testResponseToken() {
         Assert.assertEquals("local", DurabilityTier.responseToken(DurabilityTier.LOCAL).toString());
         Assert.assertEquals("replicated", DurabilityTier.responseToken(DurabilityTier.REPLICATED).toString());
+        Assert.assertEquals("local,replicated", DurabilityTier.responseToken(DurabilityTier.LOCAL | DurabilityTier.REPLICATED).toString());
+        Assert.assertEquals("enabled", DurabilityTier.responseToken(DurabilityTier.REPLICATED | DurabilityTier.LEGACY_TRUE).toString());
         Assert.assertNull(DurabilityTier.responseToken(DurabilityTier.NONE));
-        Assert.assertNull(DurabilityTier.responseToken(DurabilityTier.DEFAULT));
     }
 }

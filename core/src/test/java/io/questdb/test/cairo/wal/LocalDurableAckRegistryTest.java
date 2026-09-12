@@ -342,7 +342,7 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
 
     /**
      * (9) LocalDurableAckRegistry reports the LOCAL tier as available (and only that tier),
-     * so strongestAvailableTier() resolves to LOCAL.
+     * so only the LOCAL tier set is grantable.
      */
     @Test
     public void testTierAvailability() throws Exception {
@@ -350,7 +350,9 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
             LocalDurableAckRegistry registry = new LocalDurableAckRegistry(engine);
             Assert.assertTrue(registry.isTierAvailable(DurabilityTier.LOCAL));
             Assert.assertFalse(registry.isTierAvailable(DurabilityTier.REPLICATED));
-            Assert.assertEquals(DurabilityTier.LOCAL, registry.strongestAvailableTier());
+            Assert.assertTrue(registry.isTierSetAvailable(DurabilityTier.LOCAL));
+            Assert.assertFalse(registry.isTierSetAvailable(DurabilityTier.REPLICATED));
+            Assert.assertFalse(registry.isTierSetAvailable(DurabilityTier.LOCAL | DurabilityTier.REPLICATED));
         });
     }
 }

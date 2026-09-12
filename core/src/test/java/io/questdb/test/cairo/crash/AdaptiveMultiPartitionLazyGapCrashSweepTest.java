@@ -150,8 +150,7 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
             final String table = "mp_layout_confirm";
             execute("drop table if exists " + table);
             drainWalQueue();
-            execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal "
-                    + "with commit_mode='adaptive'");
+            execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal");
 
             for (int i = 0; i < LAZY_K; i++) {
                 insertRow(table, i);
@@ -382,8 +381,7 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                 final String table = "mp_lazygap_nc";
                 execute("drop table if exists " + table);
                 drainWalQueue();
-                execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal "
-                        + "with commit_mode='adaptive'");
+                execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal");
                 final TableToken tt = engine.verifyTableName(table);
 
                 for (int i = 0; i < LAZY_K; i++) {
@@ -611,8 +609,7 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
             execute("drop table if exists " + table);
             drainWalQueue();
-            execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal "
-                    + "with commit_mode='adaptive'");
+            execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal");
             tt = engine.verifyTableName(table);
 
             // LAZY_K rows spanning 2 partitions (days 1,1,2,2) -> apply -> durable epoch at seqTxn=LAZY_K,

@@ -187,7 +187,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final long TIMESTAMP_EPOCH = 0L;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final long IGNORE = -1L;
-    private static final Log LOG = LogFactory.getLog(TableWriter.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(TableWriter.class);
     /*
         The most recent logical partition is allowed to have up to cairo.o3.last.partition.max.splits (20 by default) splits.
         Any other partition is allowed to have cairo.o3.mid.partition.max.splits (1 by default) splits.
@@ -339,18 +341,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
-    // The table's EFFECTIVE commit mode (its _meta override resolved against the global cairo.commit.mode).
-    // Cached once when metadata is (re)loaded and recomputed on ALTER ... SET PARAM commit_mode. Every
-    // apply-path adaptive decision in this writer (syncColumns, applyColumnSyncMode, configureColumn's
-    // setApplyLazy, partition split/squash, parquet rebuild) uses THIS, not configuration.getCommitMode(),
-    // so the table behaves per its own mode even when the instance default differs. See Deferred 1.
+    // The commit mode this writer applies under. Normally the instance-global cairo.commit.mode; it is
+    // held at SYNC while an ADAPTIVE instance has a table that is not yet ENROLLED, and becomes ADAPTIVE
+    // once the enrolment baseline is published. Every apply-path adaptive decision in this writer
+    // (syncColumns, applyColumnSyncMode, configureColumn's setApplyLazy, partition split/squash, parquet
+    // rebuild) uses THIS rather than configuration.getCommitMode(), so the enrolment window is honoured.
     private int effectiveCommitMode = CommitMode.UNSET;
-    // This table resolves to ADAPTIVE but its _meta does not yet record it as enrolled: it needs a durable
-    // baseline published at the LIVE cut before a single commit may be applied lazily.
+    // The instance runs ADAPTIVE but this table's _meta does not yet record it as enrolled: it needs a
+    // durable baseline published at the LIVE cut before a single commit may be applied lazily.
     private boolean adaptiveEnrollmentPending;
-    // The mirror: _meta records the state as enrolled under ADAPTIVE but the table no longer resolves to it
-    // (a per-table ALTER, or the instance default changing under an UNSET table). The lazily-applied state
-    // must be reconciled durably before the record can stop saying "may be ahead of the epoch".
+    // The mirror: _meta records the state as enrolled under ADAPTIVE but the instance no longer runs it
+    // (the global mode changed across a restart). The lazily-applied state must be reconciled durably
+    // before the record can stop saying "may be ahead of the epoch".
     private boolean adaptiveExitPending;
     private IndexBuilder attachIndexBuilder;
     private long attachMaxTimestamp;
@@ -547,9 +549,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             this.metadata = new TableWriterMetadata(this.tableToken);
             openMetaFile(ff, path, pathSize, ddlMem, metadata);
-            final int resolvedCommitMode = CommitMode.effectiveCommitMode(metadata.getCommitMode(), configuration.getCommitMode());
+            final int resolvedCommitMode = configuration.getCommitMode();
             // Enrollment is driven by the ENROLLED record in _meta, not by the metadata FORMAT. A legacy
-            // table (no commit-mode field at all) reads back UNSET and is therefore covered by the same
+            // table (no enrolment field at all) reads back UNSET and is therefore covered by the same
             // rule as a table that was created while the instance ran nosync and only became adaptive when
             // the default changed under it. Both have no anchor, both must get one at their live cut.
             // A writer opened against a root other than the engine's dbRoot is a PRIVATE STAGING writer --
@@ -689,11 +691,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else if (adaptiveExitPending) {
                 reconcileAdaptiveExit(effectiveCommitMode);
             }
-            // Publish this table's effective commit mode to the per-table tracker so the WAL-side jobs
-            // (purge floor, durable-epoch trigger, recovery, wal_tables) read the same value this writer
-            // uses for its apply-path decisions — covers a post-restart reopen where registerTable did not
-            // run for this table.
-            publishEffectiveCommitModeIfUnset();
 
             // Replay any posting seal-purge intents a prior close spilled to a
             // table-local file because it could not reach the purge queue or the
@@ -2628,9 +2625,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * The table's EFFECTIVE commit mode (its {@code _meta} override resolved against the global
-     * {@code cairo.commit.mode}). Used by apply-path helpers that run outside this class (e.g.
-     * {@code O3CopyJob}) so their column-data sync follows THIS table's mode. See Deferred 1.
+     * The commit mode this writer applies under: the global {@code cairo.commit.mode}, held at SYNC while
+     * the table is not yet enrolled in adaptive. Used by apply-path helpers that run outside this class
+     * (e.g. {@code O3CopyJob}) so their column-data sync follows the same grade.
      */
     public int getEffectiveCommitMode() {
         return effectiveCommitMode;
@@ -3770,38 +3767,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         updateMatViewDefinition(newDefinition);
     }
 
-    /**
-     * Publishes this writer's cached {@link #effectiveCommitMode} to the table's {@link io.questdb.cairo.wal.seq.SeqTxnTracker}
-     * so every WAL-side adaptive decision point (purge floor, durable-epoch trigger, recovery, wal_tables)
-     * reads the same per-table mode this writer applies. No-op for non-WAL tables (they have no tracker
-     * and no durable WAL to drive the adaptive lifecycle).
-     */
-    private void publishEffectiveCommitMode() {
-        if (metadata.isWalEnabled()) {
-            engine.getTableSequencerAPI().getTxnTracker(tableToken).setCommitModeAtSeqTxn(effectiveCommitMode, getSeqTxn());
-        }
-    }
-
-    private void publishEffectiveCommitModeIfUnset() {
-        if (metadata.isWalEnabled()) {
-            // A sequenced SET PARAM commit_mode is published by WalWriter before asynchronous table apply.
-            // Do not let a concurrently opening TableWriter overwrite that newer authority with old _meta.
-            engine.getTableSequencerAPI().getTxnTracker(tableToken).setCommitModeIfUnset(effectiveCommitMode);
-        }
-    }
-
     private void enrollTableInAdaptiveMode() {
         publishAdaptiveBaselineOrFail();
         // COVERING BARRIER: publishAdaptiveBaselineOrFail() has forced the whole materialized state durable
         // and re-read the marker to confirm the anchor names exactly this (txn, seqTxn). Only now may _meta
         // record the state as lazily-applicable. A crash before this point leaves the record unenrolled and
         // re-enrolls on the next open (publishing a fresh baseline); a crash after it always has a validated
-        // anchor to rewind to. The declared per-table override is left exactly as it was -- a table that
-        // inherits the server default keeps inheriting it.
+        // anchor to rewind to.
         recordEnrolledCommitMode(CommitMode.ADAPTIVE);
         effectiveCommitMode = CommitMode.ADAPTIVE;
         adaptiveEnrollmentPending = false;
-        publishEffectiveCommitMode();
         reapplyColumnCommitMode(effectiveCommitMode);
     }
 
@@ -3859,42 +3834,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
         }
         tracker.clearPinnedEpoch();
-    }
-
-    @Override
-    public void setMetaCommitMode(int commitMode) {
-        commit();
-        final int newEffectiveCommitMode = CommitMode.effectiveCommitMode(commitMode, configuration.getCommitMode());
-        final int oldEffectiveCommitMode = effectiveCommitMode;
-        final boolean entersAdaptive = metadata.isWalEnabled()
-                && oldEffectiveCommitMode != CommitMode.ADAPTIVE
-                && newEffectiveCommitMode == CommitMode.ADAPTIVE;
-        final boolean leavesAdaptive = metadata.isWalEnabled()
-                && metadata.getEnrolledCommitMode() == CommitMode.ADAPTIVE
-                && newEffectiveCommitMode != CommitMode.ADAPTIVE;
-        if (entersAdaptive || leavesAdaptive) {
-            // Both directions take the same barrier, for the same reason: _meta is about to make a durability
-            // claim about the materialized state, so the state has to be made to match FIRST. Entering, the
-            // epoch must exist before the table may be applied lazily; leaving, the lazily-applied state must
-            // be reconciled before the record stops saying it may be ahead of the epoch. A failure in either
-            // direction leaves the old metadata authoritative and the newly written artifacts harmless.
-            publishAdaptiveBaselineOrFail();
-        }
-        metadata.setCommitMode(commitMode);
-        if (entersAdaptive || leavesAdaptive) {
-            metadata.setEnrolledCommitMode(newEffectiveCommitMode);
-        }
-        writeMetadataToDisk();
-        this.effectiveCommitMode = newEffectiveCommitMode;
-        adaptiveEnrollmentPending = false;
-        adaptiveExitPending = false;
-        publishEffectiveCommitMode();
-        if (leavesAdaptive) {
-            // After the record is durable, never before: a crash in between must leave the next startup
-            // rolling forward to this epoch, which requires its partitions to still be pinned.
-            releaseEpochPin();
-        }
-        reapplyColumnCommitMode(effectiveCommitMode);
     }
 
     private void publishAdaptiveBaselineOrFail() {
@@ -3987,13 +3926,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Re-applies all mode-dependent flags to already-open column memories, the commit-pointer writers
      * ({@code _txn}, {@code _cv}) and the open indexers.
      * <p>
-     * The pointer/index writers are included because they historically read the INSTANCE-GLOBAL
-     * {@code cairo.commit.mode} directly, which inverted the per-table polarity used everywhere else: a
-     * {@code WITH commit_mode='sync'} table on a {@code nosync} instance skipped its {@code _txn}/{@code _cv}
-     * flush entirely, and a {@code nosync} table on a {@code sync} instance paid for one it had opted out of.
-     * They now defer to whatever this method publishes, so EVERY path that CHANGES
-     * {@link #effectiveCommitMode} after construction must call it (legacy adaptive enrollment,
-     * {@code setMetaCommitMode}).
+     * The pointer/index writers are included because they seed their own grade from the instance-global
+     * {@code cairo.commit.mode} at construction, which is wrong for the enrolment window. They defer to
+     * whatever this method publishes, so EVERY path that changes {@link #effectiveCommitMode} after
+     * construction must call it -- today that is adaptive enrolment.
      * <p>
      * The CONSTRUCTOR deliberately does not route through here — it publishes to {@code txWriter} and
      * {@code columnVersionWriter} inline, each at the point the object exists, because both must know the
@@ -6158,9 +6094,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (type > 0) {
             dataMem = Vm.getPMARInstance(configuration);
             dataMem.setApplyLazy(applyLazyColumns);
-            // Thread the per-table EFFECTIVE commit mode into the page-release durability decision so a
-            // WITH commit_mode='sync' column on a nosync instance still msyncs its completed pages (the
-            // apply-side syncColumns() already uses effectiveCommitMode; release() must match).
+            // Thread this writer's commit mode into the page-release durability decision: a table held at
+            // SYNC pending adaptive enrolment must still msync its completed pages (the apply-side
+            // syncColumns() already uses effectiveCommitMode; release() must match).
             dataMem.setCommitMode(effectiveCommitMode);
             o3DataMem1 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
             o3DataMem2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
@@ -12665,7 +12601,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // durable WAL (the convert-partition command is itself WAL-replayed), so it is left
                 // non-durable here (lazy) and made crash-safe by the epoch + recovery roll-forward.
                 // The partition DIRECTORY entry below stays durable (structural). See appliesColumnSync.
-                // Per-table effective mode (Deferred 1): the data sync follows THIS table's mode.
                 // CLEANUP COMPLETES: these fsyncs are durability barriers on a CLEANUP path, so a failure
                 // here (a genuine EIO, or the crash harness's Error) must not skip the frees below -- the
                 // fd closes, the decoder close and the parquet munmap. Capture and rethrow after everything
@@ -14410,10 +14345,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void rewriteAndSwapMetadata(TableWriterMetadata metadata) {
-        final int metadataEffectiveCommitMode = CommitMode.effectiveCommitMode(
-                metadata.getCommitMode(),
-                configuration.getCommitMode()
-        );
+        final int metadataEffectiveCommitMode = configuration.getCommitMode();
         // create new _meta.swp
         this.metaSwapIndex = rewriteMetadata(metadata);
 
@@ -14492,7 +14424,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
             ddlMem.putInt(metadata.getTableFormat());
-            ddlMem.putInt(metadata.getCommitMode());
             ddlMem.putInt(metadata.getEnrolledCommitMode());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
@@ -14544,7 +14475,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             TableUtils.storeMetaBodyChecksum(ddlMem, ddlMem.getAppendOffset());
             ddlMem.sync(false);
-            if (CommitMode.effectiveCommitMode(metadata.getCommitMode(), configuration.getCommitMode()) != CommitMode.NOSYNC) {
+            if (configuration.getCommitMode() != CommitMode.NOSYNC) {
                 try {
                     path.trimTo(pathSize).concat(META_SWAP_FILE_NAME);
                     if (index > 0) {
@@ -15670,8 +15601,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * stays as durable as the commit mode dictates. NOSYNC and the structural metadata are untouched.
      */
     private int applyColumnSyncMode() {
-        // Per-table effective mode (Deferred 1): under a table whose effective mode is ADAPTIVE the
-        // split/squash column writes are lazy even when the instance default is SYNC/ASYNC, and vice versa.
+        // This writer's own grade, not the raw global mode: a table held at SYNC pending adaptive
+        // enrolment must flush its split/squash column writes even though the instance runs ADAPTIVE.
         final int commitMode = effectiveCommitMode;
         return appliesColumnSync(commitMode) ? commitMode : CommitMode.NOSYNC;
     }

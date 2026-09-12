@@ -270,8 +270,7 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
             table = "sweep_w0";
             execute("drop table if exists " + table);
             drainWalQueue();
-            execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal "
-                    + "with commit_mode='adaptive'");
+            execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal");
             tt = engine.verifyTableName(table);
             return new TableToken[]{tt};
         }

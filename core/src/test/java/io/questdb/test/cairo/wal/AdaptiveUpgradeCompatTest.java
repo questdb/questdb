@@ -26,6 +26,7 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.RecoveryCoordinator;
@@ -59,8 +60,8 @@ import org.junit.Test;
  * <p>
  * Coverage split (only the GAPS are added here; the rest is cited, not duplicated):
  * <ul>
- *   <li><b>meta {@code commit_mode} field (v2&rarr;v3)</b> &mdash;
- *       {@link #testMetaCommitModeFieldIsInertOnPreV3Meta} (NEW; the gap).</li>
+ *   <li><b>meta adaptive enrolment field</b> &mdash;
+ *       {@link #testMetaEnrolmentFieldIsInertOnPreEnrolmentMeta} (NEW; the gap).</li>
  *   <li><b>{@code _snapshot} marker + {@code .epoch} copies</b> &mdash;
  *       {@link #testStraySnapshotAndEpochArtifactsAreInertOnNormalOpen} (NEW; the gap).</li>
  *   <li><b>downgrade</b> &mdash; {@link #testDowngradeFromAdaptiveDrainsCleanlyAndArtifactsAreInert} +
@@ -77,32 +78,33 @@ import org.junit.Test;
 public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
 
     // ------------------------------------------------------------------------------------------------
-    // Artifact 1: the per-table commit_mode field in _meta (meta minor version v2 -> v3).
+    // Artifact 1: the adaptive enrolment record in _meta (a version-gated meta tail field).
     // ------------------------------------------------------------------------------------------------
 
     /**
-     * A {@code _meta} written BEFORE the {@code commit_mode} field existed (meta minor version &lt; 3) must
-     * be read as {@link CommitMode#UNSET} &rarr; the field is ignored &rarr; the table defers to the global
-     * {@code cairo.commit.mode}. This is the gate an OLDER binary relies on (it never reads the field at
-     * all) and that a NEW binary applies when it opens a pre-v3 table.
+     * A {@code _meta} written BEFORE the enrolment field existed must be read as {@link CommitMode#UNSET}
+     * &rarr; the field is ignored &rarr; the table reads as "never adaptive", which is the conservative
+     * answer. This is the gate an OLDER binary relies on (it never reads the field at all) and that a NEW
+     * binary applies when it opens such a table.
      * <p>
-     * Method: create a table {@code WITH commit_mode='adaptive'} (a real v3 {@code _meta} whose field
-     * holds {@code ADAPTIVE}). Then flip ONLY the meta minor-version high short 3&rarr;2 on disk, keeping
-     * the low-short checksum valid, i.e. turn it into a valid pre-commit-mode (v2 / table-format-era)
-     * {@code _meta}. {@link TableUtils#getCommitMode} short-circuits on
-     * {@code isMetaFormatAtLeast(mem, 3) == false} and returns {@code UNSET} without reading the field.
+     * Method: run adaptive so a writer enrols the table and stamps the field with {@code ADAPTIVE}. Then
+     * flip ONLY the meta minor-version high short down to the table-format era on disk, keeping the
+     * low-short checksum valid. {@link TableUtils#getEnrolledCommitMode} short-circuits on
+     * {@code isMetaFormatAtLeast(mem, META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE) == false} and
+     * returns {@code UNSET} without reading the field.
      * <p>
-     * <b>Non-vacuity A/B on the identical file:</b> before the flip (v3) the field reads {@code ADAPTIVE};
-     * after the flip (v2) it reads {@code UNSET}. Only the one version-gate byte changed, so the version
-     * gate is provably what makes the field inert. If the field were NOT gated, the v2 read would still
+     * <b>Non-vacuity A/B on the identical file:</b> before the flip the field reads {@code ADAPTIVE};
+     * after the flip it reads {@code UNSET}. Only the one version-gate word changed, so the version gate
+     * is provably what makes the field inert. If the field were NOT gated, the downgraded read would still
      * return {@code ADAPTIVE} and this test would fail.
      */
     @Test
-    public void testMetaCommitModeFieldIsInertOnPreV3Meta() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+    public void testMetaEnrolmentFieldIsInertOnPreEnrolmentMeta() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         assertMemoryLeak(() -> {
-            execute("create table m (ts timestamp, v long) timestamp(ts) partition by day wal " +
-                    "with commit_mode='adaptive'");
+            execute("create table m (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into m values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
             final TableToken tt = engine.verifyTableName("m");
             // Drop the pooled writer so _meta is unmapped and we can poke it and re-read it from disk.
             engine.releaseInactive();
@@ -112,39 +114,32 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.META_FILE_NAME);
                 final LPSZ metaPath = path.$();
 
-                // (control / non-vacuity) v3 meta: the field IS read -> ADAPTIVE.
+                // (control / non-vacuity) current meta: the field IS read -> ADAPTIVE.
                 try (TableReaderMetadata md = new TableReaderMetadata(configuration, tt)) {
                     md.loadMetadata();
-                    Assert.assertEquals("v3 meta must read the stored commit_mode field",
-                            CommitMode.ADAPTIVE, md.getCommitMode());
-                    Assert.assertEquals("effective(ADAPTIVE, nosync) resolves to the per-table override",
-                            CommitMode.ADAPTIVE,
-                            CommitMode.effectiveCommitMode(md.getCommitMode(), CommitMode.NOSYNC));
+                    Assert.assertEquals("current meta must read the stored enrolment field",
+                            CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
                 }
 
-                // Flip meta minor version 3 -> 2 (keep the checksum low short) => a valid pre-v3 meta.
+                // Flip the meta minor version down (keep the checksum low short) => a valid pre-enrolment meta.
                 final int cur = peekInt(ff, metaPath, TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
                 // The invariant this precondition needs is that the field is LIVE in the file we are about
                 // to downgrade, not that the file sits at any particular version: META_FORMAT_MINOR_VERSION
-                // _LATEST legitimately moves whenever a tail field is added (it went 3 -> 4 with the enrolled
-                // commit mode). Pinning the exact value would fail on every such addition while proving
-                // nothing about the gate under test.
-                Assert.assertTrue("precondition: fresh table must be written at or above the commit-mode meta"
-                                + " version, or the field being downgraded away is not live to begin with",
-                        Numbers.decodeHighShort(cur) >= TableUtils.META_FORMAT_MINOR_VERSION_COMMIT_MODE);
+                // _LATEST legitimately moves whenever a tail field is added. Pinning the exact value would
+                // fail on every such addition while proving nothing about the gate under test.
+                Assert.assertTrue("precondition: an enrolled table must be written at or above the enrolment"
+                                + " meta version, or the field being downgraded away is not live to begin with",
+                        Numbers.decodeHighShort(cur) >= TableUtils.META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE);
                 final int downgraded = Numbers.encodeLowHighShorts(
                         Numbers.decodeLowShort(cur),                         // keep the checksum valid
-                        TableUtils.META_FORMAT_MINOR_VERSION_TABLE_FORMAT);  // (short) 2 -> pre-commit-mode
+                        TableUtils.META_FORMAT_MINOR_VERSION_TABLE_FORMAT);  // pre-enrolment
                 pokeInt(ff, metaPath, TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION, downgraded);
 
-                // (the gate) v2 meta: the field is IGNORED -> UNSET -> defers to the global mode.
+                // (the gate) pre-enrolment meta: the field is IGNORED -> UNSET -> "never adaptive".
                 try (TableReaderMetadata md = new TableReaderMetadata(configuration, tt)) {
                     md.loadMetadata();
-                    Assert.assertEquals("pre-v3 meta must read commit_mode as UNSET (field gated away)",
-                            CommitMode.UNSET, md.getCommitMode());
-                    Assert.assertEquals("UNSET must resolve to the global commit mode (nosync)",
-                            CommitMode.NOSYNC,
-                            CommitMode.effectiveCommitMode(md.getCommitMode(), CommitMode.NOSYNC));
+                    Assert.assertEquals("pre-enrolment meta must read the record as UNSET (field gated away)",
+                            CommitMode.UNSET, md.getEnrolledCommitMode());
                 }
             }
         });
@@ -178,12 +173,9 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             }
 
             node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-            engine.getTableSequencerAPI().getTxnTracker(token).setCommitMode(CommitMode.UNSET);
             new RecoveryCoordinator(engine).recover();
 
             try (io.questdb.cairo.TableWriter writer = getWriter(token)) {
-                Assert.assertEquals("enrolled legacy table must keep inheriting the server default",
-                        CommitMode.UNSET, writer.getMetadata().getCommitMode());
                 Assert.assertEquals(CommitMode.ADAPTIVE, writer.getEffectiveCommitMode());
             }
             engine.releaseInactive();
@@ -192,12 +184,12 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
                 Assert.assertTrue("opening the writer must publish the enrollment baseline", ff.exists(path.$()));
                 metadata.loadMetadata();
-                Assert.assertEquals(CommitMode.UNSET, metadata.getCommitMode());
+                Assert.assertEquals(CommitMode.ADAPTIVE, metadata.getEnrolledCommitMode());
 
                 path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
                 final int upgraded = peekInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
-                Assert.assertTrue("enrollment must upgrade metadata to the commit-mode-aware format",
-                        Numbers.decodeHighShort(upgraded) >= TableUtils.META_FORMAT_MINOR_VERSION_COMMIT_MODE);
+                Assert.assertTrue("enrollment must upgrade metadata to the enrolment-aware format",
+                        Numbers.decodeHighShort(upgraded) >= TableUtils.META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE);
             }
 
             new RecoveryCoordinator(engine).recover();
@@ -301,10 +293,12 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
     // ------------------------------------------------------------------------------------------------
 
     /**
-     * Live downgrade: an adaptive table that has taken a durable epoch is switched to nosync via
-     * {@code ALTER TABLE ... SET PARAM commit_mode='nosync'}. It keeps applying WAL cleanly (no suspend,
-     * no corruption), {@code wal_tables()} reports the new mode, and the leftover {@code _snapshot}/
-     * {@code .epoch} artifacts remain on disk, inert (the live read/apply path never opens them).
+     * Downgrade: an adaptive table that has taken a durable epoch is restarted on an instance configured
+     * {@code cairo.commit.mode=nosync}. The commit mode is instance-wide and fixed for the life of a
+     * process, so a downgrade is exactly this — a restart under the new mode. The first writer to open the
+     * table reconciles it out of adaptive, it keeps applying WAL cleanly (no suspend, no corruption), and
+     * the leftover {@code _snapshot}/{@code .epoch} artifacts remain on disk, inert (the live read/apply
+     * path never opens them).
      */
     @Test
     public void testDowngradeFromAdaptiveDrainsCleanlyAndArtifactsAreInert() throws Exception {
@@ -322,25 +316,20 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             assertCurrentEpochArtifactExists(tt, TableUtils.TXN_FILE_NAME);
             assertCurrentEpochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME);
 
-            // Downgrade this table to nosync.
-            execute("alter table d set param commit_mode='nosync'");
-            drainWalQueue();
-            assertQuery("select name, commitMode from wal_tables() where name = 'd'")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .returns("name\tcommitMode\nd\tnosync\n");
-
-            // Keep operating under nosync: applies cleanly, no suspend.
-            execute("insert into d values ('2024-03-01T02:00:00.000000Z', 3)");
-            execute("insert into d values ('2024-03-01T03:00:00.000000Z', 4)");
-            drainWalQueue();
-            Assert.assertFalse("downgraded table must not be suspended",
-                    engine.getTableSequencerAPI().isSuspended(tt));
-            assertQuery("select count() from d")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("count\n4\n");
+            // Downgrade the instance and reboot on it.
+            releaseHandles();
+            try (CairoEngine restarted = new CairoEngine(nosyncConfiguration())) {
+                final TableToken rtt = restarted.verifyTableName("d");
+                // Keep operating under nosync: applies cleanly, no suspend.
+                restarted.execute("insert into d values ('2024-03-01T02:00:00.000000Z', 3)");
+                restarted.execute("insert into d values ('2024-03-01T03:00:00.000000Z', 4)");
+                TestUtils.drainWalQueue(restarted);
+                Assert.assertFalse("downgraded table must not be suspended",
+                        restarted.getTableSequencerAPI().isSuspended(rtt));
+                try (TableReader r = restarted.getReader(rtt)) {
+                    Assert.assertEquals("all rows must survive the downgrade", 4L, r.size());
+                }
+            }
 
             // Leftover artifacts remain, inert (nothing on the live path opens them).
             assertArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME);
@@ -349,8 +338,9 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
     }
 
     /**
-     * Downgrade + reboot: the hard case. After a downgrade the WAL purge floor drops from the durable
-     * epoch to the applied seqTxn (the epoch floor applies ONLY under ADAPTIVE — {@code WalPurgeJob}), so
+     * Downgrade + reboot: the hard case. After a downgrade (a restart under {@code nosync}) the WAL purge
+     * floor drops from the durable epoch to the applied seqTxn (the epoch floor applies ONLY under
+     * ADAPTIVE — {@code WalPurgeJob}), so
      * WAL segments above the frozen epoch become purgeable. If {@code recover()} still rolled the live
      * {@code _txn}/{@code _cv} back to the stale epoch, the subsequent replay of {@code (epoch, live]}
      * could hit purged WAL &rarr; data loss / suspend. It must NOT: {@code RecoveryCoordinator} skips
@@ -376,29 +366,35 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             assertArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME);
             Assert.assertTrue("adaptive must have recorded a durable epoch", readMarkerEpochSeqTxn(tt) > 0);
 
-            // Downgrade to nosync, then apply MORE rows so the live seqTxn advances well past the frozen
-            // epoch while NO new epoch is taken (nosync).
-            execute("alter table dr set param commit_mode='nosync'");
-            drainWalQueue();
-            execute("insert into dr values ('2024-04-01T02:00:00.000000Z', 3)");
-            execute("insert into dr values ('2024-04-01T03:00:00.000000Z', 4)");
-            execute("insert into dr values ('2024-04-01T04:00:00.000000Z', 5)");
-            drainWalQueue();
-
-            // The epoch is now FROZEN (nosync takes no new epochs); capture its on-disk value.
-            final long frozenEpoch = readMarkerEpochSeqTxn(tt);
-            final long liveSeqTxn = engine.getTableSequencerAPI().getTxnTracker(tt).getSeqTxn();
-            Assert.assertTrue("live seqTxn (" + liveSeqTxn + ") must be ahead of the frozen epoch ("
-                    + frozenEpoch + ")", liveSeqTxn > frozenEpoch);
-
-            // Force a WAL purge under the (now nosync) floor: segments below the applied txn become
-            // purgeable — exactly the condition that would make a rollback to the stale epoch lossy.
-            forceWalPurge(engine);
-
-            // Reboot on a fresh engine: completeInit() -> RecoveryCoordinator.recover() runs as on a real
-            // restart. The stale marker is still on disk and behind live; recovery must ignore it.
+            // Downgrade the instance and reboot on it. The first writer to open the table reconciles it out
+            // of adaptive: it forces the materialized state durable, re-anchors the marker at that cut, and
+            // stops claiming the state may be lazily ahead of the epoch. Then apply MORE rows so the live
+            // seqTxn advances well past that now-frozen epoch while NO new epoch is taken (nosync).
             releaseHandles();
-            try (CairoEngine restarted = new CairoEngine(configuration)) {
+            final CairoConfiguration nosyncConfiguration = nosyncConfiguration();
+            final long frozenEpoch;
+            final long liveSeqTxn;
+            try (CairoEngine downgraded = new CairoEngine(nosyncConfiguration)) {
+                final TableToken dtt = downgraded.verifyTableName("dr");
+                downgraded.execute("insert into dr values ('2024-04-01T02:00:00.000000Z', 3)");
+                downgraded.execute("insert into dr values ('2024-04-01T03:00:00.000000Z', 4)");
+                downgraded.execute("insert into dr values ('2024-04-01T04:00:00.000000Z', 5)");
+                TestUtils.drainWalQueue(downgraded);
+
+                // The epoch is now FROZEN (nosync takes no new epochs); capture its on-disk value.
+                frozenEpoch = readMarkerEpochSeqTxn(tt);
+                liveSeqTxn = downgraded.getTableSequencerAPI().getTxnTracker(dtt).getSeqTxn();
+                Assert.assertTrue("live seqTxn (" + liveSeqTxn + ") must be ahead of the frozen epoch ("
+                        + frozenEpoch + ")", liveSeqTxn > frozenEpoch);
+
+                // Force a WAL purge under the (now nosync) floor: segments below the applied txn become
+                // purgeable — exactly the condition that would make a rollback to the stale epoch lossy.
+                forceWalPurge(downgraded);
+            }
+
+            // Reboot again, still nosync: completeInit() -> RecoveryCoordinator.recover() runs as on a real
+            // restart. The stale marker is still on disk and behind live; recovery must ignore it.
+            try (CairoEngine restarted = new CairoEngine(nosyncConfiguration)) {
                 TestUtils.drainWalQueue(restarted);
                 final TableToken rtt = restarted.verifyTableName("dr");
                 Assert.assertFalse("downgraded table must not be suspended after reboot",
@@ -474,6 +470,19 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             p.of(configuration.getDbRoot()).concat(tt).concat(fileName);
             Assert.assertTrue("artifact must exist: " + p, ff.exists(p.$()));
         }
+    }
+
+    /**
+     * The same instance configuration with {@code cairo.commit.mode=nosync}. The commit mode is read once
+     * at engine construction, so this is how a downgrade is modelled: a restart under the new mode.
+     */
+    private CairoConfiguration nosyncConfiguration() {
+        return new CairoConfigurationWrapper(configuration) {
+            @Override
+            public int getCommitMode() {
+                return CommitMode.NOSYNC;
+            }
+        };
     }
 
     /**
