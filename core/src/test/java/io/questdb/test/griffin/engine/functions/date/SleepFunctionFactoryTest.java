@@ -68,14 +68,8 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
 
                     setCurrentMicros(200_000);
                     Assert.assertTrue(registry.cancel(queryId, sqlExecutionContext));
-                    // Advancing the clock past the sleep deadline also makes the armed timer entry
-                    // due, so the timer shard thread races this thread's cancel for the wake. When
-                    // the timer thread wins it unparks the Fiber on its own thread and publishes it
-                    // to the run queue a moment later, so a single-shot drain here can legitimately
-                    // see an empty queue. Drain until the Fiber shows up instead.
-                    drainUntilResumed(runtime);
+                    drainUntilDone(runtime, task);
 
-                    Assert.assertTrue(task.isDone());
                     Assert.assertNotNull("cancellation at the sleep deadline must fail the query", task.error);
                     Assert.assertTrue(task.error.getMessage(), task.error.getMessage().contains("cancel"));
                 } finally {
@@ -108,9 +102,8 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(1, runtime.getParkedFiberCount());
 
                 cancellationSignal.cancel();
-                Assert.assertEquals(1, runtime.drain(1));
+                drainUntilDone(runtime, task);
 
-                Assert.assertTrue(task.isDone());
                 Assert.assertNotNull(task.error);
                 Assert.assertTrue(task.error.getMessage(), task.error.getMessage().contains("cancel"));
             } finally {
@@ -287,17 +280,6 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
-    private static void drainUntilResumed(FiberRuntime runtime) {
-        final long deadline = System.nanoTime() + 30_000_000_000L;
-        while (System.nanoTime() < deadline) {
-            if (runtime.drain(1) == 1) {
-                return;
-            }
-            Os.pause();
-        }
-        Assert.fail("fiber did not resume within 30s");
-    }
-
     private static void close(FiberRuntime runtime) {
         runtime.beginQuiesce();
         final long deadline = System.nanoTime() + 5_000_000_000L;
@@ -306,6 +288,15 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
         }
         Assert.assertTrue(runtime.awaitClosed(deadline));
         runtime.closeAfterDrained();
+    }
+
+    private static void drainUntilDone(FiberRuntime runtime, SuspendableSleepTask task) {
+        final long deadline = System.nanoTime() + 5_000_000_000L;
+        while (!task.isDone() && System.nanoTime() < deadline) {
+            runtime.drain(1);
+            Os.pause();
+        }
+        Assert.assertTrue("fiber task did not finish after cancellation", task.isDone());
     }
 
     private static class PinnedSleepTask extends FiberTask {

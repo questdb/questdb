@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.log.LogFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LogCapture;
 import org.junit.Assert;
@@ -45,6 +46,7 @@ public class WalTolerableFailureLoggingTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
+        LogFactory.enableGuaranteedLogging(TableWriter.class);
         super.setUp();
         capture.start();
     }
@@ -52,8 +54,12 @@ public class WalTolerableFailureLoggingTest extends AbstractCairoTest {
     @Override
     @After
     public void tearDown() throws Exception {
-        capture.stop();
-        super.tearDown();
+        try {
+            capture.stop();
+            super.tearDown();
+        } finally {
+            LogFactory.disableGuaranteedLogging(TableWriter.class);
+        }
     }
 
     @Test
