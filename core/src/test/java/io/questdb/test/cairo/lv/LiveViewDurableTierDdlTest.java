@@ -95,7 +95,8 @@ import java.util.function.BooleanSupplier;
  * do over a block the view's own WAL holds and its table does not - including the block an
  * operator's {@code SUSPEND WAL} withholds until {@code RESUME WAL}, the blocks an apply retry
  * leaves behind when its time quota stops it part-way, and the replacement of an out-of-order
- * repair that did not land. Replica propagation belongs to a later stage.
+ * repair or of a wholesale applied-base rebuild that did not land. Replica propagation belongs to
+ * a later stage.
  */
 public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
@@ -4731,6 +4732,392 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testMidDrainRebuildWhoseReplacementDidNotApplyRepeatsItOnceItLands() throws Exception {
+        // The applied-base rebuild's half of the deferral the two out-of-order executors already
+        // take. All three commit a REPLACE_RANGE, hand an unapplied one to the reconciliation gate
+        // and advance no watermark, so the base range each replayed stays unconsumed - and only the
+        // repairs recover from that on their own. The row that triggered a repair sits in its own
+        // unconsumed range and still reads below the frontier, so the next drain repairs again. A
+        // wholesale rebuild has no trigger to re-fire: its replay carried the frontier to the top of
+        // the range, and the drain's out-of-order test is a strict below-frontier compare, so a
+        // range whose commits all sit at the frontier's own timestamp re-drains as an ordinary
+        // forward append.
+        //
+        // That is the shape here. The mid-drain fault stops one pass after the 00:00:02 row is fed,
+        // leaving seqTxn 3 and 4 - one timestamp between them, and the newest the base holds -
+        // unconsumed; the rebuild recomputes over all four commits and defers. Left to the drain,
+        // the turn that landed the block fed those two rows a second time over accumulators the
+        // rebuild had just reset and appended two rows the replacement already held: the view served
+        // 00:00:02 twice, at sums 13 and 17 above the 10 the replacement wrote, and only the row
+        // count guard noticed. The rebuild now leaves its debt on the instance and runs again over
+        // the applied base once the block lands.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // a root per flush
+        final String[] baseDir = new String[1];
+        final String[] lvDir = new String[1];
+        // -1 disarmed; >= 0 skip this many base WAL ts.d opens, then fail the next and disarm. Armed
+        // with 2 it skips the seqTxn-2 and seqTxn-3 commits and fails the seqTxn-4 one, so the
+        // seqTxn-3 row is already fed when the read throws - the mid-drain shape
+        // LiveViewSmokeTest.testMidDrainRefreshFailureRebuildsWindowState pins.
+        final AtomicInteger armBaseTsRead = new AtomicInteger(-1);
+        final AtomicBoolean failLvApply = new AtomicBoolean();
+        final AtomicInteger applyFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armBaseTsRead.get() >= 0
+                        && baseDir[0] != null
+                        && Utf8s.endsWithAscii(name, "ts.d")
+                        && Utf8s.containsAscii(name, baseDir[0])
+                        && Utf8s.containsAscii(name, "wal")) {
+                    if (armBaseTsRead.get() == 0) {
+                        armBaseTsRead.set(-1);
+                        return -1;
+                    }
+                    armBaseTsRead.decrementAndGet();
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                // The view's own partition, which only its apply writes - its WAL segments carry no
+                // partition name - so the replacement commits and the apply that would land it fails.
+                if (failLvApply.get()
+                        && lvDir[0] != null
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "2026-04-01")
+                        && Utf8s.endsWithAscii(name, ".d")) {
+                    applyFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            createMidDrainBaseAndView();
+            baseDir[0] = engine.verifyTableName("base").getDirName();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                capture.start();
+                final LiveViewInstance instance = deferAMidDrainRebuild(job, armBaseTsRead, failLvApply);
+                Assert.assertTrue("the rebuild's apply must actually have been failed", applyFaults.get() > 0);
+
+                final long replacementLvSeqTxn = instance.getPendingReplacementLvSeqTxn();
+                Assert.assertNotEquals("the rebuild must have handed its replacement to the gate",
+                        Numbers.LONG_NULL, replacementLvSeqTxn);
+                Assert.assertEquals(
+                        "the replacement must be the view's newest block",
+                        replacementLvSeqTxn,
+                        engine.getTableSequencerAPI().lastTxn(lvToken)
+                );
+                Assert.assertTrue("the replacement must not have applied", tracker.getWriterTxn() < replacementLvSeqTxn);
+                Assert.assertEquals("no watermark may walk past output the table does not hold",
+                        2, instance.getLastProcessedSeqTxn());
+                Assert.assertTrue("the deferred rebuild must leave its debt on the instance",
+                        instance.isWindowStateDirty());
+                // Reads stay on what the table holds: the two rows the flushes before the fault wrote.
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                                2026-04-01T00:00:01.000000Z\ta\t2\t3.0
+                                """);
+                Assert.assertEquals(2, lvRowCount(lvToken));
+                Assert.assertEquals("the counter tracks the table, which has not moved", 2, instance.getLvRowsTotal());
+                Assert.assertEquals("no row may wait in RAM above the outstanding block", 0, instance.getLeadRowCount());
+                capture.drain();
+                capture.assertLogged("live view applied-base rebuild deferred on its unapplied replacement, repeating it once the block lands [view=lv, lvSeqTxn="
+                        + replacementLvSeqTxn + ", ");
+
+                // Nothing may drain over a table that does not hold the rebuild's output, a forward
+                // row included.
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:03.000000Z', 'a', 5)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(replacementLvSeqTxn, instance.getPendingReplacementLvSeqTxn());
+                Assert.assertEquals(2, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals(
+                        "the gate must commit nothing behind the replacement",
+                        replacementLvSeqTxn,
+                        engine.getTableSequencerAPI().lastTxn(lvToken)
+                );
+                Assert.assertEquals(2, lvRowCount(lvToken));
+
+                // The fault clears, the gate lands the block and the rebuild runs again over the
+                // applied base - the range it never consumed, this time whole.
+                failLvApply.set(false);
+                driveUntil(
+                        job,
+                        () -> instance.getPendingReplacementLvSeqTxn() == Numbers.LONG_NULL
+                                && instance.getLastProcessedSeqTxn() > 2,
+                        "the rebuild never ran again once its replacement landed"
+                );
+                driveRefreshToQuiescence(job);
+                capture.drain();
+                capture.assertLogged("live view deferred replacement applied, resuming refresh [view=lv");
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                                2026-04-01T00:00:01.000000Z\ta\t2\t3.0
+                                2026-04-01T00:00:02.000000Z\ta\t3\t6.0
+                                2026-04-01T00:00:02.000000Z\ta\t4\t10.0
+                                2026-04-01T00:00:03.000000Z\ta\t5\t15.0
+                                """);
+                Assert.assertEquals(5, lvRowCount(lvToken));
+                Assert.assertEquals(5, instance.getLvRowsTotal());
+                Assert.assertFalse("the repeat clears the debt", instance.isWindowStateDirty());
+                Assert.assertFalse(instance.isTierStale());
+                Assert.assertEquals(tracker.getSeqTxn(), tracker.getWriterTxn());
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+
+                // Steady state resumes: the repeat advanced the watermark past every commit, so a
+                // later one does not re-feed them.
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:04.000000Z', 'a', 6)");
+                drainWalQueue();
+                driveUntilDurableRowCount(job, 6);
+                driveRefreshToQuiescence(job);
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                                2026-04-01T00:00:01.000000Z\ta\t2\t3.0
+                                2026-04-01T00:00:02.000000Z\ta\t3\t6.0
+                                2026-04-01T00:00:02.000000Z\ta\t4\t10.0
+                                2026-04-01T00:00:03.000000Z\ta\t5\t15.0
+                                2026-04-01T00:00:04.000000Z\ta\t6\t21.0
+                                """);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testRestartWhileAMidDrainDeferralHoldsRebuildsFromTheAppliedBase() throws Exception {
+        // The restart the deferred rebuild's debt cannot cross. The marking lives in RAM, so a
+        // process that comes back over the same unapplied replacement has nothing telling it a
+        // rebuild is still owed - and the range that rebuild replayed is still unconsumed, with the
+        // persisted watermark below it.
+        //
+        // It is safe anyway, and not by accident: the wholesale rebuild retires the timeline before
+        // it replays and seals nothing over a replacement that did not apply, so the view comes
+        // back with no timeline to restore from and takes the applied-base rebuild instead - the
+        // same replay, from a table that by then holds the block, advancing the watermark past the
+        // range. The restart pays that rebuild rather than a restore, which is the cost, not a
+        // wrong row.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // a root per flush
+        final String[] baseDir = new String[1];
+        final String[] lvDir = new String[1];
+        final AtomicInteger armBaseTsRead = new AtomicInteger(-1);
+        final AtomicBoolean failLvApply = new AtomicBoolean();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armBaseTsRead.get() >= 0
+                        && baseDir[0] != null
+                        && Utf8s.endsWithAscii(name, "ts.d")
+                        && Utf8s.containsAscii(name, baseDir[0])
+                        && Utf8s.containsAscii(name, "wal")) {
+                    if (armBaseTsRead.get() == 0) {
+                        armBaseTsRead.set(-1);
+                        return -1;
+                    }
+                    armBaseTsRead.decrementAndGet();
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failLvApply.get()
+                        && lvDir[0] != null
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "2026-04-01")
+                        && Utf8s.endsWithAscii(name, ".d")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            createMidDrainBaseAndView();
+            baseDir[0] = engine.verifyTableName("base").getDirName();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = deferAMidDrainRebuild(job, armBaseTsRead, failLvApply);
+                Assert.assertTrue("the debt this restart drops must be there to drop",
+                        instance.isWindowStateDirty());
+                // The rebuild retired it on the way in and sealed nothing over a replacement that
+                // did not apply, so the restart below has nothing to restore from.
+                assertTimelineExists(lvToken, false);
+            }
+
+            // The restart, with the fault cleared so the block can land under the new process.
+            failLvApply.set(false);
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The failed apply suspended the view's table, and the restart's reconcile is one of
+                // the two paths that skip a suspended one, so the view holds where it stopped until
+                // an operator lifts it - the semantics stage 26 pinned. Nothing has moved meanwhile.
+                driveRefreshToQuiescence(job);
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\nsuspended\n");
+                Assert.assertEquals(2, lvRowCount(lvToken));
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveRefreshToQuiescence(job);
+                capture.waitFor("live view restart rebuilding from applied base [view=lv");
+            } finally {
+                capture.stop();
+            }
+            final LiveViewInstance restarted = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertEquals("the restart's rebuild consumes the range the deferral left",
+                    4, restarted.getLastProcessedSeqTxn());
+            Assert.assertEquals(4, restarted.getLvRowsTotal());
+            assertQuery("SELECT ts, sym, x, s FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tx\ts
+                            2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                            2026-04-01T00:00:01.000000Z\ta\t2\t3.0
+                            2026-04-01T00:00:02.000000Z\ta\t3\t6.0
+                            2026-04-01T00:00:02.000000Z\ta\t4\t10.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testRepairDeferralKeepsTheTierAtWhatTheTableHolds() throws Exception {
+        // The other half of what a deferral leaves behind: the in-memory tier. Every out-of-order
+        // repair rebuilds it from the view's own table at its tail, and a deferral reaches that tail
+        // like any other completed turn - the executors report an unapplied replacement as a
+        // finished turn, not a park. So the slot it stages is a table without the replacement,
+        // stamped with the seqTxn that table stands at, and the fence passes: the seam serves
+        // exactly the rows the table holds, behind the view's own WAL and never ahead of it.
+        //
+        // What must never happen is a lead published on top of that slot. It would re-stamp rows
+        // the replacement is about to rewrite with a seqTxn a reader accepts, which is how the
+        // part-way apply retry served a dropped row before stage 27. Nothing does: the gate holds
+        // every turn until the block lands, the reconcile lands it without rebuilding, and the
+        // repair that runs again off the base range it never consumed restages the slot at its own
+        // tail. The forward row below is the probe - it commits nothing behind the gate and leaves
+        // the band exactly as the deferral staged it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_MAX, "4h");
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failApply = new AtomicBoolean();
+        final AtomicInteger applyFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failApply.get()
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "2026-01-01T02")
+                        && Utf8s.endsWithAscii(name, ".d")) {
+                    applyFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            // Wide enough that the band is the view's whole output, so what the slot holds is
+            // decided by the rebuild alone rather than by the window's retention.
+            createHourlyRangeView("IN MEMORY 4h ");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = flushHourlyRepairHistory(job);
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+                assertBand(instance, "2026-01-01T01:00:10.000000Z", 5);
+
+                job.setSimulateDdlBeforeRepairReplacementForTest(() -> failApply.set(true));
+                execute("INSERT INTO base VALUES ('2026-01-01T02:00:15.000000Z', 'a', 100)");
+                driveUntil(
+                        job,
+                        () -> instance.getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL,
+                        "the head-miss repair never handed its replacement to the gate"
+                );
+                Assert.assertTrue("the replacement's apply must actually have been failed", applyFaults.get() > 0);
+                final long replacementLvSeqTxn = instance.getPendingReplacementLvSeqTxn();
+
+                // The tail restaged the slot from the table the replacement has not reached, so it
+                // is a pure disk subset of the five pre-repair rows and a reader takes the seam.
+                assertBand(instance, "2026-01-01T01:00:10.000000Z", 5);
+                Assert.assertEquals("a rebuilt slot carries no lead", 0, instance.getLeadRowCount());
+                Assert.assertFalse("the rebuilt slot mirrors the table, so nothing is stale", instance.isTierStale());
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                assertQuery("SELECT ts, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\ts
+                                2026-01-01T01:00:10.000000Z\t1.0
+                                2026-01-01T02:00:10.000000Z\t2.0
+                                2026-01-01T02:00:20.000000Z\t5.0
+                                2026-01-01T02:00:30.000000Z\t9.0
+                                2026-01-01T03:00:10.000000Z\t5.0
+                                """);
+
+                // The probe: a forward row arrives while the gate holds. It commits nothing, and
+                // nothing lands in the band on top of the rows the replacement is about to rewrite.
+                execute("INSERT INTO base VALUES ('2026-01-01T03:00:20.000000Z', 'a', 7)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(replacementLvSeqTxn, instance.getPendingReplacementLvSeqTxn());
+                Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals(
+                        "the gate must commit nothing behind the replacement",
+                        replacementLvSeqTxn,
+                        engine.getTableSequencerAPI().lastTxn(lvToken)
+                );
+                assertBand(instance, "2026-01-01T01:00:10.000000Z", 5);
+                Assert.assertEquals(0, instance.getLeadRowCount());
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertEquals(5, lvRowCount(lvToken));
+
+                // The fault clears, the gate lands the block, and the repeated repair restages the
+                // band over what it rewrote - the correction and the forward row with it.
+                failApply.set(false);
+                driveUntil(
+                        job,
+                        () -> instance.getPendingReplacementLvSeqTxn() == Numbers.LONG_NULL
+                                && instance.getLastProcessedSeqTxn() > processedBefore,
+                        "the repair never ran again once its replacement landed"
+                );
+                driveRefreshToQuiescence(job);
+                assertHeadMissRepairRows();
+                assertBand(instance, "2026-01-01T01:00:10.000000Z", 7);
+                Assert.assertEquals(0, instance.getLeadRowCount());
+                Assert.assertFalse(instance.isTierStale());
+                assertRoutingMode(LiveViewRecordCursor.ROUTING_SEAM);
+                Assert.assertEquals(7, instance.getLvRowsTotal());
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
     public void testPartWayRetryAfterResumeWalKeepsTheNextLeadOffTheBlockStillOutstanding() throws Exception {
         // RESUME WAL hands a suspended view's backlog to the lagging scan's retryPendingLiveViewApply,
         // and that retry's apply is the one a per-table time quota cuts short: a long suspension leaves
@@ -7632,8 +8019,18 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
      * frontier, so the repair localizes to a finite {@code [R, H)} and splices.
      */
     private void createHourlyRangeView() throws Exception {
+        createHourlyRangeView("");
+    }
+
+    /**
+     * {@link #createHourlyRangeView()} with an {@code IN MEMORY} window, for a case that reads the
+     * published tier slot rather than only the rows the view serves. Pass a clause wide enough to
+     * hold the whole history, so the band a rebuild stages is the table's whole content and
+     * {@link #assertBand} names it without a retention rule of its own.
+     */
+    private void createHourlyRangeView(String inMemoryClause) throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY HOUR START FROM NOW AS " +
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s " + inMemoryClause + "PARTITION BY HOUR START FROM NOW AS " +
                 "(SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
                 "RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW) AS s FROM base)");
     }
@@ -7921,6 +8318,64 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 );
             }
         }
+    }
+
+    /**
+     * The base and view the mid-drain rebuild cases run over: a per-symbol running sum whose base
+     * rows all land in one day, so the view's output is one partition and a refused column file in
+     * it fails every apply the rebuild attempts.
+     */
+    private void createMidDrainBaseAndView() throws Exception {
+        setCurrentMicros(0);
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY DAY START FROM NOW AS "
+                + "(SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts "
+                + "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS s FROM base)");
+    }
+
+    /**
+     * Drives {@link #createMidDrainBaseAndView} to a wholesale rebuild whose replacement committed
+     * without applying, and returns the view's instance.
+     * <p>
+     * Four commits, the last two sharing the newest timestamp the base holds. The first is drained
+     * clean, which also leaves the faulting cycle off the first-cycle restore path so its failure
+     * routes through {@code handleRefreshFailure}. The second enqueues its own refresh task while
+     * the third and fourth coalesce into the notification watermark, so the task the worker
+     * re-enqueues after the second drains both of them in one pass -
+     * {@code LiveViewSmokeTest.testMidDrainRefreshFailureRebuildsWindowState} pins that shape.
+     * {@code armBaseTsRead} then fails the fourth commit's segment read with the third's row already
+     * fed: a mid-drain fault, before any durable commit, whose recovery recomputes the view from the
+     * applied base. {@code failLvApply} refuses that recompute's apply, so it defers with seqTxn 3
+     * and 4 unconsumed - a range holding one timestamp, and the frontier's own.
+     */
+    private LiveViewInstance deferAMidDrainRebuild(
+            LiveViewRefreshJob job,
+            AtomicInteger armBaseTsRead,
+            AtomicBoolean failLvApply
+    ) throws Exception {
+        execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'a', 1)");
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull("live view 'lv' is not registered", instance);
+
+        setCurrentMicros(2_000_000L);
+        execute("INSERT INTO base VALUES ('2026-04-01T00:00:01.000000Z', 'a', 2)");
+        drainWalQueue();
+        execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 'a', 3)");
+        execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 'a', 4)");
+        drainWalQueue();
+
+        failLvApply.set(true);
+        armBaseTsRead.set(2);
+        drainJob(job);
+        drainWalQueue();
+        Assert.assertEquals("the mid-drain segment read must have been failed exactly once",
+                -1, armBaseTsRead.get());
+        Assert.assertNotEquals("the rebuild must have handed its replacement to the gate",
+                Numbers.LONG_NULL, instance.getPendingReplacementLvSeqTxn());
+        return instance;
     }
 
     private void createBaseAndView(String partitionByClause) throws Exception {

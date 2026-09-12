@@ -8932,6 +8932,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * {@link #o3Replay} does not come through here: it pins and plans once for both
      * executors, and calls the plan-taking overload directly.
+     * <p>
+     * A replacement that commits without applying leaves the debt on the instance here,
+     * because nothing else re-triggers a wholesale rebuild. See the marking below.
      */
     private void o3HeadMissReplay(
             LiveViewInstance instance,
@@ -8950,6 +8953,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             o3HeadMissReplay(instance, windowFactory, repairPlan, reader, fullRebuild, null, false);
         } finally {
             reader.close();
+        }
+        if (instance.getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL) {
+            // The replacement is in the view's WAL and not in its table, so the deferral
+            // advanced no watermark and the base range this rebuild replayed stays
+            // unconsumed. An out-of-order repair recovers from that on its own: the row
+            // that triggered it sits in the same unconsumed range and still reads below
+            // the frontier, so the next drain repairs again and rebuilds at its own tail.
+            // A wholesale rebuild has no such trigger. Its own replay carried the frontier
+            // to the top of the range, and the drain's out-of-order test is a strict
+            // below-frontier compare, so a range whose commits all sit at the frontier's
+            // own timestamp - a single commit at the newest row, or a run of commits
+            // sharing one timestamp - re-drains as an ordinary forward append: it feeds
+            // rows the replacement already emitted a second time and appends output over
+            // the ones it holds, double-advancing the accumulators the rebuild exists to
+            // reset. Keep the debt on the instance instead. The turn that lands the block
+            // runs the rebuild again from the applied base - which is idempotent, and by
+            // then holds the replacement's own rows - and that run advances the watermark
+            // past the range. commitLiveViewWithReplaceRangeFenced cleared the flag when
+            // this replacement committed, so the marking has to follow the replay rather
+            // than precede it.
+            markWindowStateDirty(instance);
+            LOG.info().$("live view applied-base rebuild deferred on its unapplied replacement, repeating it once the block lands [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", lvSeqTxn=").$(instance.getPendingReplacementLvSeqTxn())
+                    .$(", advanceTo=").$(advanceTo).I$();
         }
     }
 
