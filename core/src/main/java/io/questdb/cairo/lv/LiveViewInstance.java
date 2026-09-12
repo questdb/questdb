@@ -168,6 +168,16 @@ public class LiveViewInstance implements QuietCloseable {
     private RecordCursorFactory storedRowScanFactory;
     private RecordToRowCopier storedRowCopier;
     private long storedRowCopierMetadataVersion = -1;
+    // Wall-clock (micros) at which this view's current apply-lag wait began, and the field that
+    // says the view is in one at all. The back-off floor below cannot say it: the floor ends
+    // every APPLY_LAG_DEFER_BACKOFF_US whether or not the base has applied anything, so a view
+    // waiting on a suspended base holds no floor between its retries. This is stamped on the
+    // first deferral of an episode and left alone by the retries, so live_views() can report how
+    // long the view has been unable to make progress rather than how long ago it last retried.
+    // LONG_NULL when the view is not waiting; clearApplyLagDeferral() ends the episode on every
+    // path that ends the wait - a cycle that drained, a turn that reached a real fault, an
+    // invalidation and a drop. Volatile for the catalogue query thread that reads it.
+    private volatile long applyLagDeferSinceUs = Numbers.LONG_NULL;
     // Base seqTxn the deferred cycle waited on when it armed applyLagDeferUntilUs. The pre-latch
     // guard clears the floor early once the base applies past this point, so a caught-up view
     // converges without waiting out the wall-clock floor (which a frozen clock never crosses).
@@ -1130,6 +1140,15 @@ public class LiveViewInstance implements QuietCloseable {
 
     public LiveViewWindow getAnchorWindow() {
         return anchorWindow;
+    }
+
+    /**
+     * @return the wall clock (micros) at which this view's current apply-lag wait began,
+     * or {@link Numbers#LONG_NULL} when the view is not waiting on its base table's apply.
+     * See {@link #applyLagDeferSinceUs}
+     */
+    public long getApplyLagDeferSinceUs() {
+        return applyLagDeferSinceUs;
     }
 
     public long getApplyLagDeferTargetSeqTxn() {
@@ -2310,6 +2329,56 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Records that a refresh cycle stopped because the base table has not applied
+     * {@code targetSeqTxn} yet, and holds the view back until {@code deferUntilUs}.
+     * <p>
+     * The target goes down before the floor, so a pre-latch guard that sees the floor also
+     * sees the target it may clear the floor early against. The episode stamp goes down
+     * last and only once: the retries the floor paces keep the stamp the first deferral
+     * wrote, so {@code live_views()} reports how long the view has been unable to make
+     * progress rather than how long ago it last retried. {@link #clearApplyLagDeferral()}
+     * ends the episode.
+     * <p>
+     * Every caller runs under the refresh latch; see
+     * {@link io.questdb.cairo.lv.LiveViewRefreshJob#armApplyLagDeferral}.
+     */
+    public void armApplyLagDeferral(long targetSeqTxn, long deferUntilUs, long nowUs) {
+        applyLagDeferTargetSeqTxn = targetSeqTxn;
+        applyLagDeferUntilUs = deferUntilUs;
+        if (applyLagDeferSinceUs == Numbers.LONG_NULL) {
+            applyLagDeferSinceUs = nowUs;
+        }
+    }
+
+    /**
+     * Ends this view's apply-lag wait, on every path that ends it: a cycle that drained,
+     * a turn that reached a fault of its own, an invalidation and a drop. Clears the
+     * episode stamp before the target it goes with, so a reader that takes the target
+     * first and the stamp second never pairs a live stamp with a target from before it;
+     * see {@link #applyLagDeferSinceUs}. Clears the back-off floor with them, because a
+     * view that is no longer waiting has nothing to be paced against.
+     * <p>
+     * Idempotent, and every caller runs under the refresh latch.
+     */
+    public void clearApplyLagDeferral() {
+        applyLagDeferSinceUs = Numbers.LONG_NULL;
+        applyLagDeferUntilUs = Numbers.LONG_NULL;
+        applyLagDeferTargetSeqTxn = Numbers.LONG_NULL;
+    }
+
+    /**
+     * Ends the back-off window alone, leaving the episode standing. The refresh worker
+     * calls this from its authoritative under-latch check once the floor has elapsed or
+     * the base has applied past the target, so the next turn runs; whether the view is
+     * still waiting is that turn's answer to give, and until it gives one the episode is
+     * what {@code live_views()} reports. See
+     * {@link io.questdb.cairo.lv.LiveViewRefreshJob#isApplyLagDeferred}.
+     */
+    public void clearApplyLagDeferFloor() {
+        applyLagDeferUntilUs = Numbers.LONG_NULL;
+    }
+
+    /**
      * Ends a rebuild deferral, leaving any other phase as it is. The refresh worker
      * calls this under the refresh latch whenever the deferral stops describing the
      * view: the base applied far enough for the rebuild to run, a recovery succeeded,
@@ -2626,8 +2695,7 @@ public class LiveViewInstance implements QuietCloseable {
     public void recordRefreshSuccess() {
         flushRetryCount = 0;
         flushRetryStartUs = Numbers.LONG_NULL;
-        applyLagDeferUntilUs = Numbers.LONG_NULL;
-        applyLagDeferTargetSeqTxn = Numbers.LONG_NULL;
+        clearApplyLagDeferral();
         // A rebuild deferral is the same lag seen from a recovery, and a cycle that
         // succeeded settled the debt it was waiting to pay.
         clearCheckpointRebuildDeferred();
@@ -2734,14 +2802,6 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setAppliedWatermark(long appliedWatermark) {
         stateReader.setAppliedWatermark(appliedWatermark);
-    }
-
-    public void setApplyLagDeferTargetSeqTxn(long applyLagDeferTargetSeqTxn) {
-        this.applyLagDeferTargetSeqTxn = applyLagDeferTargetSeqTxn;
-    }
-
-    public void setApplyLagDeferUntilUs(long applyLagDeferUntilUs) {
-        this.applyLagDeferUntilUs = applyLagDeferUntilUs;
     }
 
     /**
@@ -3154,6 +3214,7 @@ public class LiveViewInstance implements QuietCloseable {
                 freeCachedRefreshState();
                 // Under the latch, after the last cycle that could have deferred: a
                 // dropped view waits for nothing.
+                clearApplyLagDeferral();
                 clearCheckpointRebuildDeferred();
             }
         } finally {
@@ -3197,6 +3258,7 @@ public class LiveViewInstance implements QuietCloseable {
             // Under the latch, so after any cycle that deferred before it saw the
             // invalidation; every later one returns before its recovery could defer.
             // An invalid view waits for nothing.
+            clearApplyLagDeferral();
             clearCheckpointRebuildDeferred();
         } finally {
             refreshLatch.set(false);

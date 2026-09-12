@@ -296,6 +296,21 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // windowed average is correct (also proving CREATE-accept), then performs a
     // byte-exact snapshot/restore round-trip of the function's partition state
     // (write -> toTop -> restore -> write again, comparing the two payloads).
+    /**
+     * Asserts the {@code base_apply_wait_*} pair {@code live_views()} reports for the view
+     * {@code lv}: the base seqTxn its refresh waits to see applied and how long it has waited,
+     * or a NULL pair when it waits for nothing. Both arguments are null or neither is - the two
+     * columns describe one wait, so one of them alone is never a legal reading.
+     */
+    private void assertWaitReported(Long waitSeqTxn, Long waitMicros) throws Exception {
+        Assert.assertEquals("both columns describe one wait", waitSeqTxn == null, waitMicros == null);
+        assertQuery("SELECT base_apply_wait_seqtxn, base_apply_wait_micros FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("base_apply_wait_seqtxn\tbase_apply_wait_micros\n"
+                        + (waitSeqTxn == null ? "null\tnull" : waitSeqTxn + "\t" + waitMicros) + "\n");
+    }
+
     private void assertAvgDecimalFrameRoundTrip(
             String decimalType,
             String frameClause,
@@ -4717,6 +4732,152 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "2026-06-01T00:00:00.000010Z\t1\t2\n" +
                     "2026-06-01T00:00:00.000020Z\t2\t3\n" +
                     "2026-06-01T00:00:00.000030Z\t3\t4\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test(timeout = 120_000)
+    public void testO3ReplayApplyLagWaitIsReportedForAsLongAsItLasts() throws Exception {
+        // The ordinary drain's apply-lag deferral is an operator-visible state, not just an
+        // internal back-off. When a lead refresh detects an O3 base commit the base table has
+        // not applied, the cycle unwinds cooperatively and retries on a back-off - which is
+        // ordinarily momentary, but is bounded by nothing on the view's side: a base whose WAL
+        // apply is suspended keeps the view waiting until an operator resumes it, and the view
+        // stays active and merely lags meanwhile. live_views() therefore names the base commit
+        // the refresh waits to see applied (base_apply_wait_seqtxn) and how long it has been
+        // waiting for it (base_apply_wait_micros), so the momentary case and the stuck one read
+        // differently. The duration measures the wait, not the last retry: the stamp the first
+        // deferral takes survives every retry the back-off paces, and only a cycle that drains,
+        // a turn that faults, an invalidation or a drop ends it.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Establish the in-RAM lead and the O3 detection watermark, as
+                // testO3ReplayDefersOnBaseApplyLagInsteadOfDeadlocking does.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-06-01T00:00:00.000010Z', 1), " +
+                        "('2026-06-01T00:00:00.000020Z', 2), " +
+                        "('2026-06-01T00:00:00.000030Z', 3)");
+                drainWalQueue();
+                instance.setLastFlushTimeUs(currentMicros);
+                drainJob(job);
+
+                // A view that is keeping up waits for nothing, and says so.
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferSinceUs());
+                assertWaitReported(null, null);
+
+                // Commit an out-of-order row BELOW the frontier but do NOT apply it: the replay
+                // needs the base applied to that commit, and the base has applied nothing of it.
+                final long deferArmedAtUs = currentMicros;
+                execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:00.000005Z', 4)");
+                drainJob(job);
+
+                final long waitSeqTxn = instance.getApplyLagDeferTargetSeqTxn();
+                Assert.assertTrue(
+                        "the cycle must have deferred on base apply lag, or this test is not exercising the gate",
+                        waitSeqTxn > instance.getLastProcessedSeqTxn()
+                );
+                Assert.assertEquals(deferArmedAtUs, instance.getApplyLagDeferSinceUs());
+                assertWaitReported(waitSeqTxn, 0L);
+                // A drain that waits is not a recovery that waits: the deferred rebuild has a
+                // recovery phase of its own, and this has none.
+                assertQuery("SELECT view_status, checkpoint_recovery_phase FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                view_status\tcheckpoint_recovery_phase
+                                active\t
+                                """);
+
+                // Step past the back-off floor and bring the view back with a later commit's
+                // notification, the base still having applied nothing. The retry defers again on
+                // the same commit - and reports the whole wait, not the window since the last
+                // retry. Stamping the episode on every deferral instead of only the first reads
+                // zero here.
+                setCurrentMicros(deferArmedAtUs + 3_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:00.000040Z', 5)");
+                drainJob(job);
+                Assert.assertEquals(
+                        "the back-off window it paces must not restart the wait",
+                        deferArmedAtUs,
+                        instance.getApplyLagDeferSinceUs()
+                );
+                assertWaitReported(waitSeqTxn, 3_000_000L);
+
+                // Apply the base commits and let the next tick converge the replay. A cycle that
+                // drained ends the wait, so both columns go back to NULL.
+                drainWalQueue();
+                setCurrentMicros(currentMicros + 1_000_000L);
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertFalse("view must stay valid after the replay converges", instance.isInvalid());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferSinceUs());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferTargetSeqTxn());
+                assertWaitReported(null, null);
+            }
+
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-06-01T00:00:00.000005Z\t4\t1\n" +
+                    "2026-06-01T00:00:00.000010Z\t1\t2\n" +
+                    "2026-06-01T00:00:00.000020Z\t2\t3\n" +
+                    "2026-06-01T00:00:00.000030Z\t3\t4\n" +
+                    "2026-06-01T00:00:00.000040Z\t5\t5\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test(timeout = 120_000)
+    public void testAnInvalidatedViewStopsReportingTheApplyLagWaitItWasIn() throws Exception {
+        // A view that stops refreshing waits for nothing, and must stop saying it does. An
+        // invalidated view is declined at the top of every later refresh turn, so the wait it was
+        // in when the invalidation landed would otherwise stand in live_views() forever - an
+        // invalid view reporting a base commit it "resumes on its own" once the base applies.
+        // tryFreeRuntimeStateIfInvalid ends it under the refresh latch, beside the rebuild
+        // deferral it ends for the same reason.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-06-01T00:00:00.000010Z', 1), " +
+                        "('2026-06-01T00:00:00.000020Z', 2)");
+                drainWalQueue();
+                instance.setLastFlushTimeUs(currentMicros);
+                drainJob(job);
+
+                // An O3 commit the base does not apply leaves the view waiting on it.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:00.000005Z', 3)");
+                drainJob(job);
+                final long waitSeqTxn = instance.getApplyLagDeferTargetSeqTxn();
+                Assert.assertTrue("the cycle must have deferred on base apply lag", waitSeqTxn > 0);
+                assertWaitReported(waitSeqTxn, 0L);
+            }
+
+            engine.invalidateLiveView(instance, "test invalidation mid-wait");
+            Assert.assertTrue("view must be invalid", instance.isInvalid());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferSinceUs());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferTargetSeqTxn());
+            assertWaitReported(null, null);
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_status
+                            invalid
+                            """);
 
             execute("DROP LIVE VIEW lv");
         });
@@ -15557,7 +15718,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // column that says the view's own bookkeeping stopped describing its
         // output. The two keyed open-segment execution counters are appended so
         // operators can distinguish a healthy checkpoint resume from a cold
-        // bootstrap without binding to refresh-job test hooks.
+        // bootstrap without binding to refresh-job test hooks. The two recovery
+        // columns follow, and the two base_apply_wait_* columns close the set:
+        // the last group an operator reads, and the only one about a view that is
+        // waiting rather than stopped.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -15591,7 +15755,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "checkpoint_effective_duration_micros\t"
                         + "checkpoint_last_correction_depth_micros\t"
                         + "checkpoint_correction_depth_sample_count\t"
-                        + "checkpoint_recovery_phase\tcheckpoint_recovery_reason\n");
+                        + "checkpoint_recovery_phase\tcheckpoint_recovery_reason\t"
+                        + "base_apply_wait_seqtxn\tbase_apply_wait_micros\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }

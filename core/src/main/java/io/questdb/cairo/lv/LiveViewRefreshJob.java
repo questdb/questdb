@@ -1463,11 +1463,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * re-running the deferred work every tick. The target is recorded first, so the pre-latch
      * guard, which reads it once it sees the floor, can clear the floor early the moment the base
      * applies past it. Every caller holds the refresh latch; see {@link #isApplyLagDeferred}.
+     * <p>
+     * This is also where the wait becomes reportable. The floor cannot report it - the floor
+     * ends every back-off window whether or not the base moved - so the instance stamps the
+     * episode the first deferral opens and keeps that stamp across the retries, and
+     * {@code live_views()} publishes it as {@code base_apply_wait_seqtxn} and
+     * {@code base_apply_wait_micros}. Both the ordinary drain's deferral and a recovery's
+     * deferred rebuild arm through here, so the columns cover both; only the second also
+     * publishes a {@code checkpoint_recovery_phase}.
      */
     private void armApplyLagDeferral(LiveViewInstance instance, LiveViewApplyLagException lag) {
-        instance.setApplyLagDeferTargetSeqTxn(lag.getTargetSeqTxn());
-        instance.setApplyLagDeferUntilUs(
-                engine.getConfiguration().getMicrosecondClock().getTicks() + APPLY_LAG_DEFER_BACKOFF_US);
+        final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        instance.armApplyLagDeferral(lag.getTargetSeqTxn(), nowUs + APPLY_LAG_DEFER_BACKOFF_US, nowUs);
     }
 
     /**
@@ -4630,7 +4637,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return true;
         }
         if (authoritative) {
-            instance.setApplyLagDeferUntilUs(Numbers.LONG_NULL);
+            // The floor alone. The episode the floor paces ends where the turn this releases
+            // ends, not here: a base that is still behind defers the very next turn again, and
+            // clearing the episode here would restart its clock once per back-off window.
+            instance.clearApplyLagDeferFloor();
         }
         return false;
     }
@@ -14952,6 +14962,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // return null, and the recovery even calls recordRefreshSuccess(), so nothing else survives
         // to tell a test that the incremental path faulted at all.
         instance.recordRefreshFault();
+        // A turn that got here has a fault of its own, so whatever apply-lag wait it was in is
+        // over: a view that reports a base commit it waits for must not keep reporting one while
+        // it is really failing, and a target left behind would also make the next deferral on
+        // that same target look like a repeat of this one. Cleared here rather than at the two
+        // call sites because the recoveries below can defer the rebuild they owe and arm a fresh
+        // wait, which has to outlive this clear.
+        instance.clearApplyLagDeferral();
         // A parked repair cannot survive a fault on this view, whichever branch below
         // takes it. Every recovery here replaces the window state the candidate's replay
         // was standing in, and the rebuild among them rewrites the durable output its

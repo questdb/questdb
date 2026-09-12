@@ -211,6 +211,19 @@ import io.questdb.std.ObjList;
  *     Both are read once per row, phase first, so a row never pairs a phase with a
  *     reason from before it, and a NULL phase always comes with a NULL reason. See
  *     {@link io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase}.</li>
+ *     <li>What the view's refresh is waiting for - {@code base_apply_wait_seqtxn} and
+ *     {@code base_apply_wait_micros}. A refresh cycle that needs the base table applied
+ *     past a seqTxn {@code ApplyWal2TableJob} has not reached yet defers rather than
+ *     blocking on it, and retries on a back-off; while it waits these name the seqTxn and
+ *     how long the view has been unable to get past it. Both are NULL as a pair whenever
+ *     the view is not waiting, which is the steady state, and both reset on restart. The
+ *     wait is ordinarily momentary, so it is the duration rather than the presence that
+ *     matters: a base table whose WAL apply is suspended (see {@code wal_tables()}) keeps
+ *     the view waiting until an operator resumes it, and the view stays {@code active} and
+ *     lags meanwhile. Both the ordinary drain's deferral and a recovery's deferred rebuild
+ *     report here; the second is the one that also reads {@code rebuild_deferred} in
+ *     {@code checkpoint_recovery_phase}, so the two columns together say whether the view
+ *     is merely waiting to drain or waiting to rebuild.</li>
  * </ul>
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
@@ -271,6 +284,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
     private static class LiveViewsCursorFactory implements RecordCursorFactory {
         private static final int COLUMN_APPLIED_WATERMARK = 17;
+        private static final int COLUMN_BASE_APPLY_WAIT_MICROS = 64;
+        private static final int COLUMN_BASE_APPLY_WAIT_SEQTXN = 63;
         private static final int COLUMN_BASE_TABLE_NAME = 2;
         private static final int COLUMN_BELOW_LOWER_BOUND_COUNT = 13;
         private static final int COLUMN_CHECKPOINT_CORRECTION_DEPTH_SAMPLE_COUNT = 60;
@@ -423,6 +438,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             }
 
             private static class LiveViewsRecord implements Record {
+                private long applyLagDeferSinceUs;
+                private long applyLagDeferTargetSeqTxn;
                 private int checkpointRecoveryPhase;
                 private String checkpointRecoveryReason;
                 private long[] checkpointRepair;
@@ -436,6 +453,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                 private long o3ResumeReplayRows;
 
                 public void clear() {
+                    applyLagDeferSinceUs = Numbers.LONG_NULL;
+                    applyLagDeferTargetSeqTxn = Numbers.LONG_NULL;
                     checkpointRecoveryPhase = LiveViewCheckpointRecoveryPhase.NONE;
                     checkpointRecoveryReason = null;
                     checkpointRepair = null;
@@ -541,6 +560,30 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                             }
                             long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
                             yield Math.max(0, nowUs - lastFlushUs);
+                        }
+                        // The base seqTxn the view's refresh is waiting to see applied, and
+                        // how long it has been waiting for it. NULL as a pair whenever the
+                        // view is not waiting - the snapshot takes both, and reports neither
+                        // unless both came back, so a transition cannot pair a live duration
+                        // with a target from another episode.
+                        //
+                        // A refresh cycle that needs the base applied past a seqTxn
+                        // ApplyWal2TableJob has not reached defers rather than blocking on it,
+                        // and retries on a back-off. The wait is normally momentary and self-
+                        // healing, which is what the duration is for: a base table whose WAL
+                        // apply is suspended (see wal_tables()) keeps the view waiting until an
+                        // operator resumes it, and only the duration tells the two apart.
+                        // In-memory, so a restart starts the count over.
+                        case COLUMN_BASE_APPLY_WAIT_SEQTXN -> applyLagDeferSinceUs == Numbers.LONG_NULL
+                                ? Numbers.LONG_NULL
+                                : applyLagDeferTargetSeqTxn;
+                        case COLUMN_BASE_APPLY_WAIT_MICROS -> {
+                            if (applyLagDeferSinceUs == Numbers.LONG_NULL
+                                    || applyLagDeferTargetSeqTxn == Numbers.LONG_NULL) {
+                                yield Numbers.LONG_NULL;
+                            }
+                            final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+                            yield Math.max(0, nowUs - applyLagDeferSinceUs);
                         }
                         case COLUMN_LAST_PROCESSED_SEQTXN -> instance.getLastProcessedSeqTxn();
                         case COLUMN_APPLIED_WATERMARK -> instance.getStateReader().getAppliedWatermark();
@@ -840,6 +883,13 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     this.checkpointRecoveryReason = checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.NONE
                             ? null
                             : instance.getCheckpointRecoveryReason();
+                    // The apply-lag wait, target then stamp. The writer publishes the target
+                    // before the stamp and clears the stamp before the target, so a reader in
+                    // this order sees at worst a stamp whose target it read too early - which
+                    // the NULL-target gate above drops - and never a stamp paired with the
+                    // target of an episode that has already ended.
+                    this.applyLagDeferTargetSeqTxn = instance.getApplyLagDeferTargetSeqTxn();
+                    this.applyLagDeferSinceUs = instance.getApplyLagDeferSinceUs();
                     // The last repair's outcome and the rows it replayed, in that order
                     // and no other. The refresh worker bumps the o3_* counters and only
                     // then publishes the outcome word, so an outcome read here was
@@ -938,6 +988,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("checkpoint_correction_depth_sample_count", ColumnType.LONG)); // 60
             metadata.add(new TableColumnMetadata("checkpoint_recovery_phase", ColumnType.STRING));         // 61
             metadata.add(new TableColumnMetadata("checkpoint_recovery_reason", ColumnType.STRING));        // 62
+            metadata.add(new TableColumnMetadata("base_apply_wait_seqtxn", ColumnType.LONG));              // 63
+            metadata.add(new TableColumnMetadata("base_apply_wait_micros", ColumnType.LONG));              // 64
             METADATA = metadata;
         }
     }

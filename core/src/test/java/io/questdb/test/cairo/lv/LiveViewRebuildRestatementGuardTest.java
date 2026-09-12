@@ -38,6 +38,7 @@ import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.LogCapture;
@@ -632,6 +633,15 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 capture.assertOnlyOnce("live view rebuild from the applied base waits for the base table to apply what the view consumed");
                 Assert.assertTrue(instance.isCheckpointRebuildDeferred());
                 Assert.assertSame(deferralReason, instance.getCheckpointRecoveryReason());
+                // Three retries, one wait. base_apply_wait_micros measures from the deferral that
+                // opened it, not from the last retry, which is what makes a suspended base look
+                // different from a base that is merely a window behind.
+                assertQuery("SELECT base_apply_wait_seqtxn, base_apply_wait_micros "
+                        + "FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("base_apply_wait_seqtxn\tbase_apply_wait_micros\n"
+                                + (baseApplied + 1) + "\t" + (3 * CLOCK_ADVANCE_MICROS) + "\n");
                 Assert.assertTrue(instance.isWindowStateDirty());
                 Assert.assertEquals(1, instance.getRefreshFaultCount());
                 Assert.assertEquals(0, instance.getFlushRetryCount());
@@ -950,13 +960,18 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         Assert.assertFalse(instance.isCheckpointRebuildDeferred());
         Assert.assertEquals(LiveViewCheckpointRecoveryPhase.NONE, instance.getCheckpointRecoveryPhase());
         Assert.assertNull(instance.getCheckpointRecoveryReason());
-        assertQuery("SELECT view_status, checkpoint_recovery_phase, invalidation_reason, checkpoint_recovery_reason "
+        // The wait the rebuild was in goes with the phase: a view that owes nothing waits for
+        // nothing, so the two base_apply_wait_* columns read NULL beside the two recovery ones.
+        Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferSinceUs());
+        Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferTargetSeqTxn());
+        assertQuery("SELECT view_status, checkpoint_recovery_phase, invalidation_reason, checkpoint_recovery_reason, "
+                + "base_apply_wait_seqtxn, base_apply_wait_micros "
                 + "FROM live_views() WHERE view_name = 'lv'")
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("""
-                        view_status\tcheckpoint_recovery_phase\tinvalidation_reason\tcheckpoint_recovery_reason
-                        active\t\t\t
+                        view_status\tcheckpoint_recovery_phase\tinvalidation_reason\tcheckpoint_recovery_reason\tbase_apply_wait_seqtxn\tbase_apply_wait_micros
+                        active\t\t\t\tnull\tnull
                         """);
     }
 
@@ -1002,12 +1017,19 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         Assert.assertTrue("the wait must be reported", instance.isCheckpointRebuildDeferred());
         Assert.assertEquals(LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED, instance.getCheckpointRecoveryPhase());
         Assert.assertEquals(deferralReason(baseApplied + 1), instance.getCheckpointRecoveryReason());
-        assertQuery("SELECT view_status, checkpoint_recovery_phase, invalidation_reason, checkpoint_recovery_reason "
+        // A deferred rebuild is an apply-lag wait like any other, so it reports through the two
+        // base_apply_wait_* columns as well: the seqTxn the phase's reason names, and a duration
+        // the frozen test clock pins to the stamp the deferral took.
+        Assert.assertEquals(currentMicros, instance.getApplyLagDeferSinceUs());
+        assertQuery("SELECT view_status, checkpoint_recovery_phase, invalidation_reason, checkpoint_recovery_reason, "
+                + "base_apply_wait_seqtxn, base_apply_wait_micros "
                 + "FROM live_views() WHERE view_name = 'lv'")
                 .noLeakCheck()
                 .noRandomAccess()
-                .returns("view_status\tcheckpoint_recovery_phase\tinvalidation_reason\tcheckpoint_recovery_reason\n"
-                        + "active\trebuild_deferred\t\t" + deferralReason(baseApplied + 1) + "\n");
+                .returns("view_status\tcheckpoint_recovery_phase\tinvalidation_reason\tcheckpoint_recovery_reason\t"
+                        + "base_apply_wait_seqtxn\tbase_apply_wait_micros\n"
+                        + "active\trebuild_deferred\t\t" + deferralReason(baseApplied + 1) + "\t"
+                        + (baseApplied + 1) + "\t0\n");
     }
 
     private void assertViewRows(String expected) throws Exception {
