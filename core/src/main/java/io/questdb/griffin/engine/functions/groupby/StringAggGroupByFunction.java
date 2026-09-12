@@ -211,19 +211,8 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         listA.of(destListPtr);
         listB.of(srcListPtr);
 
-        final int destCharOffset = sinkA.length();
-        final int srcSize = listB.size();
-        for (int i = 0; i < srcSize; i += 2) {
-            final long srcRowId = listB.get(i);
-            final long sinkLocation = listB.get(i + 1);
-            final int off = unpackOffset(sinkLocation);
-            final int len = unpackLen(sinkLocation);
-            listA.add(srcRowId);
-            listA.add(pack(off + destCharOffset, len));
-            totalMemoryUsed += len * 2 + 2;
-        }
+        mergeRuns(sinkA.length());
         assertSizeCompliance();
-
         sinkA.put(sinkB);
 
         destValue.putLong(valueIndex, sinkA.ptr());
@@ -301,24 +290,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         }
     }
 
-    private CharSequence materialize(Record rec, DirectUtf16Sink resultSink) {
-        final long listPtr = rec.getLong(valueIndex + 1);
-        if (listPtr == 0) {
-            return null;
-        }
-        listA.of(listPtr);
-        final int size = listA.size();
-        final int count = size / 2;
-        sortData.clear();
-        sortData.ensureCapacity(size);
-        Vect.memcpy(sortData.getAddress(), listA.dataPtr(), (long) size * Long.BYTES);
-        if (count > 1) {
-            sortCpy.clear();
-            sortCpy.ensureCapacity(size);
-            Vect.radixSortLongIndexAscInPlace(sortData.getAddress(), count, sortCpy.getAddress());
-        }
-        sinkA.of(rec.getLong(valueIndex));
-        resultSink.clear();
+    private void concatenateRuns(DirectUtf16Sink resultSink, int count) {
         for (int i = 0; i < count; i++) {
             if (i > 0) {
                 resultSink.put(delimiter);
@@ -330,6 +302,45 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
                 resultSink.put(sinkA.charAt(off + j));
             }
         }
+    }
+
+    private CharSequence materialize(Record rec, DirectUtf16Sink resultSink) {
+        final long listPtr = rec.getLong(valueIndex + 1);
+        if (listPtr == 0) {
+            return null;
+        }
+        listA.of(listPtr);
+        final int count = sortRuns();
+        sinkA.of(rec.getLong(valueIndex));
+        resultSink.clear();
+        concatenateRuns(resultSink, count);
         return resultSink;
+    }
+
+    private void mergeRuns(int destCharOffset) {
+        final int srcSize = listB.size();
+        for (int i = 0; i < srcSize; i += 2) {
+            final long srcRowId = listB.get(i);
+            final long sinkLocation = listB.get(i + 1);
+            final int off = unpackOffset(sinkLocation);
+            final int len = unpackLen(sinkLocation);
+            listA.add(srcRowId);
+            listA.add(pack(off + destCharOffset, len));
+            totalMemoryUsed += len * 2 + 2;
+        }
+    }
+
+    private int sortRuns() {
+        final int size = listA.size();
+        final int count = size / 2;
+        sortData.clear();
+        sortData.ensureCapacity(size);
+        Vect.memcpy(sortData.getAddress(), listA.dataPtr(), (long) size * Long.BYTES);
+        if (count > 1) {
+            sortCpy.clear();
+            sortCpy.ensureCapacity(size);
+            Vect.radixSortLongIndexAscInPlace(sortData.getAddress(), count, sortCpy.getAddress());
+        }
+        return count;
     }
 }
