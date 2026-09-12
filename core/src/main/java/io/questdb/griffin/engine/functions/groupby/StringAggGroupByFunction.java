@@ -87,8 +87,8 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     private final DirectUtf16Sink resultSinkB = new DirectUtf16Sink(16);
     private final GroupByCharSink sinkA = new GroupByCharSink();
     private final GroupByCharSink sinkB = new GroupByCharSink();
-    private final DirectLongList sortData = new DirectLongList(32, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
     private final DirectLongList sortCpy = new DirectLongList(32, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+    private final DirectLongList sortData = new DirectLongList(32, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
     private int totalMemoryUsed;
     private int valueIndex;
 
@@ -212,8 +212,6 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         listB.of(srcListPtr);
 
         final int destCharOffset = sinkA.length();
-        sinkA.put(sinkB);
-
         final int srcSize = listB.size();
         for (int i = 0; i < srcSize; i += 2) {
             final long srcRowId = listB.get(i);
@@ -225,6 +223,8 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
             totalMemoryUsed += len * 2 + 2;
         }
         assertSizeCompliance();
+
+        sinkA.put(sinkB);
 
         destValue.putLong(valueIndex, sinkA.ptr());
         destValue.putLong(valueIndex + 1, listA.ptr());
@@ -252,6 +252,12 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("string_agg(").val(arg).val(',').val(delimiter).val(')');
+    }
+
+    @Override
+    public void toTop() {
+        UnaryFunction.super.toTop();
+        totalMemoryUsed = 0;
     }
 
     private static long pack(int offset, int len) {
