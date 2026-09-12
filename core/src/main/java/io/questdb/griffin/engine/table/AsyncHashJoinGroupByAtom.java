@@ -42,6 +42,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.HashJoinGroupByRecord;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
@@ -89,13 +90,15 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         try {
             build = new IntHashJoinBuild(metadata.getPayloadMetadata(), metadata.getBuildColumns(),
                     64, 64);
-            ObjList<GroupByFunctionsUpdater> workerUpdaters = new ObjList<>();
-            for (int i = 0; i < workerCount; i++) {
-                workerUpdaters.add(functions.getUpdater(i));
+            if (functions.isKeyed()) {
+                ObjList<GroupByFunctionsUpdater> workerUpdaters = new ObjList<>();
+                for (int i = 0; i < workerCount; i++) {
+                    workerUpdaters.add(functions.getUpdater(i));
+                }
+                shardingContext = new GroupByShardingContext(configuration, functions.getKeyTypes(),
+                        functions.getValueTypes(), functions.getUpdater(-1), workerUpdaters,
+                        perWorkerLocks, workerCount);
             }
-            shardingContext = new GroupByShardingContext(configuration, functions.getKeyTypes(),
-                    functions.getValueTypes(), functions.getUpdater(-1), workerUpdaters,
-                    perWorkerLocks, workerCount);
             for (int i = -1; i < workerCount; i++) {
                 Slot slot = new Slot(engine, metadata.newRecord());
                 slots.add(slot);
@@ -183,10 +186,18 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         try {
             assert frozen != null;
-            shardingContext.setMemoryTracker(executionContext.getMemoryTracker());
-            shardingContext.reopen();
+            if (shardingContext != null) {
+                shardingContext.setMemoryTracker(executionContext.getMemoryTracker());
+                shardingContext.reopen();
+            }
             for (int i = 0; i < slots.size(); i++) {
                 Slot slot = slots.getQuick(i);
+                if (!functions.isKeyed()) {
+                    // Allocate under the execution tracker, alongside the live frozen build.
+                    slot.value = new SimpleMapValue(functions.getValueTypes().getColumnCount(), executionContext.getMemoryTracker());
+                    functions.getUpdater(i - 1).updateEmpty(slot.value);
+                    slot.value.setNew(true);
+                }
                 slot.breaker.init(executionContext.getCircuitBreaker());
                 slot.probe = frozen.newProbe(slot.breaker);
                 slot.probeRecord.of(symbolTableSource);
@@ -252,7 +263,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     GroupByMapFragment getFragment(int slot) {
-        return shardingContext.getFragment(slot);
+        return shardingContext != null ? shardingContext.getFragment(slot) : null;
     }
 
     HashJoinGroupByFunctions getFunctions() {
@@ -280,7 +291,26 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     public boolean isSharded() {
-        return shardingContext.isSharded();
+        return shardingContext != null && shardingContext.isSharded();
+    }
+
+    SimpleMapValue mergeScalar(SqlExecutionCircuitBreaker breaker) {
+        SimpleMapValue dest = getSlot(-1).value;
+        GroupByFunctionsUpdater updater = functions.getUpdater(-1);
+        for (int i = 1; i < slots.size(); i++) {
+            breaker.statefulThrowExceptionIfTripped();
+            SimpleMapValue src = slots.getQuick(i).value;
+            if (!src.isNew()) {
+                if (dest.isNew()) {
+                    dest.copy(src);
+                } else {
+                    updater.merge(dest, src);
+                }
+                dest.setNew(false);
+            }
+        }
+        breaker.statefulThrowExceptionIfTrippedNoThrottle();
+        return dest;
     }
 
     void release(int slot) {
@@ -296,6 +326,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         final HashJoinGroupByRecord joinedRecord;
         final ProbeRecord probeRecord = new ProbeRecord();
         FrozenHashJoinBuild.Probe probe;
+        SimpleMapValue value;
         long scannedRows;
         long matchedPairs;
         long nullExtendedRows;
@@ -308,12 +339,15 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
         @Override
         public void close() {
-            Throwable failure = Misc.freeBestEffort(null, probeRecord);
+            Throwable failure = Misc.freeBestEffort(null, value);
+            value = null;
+            failure = Misc.freeBestEffort(failure, probeRecord);
             failure = Misc.freeBestEffort(failure, breaker);
             CairoException.rethrowCleanupFailure(failure);
         }
 
         void clear() {
+            value = Misc.free(value);
             scannedRows = matchedPairs = nullExtendedRows = survivingRows = 0;
             joinedRecord.clear();
             probe = null;

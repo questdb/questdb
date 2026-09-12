@@ -55,7 +55,7 @@ import org.jetbrains.annotations.Nullable;
  * Pre-construction eligibility contract for RFC 130. This descriptor borrows optimized models:
  * use it before ordinary join generation mutates them, and never retain it in a cursor factory.
  * Analysis does not move filters, swap models, initialize functions, or adopt child factories.
- * The planner selects only after verifying the compiled children and keyed functions.
+ * The planner selects only after verifying the compiled children and aggregate functions.
  */
 public final class HashJoinGroupByCandidate {
     private final IntList baseColumnIndexes;

@@ -59,7 +59,7 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
    benchmark's planner adapter now expose both plans, phase timings and counters.
    See [planner, ownership, controls and diagnostics](docs/parallel-hash-join-group-by-planner.md).
 
-7. **Publish the keyed prototype benchmark and enforce the early gate** — this update.
+7. **Publish the keyed prototype benchmark and enforce the early gate** — commit `7c606730e9`.
    The fixed 100-million-row/four-worker primary comparison passes in both rounds:
    ordinary/fused medians 2,323.627/335.099 ms (**6.934×**) and
    2,321.217/333.964 ms (**6.951×**). No engine tuning or workload change was needed.
@@ -69,34 +69,50 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
    selectivity and small-input cases, retaining commands, environment, plans,
    ordered results and every sample. See the [benchmark report and raw data](docs/parallel-hash-join-group-by-benchmark.md).
 
-The branch supports experimental automatic selection for eligible keyed queries.
-Tasks 1–7 and 6a are complete, including the early performance gate. The
-experimental default remains false; the gate permits Phase 2 work, not rollout.
+8. **Add unkeyed aggregation through the same build/probe pipeline** — this update.
+   The existing factory/atom/reducer now supports scalar partial states, without
+   grouping maps or sharding contexts. Each slot's `SimpleMapValue` is allocated
+   under the execution tracker alongside the live build, initialized with the
+   aggregates' empty values, and merged after probe drain through the existing
+   intermediate-state updaters. The cursor returns exactly one row, including
+   empty input, supports reread and reports no random access. EXPLAIN identifies
+   `aggregation: scalar`; the same global/experimental/positive-worker gate applies.
+   All declared SUM/AVG DOUBLE and COUNT INT/LONG/DOUBLE/SYMBOL variants are covered
+   for keyed and scalar INNER/LEFT/normalized RIGHT execution. See
+   [scalar execution and validation](docs/parallel-hash-join-group-by-unkeyed.md).
 
-## Next pending task: 8
+The branch supports experimental automatic selection for eligible keyed and
+unkeyed queries. Tasks 1–8 and 6a are complete, including the early keyed
+performance gate. The experimental default remains false.
 
-**Add unkeyed aggregation through the same build/probe pipeline.**
+## Next pending task: 9
 
-- Reuse the frozen build, matching, filtering and slot/lifecycle contracts. Add
-  scalar partial states and final merge following `AsyncGroupByNotKeyedAtom` and
-  `AsyncGroupByNotKeyedRecordCursorFactory`; do not allocate grouping maps.
-- Require both global parallel GROUP BY and experimental fused flags and positive
-  configured query workers. Extend result/EXPLAIN flag-combination coverage to
-  unkeyed INNER/LEFT/eligible normalized RIGHT queries.
-- Implement every declared allowlisted aggregate/type combination, including
-  `count(*)` and `count(expr)`, retaining existing null and result-type contracts.
-  Produce exactly one unkeyed row for empty aggregate input. Empty build/probe
-  and no matches yield empty input for INNER. LEFT/normalized RIGHT with empty
-  build or all misses must aggregate surviving preserved rows; empty probe or
-  post-join rejection of every candidate yields empty input.
-- Differentially test keyed and unkeyed aggregate/type combinations, duplicate
-  fanout, all-null arguments, null extension and each distinct empty-input cause.
-  Keep unsupported compiled aggregates excluded.
+**Complete storage, concurrency, and resource qualification.**
+
+- Qualify every enabled native/Parquet path, mixed partitions, column tops,
+  logical conversions and filters for keyed and scalar execution. Cover storage
+  changes, source invalidation, bind rebinding and SYMBOL changes across reuse;
+  assert ordinary plans for unsupported access paths.
+- Add randomized differential coverage across join orientation, input sizes,
+  key distributions, duplicate fanout, ON/WHERE placement, selectivity, grouping
+  cardinality and worker counts. Assert fused selection and outer semantics.
+- Complete concurrent-query, work-stealing, worker-mode, cancellation and fault
+  coverage across build, initialization, decoding, probing and merging. Drain
+  tasks, release slots and allocations, and successfully reuse factories after
+  supported failures. Include compile/close and partial-output lifecycles.
+- Force memory breaches across build growth/rehashing, duplicate/payload storage,
+  slot state and merge overlap, including a build that fits but exceeds the limit
+  together with live aggregate state. Preserve normal errors without fallback
+  or replay, and run the relevant planner/join/aggregation/configuration/storage/
+  concurrency suites.
+- Back every published V1 capability with positive and negative tests. Task 8's
+  focused scalar lifecycle/resource tests are a starting point, not completion
+  of this broader qualification.
 
 The [comparison harness guide](docs/parallel-hash-join-group-by.md) and
 [planner metrics guide](docs/parallel-hash-join-group-by-planner.md) describe
 commands and measurements. Broader storage/concurrency/resource qualification
-remains task 9; completed-V1 benchmarks and separate rollout remain task 10.
+is task 9; completed-V1 benchmarks and separate rollout remain task 10.
 Do not infer default enablement or general outer/storage performance from the
 primary inner/native/low-cardinality benchmark. No build-size cutoff or fallback.
 
@@ -109,6 +125,25 @@ keep ordinary execution. Probe filter takeover uses interpreted logical getters,
 releases unused JIT handles and composes peeled projection mappings. Ordinary
 serial probe filters that cannot be stolen keep the existing plan. Child partition-
 format guards continue to request normal recompilation; they are not bypassed.
+
+## Validation for task 8
+
+**651 tests passed across 26 suites, with zero failures, errors or skips.**
+This includes ten new test methods plus expanded planner/differential coverage.
+The benchmark package build passed. The 100,000-row/four-worker keyed smoke
+comparison passed all 43 explicit result checks, including all 40 measured
+executions. This smoke check validates integration, not the primary performance gate.
+
+The [scalar guide](docs/parallel-hash-join-group-by-unkeyed.md) records exact commands
+and coverage. The differential matrix checks all declared aggregate/type pairs
+on both inputs for keyed/unkeyed INNER/LEFT/RIGHT, including duplicate fanout,
+all-null arguments, empty build/probe/both, no matches, and filters rejecting all
+candidates. It compares result types as well as values. The flag matrix now covers
+scalar aggregate projections and count-only queries at zero/one/four workers.
+Scalar tests exercise concurrent slot use, intermediate-state merging, long-chain
+cancellation, initialization/probe/merge failure and cancellation, scalar allocation
+breaches with the build still live, early close, remaining size, reread and reuse.
+Task 7's measurements remain historical; completed-V1 benchmarking is task 10.
 
 ## Validation for task 7
 

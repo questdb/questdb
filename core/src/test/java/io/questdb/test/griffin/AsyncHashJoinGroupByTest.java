@@ -97,10 +97,13 @@ import java.util.concurrent.atomic.AtomicReference;
 public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     private static final String AGGREGATES = "select p.country, year(r.reading_ts) yr, month(r.reading_ts) mo, "
             + "sum(r.energy_kwh) energy, avg(r.irradiance_wm2) irradiance, sum(p.installed_kwp) capacity";
+    private static final String SCALAR_AGGREGATES = "select sum(r.energy_kwh) energy, avg(r.irradiance_wm2) irradiance, "
+            + "sum(p.installed_kwp) capacity, count(*) n, count(p.country) countries";
     private static final String INNER = " from r join p on r.plant_id=p.plant_id";
     private static final String OUTER = " from r left join p on r.plant_id=p.plant_id";
     private static final int WORKERS = 3;
     private int frameRows;
+    private int factoryWorkerCount = WORKERS;
 
     @Before
     public void setUp() {
@@ -211,113 +214,42 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testCompileCloseEarlyCloseAndReuse() throws Exception {
-        assertMemoryLeak(() -> {
-            createTables();
-            try (Fixture ignored = new Fixture(AGGREGATES + OUTER)) {
-                // No cursor acquisition.
-            }
-            try (Fixture f = new Fixture(AGGREGATES + OUTER)) {
-                try (RecordCursor cursor = f.getCursor()) {
-                    Assert.assertEquals(-1, cursor.size());
-                    Assert.assertNull(cursor.getSymbolTable(0).valueOf(SymbolTable.VALUE_IS_NULL));
-                }
-                f.assertResults(AGGREGATES + OUTER);
-                try (RecordCursor cursor = f.getCursor()) {
-                    Assert.assertTrue(cursor.hasNext());
-                }
-                f.assertResults(AGGREGATES + OUTER);
-            }
-        });
+        assertCompileCloseEarlyCloseAndReuse(true);
+    }
+
+    @Test
+    public void testScalarCompileCloseEarlyCloseAndReuse() throws Exception {
+        assertCompileCloseEarlyCloseAndReuse(false);
     }
 
     @Test
     public void testConcurrentProbeAndWorkerFailureReuse() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10);
-        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
-        assertMemoryLeak(() -> {
-            createTables();
-            execute("insert into r select 1, timestamp_sequence('2022-01-01', 1000000L), x::double, x::double from long_sequence(1000)");
-            Hook hook = new Hook();
-            String sql = AGGREGATES + OUTER + " where p.installed_kwp is null";
-            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
-                 Reducers reducers = new Reducers()) {
-                CountDownLatch acquired = new CountDownLatch(2);
-                f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
-                hook.gate = new CountDownLatch(2);
-                f.assertResults(sql);
-                Assert.assertEquals(0, acquired.getCount());
-                Assert.assertEquals(WORKERS + 1, hook.initCount.get());
-                Assert.assertTrue("probe functions must run concurrently", hook.maxActive.get() >= 2);
-                Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                hook.gate = null;
-                hook.fail = true;
-                acquired = new CountDownLatch(1);
-                f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
-                try (RecordCursor cursor = f.getCursor()) {
-                    cursor.hasNext();
-                    Assert.fail();
-                } catch (CairoException expected) {
-                    Assert.assertTrue(expected.getFlyweightMessage().toString().contains("injected probe failure"));
-                }
-                Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                Assert.assertEquals(0, acquired.getCount());
-                hook.fail = false;
-                f.assertResults(sql);
-            }
-        });
+        assertConcurrentProbeAndWorkerFailureReuse(true);
+    }
+
+    @Test
+    public void testScalarConcurrentProbeAndWorkerFailureReuse() throws Exception {
+        assertConcurrentProbeAndWorkerFailureReuse(false);
     }
 
     @Test
     public void testCancellationInsideDuplicateChainAndReuse() throws Exception {
-        assertMemoryLeak(() -> {
-            createTables();
-            execute("truncate table r");
-            execute("truncate table p");
-            execute("insert into r values (1, '2020-01-01', 10, 100)");
-            execute("insert into p select 1, 'ES', null::double from long_sequence(100000)");
-            Hook hook = new Hook();
-            String sql = AGGREGATES + OUTER + " where p.installed_kwp is null";
-            SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
-            AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
-            ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
-            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
-                hook.cancel = breaker;
-                try (RecordCursor cursor = f.getCursor()) {
-                    cursor.hasNext();
-                    Assert.fail();
-                } catch (CairoException expected) {
-                    Assert.assertTrue(expected.isInterruption());
-                }
-                Assert.assertEquals("cancellation must stop within one duplicate loop", 32, hook.calls.get());
-                Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                hook.cancel = null;
-                breaker.reset();
-                f.assertResults(sql);
-            } finally {
-                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
-            }
-        });
+        assertCancellationInsideDuplicateChainAndReuse(true);
+    }
+
+    @Test
+    public void testScalarCancellationInsideDuplicateChainAndReuse() throws Exception {
+        assertCancellationInsideDuplicateChainAndReuse(false);
     }
 
     @Test
     public void testInitializationFailureAndReuse() throws Exception {
-        assertMemoryLeak(() -> {
-            createTables();
-            Hook hook = new Hook();
-            String sql = AGGREGATES + OUTER + " where p.installed_kwp is null";
-            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
-                hook.failInit = true;
-                try (RecordCursor ignored = f.getCursor()) {
-                    Assert.fail();
-                } catch (SqlException expected) {
-                    Assert.assertEquals("injected init failure", expected.getFlyweightMessage().toString());
-                }
-                Assert.assertTrue(hook.closed.get() > 0);
-                Assert.assertFalse(sqlExecutionContext.getCloneSymbolTables());
-                hook.failInit = false;
-                f.assertResults(sql);
-            }
-        });
+        assertInitializationFailureAndReuse(true);
+    }
+
+    @Test
+    public void testScalarInitializationFailureAndReuse() throws Exception {
+        assertInitializationFailureAndReuse(false);
     }
 
     @Test
@@ -438,8 +370,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     public void testConstructionFailureClosesOwnedResources() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            factoryWorkerCount = 0;
             try (Fixture ignored = new Fixture("select count(*)" + INNER)) {
-                Assert.fail("unkeyed factory inputs must be rejected");
+                Assert.fail("zero worker slots must be rejected");
             } catch (IllegalArgumentException expected) {
                 Assert.assertEquals("unsupported fused hash join execution inputs", expected.getMessage());
             }
@@ -720,6 +653,239 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testScalarAllAggregateTypesConcurrent() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("insert into r select (x % 3)::int, timestamp_sequence('2022-01-01', 1000000L), "
+                    + "(x % 8)::double, case when x % 3=0 then null else x::double end from long_sequence(1003)");
+            String sql = SCALAR_AGGREGATES + ", avg(p.installed_kwp) avg_capacity, count(r.plant_id) ri, "
+                    + "count(p.plant_id) pi, count(r.plant_id::long) rl, count(p.plant_id::long) pl, "
+                    + "count(r.irradiance_wm2) rd, count(p.installed_kwp) pd" + OUTER + " where r.energy_kwh >= 0";
+            Hook hook = new Hook();
+            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), "energy_kwh >= 0", hook);
+                 Reducers reducers = new Reducers()) {
+                f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(new CountDownLatch(2));
+                hook.gate = new CountDownLatch(2);
+                f.assertResults(sql, false);
+                Assert.assertTrue(hook.maxActive.get() >= 2);
+                Assert.assertTrue(hook.mergeCalls.get() > 0);
+                Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+            }
+        });
+    }
+
+    @Test
+    public void testScalarStateMemoryLimitAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            String sql = SCALAR_AGGREGATES + OUTER;
+            try (Fixture f = new Fixture(sql); LimitedMemoryTracker tracker = new LimitedMemoryTracker(100_000_000)) {
+                MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
+                sqlExecutionContext.setMemoryTracker(tracker);
+                try {
+                    long initializedBytes;
+                    try (RecordCursor cursor = f.getRawCursor()) {
+                        initializedBytes = tracker.getUsed();
+                        Assert.assertTrue(initializedBytes > f.factory.getMetrics().getBuildBytes());
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertFalse(f.factory.getAtom().isSharded());
+                    }
+                    Assert.assertEquals(0, tracker.getUsed());
+                    // The build still fits. Reject the final slot's scalar allocation
+                    // after earlier scalar states have been allocated under this tracker.
+                    Assert.assertTrue(initializedBytes - 1 > f.factory.getMetrics().getBuildBytes());
+                    tracker.setLimit(initializedBytes - 1);
+                    try (RecordCursor ignored = f.getRawCursor()) {
+                        Assert.fail("expected scalar state allocation to breach the query limit");
+                    } catch (CairoException expected) {
+                        Assert.assertTrue(expected.isOutOfMemory());
+                    }
+                    Assert.assertEquals(0, tracker.getUsed());
+                    Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    tracker.setLimit(100_000_000);
+                    try (RecordCursor cursor = f.getRawCursor()) {
+                        Assert.assertTrue(cursor.hasNext());
+                    }
+                    Assert.assertEquals(0, tracker.getUsed());
+                } finally {
+                    sqlExecutionContext.setMemoryTracker(previous);
+                }
+                f.assertResults(sql);
+            }
+        });
+    }
+
+    @Test
+    public void testScalarMergeFailureAndReuse() throws Exception {
+        assertScalarMergeFailureAndReuse(false);
+    }
+
+    @Test
+    public void testScalarMergeCancellationAndReuse() throws Exception {
+        assertScalarMergeFailureAndReuse(true);
+    }
+
+    private void assertScalarMergeFailureAndReuse(boolean cancel) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("insert into r select 1, timestamp_sequence('2022-01-01', 1000000L), x::double, x::double from long_sequence(1003)");
+            Hook hook = new Hook();
+            SqlExecutionCircuitBreaker previousBreaker = sqlExecutionContext.getCircuitBreaker();
+            AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+            ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+            String sql = SCALAR_AGGREGATES + OUTER + " where p.installed_kwp is null";
+            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
+                 LimitedMemoryTracker tracker = new LimitedMemoryTracker(100_000_000);
+                 Reducers reducers = new Reducers()) {
+                MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
+                sqlExecutionContext.setMemoryTracker(tracker);
+                try {
+                    f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(new CountDownLatch(2));
+                    hook.gate = new CountDownLatch(2);
+                    hook.failMerge = !cancel;
+                    hook.mergeCancel = cancel ? breaker : null;
+                    try (RecordCursor cursor = f.getRawCursor()) {
+                        cursor.hasNext();
+                        Assert.fail("expected a scalar merge failure");
+                    } catch (CairoException expected) {
+                        if (cancel) {
+                            Assert.assertTrue(expected.isInterruption());
+                        } else {
+                            Assert.assertTrue(expected.getFlyweightMessage().toString().contains("injected merge failure"));
+                        }
+                    }
+                    Assert.assertTrue(hook.mergeCalls.get() > 0);
+                    Assert.assertEquals(0, tracker.getUsed());
+                    Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    hook.gate = null;
+                    hook.failMerge = false;
+                    hook.mergeCancel = null;
+                    breaker.reset();
+                    f.assertResults(sql);
+                    Assert.assertEquals(0, tracker.getUsed());
+                } finally {
+                    sqlExecutionContext.setMemoryTracker(previous);
+                }
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previousBreaker);
+            }
+        });
+    }
+
+    private void assertConcurrentProbeAndWorkerFailureReuse(boolean keyed) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("insert into r select 1, timestamp_sequence('2022-01-01', 1000000L), x::double, x::double from long_sequence(1000)");
+            Hook hook = new Hook();
+            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + " where p.installed_kwp is null";
+            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
+                 Reducers reducers = new Reducers()) {
+                CountDownLatch acquired = new CountDownLatch(2);
+                f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
+                hook.gate = new CountDownLatch(2);
+                f.assertResults(sql);
+                Assert.assertEquals(0, acquired.getCount());
+                Assert.assertEquals(WORKERS + 1, hook.initCount.get());
+                Assert.assertTrue("probe functions must run concurrently", hook.maxActive.get() >= 2);
+                Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                hook.gate = null;
+                hook.fail = true;
+                acquired = new CountDownLatch(1);
+                f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
+                try (RecordCursor cursor = f.getCursor()) {
+                    cursor.hasNext();
+                    Assert.fail();
+                } catch (CairoException expected) {
+                    Assert.assertTrue(expected.getFlyweightMessage().toString().contains("injected probe failure"));
+                }
+                Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                Assert.assertEquals(0, acquired.getCount());
+                hook.fail = false;
+                f.assertResults(sql);
+            }
+        });
+    }
+
+    private void assertCancellationInsideDuplicateChainAndReuse(boolean keyed) throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("truncate table r");
+            execute("truncate table p");
+            execute("insert into r values (1, '2020-01-01', 10, 100)");
+            execute("insert into p select 1, 'ES', null::double from long_sequence(100000)");
+            Hook hook = new Hook();
+            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + " where p.installed_kwp is null";
+            SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+            AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+            ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
+                hook.cancel = breaker;
+                try (RecordCursor cursor = f.getCursor()) {
+                    cursor.hasNext();
+                    Assert.fail();
+                } catch (CairoException expected) {
+                    Assert.assertTrue(expected.isInterruption());
+                }
+                Assert.assertEquals("cancellation must stop within one duplicate loop", 32, hook.calls.get());
+                Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                hook.cancel = null;
+                breaker.reset();
+                f.assertResults(sql);
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+            }
+        });
+    }
+
+    private void assertInitializationFailureAndReuse(boolean keyed) throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            Hook hook = new Hook();
+            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + " where p.installed_kwp is null";
+            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
+                hook.failInit = true;
+                try (RecordCursor ignored = f.getCursor()) {
+                    Assert.fail();
+                } catch (SqlException expected) {
+                    Assert.assertEquals("injected init failure", expected.getFlyweightMessage().toString());
+                }
+                Assert.assertTrue(hook.closed.get() > 0);
+                Assert.assertFalse(sqlExecutionContext.getCloneSymbolTables());
+                hook.failInit = false;
+                f.assertResults(sql);
+            }
+        });
+    }
+
+    private void assertCompileCloseEarlyCloseAndReuse(boolean keyed) throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            try (Fixture ignored = new Fixture((keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER)) {
+                // No cursor acquisition.
+            }
+            try (Fixture f = new Fixture((keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER)) {
+                try (RecordCursor cursor = f.getCursor()) {
+                    Assert.assertEquals(keyed ? -1 : 1, cursor.size());
+                    if (keyed) {
+                        Assert.assertNull(cursor.getSymbolTable(0).valueOf(SymbolTable.VALUE_IS_NULL));
+                    }
+                }
+                f.assertResults((keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER);
+                try (RecordCursor cursor = f.getCursor()) {
+                    Assert.assertTrue(cursor.hasNext());
+                }
+                f.assertResults((keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER);
+            }
+        });
+    }
+
     private void createMergeTables() throws Exception {
         createTables();
         execute("truncate table r");
@@ -996,7 +1162,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         functions = null;
                         filterContext = null;
                         factory = new AsyncHashJoinGroupByRecordCursorFactory(engine, probeOwned, buildOwned, metadata,
-                                functionsOwned, filtersOwned, candidate.getPhysicalJoinType() == IQueryModel.JOIN_LEFT_OUTER, WORKERS);
+                                functionsOwned, filtersOwned, candidate.getPhysicalJoinType() == IQueryModel.JOIN_LEFT_OUTER, factoryWorkerCount);
                     }
                     queryFactory = new QueryProgress(engine.getQueryRegistry(), sql, factory);
                 }
@@ -1100,17 +1266,19 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 cursor.toTop();
                 Assert.assertEquals(expected, rows(cursor, factory.getMetadata()));
                 cursor.toTop();
-                LongList rowIds = new LongList();
-                while (cursor.hasNext()) {
-                    rowIds.add(cursor.getRecord().getRowId());
+                if (factory.recordCursorSupportsRandomAccess()) {
+                    LongList rowIds = new LongList();
+                    while (cursor.hasNext()) {
+                        rowIds.add(cursor.getRecord().getRowId());
+                    }
+                    List<String> randomAccess = new ArrayList<>();
+                    for (int i = rowIds.size() - 1; i >= 0; i--) {
+                        cursor.recordAt(cursor.getRecordB(), rowIds.getQuick(i));
+                        appendRow(randomAccess, cursor.getRecordB(), factory.getMetadata());
+                    }
+                    Collections.sort(randomAccess);
+                    Assert.assertEquals(expected, randomAccess);
                 }
-                List<String> randomAccess = new ArrayList<>();
-                for (int i = rowIds.size() - 1; i >= 0; i--) {
-                    cursor.recordAt(cursor.getRecordB(), rowIds.getQuick(i));
-                    appendRow(randomAccess, cursor.getRecordB(), factory.getMetadata());
-                }
-                Collections.sort(randomAccess);
-                Assert.assertEquals(expected, randomAccess);
                 cursor.toTop();
                 RecordCursor.Counter remaining = new RecordCursor.Counter();
                 boolean first = cursor.hasNext();

@@ -4995,9 +4995,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return tableFactory;
     }
 
-    /**
-     * Generates the factories for HORIZON JOIN.
-     */
+    /** Generates keyed or scalar aggregation over a shared immutable hash join build. */
     private RecordCursorFactory generateHashJoinGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (!executionContext.isParallelHashJoinGroupByEnabled()) {
             return null;
@@ -5047,9 +5045,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     probeInput.getMetadata(), probeColumns,
                     build.getMetadata(), candidate.getInputColumns(build.getMetadata(), true))) {
                 functions = compileHashJoinGroupByFunctions(model, metadata, workerCount, executionContext);
-                if (functions.getKeyTypes().getColumnCount() == 0) {
-                    return null;
-                }
                 if (metadata.getBuildOnFilter() != null) {
                     build = new FilteredRecordCursorFactory(build,
                             compileBooleanFilter(metadata.getBuildOnFilter(), build.getMetadata(), executionContext));

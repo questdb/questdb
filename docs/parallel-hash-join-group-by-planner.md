@@ -1,6 +1,6 @@
 # Fused hash join planner and diagnostics
 
-[RFC 130](https://github.com/questdb/rfc/discussions/130), tasks 6 and 6a.
+[RFC 130](https://github.com/questdb/rfc/discussions/130), tasks 6, 6a and 8.
 
 ## Selection and controls
 
@@ -11,7 +11,7 @@
 must have a positive shared query-worker count. The context's global parallel
 GROUP BY switch continues to gate selection after runtime setter changes.
 
-| Global GROUP BY | Experimental fused flag | Query workers | Eligible keyed plan |
+| Global GROUP BY | Experimental fused flag | Query workers | Eligible keyed or unkeyed plan |
 | --- | --- | --- | --- |
 | false | either | any | Ordinary join and aggregation |
 | true | false | any | Ordinary join and aggregation |
@@ -25,9 +25,9 @@ availability does not promise that every execution actually uses all workers.
 
 The planner calls the candidate API before generating the ordinary join/group-by
 pipeline. It verifies the compiled probe's frame/filter capabilities and the exact
-aggregate/type allowlist, and selects only keyed aggregation. Shared cursor models retain their existing
-ownership and plans; they are rejected before speculative child compilation. Unkeyed execution is
-task 8. See the [capability table](parallel-hash-join-group-by.md). There is no build-size
+aggregate/type allowlist, and selects keyed maps or unkeyed scalar partials. Shared cursor models retain their
+existing ownership and plans; they are rejected before speculative child compilation.
+See [scalar execution](parallel-hash-join-group-by-unkeyed.md). See the [capability table](parallel-hash-join-group-by.md). There is no build-size
 cutoff, runtime fallback, or consumed-input replay.
 
 ## Filters, projections and ownership
@@ -67,6 +67,7 @@ flag, qualified equality keys, `buildStrategy: shared`, grouping keys/functions,
 aggregate functions, post-join and taken-over probe filters, and labelled Probe/Build
 children. Child plans retain interval scans and build filters. The factory copies
 only the joined metadata needed to render functions; it retains no candidate models.
+Unkeyed plans additionally report `aggregation: scalar` and have no grouping keys.
 EXPLAIN does not acquire the build cursor or populate execution metrics.
 
 ## Execution metrics and benchmark adapter
@@ -83,7 +84,7 @@ computed result does not recount input rows.
 | matchedPairs | Equality-ON matches before post-join filtering, including every duplicate |
 | nullExtendedRows | One candidate for each surviving probe-input row without an ON match in physical LEFT execution |
 | survivingRows | Matched or null-extended candidates passing the post-join filter and reaching aggregate updates |
-| mergeCardinality | Final grouping-map row count |
+| mergeCardinality | Final output row count: grouping-map cardinality or one scalar row, including empty scalar input |
 | buildNanos | Build-child cursor acquisition, filtering, copying/freezing and child cursor close |
 | initNanos | Probe frame-cursor acquisition and execution function/slot initialization |
 | probeNanos | Frame preparation, scheduling, decoding, probing and aggregate updates through worker drain |
@@ -159,3 +160,10 @@ The small smoke workload validates integration only. Task 7 subsequently passed
 the primary 100-million-row, repeatable 2× end-to-end performance gate; see the
 [keyed prototype benchmark](parallel-hash-join-group-by-benchmark.md). Default
 enablement remains a separate rollout decision after V1 qualification.
+
+
+Task 8 extends result/EXPLAIN flag coverage to unkeyed aggregate projections and
+count-only queries, and adds the complete declared aggregate/type differential
+matrix, scalar cursor contracts, memory tracking and concurrent failure/reuse tests.
+See [the task 8 validation report](parallel-hash-join-group-by-unkeyed.md) for current
+regression results; the task 6 numbers above retain their original scope.

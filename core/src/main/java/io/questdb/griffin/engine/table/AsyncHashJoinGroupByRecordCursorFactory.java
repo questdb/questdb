@@ -57,7 +57,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 /**
- * Keyed shared-build execution selected by the experimental planner gate.
+ * Keyed and scalar shared-build execution selected by the experimental planner gate.
  * Takes ownership of both child factories, functions and the interpreted probe
  * filter context on entry, including construction failure. Borrows metadata only
  * during construction. Callers must compile functions for the same worker count.
@@ -116,7 +116,6 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             this.joinedMetadata = GenericRecordMetadata.copyOf(metadata.getJoinedMetadata());
             this.condition = metadata.getCondition();
             if (workerCount < 1 || functions.getWorkerCount() != workerCount
-                    || functions.getKeyTypes().getColumnCount() == 0
                     || !probeFactory.supportsPageFrameCursor()
                     || filterContext.getCompiledFilter() != null) {
                 throw new IllegalArgumentException("unsupported fused hash join execution inputs");
@@ -179,7 +178,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return true;
+        return functions.isKeyed();
     }
 
     @Override
@@ -192,6 +191,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         sink.attr("inputSwapped").val(inputSwapped);
         sink.attr("condition").val(condition);
         sink.attr("buildStrategy").val("shared");
+        if (!functions.isKeyed()) {
+            sink.attr("aggregation").val("scalar");
+        }
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(functions.getOutputFunctions(), getMetadata()));
         sink.setMetadata(joinedMetadata);
         try {
@@ -237,7 +239,8 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 if (atom.isSharded()) {
                     fragment.shard(breaker);
                 }
-                final Map map = fragment.isNotSharded() ? fragment.reopenMap() : fragment.getShards().getQuick(0);
+                final Map map = fragment == null ? null
+                        : fragment.isNotSharded() ? fragment.reopenMap() : fragment.getShards().getQuick(0);
                 final Function probeFilter = atom.getFilterContext().getFilter(slotId);
                 final Function postJoinFilter = functions.getFilter(slotId);
                 for (long r = 0, n = sequence.getFrameRowCount(frameIndex); r < n && sequence.isActive(); r++) {
@@ -265,7 +268,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                         update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                     }
                 }
-                atom.getShardingContext().maybeEnableSharding(fragment, 0);
+                if (fragment != null) {
+                    atom.getShardingContext().maybeEnableSharding(fragment, 0);
+                }
             } finally {
                 pool.releaseParquetBuffers();
             }
@@ -278,25 +283,32 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                                HashJoinGroupByRecord record, Function filter, long rowId) {
         if (filter == null || filter.getBool(record)) {
             slot.survivingRows++;
-            MapKey key = map.withKey();
-            sink.copy(record, key);
             final MapValue value;
-            if (fragment.isNotSharded()) {
-                value = key.createValue();
+            if (slot.value != null) {
+                value = slot.value;
             } else {
-                key.commit();
-                final long hashCode = key.hash();
-                final Map shard = fragment.getShardMap(hashCode);
-                if (shard != map) {
-                    MapKey shardKey = shard.withKey();
-                    shardKey.copyFrom(key);
-                    value = shardKey.createValue(hashCode);
+                MapKey key = map.withKey();
+                sink.copy(record, key);
+                if (fragment.isNotSharded()) {
+                    value = key.createValue();
                 } else {
-                    value = key.createValue(hashCode);
+                    key.commit();
+                    final long hashCode = key.hash();
+                    final Map shard = fragment.getShardMap(hashCode);
+                    if (shard != map) {
+                        MapKey shardKey = shard.withKey();
+                        shardKey.copyFrom(key);
+                        value = shardKey.createValue(hashCode);
+                    } else {
+                        value = key.createValue(hashCode);
+                    }
                 }
             }
             if (value.isNew()) {
                 updater.updateNew(value, record, rowId);
+                if (slot.value != null) {
+                    slot.value.setNew(false);
+                }
             } else {
                 updater.updateExisting(value, record, rowId);
             }

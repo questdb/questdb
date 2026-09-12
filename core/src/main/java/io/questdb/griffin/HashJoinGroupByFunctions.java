@@ -127,13 +127,13 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
                 workerFilters = generator.compileWorkerFiltersConditionally(executionContext,
                         filter, workerCount, metadata.getPostJoinFilter(), joined);
             }
-            Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(configuration, asm,
-                    joined, columnFilter, keyFunctions, null, null, null, null);
+            Class<RecordSink> sinkClass = isKeyed() ? RecordSinkFactory.getInstanceClass(configuration, asm,
+                    joined, columnFilter, keyFunctions, null, null, null, null) : null;
             Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, groupByFunctions.size());
             // Index zero is the owner (slot -1); other entries are acquired worker slots.
             for (int slot = -1; slot < workerCount; slot++) {
-                mapSinks.add(RecordSinkFactory.getInstance(sinkClass, joined, columnFilter,
-                        getKeyFunctions(slot), null, null, null, null));
+                mapSinks.add(sinkClass != null ? RecordSinkFactory.getInstance(sinkClass, joined, columnFilter,
+                        getKeyFunctions(slot), null, null, null, null) : null);
                 updaters.add(GroupByFunctionsUpdaterFactory.getInstance(updaterClass, getGroupByFunctions(slot)));
             }
         } catch (Throwable th) {
@@ -227,6 +227,10 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
 
     public int getWorkerCount() {
         return workerCount;
+    }
+
+    public boolean isKeyed() {
+        return keyTypes.getColumnCount() > 0;
     }
 
     /**

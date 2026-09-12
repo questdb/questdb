@@ -46,6 +46,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     private static final String SELECT = "select p.country, year(r.reading_ts) yr, month(r.reading_ts) mo, "
             + "sum(r.energy_kwh) energy, avg(r.irradiance_wm2) irradiance, "
             + "sum(r.energy_kwh)/nullif(sum(p.installed_kwp),0) yield";
+    private static final String SCALAR_SELECT = "select count(*) pairs, count(p.plant_id) plants, "
+            + "sum(r.energy_kwh) energy, avg(r.irradiance_wm2) irradiance, "
+            + "sum(r.energy_kwh)/nullif(sum(p.installed_kwp),0) yield";
     private static final String[] JOINS = {
             " from r join p on r.plant_id=p.plant_id",
             " from r left join p on r.plant_id=p.plant_id",
@@ -69,6 +72,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             Assert.assertEquals(enabled, context.isParallelHashJoinGroupByEnabled());
                             for (String join : JOINS) {
                                 assertDifferential(SELECT + join + " order by country, yr, mo", context, enabled);
+                                assertDifferential(SCALAR_SELECT + join, context, enabled);
+                                assertDifferential("select count(*)" + join, context, enabled);
                             }
                         }
                     }
@@ -89,6 +94,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                 + " and r.reading_ts < '2021-01-01' and r.energy_kwh > 10"
                                 + " and p.country in ('ES','IT') order by country, yr, mo limit 3";
                         assertDifferential(sql, context, true);
+                        assertDifferential(sql.replace(SELECT, SCALAR_SELECT).replace(" order by country, yr, mo", " order by energy"), context, true);
                         try (RecordCursorFactory factory = engine.select(sql, context)) {
                             String plan = plan(factory, context);
                             Assert.assertTrue(plan, plan.contains("Interval forward scan on: r"));
@@ -106,6 +112,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     for (String on : new String[]{"", " and p.installed_kwp > 5"}) {
                         for (String where : new String[]{"", " where p.installed_kwp is null", " where p.installed_kwp > 5"}) {
                             assertDifferential(SELECT + JOINS[j] + on + where + " order by country, yr, mo", context, true);
+                            assertDifferential(SCALAR_SELECT + JOINS[j] + on + where, context, true);
                         }
                     }
                 }
@@ -124,6 +131,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     for (String join : new String[]{probe + " join " + build, probe + " left join " + build, build + " right join " + probe}) {
                         assertDifferential("select b.c, year(a.ts) yr, sum(a.e) energy, avg(a.irr) irradiance, sum(b.cap) capacity from "
                                 + join + " on a.id=b.id group by b.c, year(a.ts) order by b.c, yr", context, true);
+                        assertDifferential("select sum(a.e) energy, avg(a.irr) irradiance, count(b.c) countries, sum(b.cap) capacity from "
+                                + join + " on a.id=b.id", context, true);
                     }
                 }
             }
@@ -136,8 +145,10 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             createTables();
             try (SqlExecutionContextImpl context = enabledContext()) {
                 for (String sql : new String[]{
-                        "select sum(r.energy_kwh)" + JOINS[0],
-                        "select sum(r.energy_kwh)" + JOINS[2] + " where r.reading_ts >= '2020-02-01' and r.energy_kwh > 10",
+                        "select first(r.energy_kwh), last(r.energy_kwh)" + JOINS[0],
+                        "select sum(r.plant_id), avg(r.plant_id)" + JOINS[0],
+                        "select count(distinct p.country)" + JOINS[1],
+                        "select min(r.energy_kwh), max(r.energy_kwh)" + JOINS[2],
                         "select p.country, first(r.energy_kwh), last(r.energy_kwh)" + JOINS[0] + " order by country",
                         "select p.country, sum(r.plant_id)" + JOINS[0] + " order by country",
                         SELECT + " from r join p on r.plant_id::long=p.plant_id::long order by country,yr,mo",
@@ -305,9 +316,103 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testAllAggregateTypesKeyedAndUnkeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table a (id int, i int, l long, d double, s symbol)");
+            execute("create table b (id int, i int, l long, d double, s symbol)");
+            String aggregates = "count(*) n, count() n2, count(a.i) ai, count(a.l) al, count(a.d) ad, count(a.s) asym, "
+                    + "count(b.i) bi, count(b.l) bl, count(b.d) bd, count(b.s) bsym, "
+                    + "sum(a.d) asum, avg(a.d) aavg, sum(b.d) bsum, avg(b.d) bavg";
+            String[] joins = {" from a join b on a.id=b.id", " from a left join b on a.id=b.id", " from b right join a on a.id=b.id"};
+            for (int scenario = 0; scenario < 8; scenario++) {
+                execute("truncate table a");
+                execute("truncate table b");
+                if (scenario != 4 && scenario != 7) {
+                    execute("insert into a values (1,1,100,0.5,'a'), (1,null,null,null,null), (2,2,200,2.0,'b'), "
+                            + "(3,3,300,8.0,'c'), (null,null,null,null,null)");
+                }
+                if (scenario != 2 && scenario != 7) {
+                    execute("insert into b values (1,1,10,1.0,'x'), (1,null,null,null,null), (1,2,20,4.0,'y'), "
+                            + "(2,3,30,8.0,'z'), (null,null,null,null,null)");
+                }
+                if (scenario == 1) {
+                    execute("update a set i=null, l=null, d=null, s=null");
+                    execute("update b set i=null, l=null, d=null, s=null");
+                } else if (scenario == 3) {
+                    execute("update b set id=999");
+                }
+                String where = scenario == 5 ? " where b.i=999" : scenario == 6 ? " where a.i=999" : "";
+                for (int workers : new int[]{1, 4}) {
+                    try (SqlExecutionContextImpl context = context(workers)) {
+                        context.setParallelGroupByEnabled(true);
+                        context.setParallelHashJoinGroupByEnabled(true);
+                        context.changePageFrameSizes(1, 1);
+                        for (String join : joins) {
+                            assertDifferential("select " + aggregates + join + where, context, true);
+                            assertDifferential("select a.id, " + aggregates + join + where + " order by a.id", context, true);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarEmptyInputMetricsAndCursorReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                for (int j = 0; j < JOINS.length; j++) {
+                    String sql = "select count(*) n, count(p.plant_id) c, sum(p.installed_kwp) s, avg(p.installed_kwp) a" + JOINS[j];
+                    try (RecordCursorFactory factory = engine.select(sql, context)) {
+                        AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
+                        Assert.assertFalse(fused.recordCursorSupportsRandomAccess());
+                        Assert.assertTrue(plan(factory, context).contains("aggregation: scalar"));
+                        Assert.assertEquals(0, fused.getMetrics().getBuildRows());
+                        // Close before dispatch, and then consume and reread the same factory.
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            Assert.assertEquals(1, cursor.size());
+                            Assert.assertEquals(0, cursor.preComputedStateSize());
+                        }
+                        String expected = result(factory, context);
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            Assert.assertTrue(cursor.hasNext());
+                            RecordCursor.Counter remaining = new RecordCursor.Counter();
+                            cursor.calculateSize(context.getCircuitBreaker(), remaining);
+                            Assert.assertEquals(0, remaining.get());
+                            Assert.assertFalse(cursor.hasNext());
+                            cursor.toTop();
+                            StringSink sink = new StringSink();
+                            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
+                            Assert.assertEquals(expected, sink.toString());
+                            cursor.toTop();
+                            cursor.calculateSize(context.getCircuitBreaker(), remaining);
+                            Assert.assertEquals(1, remaining.get());
+                            Assert.assertFalse(cursor.hasNext());
+                            Assert.assertEquals(1, cursor.preComputedStateSize());
+                        }
+                        execute("truncate table p");
+                        Assert.assertEquals("n\tc\ts\ta\n" + (j == 0 ? "0" : "5") + ":LONG\t0:LONG\tnull:DOUBLE\tnull:DOUBLE\n", result(factory, context));
+                        HashJoinGroupByMetrics metrics = fused.getMetrics();
+                        Assert.assertEquals(0, metrics.getBuildRows());
+                        Assert.assertEquals(0, metrics.getMatchedPairs());
+                        Assert.assertEquals(j == 0 ? 0 : 5, metrics.getScannedRows());
+                        Assert.assertEquals(j == 0 ? 0 : 5, metrics.getNullExtendedRows());
+                        Assert.assertEquals(1, metrics.getMergeCardinality());
+                        Assert.assertFalse(fused.getAtom().isSharded());
+                        execute("insert into p values (1,'ES',5), (1,'ES',7), (1,'IT',null), (2,null,null), (null,'ES',11)");
+                        Assert.assertEquals(expected, result(factory, context));
+                    }
+                }
+            }
+        });
+    }
+
     private void assertDifferential(String sql, SqlExecutionContextImpl context, boolean enabled) throws Exception {
         String expected;
         String baselinePlan;
+        int[] types;
         try (SqlExecutionContextImpl baselineContext = context(context.getSharedQueryWorkerCount())) {
             baselineContext.setParallelHashJoinGroupByEnabled(false);
             baselineContext.setParallelGroupByEnabled(context.isParallelGroupByEnabled());
@@ -318,6 +423,10 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 baselinePlan = plan(baseline, baselineContext);
                 Assert.assertFalse(baselinePlan.contains("Async Hash Join Group By"));
                 expected = result(baseline, baselineContext);
+                types = new int[baseline.getMetadata().getColumnCount()];
+                for (int i = 0; i < types.length; i++) {
+                    types[i] = baseline.getMetadata().getColumnType(i);
+                }
             }
         }
         try (RecordCursorFactory factory = engine.select(sql, context)) {
@@ -325,6 +434,10 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             Assert.assertEquals(sql + "\n" + plan, enabled, plan.contains("Async Hash Join Group By"));
             if (!enabled) {
                 Assert.assertEquals(sql, baselinePlan, plan);
+            }
+            Assert.assertEquals(types.length, factory.getMetadata().getColumnCount());
+            for (int i = 0; i < types.length; i++) {
+                Assert.assertEquals(sql, types[i], factory.getMetadata().getColumnType(i));
             }
             Assert.assertEquals(sql, expected, result(factory, context));
             Assert.assertEquals(sql, expected, result(factory, context));

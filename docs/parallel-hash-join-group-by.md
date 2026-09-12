@@ -1,15 +1,17 @@
 # Parallel hash join / group by: capabilities and comparison harness
 
-[RFC 130](https://github.com/questdb/rfc/discussions/130), implementation tasks 1–6 and 6a.
+[RFC 130](https://github.com/questdb/rfc/discussions/130), implementation tasks 1–8 and 6a.
 
 The branch includes the [immutable build boundary](parallel-hash-join-group-by-build.md),
 [joined metadata and function initialization](parallel-hash-join-group-by-functions.md),
-and [keyed execution and merging](parallel-hash-join-group-by-execution.md).
+[keyed execution and merging](parallel-hash-join-group-by-execution.md),
+and [scalar execution](parallel-hash-join-group-by-unkeyed.md).
 Task 6 connects these components to ordinary SQL compilation behind an experimental
 flag. The [planner and diagnostics guide](parallel-hash-join-group-by-planner.md)
 documents selection, configuration, ownership, EXPLAIN and benchmark counters.
-The [handoff](../PARALLEL_HASH_JOIN_HANDOFF.md) records completed work and task 7's
-pending performance gate. Default SQL plans remain unchanged.
+The [handoff](../PARALLEL_HASH_JOIN_HANDOFF.md) records completed tasks 1–8, the
+passed keyed performance gate, and pending V1 qualification in task 9. The
+experimental flag remains disabled by default.
 
 ## Capability table
 
@@ -24,7 +26,7 @@ pending performance gate. Default SQL plans remain unchanged.
 | COUNT | `CountLongConstGroupByFunction` (`count(*)` / `count()`), `CountIntGroupByFunction`, `CountLongGroupByFunction`, `CountDoubleGroupByFunction`, `CountSymbolGroupByFunction` with the corresponding INT/LONG/DOUBLE/SYMBOL argument. All return LONG. Additional overloads require an explicit extension. |
 | Expressions | Scalar expressions over the supported columns, constants and bind variables, with a supported result type and compiled parallel execution capability. Includes `year(timestamp)`, `month(timestamp)`, arithmetic and `coalesce(double, double)`. Scalar subqueries, arrays, window expressions and functions unstable within an execution are excluded. Final expressions over aggregates, ordering, and LIMIT stay above aggregation. |
 | Unsupported aggregates | Every implementation outside the exact class/type allowlist, including `first`, `last`, DISTINCT aggregates, MIN/MAX, integer SUM/AVG, and custom subclasses. Parallel GROUP BY support alone is insufficient to order duplicate joined pairs. |
-| Aggregation | Keyed execution is available. Unkeyed queries keep ordinary execution until task 8. |
+| Aggregation | Keyed maps and unkeyed scalar partials share the build/probe pipeline. Scalar execution allocates no grouping maps and returns exactly one row for empty aggregate input: zero counts and null SUM/AVG. Both require the global parallel GROUP BY and experimental fused flags with positive query-worker slots. |
 | Wrappers | Resolve projected aliases recursively during candidate analysis. Never fuse across an intervening LIMIT, DISTINCT (including DISTINCT rewritten to GROUP BY), other aggregation, window or set operation. |
 
 The descriptor borrows model references and is valid only until subsequent model

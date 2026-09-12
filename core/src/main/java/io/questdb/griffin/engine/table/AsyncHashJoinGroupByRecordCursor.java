@@ -56,6 +56,8 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
     private final VirtualRecord recordB;
     private final ShardedMapCursor shardedCursor = new ShardedMapCursor();
     private SqlExecutionCircuitBreaker circuitBreaker;
+    private boolean isBuilt;
+    private boolean isExhausted;
     private boolean isOpen;
     private MapRecordCursor mapCursor;
 
@@ -72,8 +74,13 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker breaker, Counter counter) {
-        buildMap();
-        mapCursor.calculateSize(breaker, counter);
+        buildResult();
+        if (functions.isKeyed()) {
+            mapCursor.calculateSize(breaker, counter);
+        } else if (!isExhausted) {
+            counter.inc();
+            isExhausted = true;
+        }
     }
 
     @Override
@@ -89,6 +96,7 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
                 recordA.of(null);
                 recordB.of(null);
                 circuitBreaker = null;
+                isBuilt = false;
                 frameSequence.reset();
             }
         }
@@ -101,6 +109,9 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
 
     @Override
     public Record getRecordB() {
+        if (!functions.isKeyed()) {
+            throw new UnsupportedOperationException();
+        }
         return recordB;
     }
 
@@ -111,8 +122,15 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        buildMap();
-        return mapCursor.hasNext();
+        buildResult();
+        if (functions.isKeyed()) {
+            return mapCursor.hasNext();
+        }
+        if (isExhausted) {
+            return false;
+        }
+        isExhausted = true;
+        return true;
     }
 
     @Override
@@ -122,29 +140,35 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
 
     @Override
     public long preComputedStateSize() {
-        return mapCursor == null ? 0 : 1;
+        return isBuilt ? 1 : 0;
     }
 
     @Override
     public void recordAt(Record record, long rowId) {
+        if (!functions.isKeyed()) {
+            throw new UnsupportedOperationException();
+        }
         mapCursor.recordAt(((VirtualRecord) record).getBaseRecord(), rowId);
     }
 
     @Override
     public long size() {
-        return mapCursor == null ? -1 : mapCursor.size();
+        return functions.isKeyed() ? (mapCursor == null ? -1 : mapCursor.size()) : 1;
     }
 
     @Override
     public void toTop() {
-        if (mapCursor != null) {
-            mapCursor.toTop();
+        isExhausted = false;
+        if (isBuilt) {
+            if (mapCursor != null) {
+                mapCursor.toTop();
+            }
             GroupByUtils.toTop(functions.getOutputFunctions());
         }
     }
 
-    private void buildMap() {
-        if (mapCursor == null) {
+    private void buildResult() {
+        if (!isBuilt) {
             try {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 AsyncHashJoinGroupByAtom atom = frameSequence.getAtom();
@@ -157,28 +181,34 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
                 metrics.probeNanos = System.nanoTime() - start;
                 atom.collectMetrics(metrics);
                 start = System.nanoTime();
-                final GroupByShardingContext sharding = atom.getShardingContext();
-                if (sharding.isSharded()) {
-                    // mergeShards drains every published task before returning or throwing.
-                    // Only then may close() release fragments and shared build backing.
-                    final ObjList<Map> shards = sharding.mergeShards(engine.getMessageBus(), frameSequence.getWorkStealingStrategy(),
-                            circuitBreaker, mergeCircuitBreaker, mergeDoneLatch, mergeStartedCounter);
-                    if (mergeCircuitBreaker.checkIfTripped()) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                        if (mergeCircuitBreaker.hasError()) {
-                            throw mergeCircuitBreaker.buildError();
+                if (functions.isKeyed()) {
+                    final GroupByShardingContext sharding = atom.getShardingContext();
+                    if (sharding.isSharded()) {
+                        // mergeShards drains every published task before returning or throwing.
+                        // Only then may close() release fragments and shared build backing.
+                        final ObjList<Map> shards = sharding.mergeShards(engine.getMessageBus(), frameSequence.getWorkStealingStrategy(),
+                                circuitBreaker, mergeCircuitBreaker, mergeDoneLatch, mergeStartedCounter);
+                        if (mergeCircuitBreaker.checkIfTripped()) {
+                            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                            if (mergeCircuitBreaker.hasError()) {
+                                throw mergeCircuitBreaker.buildError();
+                            }
+                            throw frameSequence.buildInterruptionException();
                         }
-                        throw frameSequence.buildInterruptionException();
+                        shardedCursor.of(shards);
+                        mapCursor = shardedCursor;
+                    } else {
+                        mapCursor = sharding.mergeOwnerMap(circuitBreaker).getCursor();
                     }
-                    shardedCursor.of(shards);
-                    mapCursor = shardedCursor;
+                    metrics.mergeCardinality = mapCursor.size();
+                    recordA.of(mapCursor.getRecord());
+                    recordB.of(mapCursor.getRecordB());
                 } else {
-                    mapCursor = sharding.mergeOwnerMap(circuitBreaker).getCursor();
+                    recordA.of(atom.mergeScalar(circuitBreaker));
+                    metrics.mergeCardinality = 1;
                 }
                 metrics.mergeNanos = System.nanoTime() - start;
-                metrics.mergeCardinality = mapCursor.size();
-                recordA.of(mapCursor.getRecord());
-                recordB.of(mapCursor.getRecordB());
+                isBuilt = true;
             } catch (Throwable th) {
                 Misc.free(this, th);
                 throw th;
@@ -189,5 +219,7 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
     void open(SqlExecutionCircuitBreaker circuitBreaker) {
         this.circuitBreaker = circuitBreaker;
         isOpen = true;
+        isBuilt = false;
+        isExhausted = false;
     }
 }
