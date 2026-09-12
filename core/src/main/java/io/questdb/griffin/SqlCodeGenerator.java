@@ -788,6 +788,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return compileBooleanFilter(expr, metadata, executionContext);
     }
 
+    /** Compiles joined functions independently of child cursor construction and planner selection. */
+    public HashJoinGroupByFunctions compileHashJoinGroupByFunctions(
+            IQueryModel model,
+            HashJoinGroupByMetadata metadata,
+            int workerCount,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        return new HashJoinGroupByFunctions(this, configuration, asm, functionParser,
+                model, metadata, workerCount, executionContext);
+    }
+
     /**
      * Typed whitebox seam for {@link #compilePerWorkerInnerProjectionFunctions}: it lets tests
      * pin the per-worker clone/borrow contract without reflecting private members.
@@ -2065,7 +2076,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
-    private @Nullable WorkerFunctionLists compilePerWorkerInnerProjectionFunctions(
+    @Nullable WorkerFunctionLists compilePerWorkerInnerProjectionFunctions(
             SqlExecutionContext executionContext,
             ObjList<QueryColumn> queryColumns,
             ObjList<Function> innerProjectionFunctions,
@@ -2226,7 +2237,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * {@code filter} against, so every clone resolves a column reference the same way and the rows
      * a query returns cannot depend on which worker reduced a given page frame.
      */
-    private @Nullable ObjList<Function> compileWorkerFiltersConditionally(
+    @Nullable ObjList<Function> compileWorkerFiltersConditionally(
             SqlExecutionContext executionContext,
             @Nullable Function filter,
             int sharedQueryWorkerCount,

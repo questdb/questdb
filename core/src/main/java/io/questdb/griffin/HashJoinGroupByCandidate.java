@@ -47,6 +47,7 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -56,15 +57,25 @@ import org.jetbrains.annotations.Nullable;
  * Selection remains disabled until the fused factory and its storage guards are implemented.
  */
 public final class HashJoinGroupByCandidate {
+    private final IntList baseColumnIndexes;
     private final int buildIndex;
     private final int buildKeyColumn;
     private final ExpressionNode buildOnFilter;
+    private final IntList columnSources;
     private final IQueryModel joinModel;
     private final int logicalJoinType;
     private final int probeKeyColumn;
     private final IntList requiredBuildColumns;
+    private final ObjList<QueryColumn> resolvedColumns;
+    private final RecordMetadata resolvedMetadata;
+    private final ObjList<ExpressionNode> resolvedPostJoinFilters;
 
     private HashJoinGroupByCandidate(Analyzer analyzer, int probeKeyColumn, int buildKeyColumn) {
+        this.baseColumnIndexes = analyzer.columnIndexes;
+        this.columnSources = analyzer.columnSources;
+        this.resolvedColumns = analyzer.resolvedColumns;
+        this.resolvedMetadata = analyzer.metadata;
+        this.resolvedPostJoinFilters = analyzer.resolvedPostJoinFilters;
         this.buildIndex = analyzer.buildIndex;
         this.buildKeyColumn = buildKeyColumn;
         this.buildOnFilter = analyzer.buildOnFilter;
@@ -226,6 +237,8 @@ public final class HashJoinGroupByCandidate {
                 if (expression == null) {
                     return null;
                 }
+                analyzer.resolvedColumns.add(QueryColumn.FACTORY.newInstance().of(
+                        Chars.toString(groupBy.getColumns().getQuick(i).getName()), expression));
                 try (Function function = parser.parseFunction(expression, analyzer.metadata, executionContext)) {
                     if (function instanceof GroupByFunction) {
                         if (!supportsAggregate(function)) {
@@ -249,6 +262,26 @@ public final class HashJoinGroupByCandidate {
             int probeKey = buildKey == a ? b : a;
             return new HashJoinGroupByCandidate(analyzer, analyzer.columnIndexes.getQuick(probeKey), analyzer.columnIndexes.getQuick(buildKey));
         }
+    }
+
+    int getBaseColumnIndex(int resolvedIndex) {
+        return baseColumnIndexes.getQuick(resolvedIndex);
+    }
+
+    ObjList<QueryColumn> getResolvedColumns() {
+        return resolvedColumns;
+    }
+
+    RecordMetadata getResolvedMetadata() {
+        return resolvedMetadata;
+    }
+
+    ObjList<ExpressionNode> getResolvedPostJoinFilters() {
+        return resolvedPostJoinFilters;
+    }
+
+    boolean isBuildColumn(int resolvedIndex) {
+        return columnSources.getQuick(resolvedIndex) == buildIndex;
     }
 
     private static IQueryModel baseTable(IQueryModel input, IQueryModel join) {
@@ -290,6 +323,8 @@ public final class HashJoinGroupByCandidate {
         private final GenericRecordMetadata metadata = new GenericRecordMetadata();
         private final FunctionParser parser;
         private final IntList requiredBuildColumns = new IntList();
+        private final ObjList<QueryColumn> resolvedColumns = new ObjList<>();
+        private final ObjList<ExpressionNode> resolvedPostJoinFilters = new ObjList<>();
         private final RecordMetadata[] sources;
         private ExpressionNode buildOnFilter;
         private int usedSources;
@@ -346,6 +381,9 @@ public final class HashJoinGroupByCandidate {
             }
             if (expression == null || (postJoin && usedSources == 3)) {
                 return false;
+            }
+            if (postJoin) {
+                resolvedPostJoinFilters.add(expression);
             }
             try (Function function = parser.parseFunction(expression, metadata, executionContext)) {
                 return function.getType() == ColumnType.BOOLEAN && function.supportsParallelism() && function.isStableWithinExecution();

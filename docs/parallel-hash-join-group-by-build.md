@@ -84,7 +84,7 @@ additional independent flyweights when functions need them. All views share only
 immutable native backing. Getters and handles are valid only until execution
 cleanup; `recordAt` must receive a handle from this build. `find` clears the payload
 position and replaces the duplicate iterator even on a miss. Null extension is
-still a task 3 joined-record responsibility. An empty build already provides a
+handled by the [task 3 joined record](parallel-hash-join-group-by-functions.md). An empty build already provides a
 symbol source that resolves the null key without a real dictionary allocation.
 
 The factory/execution owner must stop and drain every reader before `close`, and
