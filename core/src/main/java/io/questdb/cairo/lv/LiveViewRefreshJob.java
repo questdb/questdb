@@ -15355,7 +15355,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * </ul>
      * Returns {@code null} when recovery completed (or was re-armed for the next
      * tick); otherwise the error the recovery replay failed with, which the caller
-     * feeds into the standard flush-retry accounting.
+     * feeds into the standard flush-retry accounting - and, for the ACTIVE rebuild,
+     * the window-state debt that error leaves behind.
+     * <p>
+     * Only an out-of-order correction reaches here on an ACTIVE view's ordinary path.
+     * The raw-WAL forward drain reconciles the segment against the compiled base-scan
+     * projection, which holds the REFERENCED columns only, so a change the view cannot
+     * see never drifts it and one it can see invalidates it instead; the coupled
+     * applied-base drain opens its reader unversioned. The replay is the reader that
+     * asks for the base at the factory's compile-time metadata version, and
+     * {@link LiveViewRefreshSqlExecutionContext#getReader(TableToken, long)} refuses a
+     * pinned reader whose version has moved.
      */
     private Throwable recoverFromBaseMetadataDrift(LiveViewInstance instance) {
         final String viewName = instance.getDefinition().getViewName();
@@ -15376,7 +15386,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(viewName).I$();
             return null;
         }
-        return rebuildActiveWindowStateFromAppliedBase(instance, "base table metadata change");
+        final Throwable rebuildError = rebuildActiveWindowStateFromAppliedBase(instance, "base table metadata change");
+        if (rebuildError != null) {
+            // prepareForBaseSchemaRecompile freed the compiled artifacts at the top, so the runtime
+            // this rebuild was going to put back is gone: the next getWindowFactory recompiles at
+            // identity while the durable tier still holds the whole history, and a forward drain
+            // over that would commit a running total starting from zero and call
+            // recordRefreshSuccess() on it. Carry the debt, exactly as the mid-drain rebuild does
+            // when its own replay fails - handleRefreshFailure cannot do it for this caller,
+            // because its carry sits behind the !wasMetadataDrift guard that stops the mid-drain
+            // rebuild running a second time.
+            //
+            // The replay marks the instance itself once it has wiped the state and started
+            // scanning, so this covers the window before that: the recompile, the reader pin and
+            // the plan. Idempotent with the replay's own marking.
+            markWindowStateDirty(instance);
+        }
+        return rebuildError;
     }
 
     /**

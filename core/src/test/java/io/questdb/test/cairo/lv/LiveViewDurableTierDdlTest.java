@@ -95,8 +95,10 @@ import java.util.function.BooleanSupplier;
  * do over a block the view's own WAL holds and its table does not - including the block an
  * operator's {@code SUSPEND WAL} withholds until {@code RESUME WAL}, the blocks an apply retry
  * leaves behind when its time quota stops it part-way, and the replacement of an out-of-order
- * repair or of a wholesale applied-base rebuild that did not land. Replica propagation belongs to
- * a later stage.
+ * repair or of a wholesale applied-base rebuild that did not land - whether that rebuild came from
+ * a mid-drain failure, from a base metadata change, or from a base WAL segment that has gone for
+ * good - plus which shape reaches the metadata-change recovery at all and what its own failure
+ * leaves the view owing. Replica propagation belongs to a later stage.
  */
 public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
@@ -5113,6 +5115,546 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
                         .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
                 assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testBaseMetadataDriftRecoveryTakesTheCorrectionAndNotTheForwardCommit() throws Exception {
+        // Which shape reaches recoverFromBaseMetadataDrift at all, pinned before the two cases below
+        // rest on it. Two readers can raise the drift, and only one of them is on a live view's
+        // ordinary path:
+        //
+        // - The raw-WAL forward drain reconciles the segment against the compiled base-scan
+        //   projection by name and type (WalSegmentPageFrameCursor.of), and that projection holds
+        //   the REFERENCED columns only. A base column the view never reads can be added, dropped
+        //   or retyped without the segment failing to satisfy it, so the drain walks straight past
+        //   a metadata version the factory predates - and a change that does touch a referenced
+        //   column invalidates the view instead of drifting it.
+        // - An out-of-order correction diverts to the replay, which reads the applied base through
+        //   the compiled factory. AbstractPartitionFrameCursorFactory asks for the reader at its
+        //   compile-time metadata version, and LiveViewRefreshSqlExecutionContext.getReader refuses
+        //   a pinned reader whose version has moved. That is the door, and it opens on the version
+        //   alone - the columns need not have changed in any way the view can see.
+        //
+        // So the recovery is reachable, and only from the correction. Both halves run over the same
+        // ALTER so the difference is the shape of the commit that follows it, nothing else.
+        assertMemoryLeak(() -> {
+            createMidDrainBaseAndView();
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("""
+                        INSERT INTO base VALUES
+                        ('2026-04-01T00:00:00.000000Z', 'a', 1),
+                        ('2026-04-01T00:00:02.000000Z', 'a', 3)""");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' is not registered", instance);
+
+                // The view references ts, sym and x, so an added column leaves it valid and moves
+                // the base metadata version past the factory the view compiled at CREATE.
+                execute("ALTER TABLE base ADD COLUMN extra DOUBLE");
+                drainWalQueue();
+
+                capture.start();
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:03.000000Z', 'a', 4)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                capture.drain();
+                capture.assertNotLogged("cause=base table metadata change");
+                assertNoRefreshFaults("lv");
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                                2026-04-01T00:00:02.000000Z\ta\t3\t4.0
+                                2026-04-01T00:00:03.000000Z\ta\t4\t8.0
+                                """);
+
+                setCurrentMicros(4_000_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:01.000000Z', 'a', 2)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                capture.drain();
+                capture.assertLogged(
+                        "live view recomputed window state from applied base [view=lv, cause=base table metadata change]");
+                Assert.assertEquals("the correction must fault exactly once, on the drift",
+                        1, instance.getRefreshFaultCount());
+                Assert.assertFalse("a drift recovery keeps the view valid", instance.isInvalid());
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                                2026-04-01T00:00:01.000000Z\ta\t2\t3.0
+                                2026-04-01T00:00:02.000000Z\ta\t3\t6.0
+                                2026-04-01T00:00:03.000000Z\ta\t4\t10.0
+                                """);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testDriftRebuildWhoseReplacementDidNotApplyRepeatsItOnceItLands() throws Exception {
+        // The second of the three callers that rebuild the whole window state from the applied base
+        // and hand the result to the reconciliation gate. The mid-drain one is pinned above; this is
+        // the base-metadata-drift one, and it reaches the same entry point, so the same debt has to
+        // survive its deferral: the replay advances no watermark, its own frontier sits at the top
+        // of the range it replayed, and the drain's out-of-order test is a strict below-frontier
+        // compare, so the correction's range would re-drain as a forward append over accumulators
+        // the rebuild had just reset.
+        //
+        // The route is the one testBaseMetadataDriftRecoveryTakesTheCorrectionAndNotTheForwardCommit
+        // pins: an added, unreferenced base column leaves the view valid and moves the metadata
+        // version, and the correction below diverts to the replay, whose pinned reader the factory's
+        // compile-time version no longer matches.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // a root per flush
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failLvApply = new AtomicBoolean();
+        final AtomicInteger applyFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                // The view's own partition, which only its apply writes, so the rebuild's
+                // replacement commits and the apply that would land it fails.
+                if (failLvApply.get()
+                        && lvDir[0] != null
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "2026-04-01")
+                        && Utf8s.endsWithAscii(name, ".d")) {
+                    applyFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            createMidDrainBaseAndView();
+            final TableToken baseToken = engine.verifyTableName("base");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                capture.start();
+                execute("""
+                        INSERT INTO base VALUES
+                        ('2026-04-01T00:00:00.000000Z', 'a', 1),
+                        ('2026-04-01T00:00:02.000000Z', 'a', 3)""");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' is not registered", instance);
+                Assert.assertEquals(2, lvRowCount(lvToken));
+
+                execute("ALTER TABLE base ADD COLUMN extra DOUBLE");
+                drainWalQueue();
+
+                failLvApply.set(true);
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:01.000000Z', 'a', 2)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertTrue("the rebuild's apply must actually have been failed", applyFaults.get() > 0);
+                capture.drain();
+                capture.assertLogged(
+                        "live view recomputed window state from applied base [view=lv, cause=base table metadata change]");
+
+                final long replacementLvSeqTxn = instance.getPendingReplacementLvSeqTxn();
+                Assert.assertNotEquals("the drift rebuild must have handed its replacement to the gate",
+                        Numbers.LONG_NULL, replacementLvSeqTxn);
+                Assert.assertEquals(
+                        "the replacement must be the view's newest block",
+                        replacementLvSeqTxn,
+                        engine.getTableSequencerAPI().lastTxn(lvToken)
+                );
+                Assert.assertTrue("the replacement must not have applied", tracker.getWriterTxn() < replacementLvSeqTxn);
+                // The structural commit emitted no output, so the drain consumed it before the
+                // correction behind it diverted; what must stay unconsumed is the correction, whose
+                // output the replacement holds and the table does not.
+                final long correctionSeqTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
+                final long processedAtDeferral = instance.getLastProcessedSeqTxn();
+                Assert.assertTrue("no watermark may walk past output the table does not hold",
+                        processedAtDeferral < correctionSeqTxn);
+                Assert.assertTrue("the deferred rebuild must leave its debt on the instance",
+                        instance.isWindowStateDirty());
+                capture.assertLogged("live view applied-base rebuild deferred on its unapplied replacement,"
+                        + " repeating it once the block lands [view=lv, lvSeqTxn=" + replacementLvSeqTxn + ", ");
+                // Reads stay on what the table holds: the two rows the flush before the drift wrote.
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                                2026-04-01T00:00:02.000000Z\ta\t3\t4.0
+                                """);
+                Assert.assertEquals(2, lvRowCount(lvToken));
+                Assert.assertEquals("the counter tracks the table, which has not moved", 2, instance.getLvRowsTotal());
+                Assert.assertEquals("no row may wait in RAM above the outstanding block", 0, instance.getLeadRowCount());
+
+                // A forward row arriving while the gate holds commits nothing.
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:03.000000Z', 'a', 4)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(replacementLvSeqTxn, instance.getPendingReplacementLvSeqTxn());
+                Assert.assertEquals(processedAtDeferral, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals(
+                        "the gate must commit nothing behind the replacement",
+                        replacementLvSeqTxn,
+                        engine.getTableSequencerAPI().lastTxn(lvToken)
+                );
+                Assert.assertEquals(2, lvRowCount(lvToken));
+
+                // The fault clears, the gate lands the block, and the rebuild runs again over the
+                // applied base - the range it never consumed, this time with the forward row in it.
+                failLvApply.set(false);
+                driveUntil(
+                        job,
+                        () -> instance.getPendingReplacementLvSeqTxn() == Numbers.LONG_NULL
+                                && instance.getLastProcessedSeqTxn() > processedAtDeferral,
+                        "the drift rebuild never ran again once its replacement landed"
+                );
+                driveRefreshToQuiescence(job);
+                capture.drain();
+                capture.assertLogged("live view deferred replacement applied, resuming refresh [view=lv");
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                                2026-04-01T00:00:01.000000Z\ta\t2\t3.0
+                                2026-04-01T00:00:02.000000Z\ta\t3\t6.0
+                                2026-04-01T00:00:03.000000Z\ta\t4\t10.0
+                                """);
+                Assert.assertEquals(4, lvRowCount(lvToken));
+                Assert.assertEquals(4, instance.getLvRowsTotal());
+                Assert.assertFalse("the repeat clears the debt", instance.isWindowStateDirty());
+                Assert.assertFalse(instance.isTierStale());
+                Assert.assertEquals(tracker.getSeqTxn(), tracker.getWriterTxn());
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+
+                // Steady state resumes on the recompiled factory: the repeat advanced the watermark
+                // past every commit, so a later one does not re-feed them.
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:04.000000Z', 'a', 5)");
+                drainWalQueue();
+                driveUntilDurableRowCount(job, 5);
+                driveRefreshToQuiescence(job);
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                                2026-04-01T00:00:01.000000Z\ta\t2\t3.0
+                                2026-04-01T00:00:02.000000Z\ta\t3\t6.0
+                                2026-04-01T00:00:03.000000Z\ta\t4\t10.0
+                                2026-04-01T00:00:04.000000Z\ta\t5\t15.0
+                                """);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testFailedDriftRecoveryLeavesItsWindowStateDebtOnTheInstance() throws Exception {
+        // The drift recovery is the one recovery whose FAILURE left no debt behind. It frees the
+        // compiled artifacts before it rebuilds - the recompile is the whole point - so a rebuild
+        // that then fails leaves the next getWindowFactory recompiling at identity while the durable
+        // tier still holds the view's whole history. Every other recovery records that as
+        // windowStateDirty on the instance, and refreshInstance's gate rebuilds from the applied
+        // base before letting a drain near those accumulators. This one did not: handleRefreshFailure
+        // carries the debt inside the block it guards with !wasMetadataDrift - the guard that keeps
+        // the mid-drain rebuild from running a second time behind the drift path's own - so the
+        // carry never ran for a drift whose recovery failed.
+        //
+        // The rows were not observably wrong, and the reason is worth stating because it is the
+        // clause the deferred rebuild's own repeat rests on: the only commit that reaches this
+        // recovery is an out-of-order one, it is still unconsumed when the recovery fails, and it
+        // still reads below the frontier - so the next drain diverts to a repair, which rebuilds the
+        // window state from the view's lower bound and lands the right answer by the longer route.
+        // The debt is what makes that a property of the recovery rather than of its trigger.
+        //
+        // The fault is a refused read of one base partition column file, armed for the first such
+        // read the recovery's own replay takes. That is ahead of the replay's own marking, which
+        // only happens once it has wiped the state and started scanning.
+        final String[] baseDir = new String[1];
+        // -1 disarmed; 0 fail the next base partition x.d read and disarm.
+        final AtomicInteger armBaseRead = new AtomicInteger(-1);
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armBaseRead.get() == 0
+                        && baseDir[0] != null
+                        && Utf8s.containsAscii(name, baseDir[0])
+                        && !Utf8s.containsAscii(name, "wal")
+                        && Utf8s.containsAscii(name, "2026-04-01")
+                        && Utf8s.endsWithAscii(name, "x.d")) {
+                    armBaseRead.set(-1);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        }, () -> {
+            createMidDrainBaseAndView();
+            baseDir[0] = engine.verifyTableName("base").getDirName();
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'a', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' is not registered", instance);
+
+                execute("ALTER TABLE base ADD COLUMN extra DOUBLE");
+                drainWalQueue();
+
+                capture.start();
+                setCurrentMicros(2_000_000L);
+                // A forward commit the drain feeds, then the correction that diverts to the replay
+                // and drifts there. The fed commit is what makes the debt matter: the accumulators
+                // lead the last durable commit when the recovery takes over.
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:03.000000Z', 'a', 4)");
+                drainWalQueue();
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:01.000000Z', 'a', 2)");
+                drainWalQueue();
+
+                // One turn, stopped the moment the fault fires, so the assertions below read the
+                // state the failed recovery left rather than whatever a later turn made of it.
+                armBaseRead.set(0);
+                for (int i = 0; i < 64 && armBaseRead.get() >= 0; i++) {
+                    job.run();
+                }
+                Assert.assertEquals("the recovery's base read must actually have been failed",
+                        -1, armBaseRead.get());
+                capture.drain();
+                capture.assertLogged("live view window-state recompute failed [view=lv, cause=base table metadata change");
+                Assert.assertTrue("a drift recovery that failed must leave its debt on the instance",
+                        instance.isWindowStateDirty());
+                Assert.assertFalse("a failed recovery must not invalidate the view", instance.isInvalid());
+
+                // The gate settles the debt before anything drains: the next turn rebuilds from the
+                // applied base, and it is that rebuild - not the correction's repair - that lands the
+                // answer.
+                capture.stop();
+                capture.start();
+                driveRefreshToQuiescence(job);
+                capture.drain();
+                capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=mid-drain refresh failure]");
+                Assert.assertFalse("the rebuild clears the debt", instance.isWindowStateDirty());
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                                2026-04-01T00:00:01.000000Z\ta\t2\t3.0
+                                2026-04-01T00:00:03.000000Z\ta\t4\t7.0
+                                """);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+
+                // Steady state resumes on the recompiled factory.
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:04.000000Z', 'a', 5)");
+                drainWalQueue();
+                driveUntilDurableRowCount(job, 4);
+                driveRefreshToQuiescence(job);
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                                2026-04-01T00:00:01.000000Z\ta\t2\t3.0
+                                2026-04-01T00:00:03.000000Z\ta\t4\t7.0
+                                2026-04-01T00:00:04.000000Z\ta\t5\t12.0
+                                """);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testWalLossRederiveWhoseReplacementDidNotApplyRepeatsItOnceItLands() throws Exception {
+        // The third caller: the re-derive a view takes when a base WAL segment it still owes itself
+        // has gone for good, which is what a backup restore leaves behind - the applied base TABLE
+        // survives, its WAL does not. It runs only after the flush-retry budget is spent, as the
+        // last thing between the view and a permanent invalidation, and it reaches the same
+        // plan-and-pin entry point as the other two.
+        //
+        // So it takes the same debt when its replacement does not apply, and the repeat that debt
+        // buys is what consumes the base range the deferral left behind. The range matters more
+        // here than anywhere else: the commit it covers is the one whose WAL is gone, so the only
+        // reader that can still produce its rows is the applied-base replay this recovery runs.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // a root per flush
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failLvApply = new AtomicBoolean();
+        final AtomicInteger applyFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failLvApply.get()
+                        && lvDir[0] != null
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "2026-04-01")
+                        && Utf8s.endsWithAscii(name, ".d")) {
+                    applyFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            createMidDrainBaseAndView();
+            final TableToken baseToken = engine.verifyTableName("base");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                capture.start();
+                execute("""
+                        INSERT INTO base VALUES
+                        ('2026-04-01T00:00:00.000000Z', 'a', 1),
+                        ('2026-04-01T00:00:01.000000Z', 'a', 2)""");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' is not registered", instance);
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+                Assert.assertEquals(2, lvRowCount(lvToken));
+
+                // The commit the view still owes itself: applied to the base TABLE, never drained
+                // by the view, and about to have nowhere else to be read from.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 'a', 3)");
+                drainWalQueue();
+
+                // releaseInactive frees the pooled base WAL writer so the directory can go.
+                engine.releaseInactive();
+                try (Path p = new Path()) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(baseToken).concat(WalUtils.WAL_NAME_BASE + "1");
+                    Assert.assertTrue(
+                            "could not remove the base WAL",
+                            engine.getConfiguration().getFilesFacade().rmdir(p)
+                    );
+                }
+
+                failLvApply.set(true);
+                driveUntil(
+                        job,
+                        () -> instance.getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL,
+                        "the WAL-loss re-derive never handed its replacement to the gate"
+                );
+                Assert.assertTrue("the re-derive's apply must actually have been failed", applyFaults.get() > 0);
+                capture.drain();
+                capture.assertLogged("live view re-derived from the applied base after base WAL loss [view=lv");
+
+                final long replacementLvSeqTxn = instance.getPendingReplacementLvSeqTxn();
+                Assert.assertEquals(
+                        "the replacement must be the view's newest block",
+                        replacementLvSeqTxn,
+                        engine.getTableSequencerAPI().lastTxn(lvToken)
+                );
+                Assert.assertTrue("the replacement must not have applied", tracker.getWriterTxn() < replacementLvSeqTxn);
+                Assert.assertEquals("no watermark may walk past output the table does not hold",
+                        processedBefore, instance.getLastProcessedSeqTxn());
+                Assert.assertTrue("the deferred re-derive must leave its debt on the instance",
+                        instance.isWindowStateDirty());
+                Assert.assertFalse("the re-derive must not invalidate the view", instance.isInvalid());
+                capture.assertLogged("live view applied-base rebuild deferred on its unapplied replacement,"
+                        + " repeating it once the block lands [view=lv, lvSeqTxn=" + replacementLvSeqTxn + ", ");
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                                2026-04-01T00:00:01.000000Z\ta\t2\t3.0
+                                """);
+                Assert.assertEquals(2, lvRowCount(lvToken));
+                Assert.assertEquals("the counter tracks the table, which has not moved", 2, instance.getLvRowsTotal());
+                Assert.assertEquals("no row may wait in RAM above the outstanding block", 0, instance.getLeadRowCount());
+
+                // The fault clears, the gate lands the block, and the repeat consumes the range the
+                // deferral left - the one commit whose WAL is gone.
+                failLvApply.set(false);
+                driveUntil(
+                        job,
+                        () -> instance.getPendingReplacementLvSeqTxn() == Numbers.LONG_NULL
+                                && instance.getLastProcessedSeqTxn() > processedBefore,
+                        "the WAL-loss re-derive never ran again once its replacement landed"
+                );
+                driveRefreshToQuiescence(job);
+                capture.drain();
+                capture.assertLogged("live view deferred replacement applied, resuming refresh [view=lv");
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                                2026-04-01T00:00:01.000000Z\ta\t2\t3.0
+                                2026-04-01T00:00:02.000000Z\ta\t3\t6.0
+                                """);
+                Assert.assertEquals(3, lvRowCount(lvToken));
+                Assert.assertEquals(3, instance.getLvRowsTotal());
+                Assert.assertFalse("the repeat clears the debt", instance.isWindowStateDirty());
+                Assert.assertFalse(instance.isInvalid());
+                Assert.assertEquals(tracker.getSeqTxn(), tracker.getWriterTxn());
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+
+                // A fresh base commit with an intact WAL: the view drains forward from where the
+                // repeat left it, without re-feeding anything the replacement already holds.
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:03.000000Z', 'a', 4)");
+                drainWalQueue();
+                driveUntilDurableRowCount(job, 4);
+                driveRefreshToQuiescence(job);
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                                2026-04-01T00:00:01.000000Z\ta\t2\t3.0
+                                2026-04-01T00:00:02.000000Z\ta\t3\t6.0
+                                2026-04-01T00:00:03.000000Z\ta\t4\t10.0
+                                """);
+            } finally {
+                capture.stop();
             }
         });
     }
