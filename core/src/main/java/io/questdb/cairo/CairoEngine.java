@@ -4495,13 +4495,19 @@ public class CairoEngine implements Closeable, WriterSource {
      * that is already correct, so any failure degrades to that behaviour.
      */
     private boolean planMatViewRepair(TableToken viewToken, long baseTableLastTxn, WalUtils.MatViewRepairPlan plan) {
-        try (Path repairPath = new Path().of(configuration.getDbRoot())) {
+        // The event reader is owned HERE, not by findMatViewRepairPlan: the scan re-positions it with
+        // close()+of() per txn and leaves it open on the last one, so without this try-with-resources
+        // the view's _event and _event.c mappings stay open for the life of the engine.
+        try (
+                Path repairPath = new Path().of(configuration.getDbRoot());
+                WalEventReader walEventReader = new WalEventReader(configuration)
+        ) {
             repairPath.concat(viewToken);
             return WalUtils.findMatViewRepairPlan(
                     repairPath,
                     configuration,
                     Vm.getCMRInstance(configuration.getBypassWalFdCache()),
-                    new WalEventReader(configuration),
+                    walEventReader,
                     baseTableLastTxn,
                     plan
             ) && plan.hasRange();
