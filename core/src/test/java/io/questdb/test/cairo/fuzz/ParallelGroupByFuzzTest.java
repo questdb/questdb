@@ -4824,6 +4824,113 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedStringAgg() throws Exception {
+        // Determinism check: even though frames are processed by worker threads in an
+        // arbitrary order, string_agg() must concatenate values in scan (row id) order.
+        testParallelSymbolKeyGroupBy(
+                "SELECT string_agg(key, '-') FROM tab WHERE quantity <= 5",
+                "string_agg\n" +
+                        "k1-k2-k3-k4-k0\n",
+                null
+        );
+    }
+
+    @Test
+    public void testParallelStringAggAcrossWorkers() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        engine.execute(
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  key SYMBOL," +
+                                        "  val STRING" +
+                                        ") timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), " +
+                                        "case when x % 7 = 0 then NULL else 'v' || x end " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+
+                        final String keyedQuery = "SELECT key, string_agg(val, '-') FROM tab ORDER BY key";
+                        final String notKeyedQuery = "SELECT string_agg(val, '-') FROM tab";
+
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        sink.clear();
+                        TestUtils.printSql(engine, sqlExecutionContext, keyedQuery, sink);
+                        final String expectedKeyed = sink.toString();
+                        sink.clear();
+                        TestUtils.printSql(engine, sqlExecutionContext, notKeyedQuery, sink);
+                        final String expectedNotKeyed = sink.toString();
+
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        TestUtils.assertSql(engine, sqlExecutionContext, keyedQuery, sink, expectedKeyed);
+                        TestUtils.assertSql(engine, sqlExecutionContext, notKeyedQuery, sink, expectedNotKeyed);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelStringAggMaxSizeExceededOnMerge() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, 128);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        engine.execute(
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  val STRING" +
+                                        ") timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "insert into tab select (x * 864000000)::timestamp, 'v' || x " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+
+                        try {
+                            TestUtils.printSql(engine, sqlExecutionContext, "SELECT string_agg(val, '-') FROM tab", sink);
+                            Assert.fail();
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "string_agg() result exceeds max size of");
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelSymbolKeyedStringAgg() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT key, string_agg(key, '-') FROM tab WHERE quantity <= 10 GROUP BY key ORDER BY key",
+                "key\tstring_agg\n" +
+                        "k0\tk0-k0\n" +
+                        "k1\tk1-k1\n" +
+                        "k2\tk2-k2\n" +
+                        "k3\tk3-k3\n" +
+                        "k4\tk4-k4\n",
+                null
+        );
+    }
+
+    @Test
     public void testStringKeyGroupByEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));

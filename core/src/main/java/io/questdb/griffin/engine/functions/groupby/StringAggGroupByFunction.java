@@ -34,104 +34,118 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByCharSink;
+import io.questdb.griffin.engine.groupby.GroupByLongList;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
+import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf16Sink;
 
+/**
+ * Deterministic, parallel-capable {@code string_agg(str, delimiter)}.
+ * <p>
+ * Each group's map value holds two pointers:
+ * <pre>
+ * | valueIndex: char sink ptr | valueIndex+1: run-list ptr |
+ * +----------------------------+------------------------------+
+ * |          8 bytes           |            8 bytes           |
+ * +----------------------------+------------------------------+
+ * </pre>
+ * The char sink ({@link GroupByCharSink}) holds the raw characters of every accepted value,
+ * concatenated without gaps. The run list ({@link GroupByLongList}) is a flat sequence of
+ * (rowId, sinkLocation) pairs, one pair per run of values that arrived from the same page frame:
+ * <pre>
+ * | rowId (run start) | sinkLocation | rowId (run start) | sinkLocation | ...
+ * +---------------------+----------------+---------------------+----------------+
+ * |       8 bytes       |    8 bytes     |       8 bytes       |    8 bytes     |
+ * +---------------------+----------------+---------------------+----------------+
+ * </pre>
+ * {@code sinkLocation} locates a run inside the char sink:
+ * <pre>
+ * | offset into char sink | run length (chars) |
+ * +-------------------------+----------------------+
+ * |         32 bits         |       32 bits        |
+ * +-------------------------+----------------------+
+ * </pre>
+ * Worker threads append runs in an arbitrary order relative to each other, though values within
+ * a single run are always in scan order (one page frame is always scanned by one thread).
+ * Determinism is restored at read time: {@link #materialize} sorts runs by their starting rowId
+ * and concatenates them, reproducing the same output as a single-threaded scan regardless of how
+ * work was distributed across threads.
+ */
 class StringAggGroupByFunction extends StrFunction implements UnaryFunction, GroupByFunction {
-    // Cleared function retains up to INITIAL_SINK_CAPACITY * LIST_CLEAR_THRESHOLD bytes.
-    private static final int INITIAL_SINK_CAPACITY = 512;
-    private static final int LIST_CLEAR_THRESHOLD = 64;
+    private static final int DELIMITER_BYTES = 2;
+    private static final int RUN_OVERHEAD_BYTES = 16;
     private final Function arg;
     private final char delimiter;
     private final int functionPosition;
+    private final GroupByLongList listA = new GroupByLongList(16);
+    private final GroupByLongList listB = new GroupByLongList(16);
     private final int maxBytes;
-    private ObjList<DirectUtf16Sink> sinks = new ObjList<>();
-    private boolean isShared;
-    private int sinkIndex = 0;
-    private int touchedMemorySize;
+    private final DirectUtf16Sink resultSinkA = new DirectUtf16Sink(16);
+    private final DirectUtf16Sink resultSinkB = new DirectUtf16Sink(16);
+    private final GroupByCharSink sinkA = new GroupByCharSink();
+    private final GroupByCharSink sinkB = new GroupByCharSink();
+    private final DirectLongList sortCpy = new DirectLongList(32, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+    private final DirectLongList sortData = new DirectLongList(32, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+    private int totalMemoryUsed;
     private int valueIndex;
 
     public StringAggGroupByFunction(Function arg, int functionPosition, char delimiter, int maxBytes) {
         this.arg = arg;
         this.delimiter = delimiter;
-        this.maxBytes = maxBytes;
         this.functionPosition = functionPosition;
+        this.maxBytes = maxBytes;
     }
 
     @Override
     public void clear() {
-        if (isShared) {
-            return;
-        }
-        // Free extra sinks.
-        touchedMemorySize = 0;
-        if (sinks.size() > LIST_CLEAR_THRESHOLD) {
-            for (int i = sinks.size() - 1; i > LIST_CLEAR_THRESHOLD - 1; i--) {
-                Misc.free(sinks.getQuick(i));
-                sinks.remove(i);
-            }
-        }
-        // Reset capacity on the remaining ones.
-        for (int i = 0, n = sinks.size(); i < n; i++) {
-            DirectUtf16Sink sink = sinks.getQuick(i);
-            if (sink != null) {
-                sink.resetCapacity();
-                touchedMemorySize += sink.size();
-            }
-        }
-        sinkIndex = 0;
+        sinkA.of(0);
+        sinkB.of(0);
+        listA.resetPtr();
+        listB.resetPtr();
+        resultSinkA.clear();
+        resultSinkB.clear();
+        totalMemoryUsed = 0;
     }
 
     @Override
     public void close() {
-        Misc.freeObjListAndClear(sinks);
+        Misc.free(resultSinkA);
+        Misc.free(resultSinkB);
+        Misc.free(sortData);
+        Misc.free(sortCpy);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final DirectUtf16Sink sink;
-        if (sinks.size() <= sinkIndex) {
-            sinks.extendAndSet(sinkIndex, sink = new DirectUtf16Sink(INITIAL_SINK_CAPACITY));
-        } else {
-            sink = sinks.getQuick(sinkIndex);
-            sink.clear();
-        }
-
         final CharSequence str = arg.getStrA(record);
-        if (str != null) {
-            sink.put(str);
-            mapValue.putBool(valueIndex + 1, false);
-        } else {
-            mapValue.putBool(valueIndex + 1, true);
+        if (str == null) {
+            mapValue.putLong(valueIndex, 0);
+            mapValue.putLong(valueIndex + 1, 0);
+            return;
         }
-        mapValue.putInt(valueIndex, sinkIndex++);
-        touchedMemorySize += sink.size();
-        assertTouchedMemoryCompliance();
+        sinkA.of(0);
+        listA.of(0);
+        append(rowId, str);
+        mapValue.putLong(valueIndex, sinkA.ptr());
+        mapValue.putLong(valueIndex + 1, listA.ptr());
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final DirectUtf16Sink sink = sinks.getQuick(mapValue.getInt(valueIndex));
         final CharSequence str = arg.getStrA(record);
-        if (str != null) {
-            final int hi = sink.size();
-            final boolean nullValue = mapValue.getBool(valueIndex + 1);
-            if (!nullValue) {
-                sink.putAscii(delimiter);
-            }
-            sink.put(str);
-            mapValue.putBool(valueIndex + 1, false);
-            touchedMemorySize += sink.size() - hi;
-            assertTouchedMemoryCompliance();
+        if (str == null) {
+            return;
         }
-    }
-
-    private void assertTouchedMemoryCompliance() {
-        if (touchedMemorySize > maxBytes) {
-            throw CairoException.nonCritical().position(functionPosition)
-                    .put("string_agg() result exceeds max size of ").put(maxBytes).put(" bytes");
-        }
+        sinkA.of(mapValue.getLong(valueIndex));
+        listA.of(mapValue.getLong(valueIndex + 1));
+        append(rowId, str);
+        mapValue.putLong(valueIndex, sinkA.ptr());
+        mapValue.putLong(valueIndex + 1, listA.ptr());
     }
 
     @Override
@@ -141,28 +155,17 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
 
     @Override
     public CharSequence getStrA(Record rec) {
-        final boolean nullValue = rec.getBool(valueIndex + 1);
-        if (nullValue) {
-            return null;
-        }
-        return sinks.getQuick(rec.getInt(valueIndex));
+        return materialize(rec, resultSinkA);
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return getStrA(rec);
+        return materialize(rec, resultSinkB);
     }
 
     @Override
     public int getValueIndex() {
         return valueIndex;
-    }
-
-    @Override
-    public void initSharedFrom(GroupByFunction primary) {
-        this.valueIndex = primary.getValueIndex();
-        this.sinks = ((StringAggGroupByFunction) primary).sinks;
-        this.isShared = true;
     }
 
     @Override
@@ -173,8 +176,8 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT); // sink index
-        columnTypes.add(ColumnType.BOOLEAN); // null flag
+        columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -188,13 +191,56 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     }
 
     @Override
+    public boolean isThreadSafe() {
+        return false;
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        final long srcListPtr = srcValue.getLong(valueIndex + 1);
+        if (srcListPtr == 0) {
+            return;
+        }
+        final long destListPtr = destValue.getLong(valueIndex + 1);
+        if (destListPtr == 0) {
+            listB.of(srcListPtr);
+            totalMemoryUsed += sizeOf(listB);
+            assertSizeCompliance();
+            destValue.putLong(valueIndex, srcValue.getLong(valueIndex));
+            destValue.putLong(valueIndex + 1, srcListPtr);
+            return;
+        }
+
+        sinkA.of(destValue.getLong(valueIndex));
+        sinkB.of(srcValue.getLong(valueIndex));
+        listA.of(destListPtr);
+        listB.of(srcListPtr);
+
+        mergeRuns(sinkA.length());
+        assertSizeCompliance();
+        sinkA.put(sinkB);
+
+        destValue.putLong(valueIndex, sinkA.ptr());
+        destValue.putLong(valueIndex + 1, listA.ptr());
+    }
+
+    @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        sinkA.setAllocator(allocator);
+        sinkB.setAllocator(allocator);
+        listA.setAllocator(allocator);
+        listB.setAllocator(allocator);
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putBool(valueIndex + 1, true);
+        mapValue.putLong(valueIndex, 0);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
     public boolean supportsParallelism() {
-        return false;
+        return true;
     }
 
     @Override
@@ -205,6 +251,111 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
-        sinkIndex = 0;
+        totalMemoryUsed = 0;
+    }
+
+    private static long pack(int offset, int len) {
+        return ((long) offset << 32) | (len & 0xffffffffL);
+    }
+
+    private static int sizeOf(GroupByLongList list) {
+        final int size = list.size();
+        int total = 0;
+        for (int i = 0; i < size; i += 2) {
+            total += unpackLen(list.get(i + 1)) * 2 + RUN_OVERHEAD_BYTES + (i > 0 ? DELIMITER_BYTES : 0);
+        }
+        return total;
+    }
+
+    private static int unpackLen(long sinkLocation) {
+        return (int) sinkLocation;
+    }
+
+    private static int unpackOffset(long sinkLocation) {
+        return (int) (sinkLocation >>> 32);
+    }
+
+    private void append(long rowId, CharSequence str) {
+        final int len = str.length();
+        final int size = listA.size();
+        final boolean isSameRun = size > 0 && Rows.toPartitionIndex(rowId) == Rows.toPartitionIndex(listA.get(size - 2));
+        if (isSameRun) {
+            final int startOffset = unpackOffset(listA.get(size - 1));
+            sinkA.putAscii(delimiter);
+            sinkA.put(str);
+            listA.set(size - 1, pack(startOffset, sinkA.length() - startOffset));
+        } else {
+            final int offset = sinkA.length();
+            sinkA.put(str);
+            listA.add(rowId);
+            listA.add(pack(offset, len));
+            totalMemoryUsed += RUN_OVERHEAD_BYTES;
+        }
+        totalMemoryUsed += len * 2 + (size > 0 ? DELIMITER_BYTES : 0);
+        assertSizeCompliance();
+    }
+
+    private void assertSizeCompliance() {
+        if (totalMemoryUsed > maxBytes) {
+            throw CairoException.nonCritical()
+                    .position(functionPosition)
+                    .put("string_agg() result exceeds max size of ")
+                    .put(maxBytes)
+                    .put(" bytes");
+        }
+    }
+
+    private void concatenateRuns(DirectUtf16Sink resultSink, int count) {
+        for (int i = 0; i < count; i++) {
+            if (i > 0) {
+                resultSink.put(delimiter);
+            }
+            final long sinkLocation = sortData.get(2L * i + 1);
+            final int off = unpackOffset(sinkLocation);
+            final int len = unpackLen(sinkLocation);
+            for (int j = 0; j < len; j++) {
+                resultSink.put(sinkA.charAt(off + j));
+            }
+        }
+    }
+
+    private CharSequence materialize(Record rec, DirectUtf16Sink resultSink) {
+        final long listPtr = rec.getLong(valueIndex + 1);
+        if (listPtr == 0) {
+            return null;
+        }
+        listA.of(listPtr);
+        final int count = sortRuns();
+        sinkA.of(rec.getLong(valueIndex));
+        resultSink.clear();
+        concatenateRuns(resultSink, count);
+        return resultSink;
+    }
+
+    private void mergeRuns(int destCharOffset) {
+        final int srcSize = listB.size();
+        for (int i = 0; i < srcSize; i += 2) {
+            final long srcRowId = listB.get(i);
+            final long sinkLocation = listB.get(i + 1);
+            final int off = unpackOffset(sinkLocation);
+            final int len = unpackLen(sinkLocation);
+            listA.add(srcRowId);
+            listA.add(pack(off + destCharOffset, len));
+            totalMemoryUsed += len * 2 + DELIMITER_BYTES + RUN_OVERHEAD_BYTES;
+        }
+    }
+
+    private int sortRuns() {
+        final int size = listA.size();
+        final int count = size / 2;
+        sortData.clear();
+        sortData.ensureCapacity(size);
+        Vect.memcpy(sortData.getAddress(), listA.dataPtr(), (long) size * Long.BYTES);
+        if (count > 1) {
+            sortCpy.clear();
+            sortCpy.ensureCapacity(size);
+            Vect.radixSortLongIndexAscInPlace(sortData.getAddress(), count, sortCpy.getAddress());
+        }
+        return count;
     }
 }
