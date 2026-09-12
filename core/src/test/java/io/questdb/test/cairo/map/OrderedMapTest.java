@@ -48,6 +48,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.MapValueMergeFunction;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -84,6 +85,43 @@ import org.junit.Test;
 import java.util.HashMap;
 
 public class OrderedMapTest extends AbstractCairoTest {
+
+    @Test
+    public void testVarSizeMergeCancellationAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            ArrayColumnTypes keys = new ArrayColumnTypes().add(ColumnType.STRING);
+            ArrayColumnTypes values = new ArrayColumnTypes().add(ColumnType.LONG);
+            try (OrderedMap source = new OrderedMap(1024, keys, values, 64, 0.7, 32);
+                 OrderedMap dest = new OrderedMap(1024, keys, values, 64, 0.7, 32)) {
+                for (int i = 0; i < 10000; i++) {
+                    MapKey key = source.withKey();
+                    key.putStr(Integer.toString(i));
+                    key.createValue().putLong(0, i);
+                }
+                int[] checks = {0};
+                AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine) {
+                    @Override
+                    public void statefulThrowExceptionIfTrippedTimeThrottled() {
+                        if (++checks[0] == 32) {
+                            cancel();
+                        }
+                        super.statefulThrowExceptionIfTrippedTimeThrottled();
+                    }
+                };
+                try {
+                    dest.merge(source, (a, b) -> a.addLong(0, b.getLong(0)), breaker);
+                    Assert.fail("expected cancellation inside variable-size merge");
+                } catch (CairoException expected) {
+                    Assert.assertTrue(expected.isInterruption());
+                }
+                Assert.assertEquals(32, checks[0]);
+                Assert.assertEquals(10000, source.size());
+                dest.clear();
+                dest.merge(source, (a, b) -> a.addLong(0, b.getLong(0)));
+                Assert.assertEquals(10000, dest.size());
+            }
+        });
+    }
 
     @Test
     public void testAllTypesFixedSizeKey() throws Exception {

@@ -33,6 +33,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
@@ -319,7 +320,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     }
 
     @Override
-    public void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
+    public void merge(Map srcMap, MapValueMergeFunction mergeFunc, @Nullable SqlExecutionCircuitBreaker circuitBreaker) {
         assert this != srcMap;
         long srcMapSize = srcMap.size();
         if (srcMapSize == 0) {
@@ -329,6 +330,9 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
         OUTER:
         for (long srcAddr = srcVarcharMap.memStart; srcAddr < srcVarcharMap.memLimit; srcAddr += entrySize) {
+            if (circuitBreaker != null) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
             long srcHashSizeFlags = Unsafe.getLong(srcAddr);
             if (srcHashSizeFlags == 0) {
                 continue;

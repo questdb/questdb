@@ -105,6 +105,15 @@ public class PostAggregationCircuitBreaker extends AtomicBooleanCircuitBreaker {
     }
 
     @Override
+    public void statefulThrowExceptionIfTrippedTimeThrottled() {
+        // Merge workers share this channel. Read the cancellation flag without
+        // modifying AtomicBooleanCircuitBreaker's slot-local throttle counter.
+        if (checkIfTripped()) {
+            throw CairoException.queryCancelled(getFd());
+        }
+    }
+
+    @Override
     public synchronized void reset() {
         super.reset();
         errorMsg.clear();

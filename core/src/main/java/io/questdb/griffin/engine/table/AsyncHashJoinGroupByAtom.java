@@ -27,11 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecord;
-import io.questdb.cairo.map.MapRecordCursor;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursor;
@@ -189,6 +184,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         try {
             assert frozen != null;
             shardingContext.setMemoryTracker(executionContext.getMemoryTracker());
+            shardingContext.reopen();
             for (int i = 0; i < slots.size(); i++) {
                 Slot slot = slots.getQuick(i);
                 slot.breaker.init(executionContext.getCircuitBreaker());
@@ -266,30 +262,12 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return workerId == -1 && owner ? -1 : perWorkerLocks.acquireSlot(workerId, breaker);
     }
 
-    /** Task 4 uses an interruptible owner merge. Sharded merging is task 5. */
-    Map merge(SqlExecutionCircuitBreaker breaker) {
-        Map dest = getFragment(-1).reopenMap();
-        GroupByFunctionsUpdater updater = functions.getUpdater(-1);
-        for (int i = 0; i < slots.size() - 1; i++) {
-            Map source = getFragment(i).getMap();
-            if (source.size() > 0) {
-                MapRecordCursor cursor = source.getCursor();
-                MapRecord record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    breaker.statefulThrowExceptionIfTrippedTimeThrottled();
-                    MapKey key = dest.withKey();
-                    record.copyToKey(key);
-                    MapValue value = key.createValue();
-                    if (value.isNew()) {
-                        record.copyValue(value);
-                    } else {
-                        updater.merge(value, record.getValue());
-                    }
-                }
-            }
-            source.close();
-        }
-        return dest;
+    GroupByShardingContext getShardingContext() {
+        return shardingContext;
+    }
+
+    public boolean isSharded() {
+        return shardingContext.isSharded();
     }
 
     void release(int slot) {

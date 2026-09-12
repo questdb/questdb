@@ -28,40 +28,54 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
    before parent initialization, and releases execution state through `cursorClosed()`.
    See [API, ownership and validation](docs/parallel-hash-join-group-by-functions.md).
 
-4. **Implement the keyed factory, atom, cursor lifecycle, and frame reducer** — this update.
+4. **Implement the keyed factory, atom, cursor lifecycle, and frame reducer** — commit `ce38d0e7d3`.
    `AsyncHashJoinGroupByRecordCursorFactory` now executes forced keyed INNER/LEFT
    and normalized RIGHT plans using immutable build storage, independently
    acquired slot state, logical frame access and an interruptible owner merge.
    It drains tasks before cleanup and retains SYMBOL backing through output.
    See [execution, ownership and validation](docs/parallel-hash-join-group-by-execution.md).
 
+5. **Connect keyed merging and the output cursor** — this update.
+   The fused reducer switches from slot maps to sharded updates and uses the
+   existing parallel shard merge and `ShardedMapCursor`. Small maps use the
+   optimized owner merge. Native map merge loops and map redistribution accept
+   cancellation checks; destination allocations remain charged alongside live
+   sources. The shared scheduler now converts the countdown latch to a positive
+   completed-task count, fixing owner-only merge work stealing. Final projection,
+   SYMBOL sorting, ratio evaluation, cursor reread and failure/reuse are tested.
+   See [execution, merging and validation](docs/parallel-hash-join-group-by-execution.md).
+
 The branch executes the fused keyed operator through its explicit construction
 boundary. Default plans, configuration and automatic EXPLAIN selection remain
 unchanged. The RFC's 2× end-to-end gate is still pending.
 
-## Next pending task: 5
+## Next pending task: 6
 
-**Connect keyed merging and the output cursor.**
+**Integrate planner selection, configuration, and diagnostics.**
 
-- Complete `GroupByShardingContext` integration: task 4 uses its map fragments but
-  deliberately performs an interruptible owner merge only. Connect sharded update,
-  the existing parallel merge and final sharded cursor. Force both merge paths.
-- Merge intermediate states through `GroupByFunctionsUpdater`. Test SUM/AVG nulls
-  and unequal partial counts so averaging partial averages cannot pass. Preserve
-  the original capacity denominator once per joined reading.
-- Audit cancellation within long reused shard/merge loops, including transitions
-  from unsharded maps. Account for destination allocations while sources remain
-  live. Drain merge tasks before releasing their inputs after failure.
-- Verify final projection and ordering over the original query, high-cardinality
-  results, symbols and cursor metadata/capabilities. Output must not advertise
-  probe input ordering. Exercise `toTop`, random access and reuse after failures.
+- Connect the candidate API to fused factory construction before the ordinary
+  join/group-by pipeline. Compile children and joined functions, preserve
+  projections, aliases, intervals and final ordering/limiting, then transfer
+  child/filter ownership only after all capability checks pass.
+- Add `cairo.sql.parallel.hash.join.groupby.enabled`, default false, and wire
+  configuration wrappers, SQL execution context and test overrides. Define
+  behavior with no query workers and existing parallel-aggregation controls.
+- Implement safe probe-filter takeover and post-join filtering with correct
+  predicate placement for INNER/LEFT and normalized RIGHT joins. Unsupported
+  shapes must retain their existing plans without leaked speculative resources.
+- Expand EXPLAIN with grouping/aggregate expressions, filters, join condition,
+  logical/physical orientation and input swapping, plus `buildStrategy: shared`.
+  EXPLAIN must not consume the build input.
+- Add benchmark instrumentation: build rows/keys/bytes, scanned rows, matched
+  pairs, null extensions, surviving candidates, merge cardinality, phase timings
+  and peak memory. Keep worker counters local until completion.
 
-Completion requires the original ordered query and a forced high-cardinality case
-matching the ordinary path, with both merge paths passing memory-leak, allocation,
-cancellation and cursor-reread tests. Planner selection/configuration/diagnostics
-remain task 6, and the performance gate remains task 7.
+Completion requires enabled/disabled result and plan assertions for supported
+and rejected shapes, including aliases, filters, normalized RIGHT and larger
+builds. Do not introduce a build-size cutoff, runtime fallback or input replay.
+The keyed performance gate remains task 7; no speedup is claimed yet.
 
-Task-4 integration notes: compile ordinary child factories under **one enclosing
+Integration notes: compile ordinary child factories under **one enclosing
 query registration**; do not nest independently registered `QueryProgress` roots.
 The factory consumes children/functions/interpreted filter context on constructor
 entry, including failure, and borrows joined metadata only during construction.
@@ -86,6 +100,19 @@ and 10k keys with fanout 10, with both rounds and all regressions retained.
 In particular, the 100k unique case probes more slowly. These measurements select
 a safe initial boundary; they do not pass the later keyed pipeline's performance
 gate or justify default enablement.
+
+## Validation for task 5
+
+The [execution report](docs/parallel-hash-join-group-by-execution.md) contains the
+exact regression command. **575 tests passed, 11 existing conditional map cases
+skipped, zero failures/errors** (586 total). This includes 23 fused execution
+tests, 10,003 final groups on both merge paths, the ordered motivating query,
+concurrent merge/failure gates, cancellation, destination memory-limit breaches,
+all-row random access, remaining size, partial close and successful factory reuse.
+There are 14 additional passing cases across fused execution, map merge and
+redistribution tests. Shared regressions include ordinary group-by/horizon memory
+tracking and the parallel fiber dispatcher.
+`mvn -pl benchmarks -am package -DskipTests -Dmaven.test.skip=true` also passed.
 
 ## Validation for task 4
 

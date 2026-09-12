@@ -27,6 +27,11 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -42,6 +47,7 @@ import io.questdb.griffin.HashJoinGroupByCandidate;
 import io.questdb.griffin.HashJoinGroupByFunctions;
 import io.questdb.griffin.HashJoinGroupByMetadata;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
+import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -50,14 +56,23 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
+import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.mp.Job;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -85,6 +100,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     private static final String INNER = " from r join p on r.plant_id=p.plant_id";
     private static final String OUTER = " from r left join p on r.plant_id=p.plant_id";
     private static final int WORKERS = 3;
+    private int frameRows;
 
     @Before
     public void setUp() {
@@ -334,7 +350,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
                 sqlExecutionContext.setMemoryTracker(tracker);
                 try {
-                    try (RecordCursor ignored = f.factory.getCursor(sqlExecutionContext)) {
+                    try (RecordCursor ignored = f.getRawCursor()) {
                         Assert.fail();
                     } catch (CairoException expected) {
                         Assert.assertTrue(expected.isOutOfMemory());
@@ -343,7 +359,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     tracker.setLimit(100_000_000);
                     CountDownLatch acquired = new CountDownLatch(1);
                     f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
-                    try (RecordCursor cursor = f.factory.getCursor(sqlExecutionContext); Reducers reducers = new Reducers()) {
+                    try (RecordCursor cursor = f.getRawCursor(); Reducers reducers = new Reducers()) {
                         Assert.assertTrue("build must be charged before probe", tracker.getUsed() > 0);
                         tracker.setLimit(tracker.getUsed());
                         cursor.hasNext();
@@ -355,7 +371,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     Assert.assertEquals(0, acquired.getCount());
                     Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                     tracker.setLimit(100_000_000);
-                    try (RecordCursor cursor = f.factory.getCursor(sqlExecutionContext)) {
+                    try (RecordCursor cursor = f.getRawCursor()) {
                         Assert.assertTrue(cursor.hasNext());
                         Assert.assertTrue(tracker.getUsed() > 0);
                     }
@@ -384,7 +400,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     try {
                         CountDownLatch acquired = new CountDownLatch(1);
                         f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
-                        try (RecordCursor cursor = f.factory.getCursor(sqlExecutionContext); Reducers reducers = new Reducers()) {
+                        try (RecordCursor cursor = f.getRawCursor(); Reducers reducers = new Reducers()) {
                             tracker.setLimit(tracker.getUsed());
                             cursor.hasNext();
                             Assert.fail();
@@ -428,6 +444,296 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 Assert.assertEquals("unsupported fused hash join execution inputs", expected.getMessage());
             }
         });
+    }
+
+    @Test
+    public void testOrderedSolarQueryBothMergePaths() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("insert into r values (1, '2020-01-04', null, null), (1, '2020-01-05', 70, 800), "
+                    + "(2, '2020-02-02', null, null)");
+            frameRows = 2;
+            for (boolean sharded : new boolean[]{false, true}) {
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, sharded ? 1 : Integer.MAX_VALUE);
+                for (String join : new String[]{INNER, OUTER, " from p right join r on r.plant_id=p.plant_id"}) {
+                    String probeSql = "r where reading_ts >= '2020-01-01' and reading_ts < '2025-01-01'";
+                    String predicate = " where r.reading_ts >= '2020-01-01' and r.reading_ts < '2025-01-01'";
+                    String buildSql = "p";
+                    if (join.equals(INNER)) {
+                        predicate += " and p.country in ('ES','IT')";
+                        buildSql += " where country in ('ES','IT')";
+                    }
+                    String sql = AGGREGATES + join + predicate;
+                    try (Fixture f = new Fixture(sql, probeSql, ints(0, 1, 2, 3), buildSql, ints(0, 1, 2), null, null)) {
+                        f.projectAndSort(new String[]{"country", "yr", "mo", "energy", "irradiance", "energy / nullif(capacity, 0)"},
+                                new String[]{"country", "yr", "mo", "total_energy_kwh", "avg_irradiance", "specific_yield_kwh_kwp"}, 1, 2, 3);
+                        String expected = "select p.country, year(r.reading_ts) yr, month(r.reading_ts) mo, "
+                                + "sum(r.energy_kwh) total_energy_kwh, avg(r.irradiance_wm2) avg_irradiance, "
+                                + "sum(r.energy_kwh) / nullif(sum(p.installed_kwp), 0) specific_yield_kwh_kwp"
+                                + join + predicate + " order by country, yr, mo";
+                        f.assertOrderedResults(expected, sharded);
+                        f.assertOrderedResults(expected, sharded);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHighCardinalityConcurrentMergeBothPaths() throws Exception {
+        assertMemoryLeak(() -> {
+            createMergeTables();
+            for (boolean sharded : new boolean[]{false, true}) {
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, sharded ? 1 : Integer.MAX_VALUE);
+                Hook hook = new Hook();
+                String sql = mergeSql();
+                try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
+                     Reducers reducers = new Reducers()) {
+                    hook.gate = new CountDownLatch(2);
+                    hook.mergeGate = sharded ? new CountDownLatch(2) : null;
+                    f.assertResults(sql, sharded);
+                    Assert.assertTrue("must merge overlapping partial states", hook.mergeCalls.get() > 0);
+                    if (sharded) {
+                        Assert.assertEquals("merge workers must run concurrently", 0, hook.mergeGate.getCount());
+                    }
+                    hook.gate = null;
+                    hook.mergeGate = null;
+                    f.assertResults(sql, sharded);
+                    Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMergeFailureDrainsAndReusesBothPaths() throws Exception {
+        assertMemoryLeak(() -> {
+            createMergeTables();
+            for (boolean sharded : new boolean[]{false, true}) {
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, sharded ? 1 : Integer.MAX_VALUE);
+                Hook hook = new Hook();
+                String sql = mergeSql();
+                try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
+                     LimitedMemoryTracker tracker = new LimitedMemoryTracker(100_000_000);
+                     Reducers reducers = new Reducers()) {
+                    MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
+                    sqlExecutionContext.setMemoryTracker(tracker);
+                    hook.gate = new CountDownLatch(2);
+                    hook.mergeGate = sharded ? new CountDownLatch(2) : null;
+                    hook.failMerge = true;
+                    try {
+                        try (RecordCursor cursor = f.getRawCursor()) {
+                            cursor.hasNext();
+                            Assert.fail("expected a merge failure");
+                        } catch (CairoException expected) {
+                            Assert.assertTrue(expected.getFlyweightMessage().toString().contains("injected merge failure"));
+                        }
+                        Assert.assertTrue(hook.mergeCalls.get() > 0);
+                        Assert.assertEquals(0, tracker.getUsed());
+                        Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                        hook.failMerge = false;
+                        hook.gate = null;
+                        hook.mergeGate = null;
+                        try (RecordCursor cursor = f.getRawCursor()) {
+                            Assert.assertEquals(512, rows(cursor, f.factory.getMetadata()).size());
+                        }
+                        Assert.assertEquals(0, tracker.getUsed());
+                    } finally {
+                        sqlExecutionContext.setMemoryTracker(previous);
+                    }
+                    f.assertResults(sql, sharded);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testShardedMergeMemoryLimitDrainsAndReuses() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1);
+        assertMemoryLeak(() -> {
+            createMergeTables();
+            Hook hook = new Hook();
+            String sql = mergeSql();
+            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
+                 LimitedMemoryTracker tracker = new LimitedMemoryTracker(100_000_000);
+                 Reducers reducers = new Reducers()) {
+                MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
+                sqlExecutionContext.setMemoryTracker(tracker);
+                hook.gate = new CountDownLatch(2);
+                hook.mergeTracker = tracker;
+                try {
+                    try (RecordCursor cursor = f.getRawCursor()) {
+                        cursor.hasNext();
+                        Assert.fail("expected destination allocation to fail during merge");
+                    } catch (CairoException expected) {
+                        Assert.assertTrue(expected.isOutOfMemory());
+                        Assert.assertTrue(expected.getFlyweightMessage().toString().contains("query memory limit exceeded"));
+                    }
+                    Assert.assertTrue("breach must happen after merge began", hook.mergeCalls.get() > 0);
+                    Assert.assertTrue("sources and build must be charged at merge", hook.mergeBytes > 0);
+                    Assert.assertEquals(0, tracker.getUsed());
+                    Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    hook.gate = null;
+                    hook.mergeTracker = null;
+                    tracker.setLimit(100_000_000);
+                    try (RecordCursor cursor = f.getRawCursor()) {
+                        Assert.assertEquals(512, rows(cursor, f.factory.getMetadata()).size());
+                    }
+                    Assert.assertEquals(0, tracker.getUsed());
+                } finally {
+                    sqlExecutionContext.setMemoryTracker(previous);
+                }
+                f.assertResults(sql, true);
+            }
+        });
+    }
+
+    @Test
+    public void testMergeCancellationDrainsAndReusesBothPaths() throws Exception {
+        assertMemoryLeak(() -> {
+            createMergeTables();
+            SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+            AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+            ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+            try {
+                for (boolean sharded : new boolean[]{false, true}) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, sharded ? 1 : Integer.MAX_VALUE);
+                    Hook hook = new Hook();
+                    String sql = mergeSql();
+                    try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
+                         LimitedMemoryTracker tracker = new LimitedMemoryTracker(100_000_000);
+                         Reducers reducers = new Reducers()) {
+                        MemoryTracker previousTracker = sqlExecutionContext.getMemoryTracker();
+                        sqlExecutionContext.setMemoryTracker(tracker);
+                        hook.gate = new CountDownLatch(2);
+                        hook.mergeCancel = breaker;
+                        try {
+                            try (RecordCursor cursor = f.getRawCursor()) {
+                                cursor.hasNext();
+                                Assert.fail("expected merge cancellation");
+                            } catch (CairoException expected) {
+                                Assert.assertTrue(expected.isInterruption());
+                            }
+                            Assert.assertTrue(hook.mergeCalls.get() > 0);
+                            Assert.assertEquals(0, tracker.getUsed());
+                            Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            hook.gate = null;
+                            hook.mergeCancel = null;
+                            breaker.reset();
+                            try (RecordCursor cursor = f.getRawCursor()) {
+                                Assert.assertEquals(512, rows(cursor, f.factory.getMetadata()).size());
+                            }
+                            Assert.assertEquals(0, tracker.getUsed());
+                        } finally {
+                            sqlExecutionContext.setMemoryTracker(previousTracker);
+                        }
+                        f.assertResults(sql, sharded);
+                    }
+                }
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+            }
+        });
+    }
+
+    @Test
+    public void testOwnerMergeDestinationMemoryLimitAndReuse() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, Integer.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            createMergeTables();
+            Hook hook = new Hook();
+            String sql = mergeSql();
+            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
+                 LimitedMemoryTracker tracker = new LimitedMemoryTracker(100_000_000);
+                 Reducers reducers = new Reducers()) {
+                MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
+                sqlExecutionContext.setMemoryTracker(tracker);
+                // All nine frames belong to workers, leaving the owner destination unopened.
+                // The frame cursor folds the short tail into the preceding frames.
+                CountDownLatch acquired = new CountDownLatch(9);
+                f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
+                hook.reduceTracker = tracker;
+                hook.reduceLimitAt = 20006; // 10003 readings, two matching build payloads each
+                try {
+                    try (RecordCursor cursor = f.getRawCursor()) {
+                        cursor.hasNext();
+                        Assert.fail("expected owner destination allocation to breach the live-state limit");
+                    } catch (CairoException expected) {
+                        Assert.assertTrue(expected.isOutOfMemory());
+                    }
+                    Assert.assertEquals(0, acquired.getCount());
+                    Assert.assertEquals(20006, hook.calls.get());
+                    Assert.assertEquals("the destination must fail before any merge update", 0, hook.mergeCalls.get());
+                    Assert.assertTrue(hook.mergeBytes > 0);
+                    Assert.assertEquals(0, tracker.getUsed());
+                    Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    hook.reduceTracker = null;
+                    f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(null);
+                    tracker.setLimit(100_000_000);
+                    try (RecordCursor cursor = f.getRawCursor()) {
+                        Assert.assertEquals(512, rows(cursor, f.factory.getMetadata()).size());
+                    }
+                    Assert.assertEquals(0, tracker.getUsed());
+                } finally {
+                    sqlExecutionContext.setMemoryTracker(previous);
+                }
+                f.assertResults(sql, false);
+            }
+        });
+    }
+
+    @Test
+    public void testShardedOutputEmptyBuildAndDictionaryReuse() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1);
+        assertMemoryLeak(() -> {
+            createTables();
+            for (String join : new String[]{INNER, OUTER}) {
+                String sql = AGGREGATES + join;
+                try (Fixture f = new Fixture(sql)) {
+                    f.assertResults(sql, true);
+                    try (RecordCursor cursor = f.getCursor()) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertTrue(f.factory.getAtom().isSharded());
+                    }
+                    execute("truncate table p");
+                    f.assertResults(sql, true);
+                    execute("insert into p values (1, 'FR', 17), (1, 'DE', 19), (null, 'FR', 11)");
+                    f.assertResults(sql, true);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTenThousandJoinedGroupsBothMergePaths() throws Exception {
+        assertMemoryLeak(() -> {
+            createMergeTables();
+            String sql = "select r.reading_ts, p.country, sum(r.energy_kwh) energy, avg(r.irradiance_wm2) irradiance, "
+                    + "sum(p.installed_kwp) capacity" + OUTER;
+            for (boolean sharded : new boolean[]{false, true}) {
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, sharded ? 1 : Integer.MAX_VALUE);
+                try (Fixture f = new Fixture(sql); Reducers reducers = new Reducers()) {
+                    f.assertResults(sql, sharded);
+                    f.assertResults(sql, sharded);
+                }
+            }
+        });
+    }
+
+    private void createMergeTables() throws Exception {
+        createTables();
+        execute("truncate table r");
+        execute("truncate table p");
+        execute("insert into r select (x % 512)::int, timestamp_sequence('2020-01-01', 1000000L), "
+                + "case when x % 7 = 0 then null else x::double end, "
+                + "case when x % 3 = 0 then null else (x % 8)::double end from long_sequence(10003)");
+        execute("insert into p select (x % 512)::int, 'ES', 2.0 from long_sequence(1024)");
+        frameRows = 1024;
+    }
+
+    private static String mergeSql() {
+        return "select r.plant_id, sum(r.energy_kwh) energy, avg(r.irradiance_wm2) irradiance, "
+                + "sum(p.installed_kwp) capacity, count(*) pairs" + OUTER + " where p.country is not null";
     }
 
     private static void appendRow(List<String> rows, Record record, RecordMetadata metadata) {
@@ -501,6 +807,38 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         volatile boolean fail;
         volatile boolean failInit;
         volatile CountDownLatch gate;
+        final AtomicInteger mergeCalls = new AtomicInteger();
+        volatile CountDownLatch mergeGate;
+        volatile boolean failMerge;
+        volatile LimitedMemoryTracker mergeTracker;
+        volatile AtomicBooleanCircuitBreaker mergeCancel;
+        volatile long mergeBytes;
+        volatile LimitedMemoryTracker reduceTracker;
+        volatile int reduceLimitAt;
+
+        void merge() {
+            mergeCalls.incrementAndGet();
+            CountDownLatch latch = mergeGate;
+            if (latch != null && latch.getCount() > 0) {
+                latch.countDown();
+                try {
+                    Assert.assertTrue("concurrent merge gate timed out", latch.await(10, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    throw new AssertionError(e);
+                }
+            }
+            if (failMerge) {
+                throw CairoException.nonCritical().put("injected merge failure");
+            }
+            if (mergeCancel != null) {
+                mergeCancel.cancel();
+            }
+            LimitedMemoryTracker tracker = mergeTracker;
+            if (tracker != null) {
+                mergeBytes = tracker.getUsed();
+                tracker.setLimit(1);
+            }
+        }
 
         void run() {
             int count = calls.incrementAndGet();
@@ -521,6 +859,10 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 }
                 if (cancel != null && count == 32) {
                     cancel.cancel();
+                }
+                if (reduceTracker != null && count == reduceLimitAt) {
+                    mergeBytes = reduceTracker.getUsed();
+                    reduceTracker.setLimit(mergeBytes);
                 }
             } finally {
                 active.decrementAndGet();
@@ -606,6 +948,33 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, candidate,
                             probeFactory.getMetadata(), probeColumns, buildFactory.getMetadata(), buildColumns)) {
                         functions = generator.compileHashJoinGroupByFunctions(model, metadata, WORKERS, sqlExecutionContext);
+                        if (hook != null) {
+                            // Decorate only the updater's borrowed function list, after eligibility.
+                            // The function container retains ownership and normal initialization.
+                            for (int slot = -1; slot < WORKERS; slot++) {
+                                ObjList<GroupByFunction> decorated = new ObjList<>();
+                                ObjList<GroupByFunction> originals = functions.getGroupByFunctions(slot);
+                                boolean wrapped = false;
+                                for (int i = 0; i < originals.size(); i++) {
+                                    GroupByFunction original = originals.getQuick(i);
+                                    if (!wrapped && original instanceof SumDoubleGroupByFunction sum) {
+                                        SumDoubleGroupByFunction wrapper = new SumDoubleGroupByFunction(sum.getArg()) {
+                                            @Override
+                                            public void merge(MapValue dest, MapValue src) {
+                                                hook.merge();
+                                                sum.merge(dest, src);
+                                            }
+                                        };
+                                        wrapper.initValueIndex(sum.getValueIndex());
+                                        decorated.add(wrapper);
+                                        wrapped = true;
+                                    } else {
+                                        decorated.add(original);
+                                    }
+                                }
+                                functions.getUpdater(slot).setFunctions(decorated);
+                            }
+                        }
                         Function probeFilter = null;
                         ObjList<Function> workerFilters = null;
                         if (probeFilterSql != null) {
@@ -646,10 +1015,77 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         }
 
         RecordCursor getCursor() throws SqlException {
+            if (frameRows > 0) {
+                sqlExecutionContext.changePageFrameSizes(frameRows, frameRows);
+            }
             return queryFactory.getCursor(sqlExecutionContext);
         }
 
+        RecordCursor getRawCursor() throws SqlException {
+            if (frameRows > 0) {
+                sqlExecutionContext.changePageFrameSizes(frameRows, frameRows);
+            }
+            return factory.getCursor(sqlExecutionContext);
+        }
+
+        void projectAndSort(String[] expressions, String[] aliases, int... sortColumns) throws Exception {
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            int reserved = expressions.length + 1;
+            PriorityMetadata priority = new PriorityMetadata(reserved, factory.getMetadata());
+            ObjList<Function> projection = new ObjList<>();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+                for (int i = 0; i < expressions.length; i++) {
+                    Function function = parser.parseFunction(compiler.testParseExpression(expressions[i], QueryModel.FACTORY.newInstance()),
+                            priority, sqlExecutionContext);
+                    projection.add(function);
+                    TableColumnMetadata column = new TableColumnMetadata(aliases[i], function.getType(), IndexType.NONE, 0,
+                            function instanceof SymbolFunction symbol && symbol.isSymbolTableStatic(), null);
+                    metadata.add(column);
+                    priority.add(column);
+                }
+            }
+            // The QueryProgress already owning the fused factory remains the enclosing registration.
+            RecordCursorFactory virtual = new VirtualRecordCursorFactory(metadata, priority, projection, queryFactory, reserved);
+            queryFactory = virtual;
+            ListColumnFilter order = new ListColumnFilter();
+            for (int column : sortColumns) {
+                order.add(column);
+            }
+            queryFactory = new SortedLightRecordCursorFactory(configuration, metadata, virtual,
+                    new RecordComparatorCompiler(new BytecodeAssembler()).newInstance(metadata, order), order);
+        }
+
+        void assertOrderedResults(String sql, boolean sharded) throws Exception {
+            List<String> expected = new ArrayList<>();
+            try (RecordCursorFactory baseline = select(sql); RecordCursor cursor = baseline.getCursor(sqlExecutionContext)) {
+                Assert.assertEquals(baseline.getMetadata().getColumnCount(), queryFactory.getMetadata().getColumnCount());
+                for (int i = 0; i < baseline.getMetadata().getColumnCount(); i++) {
+                    Assert.assertEquals(baseline.getMetadata().getColumnName(i), queryFactory.getMetadata().getColumnName(i));
+                    Assert.assertEquals(baseline.getMetadata().getColumnType(i), queryFactory.getMetadata().getColumnType(i));
+                }
+                while (cursor.hasNext()) {
+                    appendRow(expected, cursor.getRecord(), baseline.getMetadata());
+                }
+            }
+            try (RecordCursor cursor = getCursor()) {
+                for (int pass = 0; pass < 2; pass++) {
+                    List<String> actual = new ArrayList<>();
+                    while (cursor.hasNext()) {
+                        appendRow(actual, cursor.getRecord(), queryFactory.getMetadata());
+                    }
+                    Assert.assertEquals(expected, actual);
+                    Assert.assertEquals(sharded, factory.getAtom().isSharded());
+                    cursor.toTop();
+                }
+            }
+        }
+
         void assertResults(String sql) throws Exception {
+            assertResults(sql, null);
+        }
+
+        void assertResults(String sql, Boolean sharded) throws Exception {
             List<String> expected;
             try (RecordCursorFactory baseline = select(sql); RecordCursor cursor = baseline.getCursor(sqlExecutionContext)) {
                 expected = rows(cursor, baseline.getMetadata());
@@ -658,17 +1094,28 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             try (RecordCursor cursor = getCursor()) {
                 Assert.assertEquals(expected, rows(cursor, factory.getMetadata()));
                 Assert.assertEquals(expected.size(), cursor.size());
+                if (sharded != null) {
+                    Assert.assertEquals(sharded.booleanValue(), factory.getAtom().isSharded());
+                }
                 cursor.toTop();
                 Assert.assertEquals(expected, rows(cursor, factory.getMetadata()));
                 cursor.toTop();
-                if (cursor.hasNext()) {
-                    List<String> a = new ArrayList<>();
-                    List<String> b = new ArrayList<>();
-                    appendRow(a, cursor.getRecord(), factory.getMetadata());
-                    cursor.recordAt(cursor.getRecordB(), cursor.getRecord().getRowId());
-                    appendRow(b, cursor.getRecordB(), factory.getMetadata());
-                    Assert.assertEquals(a, b);
+                LongList rowIds = new LongList();
+                while (cursor.hasNext()) {
+                    rowIds.add(cursor.getRecord().getRowId());
                 }
+                List<String> randomAccess = new ArrayList<>();
+                for (int i = rowIds.size() - 1; i >= 0; i--) {
+                    cursor.recordAt(cursor.getRecordB(), rowIds.getQuick(i));
+                    appendRow(randomAccess, cursor.getRecordB(), factory.getMetadata());
+                }
+                Collections.sort(randomAccess);
+                Assert.assertEquals(expected, randomAccess);
+                cursor.toTop();
+                RecordCursor.Counter remaining = new RecordCursor.Counter();
+                boolean first = cursor.hasNext();
+                cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), remaining);
+                Assert.assertEquals(expected.size() - (first ? 1 : 0), remaining.get());
             }
         }
     }
@@ -683,8 +1130,11 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             for (int i = 0; i < WORKERS; i++) {
                 Thread thread = new Thread(() -> {
                     try (UnorderedPageFrameReduceJob job = new UnorderedPageFrameReduceJob(engine, engine.getMessageBus())) {
+                        GroupByMergeShardJob mergeJob = new GroupByMergeShardJob(engine.getMessageBus());
                         while (running.get()) {
-                            if (!job.run(Job.RUNNING_STATUS)) {
+                            boolean useful = job.run(Job.RUNNING_STATUS);
+                            useful |= mergeJob.run(Job.RUNNING_STATUS);
+                            if (!useful) {
                                 Thread.onSpinWait();
                             }
                         }

@@ -36,6 +36,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
@@ -410,12 +411,12 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
-    public void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
+    public void merge(Map srcMap, MapValueMergeFunction mergeFunc, @Nullable SqlExecutionCircuitBreaker circuitBreaker) {
         assert this != srcMap;
         if (srcMap.size() == 0) {
             return;
         }
-        mergeRef.merge((OrderedMap) srcMap, mergeFunc);
+        mergeRef.merge((OrderedMap) srcMap, mergeFunc, circuitBreaker);
     }
 
     @Override
@@ -665,7 +666,7 @@ public class OrderedMap implements Map, Reopenable {
         return valueOf(keyWriter.startAddr, keyWriter.appendAddr, true, value);
     }
 
-    private void mergeFixedSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc) {
+    private void mergeFixedSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc, @Nullable SqlExecutionCircuitBreaker circuitBreaker) {
         assert keySize >= 0;
 
         long entrySize = keySize + valueSize;
@@ -673,6 +674,9 @@ public class OrderedMap implements Map, Reopenable {
 
         OUTER:
         for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
+            if (circuitBreaker != null) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
             // Read the slot as a single 64-bit value, as probe0 does.
             long srcSlot = Unsafe.getLong(srcMap.offsetsAddr + ((long) i << 3));
             long srcStartAddr = srcEntryAddr(srcMap, srcSlot);
@@ -722,11 +726,14 @@ public class OrderedMap implements Map, Reopenable {
         }
     }
 
-    private void mergeVarSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc) {
+    private void mergeVarSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc, @Nullable SqlExecutionCircuitBreaker circuitBreaker) {
         assert keySize == -1;
 
         OUTER:
         for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
+            if (circuitBreaker != null) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
             // Read the slot as a single 64-bit value, as probe0 does.
             long srcSlot = Unsafe.getLong(srcMap.offsetsAddr + ((long) i << 3));
             long srcStartAddr = srcEntryAddr(srcMap, srcSlot);
@@ -1043,7 +1050,7 @@ public class OrderedMap implements Map, Reopenable {
 
     @FunctionalInterface
     private interface MergeFunction {
-        void merge(OrderedMap srcMap, MapValueMergeFunction mergeFunc);
+        void merge(OrderedMap srcMap, MapValueMergeFunction mergeFunc, @Nullable SqlExecutionCircuitBreaker circuitBreaker);
     }
 
     class FixedSizeKey extends Key {

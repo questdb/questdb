@@ -41,6 +41,7 @@ import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.cairo.map.Unordered8Map;
 import io.questdb.cairo.map.UnorderedVarcharMap;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -516,6 +517,50 @@ public class MapTest extends AbstractCairoTest {
                     MapKey key = map.withKey();
                     populateKey(key, i);
                     key.createValue();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMergeCancellationWhileCopyingAndCombining() throws Exception {
+        assertMemoryLeak(() -> {
+            SingleColumnType keys = keyColumnType(ColumnType.INT);
+            SingleColumnType values = new SingleColumnType(ColumnType.INT);
+            for (boolean intersecting : new boolean[]{false, true}) {
+                try (Map dest = createMap(keys, values, 64, 0.8, Integer.MAX_VALUE);
+                     Map source = createMap(keys, values, 64, 0.8, Integer.MAX_VALUE)) {
+                    for (int i = 0; i < 10000; i++) {
+                        MapKey key = source.withKey();
+                        populateKey(key, i);
+                        key.createValue().putInt(0, i);
+                        if (intersecting) {
+                            key = dest.withKey();
+                            populateKey(key, i);
+                            key.createValue().putInt(0, 0);
+                        }
+                    }
+                    int[] checks = {0};
+                    AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine) {
+                        @Override
+                        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+                            if (++checks[0] == 32) {
+                                cancel();
+                            }
+                            super.statefulThrowExceptionIfTrippedTimeThrottled();
+                        }
+                    };
+                    try {
+                        dest.merge(source, new TestMapValueMergeFunction(), breaker);
+                        Assert.fail("expected cancellation inside a map merge");
+                    } catch (io.questdb.cairo.CairoException expected) {
+                        Assert.assertTrue(expected.isInterruption());
+                    }
+                    Assert.assertEquals(32, checks[0]);
+                    Assert.assertEquals(10000, source.size());
+                    dest.clear();
+                    dest.merge(source, new TestMapValueMergeFunction());
+                    Assert.assertEquals(10000, dest.size());
                 }
             }
         });

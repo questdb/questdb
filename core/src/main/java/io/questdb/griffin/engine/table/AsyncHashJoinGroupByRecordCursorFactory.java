@@ -97,7 +97,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             // The sequence takes atom ownership on entry, also on constructor failure.
             frameSequence = new UnorderedPageFrameSequence<>(engine, engine.getConfiguration(),
                     engine.getMessageBus(), atom, AsyncHashJoinGroupByRecordCursorFactory::aggregate, workerCount);
-            cursor = new AsyncHashJoinGroupByRecordCursor(frameSequence, functions);
+            cursor = new AsyncHashJoinGroupByRecordCursor(engine, frameSequence, functions);
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -175,7 +175,11 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 final HashJoinGroupByFunctions functions = atom.getFunctions();
                 final RecordSink sink = functions.getMapSink(slotId);
                 final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
-                final Map map = atom.getFragment(slotId).reopenMap();
+                final GroupByMapFragment fragment = atom.getFragment(slotId);
+                if (atom.isSharded()) {
+                    fragment.shard(breaker);
+                }
+                final Map map = fragment.isNotSharded() ? fragment.reopenMap() : fragment.getShards().getQuick(0);
                 final Function probeFilter = atom.getFilterContext().getFilter(slotId);
                 final Function postJoinFilter = functions.getFilter(slotId);
                 for (long r = 0, n = sequence.getFrameRowCount(frameIndex); r < n && sequence.isActive(); r++) {
@@ -193,13 +197,14 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                                 return;
                             }
                             probe.next();
-                            update(map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                            update(fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                         } while (probe.hasNext());
                     } else if (atom.isOuter()) {
                         record.setHasMatch(false);
-                        update(map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                        update(fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                     }
                 }
+                atom.getShardingContext().maybeEnableSharding(fragment, 0);
             } finally {
                 pool.releaseParquetBuffers();
             }
@@ -208,12 +213,26 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         }
     }
 
-    private static void update(Map map, RecordSink sink, GroupByFunctionsUpdater updater,
+    private static void update(GroupByMapFragment fragment, Map map, RecordSink sink, GroupByFunctionsUpdater updater,
                                HashJoinGroupByRecord record, Function filter, long rowId) {
         if (filter == null || filter.getBool(record)) {
             MapKey key = map.withKey();
             sink.copy(record, key);
-            MapValue value = key.createValue();
+            final MapValue value;
+            if (fragment.isNotSharded()) {
+                value = key.createValue();
+            } else {
+                key.commit();
+                final long hashCode = key.hash();
+                final Map shard = fragment.getShardMap(hashCode);
+                if (shard != map) {
+                    MapKey shardKey = shard.withKey();
+                    shardKey.copyFrom(key);
+                    value = shardKey.createValue(hashCode);
+                } else {
+                    value = key.createValue(hashCode);
+                }
+            }
             if (value.isNew()) {
                 updater.updateNew(value, record, rowId);
             } else {
