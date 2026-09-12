@@ -1,21 +1,22 @@
 # Parallel hash join / group by: capabilities and comparison harness
 
-[RFC 130](https://github.com/questdb/rfc/discussions/130), implementation tasks 1–8 and 6a.
+[RFC 130](https://github.com/questdb/rfc/discussions/130), implementation tasks 1–9 and 6a.
 
 The branch includes the [immutable build boundary](parallel-hash-join-group-by-build.md),
 [joined metadata and function initialization](parallel-hash-join-group-by-functions.md),
 [keyed execution and merging](parallel-hash-join-group-by-execution.md),
-and [scalar execution](parallel-hash-join-group-by-unkeyed.md).
+[scalar execution](parallel-hash-join-group-by-unkeyed.md),
+and [V1 qualification](parallel-hash-join-group-by-qualification.md).
 Task 6 connects these components to ordinary SQL compilation behind an experimental
 flag. The [planner and diagnostics guide](parallel-hash-join-group-by-planner.md)
 documents selection, configuration, ownership, EXPLAIN and benchmark counters.
-The [handoff](../PARALLEL_HASH_JOIN_HANDOFF.md) records completed tasks 1–8, the
-passed keyed performance gate, and pending V1 qualification in task 9. The
-experimental flag remains disabled by default.
+The [handoff](../PARALLEL_HASH_JOIN_HANDOFF.md) records completed tasks 1–9, the
+passed keyed prototype performance gate, and pending completed-V1 benchmarking
+in task 10. The experimental flag remains disabled by default.
 
 ## Capability table
 
-| Component | Initial contract |
+| Component | V1 contract |
 | --- | --- |
 | Join | Exactly one INNER or LEFT OUTER equality join. RIGHT OUTER is a candidate only with swapped probe/build inputs and physical LEFT OUTER semantics. No native right/full execution, temporal joins, cross joins, or additional joins in either input. |
 | Keys | One direct INT column from each input, including direct aliases through projections. No composite, LONG, SYMBOL, or expression keys. Zero, negative and null keys follow existing QuestDB equality semantics; null keys can match. |

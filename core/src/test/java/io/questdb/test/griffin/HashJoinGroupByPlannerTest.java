@@ -283,21 +283,26 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             try (SqlExecutionContextImpl context = enabledContext()) {
-                String sql = SELECT + JOINS[0] + " where r.energy_kwh > 10 order by country,yr,mo";
-                try (RecordCursorFactory factory = engine.select(sql, context)) {
-                    AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
-                    String expected = result(factory, context);
-                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64);
-                    try {
-                        result(factory, context);
-                        Assert.fail("expected the query memory limit error");
-                    } catch (CairoException ex) {
-                        Assert.assertTrue(ex.getMessage(), ex.isOutOfMemory());
+                for (String join : JOINS) {
+                    for (String projection : new String[]{SELECT, SCALAR_SELECT}) {
+                        String sql = projection + join + " where r.energy_kwh > 10"
+                                + (projection.equals(SELECT) ? " order by country,yr,mo" : "");
+                        try (RecordCursorFactory factory = engine.select(sql, context)) {
+                            AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
+                            String expected = result(factory, context);
+                            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64);
+                            try {
+                                result(factory, context);
+                                Assert.fail("expected the query memory limit error");
+                            } catch (CairoException ex) {
+                                Assert.assertTrue(ex.getMessage(), ex.isOutOfMemory());
+                            }
+                            Assert.assertEquals(0, fused.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            Assert.assertNull(context.getMemoryTracker());
+                            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                            Assert.assertEquals(expected, result(factory, context));
+                        }
                     }
-                    Assert.assertEquals(0, fused.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                    Assert.assertNull(context.getMemoryTracker());
-                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
-                    Assert.assertEquals(expected, result(factory, context));
                 }
             }
         });

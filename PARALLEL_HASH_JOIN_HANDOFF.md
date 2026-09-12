@@ -69,7 +69,7 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
    selectivity and small-input cases, retaining commands, environment, plans,
    ordered results and every sample. See the [benchmark report and raw data](docs/parallel-hash-join-group-by-benchmark.md).
 
-8. **Add unkeyed aggregation through the same build/probe pipeline** — this update.
+8. **Add unkeyed aggregation through the same build/probe pipeline** — commit `0c940672cd`.
    The existing factory/atom/reducer now supports scalar partial states, without
    grouping maps or sharding contexts. Each slot's `SimpleMapValue` is allocated
    under the execution tracker alongside the live build, initialized with the
@@ -81,40 +81,42 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
    for keyed and scalar INNER/LEFT/normalized RIGHT execution. See
    [scalar execution and validation](docs/parallel-hash-join-group-by-unkeyed.md).
 
+9. **Complete storage, concurrency, and resource qualification** — this update.
+   The published V1 capability table is backed by plan-checked native/Parquet,
+   mixed-partition, column-top and logical-conversion comparisons for all payload
+   types on both inputs, keyed/scalar filtered storage guards, symbol/bind reuse
+   and source invalidation. A fixed-seed matrix adds 720 differential SQL cases.
+   Concurrent-query tests cover owner work stealing and real legacy/fiber workers,
+   both merge paths, cancellation isolation and reuse. New build-source failure,
+   build cancellation and scalar decoder failure tests complete the existing
+   lifecycle/resource matrix. No engine change was required. See
+   [coverage and reproduction](docs/parallel-hash-join-group-by-qualification.md).
+
 The branch supports experimental automatic selection for eligible keyed and
-unkeyed queries. Tasks 1–8 and 6a are complete, including the early keyed
-performance gate. The experimental default remains false.
+unkeyed queries. Tasks 1–9 and 6a are complete, including the early keyed
+performance gate and V1 correctness/resource qualification. The experimental
+default remains false.
 
-## Next pending task: 9
+## Next pending task: 10
 
-**Complete storage, concurrency, and resource qualification.**
+**Rebenchmark completed V1 and make rollout a separate change.**
 
-- Qualify every enabled native/Parquet path, mixed partitions, column tops,
-  logical conversions and filters for keyed and scalar execution. Cover storage
-  changes, source invalidation, bind rebinding and SYMBOL changes across reuse;
-  assert ordinary plans for unsupported access paths.
-- Add randomized differential coverage across join orientation, input sizes,
-  key distributions, duplicate fanout, ON/WHERE placement, selectivity, grouping
-  cardinality and worker counts. Assert fused selection and outer semantics.
-- Complete concurrent-query, work-stealing, worker-mode, cancellation and fault
-  coverage across build, initialization, decoding, probing and merging. Drain
-  tasks, release slots and allocations, and successfully reuse factories after
-  supported failures. Include compile/close and partial-output lifecycles.
-- Force memory breaches across build growth/rehashing, duplicate/payload storage,
-  slot state and merge overlap, including a build that fits but exceeds the limit
-  together with live aggregate state. Preserve normal errors without fallback
-  or replay, and run the relevant planner/join/aggregation/configuration/storage/
-  concurrency suites.
-- Back every published V1 capability with positive and negative tests. Task 8's
-  focused scalar lifecycle/resource tests are a starting point, not completion
-  of this broader qualification.
+- Repeat the fixed primary acceptance gate on the completed implementation.
+- Run the RFC matrix across join types/orientations, build footprints and scan
+  costs, match rates, post-join selectivity, fanout, group counts, worker counts,
+  concurrent load and enabled storage formats. Include small effective inputs,
+  cold data, skew and near-limit memory cases.
+- Publish total latency, scaling, memory peaks and regressions, and use the
+  evidence to make a documented rollout decision. Keep the disable switch.
+- Default enablement, if justified, must be a separate reviewable configuration/
+  planner change. Do not add build-size thresholds, runtime fallback or replay.
 
-The [comparison harness guide](docs/parallel-hash-join-group-by.md) and
-[planner metrics guide](docs/parallel-hash-join-group-by-planner.md) describe
-commands and measurements. Broader storage/concurrency/resource qualification
-is task 9; completed-V1 benchmarks and separate rollout remain task 10.
-Do not infer default enablement or general outer/storage performance from the
-primary inner/native/low-cardinality benchmark. No build-size cutoff or fallback.
+The [comparison harness guide](docs/parallel-hash-join-group-by.md),
+[planner metrics guide](docs/parallel-hash-join-group-by-planner.md), and historical
+[keyed benchmark report](docs/parallel-hash-join-group-by-benchmark.md) describe
+commands and measurements. Task 9 qualifies correctness, storage, concurrency
+and resources; it does not rerun task 7's gate or establish general outer/scalar/
+storage performance. Parallel radix build remains post-V1 task 11.
 
 Integration notes: children compile under **one enclosing query registration**.
 The factory consumes children/functions/interpreted filter context on constructor
@@ -125,6 +127,23 @@ keep ordinary execution. Probe filter takeover uses interpreted logical getters,
 releases unused JIT handles and composes peeled projection mappings. Ordinary
 serial probe filters that cannot be stolen keep the existing plan. Child partition-
 format guards continue to request normal recompilation; they are not bypassed.
+
+## Validation for task 9
+
+**1,790 tests passed across 41 suites, three existing conditional skips, and zero
+failures/errors** (1,793 total, counting rerun cases once). All 50 dynamic
+configuration tests passed with temporary isolated ports; the original test
+source was restored. The benchmark package build passed.
+
+The [qualification guide](docs/parallel-hash-join-group-by-qualification.md) maps
+published capabilities and each failure phase to tests and records reproduction
+commands. New coverage comprises 720 fixed-seed differential SQL cases (each
+candidate executed twice), 144 concurrent executions across three worker modes
+(including 12 expected cancellations), all supported payload getters on both
+storage paths, invalidation/rebinding, and per-failure cleanup/reuse assertions.
+The task adds fourteen test methods across three suites and expands the planner
+memory-limit matrix. Existing resource and lifecycle tests remain part of the
+broader regression set.
 
 ## Validation for task 8
 
