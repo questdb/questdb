@@ -11381,13 +11381,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * The whole gap is processed in this single call: the per-turn yield budget is
      * reset before each drain pass so the replay never stops mid-gap and leaves the
      * accumulators short of disk (which would make drain-forward re-emit rows disk
-     * already holds). On out-of-order arrival - only reachable when a prior post-O3
-     * seal failed, so an unresolved O3 sits between the head and the
-     * applied point - it hands off to {@link #o3Replay}, passing the applied point
-     * (not the offending seqTxn) as {@code advanceTo} so the REPLACE_RANGE rewrite
-     * covers everything disk already holds; {@code o3Replay} re-stamps the
-     * watermarks and seals a fresh boundary, and this returns
+     * already holds). On out-of-order arrival it hands off to {@link #o3Replay},
+     * passing the applied point (not the offending seqTxn) as {@code advanceTo} so the
+     * REPLACE_RANGE rewrite covers everything disk already holds; {@code o3Replay}
+     * re-stamps the watermarks and seals a fresh boundary, and this returns
      * {@link #REPLAY_TO_APPLIED_O3}. Otherwise returns the number of rows re-fed.
+     * <p>
+     * Two things put such a commit in the gap. A failed post-O3 seal leaves an unresolved
+     * O3 between the head and the applied point. And a deduplicating base's drain reads
+     * the applied base, whose reader yields rows in timestamp order, so a commit that is
+     * out of order only within itself and entirely above the frontier is consumed with no
+     * repair at all - while the raw WAL this replay reads still holds its rows unsorted.
+     * A repair the hand-off parks on the refresh turn's budget owns the runtime from
+     * there, which is what both callers check for before they carry on.
      */
     private long replayToApplied(
             LiveViewInstance instance,

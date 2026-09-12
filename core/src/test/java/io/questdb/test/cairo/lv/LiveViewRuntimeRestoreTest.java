@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
@@ -65,6 +66,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Every case ends on explicit rows and on a counter that tells the restore from the rebuild.
  * The rows alone could not: over a base that still holds every row, the rebuild reproduces them
  * exactly, so a restore that silently fell back would pass a row comparison.
+ * <p>
+ * Two of the cases - the ones that end in a parked repair - cover what a restore owes the turn it
+ * runs in rather than what it brings back. A replay that meets an unresolved out-of-order commit
+ * hands off to the out-of-order repair, and a localized repair there can park on the refresh
+ * turn's budget - at which point it owns the runtime, and the turn has to end on it rather than
+ * drain through accumulators the parked replay is standing half-way through. The refresh turn
+ * checks for that twice, once after the restart restore and once after the running one, and the
+ * two cases take one door each.
  */
 public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompatTest {
     private static final String[] FOUR_ROWS = {
@@ -82,6 +91,40 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             2026-01-02T09:20:00.000000Z\tacct-2\t16.0\t1
             2026-01-02T09:30:00.000000Z\tacct-1\t44.0\t3
             2026-01-02T09:40:00.000000Z\tacct-2\t80.0\t2
+            """;
+    // Day four's first row, the one the restart case leaves in the base unconsumed so the drain
+    // the parked repair's check suppresses has work waiting behind it.
+    private static final String DAY_FOUR_FIRST_ROW_OUTPUT =
+            "2026-01-04T09:00:00.000000Z\tacct-1\t1.0\t1\n";
+    private static final String DAY_FOUR_OUTPUT = DAY_FOUR_FIRST_ROW_OUTPUT
+            + "2026-01-04T09:10:00.000000Z\tacct-1\t3.0\t2\n"
+            + "2026-01-04T09:20:00.000000Z\tacct-1\t7.0\t3\n";
+    // One commit per entry, and the last of them is the whole point: its rows are not in
+    // timestamp order, every one of them sits above the frontier the commit before it left, and
+    // two of them collide on the base's dedup keys.
+    //
+    // The collision is what routes the drain through the applied base rather than the raw WAL,
+    // and the applied base's reader yields rows in timestamp order - so the view consumes the
+    // commit with no out-of-order repair, and the default cadence seals no root over it. The raw
+    // WAL under it still holds those rows in the order they arrived, which is what a later
+    // restore's replay of the gap reads.
+    private static final String[] O3_IN_THE_REPLAY_GAP = {
+            "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0)",
+            "('2026-01-02T09:00:00.000000Z', 'acct-1', 4.0)",
+            "('2026-01-03T09:00:00.000000Z', 'acct-1', 8.0), ('2026-01-03T09:10:00.000000Z', 'acct-1', 16.0), "
+                    + "('2026-01-03T09:20:00.000000Z', 'acct-1', 32.0)",
+            "('2026-01-03T09:50:00.000000Z', 'acct-1', 64.0), ('2026-01-03T09:50:00.000000Z', 'acct-1', 65.0), "
+                    + "('2026-01-03T09:40:00.000000Z', 'acct-1', 128.0)"
+    };
+    private static final String O3_GAP_OUTPUT = """
+            created_at\taccount_id\tcumulative_sum\tcumulative_count
+            2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+            2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+            2026-01-03T09:00:00.000000Z\tacct-1\t8.0\t1
+            2026-01-03T09:10:00.000000Z\tacct-1\t24.0\t2
+            2026-01-03T09:20:00.000000Z\tacct-1\t56.0\t3
+            2026-01-03T09:40:00.000000Z\tacct-1\t184.0\t4
+            2026-01-03T09:50:00.000000Z\tacct-1\t249.0\t5
             """;
     private static final String[] SIX_ROWS = {
             "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0)",
@@ -232,6 +275,166 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             final LiveViewInstance instance = instance("lv");
             assertRestoredInProcess(instance, 1);
             Assert.assertFalse(instance.isInvalid());
+        });
+    }
+
+    @Test
+    public void testAGateRestoreWhoseParkedRepairEndsTheTurn() throws Exception {
+        // The same disposition reached from the running door. The gate every turn opens at once
+        // the view owes its accumulators a recovery runs the same restore, over the same replay
+        // gap, and parks the same repair - so it ends its turn the same way.
+        //
+        // Both recoveries of the failing turn have to fail for the debt to reach a turn of its
+        // own: a restore that succeeded would settle it, and so would the rebuild behind it. The
+        // failures are one-shot, so the gate turn that follows them runs against an intact tree.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("DEDUP UPSERT KEYS(created_at, account_id)");
+            createView();
+            fault.of(engine.verifyTableName("tx").getDirName());
+            insertAndRefresh(O3_IN_THE_REPLAY_GAP);
+            assertViewRows(O3_GAP_OUTPUT);
+            final LiveViewInstance instance = instance("lv");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Commits the collapse above left provably clean, so the view drains them through
+                // the raw WAL and the fault can strike between two of them. The first goes in on
+                // its own turn; the next two coalesce behind it and drain in one pass, which is
+                // what puts the failure after a row this turn has already fed.
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:00:00.000000Z', 'acct-1', 1.0)");
+                drainWalQueue();
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:10:00.000000Z', 'acct-1', 2.0)");
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:20:00.000000Z', 'acct-1', 4.0)");
+                drainWalQueue();
+                runOnePass(job);
+                assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_FIRST_ROW_OUTPUT);
+
+                fault.arm(1);
+                fault.armTimelineOpen();
+                fault.armAppliedScan();
+                runOnePass(job);
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                Assert.assertFalse("the recovery's restore must have been failed", fault.isTimelineOpenArmed());
+                Assert.assertTrue("the recovery's rebuild must have been failed", fault.hasAppliedScanFired());
+                Assert.assertTrue(
+                        "the failed recovery must leave the window-state debt for the next turn",
+                        instance.isWindowStateDirty()
+                );
+                Assert.assertNull("nothing may park while both recoveries fail", instance.getSuspendedRepair());
+                Assert.assertEquals(
+                        "the failed restore must have brought nothing back",
+                        0,
+                        instance.getCheckpointRuntimeRestores()
+                );
+                final long watermarkBeforeTheGate = instance.getLastProcessedSeqTxn();
+
+                // The gate turn. Its restore runs now that nothing fails, meets the same
+                // out-of-order commit in the replay gap, and parks the repair it hands off to.
+                runOnePass(job);
+                Assert.assertNotNull(
+                        "the gate's restore must leave the repair it handed off to parked on the view",
+                        instance.getSuspendedRepair()
+                );
+                capture.drain();
+                capture.assertLoggedRE("live view O3 replay \\[view=lv, lateRowTs=");
+                capture.assertLoggedRE("live view O3 repair yielded on its turn budget \\[view=lv, turns=1,");
+                Assert.assertEquals(
+                        "the repair must have come out of the gate's own in-process restore",
+                        1,
+                        instance.getCheckpointRuntimeRestores()
+                );
+                Assert.assertEquals(
+                        "the parked repair owns the runtime, so the gate must not have let the drain run",
+                        watermarkBeforeTheGate,
+                        instance.getLastProcessedSeqTxn()
+                );
+                Assert.assertTrue(
+                        "the debt belongs to the repair until it finishes",
+                        instance.isWindowStateDirty()
+                );
+                assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_FIRST_ROW_OUTPUT);
+
+                driveRefreshToQuiescence(job);
+            }
+
+            // The repair finishes across the turns after it and the view converges on every row,
+            // the three commits the fault interrupted included.
+            Assert.assertNull(instance.getSuspendedRepair());
+            Assert.assertFalse(instance.isWindowStateDirty());
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertEquals("the injected mid-drain failure is the one fault", 1, instance.getRefreshFaultCount());
+            assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_OUTPUT);
+        });
+    }
+
+    @Test
+    public void testARestartRestoreWhoseParkedRepairEndsTheTurn() throws Exception {
+        // A restore's replay walks the base WAL above the root it came back on, and that WAL is
+        // raw: a commit whose own rows are not in timestamp order corrupts the accumulators if it
+        // is fed in WAL order, so the replay hands off to the out-of-order repair. A localized
+        // repair there parks on the refresh turn's budget like any other, and it owns the runtime
+        // from that point - so the turn has to end on it. The drain below it would otherwise feed
+        // rows through accumulators the parked replay is standing half-way through.
+        //
+        // The base deduplicates, which is what puts such a commit in the gap at all. Its drain
+        // reads the applied base, whose reader yields rows in timestamp order, so a commit that is
+        // out of order only within itself and entirely above the frontier is consumed with no
+        // repair and no root sealed over it. The raw WAL under it still holds the rows unsorted.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createBase("DEDUP UPSERT KEYS(created_at, account_id)");
+            createView();
+            insertAndRefresh(O3_IN_THE_REPLAY_GAP);
+            Assert.assertEquals("the default cadence seals the first boundary only", 1, countSealedBoundaries("lv"));
+            assertViewRows(O3_GAP_OUTPUT);
+            final long gapWatermark = instance("lv").getLastProcessedSeqTxn();
+
+            // One commit the view does not consume, so the drain the check suppresses has work of
+            // its own waiting behind it.
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:00:00.000000Z', 'acct-1', 1.0)");
+            drainWalQueue();
+
+            shutdown();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                runOnePass(job);
+                final LiveViewInstance instance = instance("lv");
+                Assert.assertNotNull(
+                        "the restart restore must leave the repair it handed off to parked on the view",
+                        instance.getSuspendedRepair()
+                );
+                capture.drain();
+                capture.assertLoggedRE("live view O3 replay \\[view=lv, lateRowTs=");
+                capture.assertLoggedRE("live view O3 repair yielded on its turn budget \\[view=lv, turns=1,");
+                // Nothing below the check ran: the watermark still names the commit the restart
+                // read off disk, and the commit waiting above it is not in the view.
+                Assert.assertEquals(
+                        "the parked repair owns the runtime, so the turn must not have drained over it",
+                        gapWatermark,
+                        instance.getLastProcessedSeqTxn()
+                );
+                Assert.assertEquals("a park is not a fault", 0, instance.getRefreshFaultCount());
+                Assert.assertEquals(
+                        "the repair must have come out of the restart's own restore",
+                        0,
+                        instance.getCheckpointRuntimeRestores()
+                );
+                Assert.assertEquals("the restore must not have fallen back to a rebuild", 0, instance.getCheckpointRebuildAttempts());
+                assertViewRows(O3_GAP_OUTPUT);
+
+                driveRefreshToQuiescence(job);
+                Assert.assertNull(instance.getSuspendedRepair());
+                Assert.assertFalse(instance.isInvalid());
+                assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_FIRST_ROW_OUTPUT);
+            }
+
+            // The ladder the repair left behind is the one the next restart reads, and it needs no
+            // repair of its own.
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_FIRST_ROW_OUTPUT);
         });
     }
 
@@ -486,6 +689,17 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             driveRefreshToQuiescence(job);
         }
+    }
+
+    /**
+     * Advances the clock and runs exactly one refresh turn, so a caller can read the state that
+     * turn left rather than the state the turns after it converged on.
+     */
+    private void runOnePass(LiveViewRefreshJob job) {
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        drainWalQueue();
+        job.run();
+        drainWalQueue();
     }
 
     private void shutdown() {

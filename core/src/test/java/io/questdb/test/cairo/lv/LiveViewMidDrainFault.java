@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
@@ -41,7 +42,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>
  * {@link #armAppliedScan} fails the whole-view rebuild instead: the next open of the base's own
  * {@code amount} column outside the WAL, which is what the rebuild's scan of the applied base
- * reads and the raw-WAL drain never does.
+ * reads and the raw-WAL drain never does. {@link #armTimelineOpen} fails the restore ahead of
+ * both: the next open of the view's checkpoint timeline, which is the first file a restore maps.
+ * Arming all three fails a recovery outright - neither the restore nor the rebuild behind it puts
+ * the accumulators back - which is what leaves the window-state debt for a later turn's gate.
  */
 final class LiveViewMidDrainFault {
     private final AtomicBoolean appliedScanArmed = new AtomicBoolean();
@@ -49,6 +53,7 @@ final class LiveViewMidDrainFault {
     // -1 disarmed; otherwise the number of reads still to skip before the one to fail.
     private final AtomicInteger countdown = new AtomicInteger(-1);
     private final AtomicBoolean fired = new AtomicBoolean();
+    private final AtomicBoolean timelineOpenArmed = new AtomicBoolean();
     private volatile String baseDir;
 
     void arm(int skip) {
@@ -59,6 +64,10 @@ final class LiveViewMidDrainFault {
     void armAppliedScan() {
         appliedScanFired.set(false);
         appliedScanArmed.set(true);
+    }
+
+    void armTimelineOpen() {
+        timelineOpenArmed.set(true);
     }
 
     FilesFacade facade() {
@@ -87,6 +96,16 @@ final class LiveViewMidDrainFault {
                 }
                 return super.openRO(name);
             }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (timelineOpenArmed.get()
+                        && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
+                        && timelineOpenArmed.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
         };
     }
 
@@ -96,6 +115,10 @@ final class LiveViewMidDrainFault {
 
     boolean hasFired() {
         return fired.get() && countdown.get() < 0;
+    }
+
+    boolean isTimelineOpenArmed() {
+        return timelineOpenArmed.get();
     }
 
     void of(String baseDir) {
