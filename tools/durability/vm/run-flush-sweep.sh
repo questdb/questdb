@@ -55,7 +55,7 @@ truncate -s 40G "$RUN/data.raw"
 truncate -s 60G "$RUN/log.raw"
 
 echo "flush-boundary crash sweep — $STAMP"
-echo "  mode=$MODE W=$WINDOW profile=$PROFILE epoch=${EPOCH}ms sibling=${QDB_SIBLING_TABLE:-false} perTableMode=${QDB_PER_TABLE_MODE:-false} flipAt=${QDB_FLIP_AT_ROWS:--1} recoverAs=${QDB_RECOVER_AS:-same} ddlEvery=${QDB_DDL_EVERY_ROWS:--1} matView=${QDB_MAT_VIEW:-false} rebaseAt=${QDB_REBASE_AT_ROWS:--1}"
+echo "  mode=$MODE W=$WINDOW profile=$PROFILE epoch=${EPOCH}ms sibling=${QDB_SIBLING_TABLE:-false} recoverAs=${QDB_RECOVER_AS:-same} ddlEvery=${QDB_DDL_EVERY_ROWS:--1} matView=${QDB_MAT_VIEW:-false} rebaseAt=${QDB_REBASE_AT_ROWS:--1}"
 
 keep() { echo "run state kept at $RUN" >&2; }
 
@@ -74,7 +74,7 @@ vm_ssh "$P" "$KEY" "sudo sync"
 vm_ssh "$P" "$KEY" "bash /opt/vmcrash/guest/prepare-device.sh --mode=log-writes" >/dev/null \
     || { keep; echo "LOUD_FAILURE: could not build the log-writes stack"; exit 1; }
 
-vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false} QDB_PER_TABLE_MODE=${QDB_PER_TABLE_MODE:-false} QDB_FLIP_AT_ROWS=${QDB_FLIP_AT_ROWS:--1} QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1} QDB_MAT_VIEW=${QDB_MAT_VIEW:-false} QDB_REBASE_AT_ROWS=${QDB_REBASE_AT_ROWS:--1} bash /opt/vmcrash/guest/run-workload.sh --arm=reference --mode=$MODE \
+vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false} QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1} QDB_MAT_VIEW=${QDB_MAT_VIEW:-false} QDB_REBASE_AT_ROWS=${QDB_REBASE_AT_ROWS:--1} bash /opt/vmcrash/guest/run-workload.sh --arm=reference --mode=$MODE \
     --window-us=$WINDOW --epoch-ms=$EPOCH </dev/null >/mnt/qdb/workload.out 2>&1 &" || true
 
 # Let it build a real history: many commits means many flushes means many

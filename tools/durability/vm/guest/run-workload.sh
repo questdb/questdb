@@ -77,10 +77,7 @@ case "$ARM" in
             -Depoch.interval.ms="$EPOCH" \
             -Dmax.rows="$ROWS" \
             -Dschema.profile="$PROFILE" \
-            -Dsibling.table="${QDB_SIBLING_TABLE:-false}" \
-            -Dper.table.mode="${QDB_PER_TABLE_MODE:-false}" \
-            -Dflip.at.rows="${QDB_FLIP_AT_ROWS:--1}" \
-            -Dddl.every.rows="${QDB_DDL_EVERY_ROWS:--1}" \
+            -Dsibling.table="${QDB_SIBLING_TABLE:-false}" \            -Dddl.every.rows="${QDB_DDL_EVERY_ROWS:--1}" \
             -Drebase.at.rows="${QDB_REBASE_AT_ROWS:--1}" -Dmat.view="${QDB_MAT_VIEW:-false}" \
             org.questdb.CrashIngestWriter "$DB" > /mnt/qdb/writer.log 2>&1
         ;;

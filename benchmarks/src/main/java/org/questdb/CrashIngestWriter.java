@@ -124,21 +124,6 @@ public class CrashIngestWriter {
      * (W3) covers and no single-table crash test can reach.
      */
     /**
-     * -Dper.table.mode=true runs the INSTANCE on NOSYNC while creating the table
-     * with {@code WITH commit_mode='adaptive'}.
-     * <p>
-     * This is the discriminating form of the per-table override: under a nosync
-     * instance the table's WAL and sequencer are made durable ONLY if the
-     * per-table mode is genuinely honoured at every decision point. If the
-     * override is ignored anywhere, the table falls back to nosync and the
-     * post-crash recovery loses data the oracle demands -- so the test fails
-     * rather than passing for the wrong reason.
-     * <p>
-     * Mirrors PerTableAdaptiveIsolationCrashTest#testAdaptiveTableRecoversAfterCrashUnderGlobalNosync.
-     */
-    static final boolean PER_TABLE_MODE = Boolean.getBoolean("per.table.mode");
-
-    /**
      * -Dflip.at.rows=N fires {@code ALTER TABLE t SET PARAM commit_mode='nosync'}
      * once N rows have been committed, mid-ingest, with the WalWriter still open.
      * <p>
@@ -155,7 +140,6 @@ public class CrashIngestWriter {
      * durable-ack frontier), so F >= Wm still expresses exactly the right bar --
      * everything acked while adaptive was in force must survive.
      */
-    static final long FLIP_AT_ROWS = Long.getLong("flip.at.rows", -1L);
 
     /**
      * -Dddl.every.rows=N issues a structural change (ADD COLUMN) every N committed
@@ -243,16 +227,10 @@ public class CrashIngestWriter {
         // Commit mode is configured via -DcommitMode=SYNC|NOSYNC|adaptive (default: SYNC).
         final String commitModeProp = System.getProperty("commitMode", "SYNC");
         int commitModeInt = parseCommitMode(commitModeProp);
-        // The PATH is chosen by the REQUESTED mode and never changes underneath us.
+        // Per-table commit mode was REMOVED from the product (see "Remove per-table commit
+        // mode"), taking the `commit_mode` table param and resolveEffectiveCommitMode with it.
+        // The instance mode is now the only mode, so requestedMode == commitModeInt always.
         final int requestedMode = commitModeInt;
-        if (PER_TABLE_MODE) {
-            // The INSTANCE is nosync; the TABLE asks for adaptive via WITH.
-            // Everything downstream (WAL durability, sequencer push, epoch)
-            // must come from the per-table override alone.
-            commitModeInt = CommitMode.NOSYNC;
-            System.out.println("per.table.mode=true: instance commitMode=NOSYNC,"
-                    + " table created WITH commit_mode='adaptive'");
-        }
         final int commitModeFinal = commitModeInt;
         System.out.println("commitMode=" + commitModeProp + " (" + commitModeInt + ")");
 
@@ -439,7 +417,6 @@ public class CrashIngestWriter {
                 final CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
 
                 long committedRows = 0L;
-                boolean flipped = false;
                 int ddlSeq = 0;
                 for (long id = 0; id < maxRows; id++) {
                     final long ts = tsFor(id);
@@ -483,21 +460,6 @@ public class CrashIngestWriter {
                         }
 
                         // Mid-run commit-mode flip, fired exactly once.
-                        if (FLIP_AT_ROWS > 0 && !flipped && (id + 1) >= FLIP_AT_ROWS) {
-                            flipped = true;
-                            try (SqlCompilerImpl flipCompiler = new SqlCompilerImpl(engine)) {
-                                final SqlExecutionContextImpl flipCtx = new SqlExecutionContextImpl(engine, 1)
-                                        .with(cfg.getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                                                null, null, -1, null);
-                                CairoEngine.execute(flipCompiler,
-                                        "alter table " + TABLE_NAME + " set param commit_mode='nosync'",
-                                        flipCtx, null);
-                                System.out.println("flip.at.rows: switched " + TABLE_NAME
-                                        + " to commit_mode='nosync' after " + (id + 1) + " rows");
-                            } catch (SqlException e) {
-                                throw new RuntimeException("mid-run commit-mode flip failed", e);
-                            }
-                        }
 
                         // Materialize the committed WAL into the table + fire the durable epoch. Mirrors
                         // TestUtils.drainWalQueue: apply, then CheckWalTransactionsJob to pick up any txn
@@ -790,10 +752,7 @@ public class CrashIngestWriter {
                 //   posting  posting index chain     (PostingIndexWriter)
                 //   covering posting + include(v)    (covering index read path)
                 //   none     no index                (baseline: isolates index faults)
-                // Per-table override: the INSTANCE runs nosync (see PER_TABLE_MODE)
-                // while the TABLE asks for adaptive, so every durability decision
-                // downstream must come from the override alone.
-                final String withClause = PER_TABLE_MODE ? " WITH commit_mode='adaptive'" : "";
+                final String withClause = "";
                 final String ddl = "create table " + TABLE_NAME
                         + " (id long, v long, s symbol" + indexClause() + ", ts timestamp"
                         + extraColumnsDdl() + ")"

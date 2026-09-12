@@ -10,7 +10,7 @@ cross-check.
 ## Coverage vs the Java crash suite
 
 The goal is that every code path the modelled suite covers is also exercised here, on a real
-kernel. Current state -- **18 of 18 dimensions**, every one verified to actually execute (see
+kernel. Current state -- **17 of 17 dimensions**, every one verified to actually execute (see
 "Verifying a NEW dimension is actually exercised" below -- a flag existing is not coverage):
 
 | # | Dimension | Java crash test | E2E |
@@ -30,9 +30,8 @@ kernel. Current state -- **18 of 18 dimensions**, every one verified to actually
 | 12 | structural DDL under load | `RandomizedAdaptiveCrashFuzzTest` | `QDB_DDL_EVERY_ROWS=N` |
 | 14 | multi-table | `AdaptiveMultiTableLazyGap` (W3) | `QDB_SIBLING_TABLE=true` |
 | 15 | mat-view | `AdaptiveMatViewLazyGap` (W4) | `QDB_MAT_VIEW=true` -- **found a real defect, see below** |
-| 16 | per-table commit mode | `PerTableAdaptiveIsolationCrashTest` | `QDB_PER_TABLE_MODE=true` |
-| 17 | commit-mode flip | `AdaptiveCommitModeFlipCrashTest` | `QDB_RECOVER_AS=nosync` |
-| 18 | REBASE WAL publish | `RebaseWalPublishDurabilityCrashTest` | `QDB_REBASE_AT_ROWS=N` -- hard-suspends, rebases, then IDLES so the swept boundaries land post-publish |
+| 16 | commit-mode flip | `AdaptiveCommitModeFlipCrashTest` | `QDB_RECOVER_AS=nosync` (restart under a different GLOBAL mode) |
+| 17 | REBASE WAL publish | `RebaseWalPublishDurabilityCrashTest` | `QDB_REBASE_AT_ROWS=N` -- hard-suspends, rebases, then IDLES so the swept boundaries land post-publish |
 
 Every profile keeps columns `0..3` (`id, v, s, ts`) fixed, so the identity oracle is shared and
 results are directly comparable across profiles.
@@ -57,7 +56,7 @@ java ... -Dsibling.table=true org.questdb.CrashVerifier /mnt/qdb/db \
 Do the same for any dimension added later. A green sweep whose check never executed is worse
 than no coverage, because it reads as evidence.
 
-**Check the mechanism, not just the verdict.** `QDB_PER_TABLE_MODE=true` runs the INSTANCE on
+**Check the mechanism, not just the verdict.** (Historical example: `QDB_PER_TABLE_MODE` ran the INSTANCE on
 nosync with the TABLE on adaptive, and `RPO_OK` is satisfiable two ways: the override worked
 (`F >= Wm` with a real frontier), or the override silently failed, the table ran nosync, `Wm`
 never left -1, and the bar was met vacuously. The discriminating evidence is `Wm` ADVANCING in
@@ -80,7 +79,7 @@ survived.
 
 Three false alarms in this harness came from setup rather than the engine, each caught only by
 checking the mechanism: an `o3` SILENT_CORRUPTION (the oracle assumed row order == id order), a
-sibling-table gap (the property never reached the verifier JVM), and a per-table-mode
+sibling-table gap (the property never reached the verifier JVM), and a per-table-mode (since removed)
 LOUD_FAILURE (lowering the instance mode also re-routed the workload onto the bypass-WAL path,
 so no sequencer existed at all). Uniform failure across EVERY boundary is the signature of a
 setup fault; a real crash-state defect does not land identically every time.
@@ -400,3 +399,18 @@ loginctl enable-linger "$USER"   # required, or user timers stop at logout
   proves nothing about durability on its own: a container kill leaves the guest page cache
   intact.
 - **Enterprise multi-node failover.**
+
+## Dimensions retired when the product changed
+
+**Per-table commit mode (was dimension 16)** -- removed from the product by "Remove per-table
+commit mode", which deleted `PerTableCommitModeTest` / `PerTableAdaptiveIsolationCrashTest`, the
+`commit_mode` table param, and `resolveEffectiveCommitMode`. The harness knob went with it.
+
+**Mid-run commit-mode flip (`QDB_FLIP_AT_ROWS`)** -- implemented as
+`alter table t set param commit_mode='nosync'`, SQL that no longer exists. The surviving
+`AdaptiveCommitModeFlipCrashTest` flips the GLOBAL mode, which the harness already covers via
+`QDB_RECOVER_AS` (restart under a different mode).
+
+A dimension whose Java counterpart has been deleted is not coverage, it is residue: the flag
+still parses, the sweep still goes green, and nothing is tested. Check this list against the
+Java suite whenever the branch merges.
