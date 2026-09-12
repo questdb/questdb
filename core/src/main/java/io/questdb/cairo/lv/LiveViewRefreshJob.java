@@ -4508,6 +4508,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * caller clears the marker once the post-replay seal re-anchors the head.
      * When no prefix survives (or there is no valid timeline) it retires outright,
      * exactly as before.
+     * <p>
+     * The truncate moves no generation watermark:
+     * {@link LiveViewCheckpointTimelineStoreWriter#publishTruncate} carries the
+     * superblock's {@code normalizedBaseSeqTxn} forward untouched, and the post-replay
+     * seal is what advances it over the commit the repair rewrote. So until that seal
+     * lands the preserved prefix is a generation valid against a base snapshot that
+     * predates the correction, and a restore standing on it would re-feed that commit
+     * out of raw WAL and meet it out of order (see {@link #replayToApplied}). The marker
+     * is what holds every restore off in the meantime, which is why a caller whose seal
+     * fails must retire the prefix rather than clear the marker over it.
      *
      * @return true when the prefix was preserved and a marker is now live; false
      * when the timeline was retired
@@ -11387,13 +11397,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * re-stamps the watermarks and seals a fresh boundary, and this returns
      * {@link #REPLAY_TO_APPLIED_O3}. Otherwise returns the number of rows re-fed.
      * <p>
-     * Two things put such a commit in the gap. A failed post-O3 seal leaves an unresolved
-     * O3 between the head and the applied point. And a deduplicating base's drain reads
-     * the applied base, whose reader yields rows in timestamp order, so a commit that is
-     * out of order only within itself and entirely above the frontier is consumed with no
+     * One thing puts such a commit in the gap: a deduplicating base's drain reads the
+     * applied base, whose reader yields rows in timestamp order, so a commit that is out
+     * of order only within itself and entirely above the frontier is consumed with no
      * repair at all - while the raw WAL this replay reads still holds its rows unsorted.
      * A repair the hand-off parks on the refresh turn's budget owns the runtime from
      * there, which is what both callers check for before they carry on.
+     * <p>
+     * A commit an earlier out-of-order repair already resolved is not a second producer. The
+     * repair itself advances the applied point over it, so leaving it in the gap would mean
+     * leaving a restorable generation below it - and no repair does. One that keeps the timeline
+     * republishes the whole generation at its own pinned snapshot
+     * ({@link #publishCheckpointTimelineRepair}), which puts the commit under the floor this
+     * replay starts at. One that truncates instead keeps the prefix under a durable repair
+     * marker that {@link #isRepairMarkerLive} refuses every restore behind, and only the
+     * post-replay seal moves the coordinate and clears the marker - so a seal that fails
+     * retires the prefix rather than leaving it addressable at the old coordinate. A repair's
+     * two exits are therefore sealing and retiring, and a failed post-O3 seal takes the second.
      */
     private long replayToApplied(
             LiveViewInstance instance,

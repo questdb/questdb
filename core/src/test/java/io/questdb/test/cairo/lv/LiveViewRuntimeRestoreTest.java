@@ -29,6 +29,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -74,6 +75,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * drain through accumulators the parked replay is standing half-way through. The refresh turn
  * checks for that twice, once after the restart restore and once after the running one, and the
  * two cases take one door each.
+ * <p>
+ * Two more cover the opposite question: what keeps a commit an <em>earlier</em> out-of-order
+ * repair already resolved out of that replay gap. A repair advances the applied point over the
+ * commit it rewrites, so a restorable generation left below that point would put the commit back
+ * in the gap - and a restart would re-feed it from raw WAL and meet it out of order all over
+ * again. A repair that truncates its timeline leaves exactly that generation behind until its
+ * post-replay seal moves the coordinate, so the two cases take that repair with the seal failed
+ * and with the seal left alone: the failed one must retire the prefix rather than leave it
+ * addressable, and the sealed one must carry the repair's own coordinate.
  */
 public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompatTest {
     private static final String[] FOUR_ROWS = {
@@ -141,6 +151,21 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
             2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
             2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+            2026-01-03T09:00:00.000000Z\tacct-1\t16.0\t1
+            2026-01-03T09:10:00.000000Z\tacct-2\t32.0\t1
+            """;
+    // One row below the frontier the six above leave, and above the only root the default
+    // cadence sealed - so the repair it triggers has a prefix under it the truncate can keep,
+    // and rows over it to re-emit.
+    private static final String CORRECTION_COMMIT =
+            "INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-02T09:05:00.000000Z', 'acct-1', 64.0)";
+    private static final String CORRECTED_OUTPUT = """
+            created_at\taccount_id\tcumulative_sum\tcumulative_count
+            2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+            2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+            2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+            2026-01-02T09:05:00.000000Z\tacct-1\t68.0\t2
+            2026-01-02T09:10:00.000000Z\tacct-1\t76.0\t3
             2026-01-03T09:00:00.000000Z\tacct-1\t16.0\t1
             2026-01-03T09:10:00.000000Z\tacct-2\t32.0\t1
             """;
@@ -439,6 +464,130 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     @Test
+    public void testAFailedPostRepairSealRetiresThePrefixARestartWouldReplayOver() throws Exception {
+        // The other producer the hand-off's javadoc used to name - a failed post-O3 seal - and the
+        // disposition that keeps it from being one.
+        //
+        // A repair that declines the checkpoint chain truncates instead: it keeps the roots below
+        // its own output floor, writes the durable repair marker over them and re-seals a fresh
+        // head once the replay is committed. The truncate alone does not move the generation's
+        // base coordinate - publishTruncate carries the superblock's forward untouched - so
+        // between it and that seal the preserved prefix is a generation valid against a base
+        // snapshot predating the commit the repair just rewrote. A restart standing on such a
+        // prefix replays raw base WAL above that coordinate, which walks the repaired commit
+        // again in the arrival order the WAL still holds it in, and meets it out of order.
+        //
+        // The seal is what moves the coordinate, so a seal that fails has to take the prefix with
+        // it. It does: the timeline is retired, the marker goes with it, and the restart rebuilds
+        // from the applied base - a reader, in timestamp order, with no replay opened at all.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createBase("");
+            createView();
+            insertAndRefresh(SIX_ROWS);
+            Assert.assertEquals("the default cadence seals the first boundary only", 1, countSealedBoundaries("lv"));
+            final LiveViewInstance instance = instance("lv");
+            final long resetsBefore = instance.getCheckpointTimelineResets();
+            final long sealFailuresBefore = instance.getCheckpointSealFailures();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Fails the root append the repair closes on and nothing else the turn runs: the
+                // truncate publishes through publishTruncate, which this stage leaves alone, and
+                // the declined chain leaves no range splice to fail.
+                job.setCheckpointTimelineTestFailureStage(
+                        LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_DATA_PUBLISH
+                );
+                execute(CORRECTION_COMMIT);
+                drainWalQueue();
+                drainJob(job);
+                job.setCheckpointTimelineTestFailureStage(0);
+                driveRefreshToQuiescence(job);
+            }
+
+            capture.drain();
+            capture.assertLoggedRE("live view O3 head miss declined the checkpoint splice, truncating instead \\[view=lv,");
+            Assert.assertTrue(
+                    "the repair's head seal must have been failed",
+                    instance.getCheckpointSealFailures() > sealFailuresBefore
+            );
+            Assert.assertTrue(
+                    "a repair that could not re-anchor its prefix must retire the timeline",
+                    instance.getCheckpointTimelineResets() > resetsBefore
+            );
+            try (Path dir = checkpointsDir(instance); Path timeline = new Path()) {
+                LiveViewCheckpointLayout.timelinePath(timeline, dir);
+                Assert.assertFalse(
+                        "the retire must take the prefix the truncate kept",
+                        engine.getConfiguration().getFilesFacade().exists(timeline.$())
+                );
+                Assert.assertFalse(
+                        "the retire must take the repair marker with it",
+                        LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), dir)
+                );
+            }
+            assertViewRows(CORRECTED_OUTPUT);
+
+            shutdown();
+            restart();
+            assertRebuiltFromAppliedBase("lv");
+            assertViewRows(CORRECTED_OUTPUT);
+        });
+    }
+
+    @Test
+    public void testARepairThatSealedItsHeadRestartsAboveTheCommitItRepaired() throws Exception {
+        // The control for the case above, over the same repair with the seal left alone. The head
+        // it appends carries the repair's own base coordinate, and the whole generation is
+        // published under it - so the restart's replay starts above the commit the repair
+        // rewrote rather than over it, and meets nothing out of order.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createBase("");
+            createView();
+            insertAndRefresh(SIX_ROWS);
+            final LiveViewInstance instance = instance("lv");
+            final long coordinateBefore = normalizedBaseSeqTxn(instance);
+            final long resetsBefore = instance.getCheckpointTimelineResets();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute(CORRECTION_COMMIT);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+
+            capture.drain();
+            capture.assertLoggedRE("live view O3 head miss declined the checkpoint splice, truncating instead \\[view=lv,");
+            Assert.assertEquals(
+                    "a repair that re-anchored its prefix keeps the timeline",
+                    resetsBefore,
+                    instance.getCheckpointTimelineResets()
+            );
+            Assert.assertTrue(
+                    "the seal must have moved the generation past the coordinate the prefix was sealed under",
+                    normalizedBaseSeqTxn(instance) > coordinateBefore
+            );
+            Assert.assertEquals(
+                    "the generation the repair leaves behind must be valid against the repair's own"
+                            + " base snapshot, which is the floor a restart replays above",
+                    instance.getLastProcessedSeqTxn(),
+                    normalizedBaseSeqTxn(instance)
+            );
+            assertViewRows(CORRECTED_OUTPUT);
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            final LiveViewInstance restarted = instance("lv");
+            Assert.assertEquals(
+                    "the restart's replay must have met no out-of-order commit",
+                    0,
+                    restarted.getO3BoundaryReplayRows() + restarted.getO3ResumeReplayRows()
+            );
+            assertViewRows(CORRECTED_OUTPUT);
+        });
+    }
+
+    @Test
     public void testAMidDrainFailureOverABaseThatLostADayKeepsTheViewRunning() throws Exception {
         final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
         assertMemoryLeak(fault.facade(), () -> {
@@ -681,6 +830,14 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 LiveViewCheckpointGenerationPin pin = store.pin()
         ) {
             return pin.getGeneration();
+        }
+    }
+
+    // The base-table coordinate the whole published generation is valid against, and the floor a
+    // restart's replay of the raw base WAL starts above.
+    private long normalizedBaseSeqTxn(LiveViewInstance instance) {
+        try (LiveViewCheckpointMetaStore store = openStore(instance)) {
+            return store.getSuperblock().normalizedBaseSeqTxn;
         }
     }
 
