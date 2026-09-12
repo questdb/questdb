@@ -3011,9 +3011,10 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     @Test
     public void testDropQueuedBehindADeferredReplacementIsReconciledOnce() throws Exception {
         // The other order inside one drain. The repair's replacement commits but its apply stalls,
-        // so the repair defers - its timeline retired, the base range left unconsumed - and a DROP
-        // of the hour the replacement rewrote is sequenced behind it. The next apply lands the
-        // replacement and then the DROP, which takes the rows the replacement had just written;
+        // so the repair defers - cut back to the roots below R, the base range left unconsumed -
+        // and a DROP of the hour the replacement rewrote is sequenced behind it, which reaches one
+        // of the roots the deferral kept. The next apply lands the replacement and then the DROP,
+        // which takes the rows the replacement had just written;
         // the deferred repair then runs again from the same out-of-order row and re-emits [R, H)
         // a second time. The removal is counted once: the apply that lands it subtracts it from
         // the counter, the repeated repair re-seats that counter from the table rather than
@@ -3036,7 +3037,9 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 Assert.assertNotEquals("the replacement must be left for reconciliation", Numbers.LONG_NULL, replacementLvSeqTxn);
                 final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
                 Assert.assertEquals(replacementLvSeqTxn - 1, tracker.getWriterTxn());
-                assertTimelineExists(lvToken, false);
+                // The deferral keeps the roots below R, which the DROP below then reaches.
+                assertLadder(instance, ts("2026-01-01T01:00:10.000000Z"), 1, ts("2026-01-01T02:00:10.000000Z"), 2);
+                assertRepairMarker(lvToken, true);
                 Assert.assertEquals(5, instance.getLvRowsTotal());
 
                 execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-01T02'");
@@ -4270,6 +4273,328 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
             restartAndAssertRestoredFromTimeline();
             assertResumeRepairRows();
+        });
+    }
+
+    @Test
+    public void testHeadMissReplacementThatDidNotApplyKeepsTheAnchorsPrefix() throws Exception {
+        // The head-miss executor's half of the deferral the resume executor already took. Both
+        // hand an unapplied replacement to the reconciliation gate, but this one retired the whole
+        // ladder on the way out where the resume keeps the roots below R - and the two describe the
+        // same thing: a replacement that rewrites [R, H) leaves every root under R addressing
+        // output no row of it touches. Retiring them cost a restart in this state the applied-base
+        // rebuild, and left a later correction below the fresh head with no anchor to resume from.
+        //
+        // The correction at 02:00:15 re-versions the roots at 02:00:20 and 02:00:30 and keeps
+        // 02:00:10 and 01:00:10 below it. A refused column file in hour 02 - the partition the
+        // replacement rewrites - fails its apply and suspends the table, so the repair defers with
+        // its capture in hand. Once the fault clears the gate lands the block and the repair runs
+        // again, from a base range it never consumed.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failApply = new AtomicBoolean();
+        final AtomicInteger applyFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failApply.get()
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "2026-01-01T02")
+                        && Utf8s.endsWithAscii(name, ".d")) {
+                    applyFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            createHourlyRangeView();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = flushHourlyRepairHistory(job);
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+                capture.start();
+
+                // Armed right before the replacement commits, so only its apply meets the fault.
+                job.setSimulateDdlBeforeRepairReplacementForTest(() -> failApply.set(true));
+                execute("INSERT INTO base VALUES ('2026-01-01T02:00:15.000000Z', 'a', 100)");
+                driveUntil(
+                        job,
+                        () -> instance.getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL,
+                        "the head-miss repair never handed its replacement to the gate"
+                );
+                Assert.assertTrue("the replacement's apply must actually have been failed", applyFaults.get() > 0);
+                final long replacementLvSeqTxn = instance.getPendingReplacementLvSeqTxn();
+                Assert.assertEquals(
+                        "the replacement must be the view's newest block",
+                        replacementLvSeqTxn,
+                        engine.getTableSequencerAPI().lastTxn(lvToken)
+                );
+                Assert.assertTrue(
+                        "the replacement must not have applied",
+                        engine.getTableSequencerAPI().getTxnTracker(lvToken).getWriterTxn() < replacementLvSeqTxn
+                );
+                Assert.assertEquals(
+                        "no watermark may walk past output the table does not hold",
+                        processedBefore,
+                        instance.getLastProcessedSeqTxn()
+                );
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\nsuspended\n");
+                assertQuery("SELECT ts, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\ts
+                                2026-01-01T01:00:10.000000Z\t1.0
+                                2026-01-01T02:00:10.000000Z\t2.0
+                                2026-01-01T02:00:20.000000Z\t5.0
+                                2026-01-01T02:00:30.000000Z\t9.0
+                                2026-01-01T03:00:10.000000Z\t5.0
+                                """);
+                Assert.assertEquals("the counter tracks the table, which has not moved", 5, instance.getLvRowsTotal());
+                // The roots the replacement rewrites went with the capture; the two below R stay,
+                // behind the marker a restart in this state would rebuild from.
+                assertLadder(instance, ts("2026-01-01T01:00:10.000000Z"), 1, ts("2026-01-01T02:00:10.000000Z"), 2);
+                assertRepairMarker(lvToken, true);
+                assertRetentionMarker(lvToken, false);
+                capture.drain();
+                capture.assertLogged("live view O3 replacement committed but did not apply, deferring repair [view=lv, lvSeqTxn="
+                        + replacementLvSeqTxn + ", ");
+                capture.assertNotLogged("row count does not match");
+
+                // Nothing may drain over a table that still holds the output the replacement is
+                // about to rewrite, forward row included.
+                execute("INSERT INTO base VALUES ('2026-01-01T03:00:20.000000Z', 'a', 7)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(replacementLvSeqTxn, instance.getPendingReplacementLvSeqTxn());
+                Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals(
+                        "the gate must commit nothing behind the replacement",
+                        replacementLvSeqTxn,
+                        engine.getTableSequencerAPI().lastTxn(lvToken)
+                );
+                Assert.assertEquals(5, lvRowCount(lvToken));
+                assertNoRefreshFaults("lv");
+
+                // The fault clears, the gate lands the replacement and the repair runs again.
+                failApply.set(false);
+                driveUntil(
+                        job,
+                        () -> instance.getPendingReplacementLvSeqTxn() == Numbers.LONG_NULL
+                                && instance.getLastProcessedSeqTxn() > processedBefore,
+                        "the repair never ran again once its replacement landed"
+                );
+                driveRefreshToQuiescence(job);
+                capture.drain();
+                capture.assertLogged("live view deferred replacement applied, resuming refresh [view=lv");
+                assertHeadMissRepairRows();
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\nactive\n");
+                Assert.assertEquals(7, instance.getLvRowsTotal());
+                // The repeated repair truncates at the same R and seals the frontier above the
+                // prefix it found, rather than opening a history of its own at that frontier.
+                assertLadder(
+                        instance,
+                        ts("2026-01-01T01:00:10.000000Z"), 1,
+                        ts("2026-01-01T02:00:10.000000Z"), 2,
+                        ts("2026-01-01T03:00:20.000000Z"), 7
+                );
+                assertRepairMarker(lvToken, false);
+                assertRetentionMarker(lvToken, false);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            } finally {
+                capture.stop();
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertHeadMissRepairRows();
+        });
+    }
+
+    @Test
+    public void testHeadMissDeferralOverADropRetiresTheLadderItCannotCorrect() throws Exception {
+        // The exception the kept prefix owes a removal, which the resume executor's deferral takes
+        // for the same reason. The hook sequences a DROP of hour 01 right before the replacement
+        // commits, so one drain lands the removal and then meets the fault on the replacement: the
+        // prefix the deferral would keep holds a root inside the partition that just went, and its
+        // position still counts the row the DROP took. Nothing left can correct it - the events
+        // stop saying what the table lacks once the replacement re-emits the rows in its own range -
+        // so the whole ladder goes, and the retention marker the removal's commit wrote with it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failApply = new AtomicBoolean();
+        final AtomicInteger applyFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failApply.get()
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "2026-01-01T02")
+                        && Utf8s.endsWithAscii(name, ".d")) {
+                    applyFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            createHourlyRangeView();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = flushHourlyRepairHistory(job);
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+                capture.start();
+
+                job.setSimulateDdlBeforeRepairReplacementForTest(() -> {
+                    try {
+                        execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-01T01'");
+                    } catch (SqlException e) {
+                        throw new AssertionError(e);
+                    }
+                    failApply.set(true);
+                });
+                execute("INSERT INTO base VALUES ('2026-01-01T02:00:15.000000Z', 'a', 100)");
+                driveUntil(
+                        job,
+                        () -> instance.getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL,
+                        "the head-miss repair never handed its replacement to the gate"
+                );
+                Assert.assertTrue("the replacement's apply must actually have been failed", applyFaults.get() > 0);
+                Assert.assertEquals(
+                        "no watermark may walk past output the table does not hold",
+                        processedBefore,
+                        instance.getLastProcessedSeqTxn()
+                );
+                // The DROP landed ahead of the replacement, so hour 01 is gone from the table the
+                // counter is taken from.
+                assertQuery("SELECT ts, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\ts
+                                2026-01-01T02:00:10.000000Z\t2.0
+                                2026-01-01T02:00:20.000000Z\t5.0
+                                2026-01-01T02:00:30.000000Z\t9.0
+                                2026-01-01T03:00:10.000000Z\t5.0
+                                """);
+                Assert.assertEquals("the counter tracks the table the DROP shrank", 4, instance.getLvRowsTotal());
+                assertTimelineExists(lvToken, false);
+                Assert.assertFalse(instance.hasPendingPartitionRemovals());
+                assertRepairMarker(lvToken, false);
+                assertRetentionMarker(lvToken, false);
+                capture.drain();
+                capture.assertNotLogged("row count does not match");
+
+                failApply.set(false);
+                driveUntil(
+                        job,
+                        () -> instance.getPendingReplacementLvSeqTxn() == Numbers.LONG_NULL
+                                && instance.getLastProcessedSeqTxn() > processedBefore,
+                        "the repair never ran again once its replacement landed"
+                );
+                driveRefreshToQuiescence(job);
+
+                // The repeated repair re-emits [R, H) over a table hour 01 has left; 02:00:10 sits
+                // below R and keeps the value the first pass gave it.
+                assertQuery("SELECT ts, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\ts
+                                2026-01-01T02:00:10.000000Z\t2.0
+                                2026-01-01T02:00:15.000000Z\t102.0
+                                2026-01-01T02:00:20.000000Z\t105.0
+                                2026-01-01T02:00:30.000000Z\t109.0
+                                2026-01-01T03:00:10.000000Z\t5.0
+                                """);
+                Assert.assertEquals(5, instance.getLvRowsTotal());
+                // A fresh history, opened by the seal that closed the repeated repair.
+                assertLadder(instance, ts("2026-01-01T03:00:10.000000Z"), 5);
+                assertRepairMarker(lvToken, false);
+                assertRetentionMarker(lvToken, false);
+                assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
+                        .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
+                assertNoRefreshFaults("lv");
+            } finally {
+                capture.stop();
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT ts, s FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\ts
+                            2026-01-01T02:00:10.000000Z\t2.0
+                            2026-01-01T02:00:15.000000Z\t102.0
+                            2026-01-01T02:00:20.000000Z\t105.0
+                            2026-01-01T02:00:30.000000Z\t109.0
+                            2026-01-01T03:00:10.000000Z\t5.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testRestartWhileAHeadMissDeferralHoldsRebuildsFromItsMarker() throws Exception {
+        // What the kept prefix is worth across a crash, and what it costs. The marker the truncate
+        // wrote is what makes the restart safe: the roots below it are correct, but the head they
+        // sat under is gone and the block beside them is not in the table yet, so the restore is
+        // refused and the view rebuilds from the applied base instead - the cost the retire used to
+        // impose on every restart after a deferral, which the prefix pays only until the repeated
+        // repair seals above it. The rows come out of that rebuild whole.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createHourlyRangeView();
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = flushHourlyRepairHistory(job);
+
+                job.setSimulateRepairApplyFailureForTest(true);
+                execute("INSERT INTO base VALUES ('2026-01-01T02:00:15.000000Z', 'a', 100)");
+                drainWalQueue();
+                // Exactly one pass: it drains the notification and runs the repair, so the idle
+                // scan's apply retry does not land the stalled replacement before the restart.
+                Assert.assertTrue(job.run());
+                drainWalQueue();
+                Assert.assertNotEquals(
+                        "the replacement must be left for reconciliation",
+                        Numbers.LONG_NULL,
+                        instance.getPendingReplacementLvSeqTxn()
+                );
+                assertLadder(instance, ts("2026-01-01T01:00:10.000000Z"), 1, ts("2026-01-01T02:00:10.000000Z"), 2);
+                assertRepairMarker(lvToken, true);
+                job.setSimulateRepairApplyFailureForTest(false);
+            }
+
+            // The process comes back over a prefix whose head was never re-sealed, so the marker
+            // is live and the restore may not run; the scan's apply retry lands the outstanding
+            // block and the rebuild reads the table it leaves.
+            restartAndAssertRebuiltFromAppliedBase("prefix preservation repair marker present");
+            assertRepairMarker(lvToken, false);
+            assertQuery("SELECT ts, s FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\ts
+                            2026-01-01T01:00:10.000000Z\t1.0
+                            2026-01-01T02:00:10.000000Z\t2.0
+                            2026-01-01T02:00:15.000000Z\t102.0
+                            2026-01-01T02:00:20.000000Z\t105.0
+                            2026-01-01T02:00:30.000000Z\t109.0
+                            2026-01-01T03:00:10.000000Z\t5.0
+                            """);
+            Assert.assertEquals(6, engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal());
         });
     }
 
@@ -6655,20 +6980,6 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         }
     }
 
-    /**
-     * Asserts the timeline's logical entries are exactly the {@code (maxTimestamp, effective row
-     * position)} pairs given, in order. The position is the effective one, so it carries the
-     * retention corrections the difference array holds rather than what the entry itself stores.
-     */
-    private void assertLadder(LiveViewInstance instance, long... expectedPairs) {
-        final LongList expected = new LongList();
-        for (long value : expectedPairs) {
-            expected.add(value);
-        }
-        final LongList actual = snapshotCheckpointLadder(instance);
-        Assert.assertEquals("checkpoint ladder (maxTimestamp, effective position)", expected.toString(), actual.toString());
-    }
-
     private void assertRepairMarker(TableToken lvToken, boolean expected) {
         try (Path path = new Path()) {
             Assert.assertEquals(
@@ -7509,6 +7820,28 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
                 .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
         assertNoRefreshFaults("lv");
+    }
+
+    /**
+     * The rows a finished head-miss repair over {@link #flushHourlyRepairHistory} leaves: the
+     * correction at 02:00:15 folded in, the two roots it re-versioned re-emitted, and the forward
+     * row the gate held behind it.
+     */
+    private void assertHeadMissRepairRows() throws Exception {
+        assertQuery("SELECT ts, s FROM lv")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\ts
+                        2026-01-01T01:00:10.000000Z\t1.0
+                        2026-01-01T02:00:10.000000Z\t2.0
+                        2026-01-01T02:00:15.000000Z\t102.0
+                        2026-01-01T02:00:20.000000Z\t105.0
+                        2026-01-01T02:00:30.000000Z\t109.0
+                        2026-01-01T03:00:10.000000Z\t5.0
+                        2026-01-01T03:00:20.000000Z\t12.0
+                        """);
     }
 
     private void assertResumeRepairRows() throws Exception {

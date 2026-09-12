@@ -10612,9 +10612,42 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // The replacement is in the live view's WAL but not in its table. No
                     // watermark may walk past output the table does not hold, so this turn
                     // stops short and leaves the repair to be repeated: the base range stays
-                    // unconsumed, the retire below leaves nothing describing superseded
-                    // output, and the next turn blocks on this same seqTxn until the block
-                    // lands.
+                    // unconsumed, the disposition below leaves nothing describing superseded
+                    // output, and the next turn blocks on this same seqTxn until the block lands.
+                    if (timelineCapture != null) {
+                        // The capture route's disposition, which the exit path used to take by
+                        // retiring the whole ladder. The roots at or above R describe output the
+                        // replacement rewrites, so they go now rather than once it lands - the
+                        // capture cannot prove a replacement the table does not hold, and nothing
+                        // may describe superseded output after it does - but the roots below R are
+                        // the anchors no row of the replacement touches, and a truncate keeps them
+                        // behind a marker of its own. That is what replayFromAnchor's deferral
+                        // leaves, and where the truncate route already stands when it reaches here:
+                        // the repeated repair resumes from an anchor instead of rebuilding the
+                        // view, and a restart in between rebuilds from the applied base on the
+                        // marker.
+                        //
+                        // A removal this apply drained is the exception, for the reason the resume
+                        // path takes it: it may have taken rows under the kept roots, and its
+                        // events - cleared above with the counter's re-seat - stop saying what the
+                        // table lacks once the replacement re-emits the rows inside its range. The
+                        // whole timeline goes, and the retention marker its commit wrote with it.
+                        if (retentionDuringRepair) {
+                            retireCheckpointStateOnO3(instance, true);
+                            clearRetentionMarker(instance);
+                            prefixMarkerLive = false;
+                        } else {
+                            prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, emitLowTs);
+                        }
+                        // The candidate goes with the capture either way, so the descriptor claims
+                        // no file this process owns, and a discarded one records no stage into a
+                        // directory the retire above may have taken.
+                        timelineCapture = Misc.free(timelineCapture);
+                        if (session != null) {
+                            session.setRepairMarkerLive(prefixMarkerLive);
+                            session.discardDescriptor();
+                        }
+                    }
                     instance.setPendingReplacementLvSeqTxn(repairPublication.getCommittedLvSeqTxn());
                     LOG.critical().$("live view O3 replacement committed but did not apply, deferring repair [view=")
                             .$(viewName)
@@ -10707,8 +10740,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // A splice that never published does not reach here: once its
                         // replacement applied it retired the timeline ahead of the seal, markers
                         // and all, and one whose replacement has not applied never seals - the
-                        // exit path below retires the timeline for it, and that takes the marker
-                        // with it, so this must not clear one on the strength of a seal alone.
+                        // deferral above cuts the timeline back to the anchor's prefix for it,
+                        // under a marker that has to stay live until the repeated repair seals
+                        // above it, so this must not clear one on the strength of a seal alone.
                         //
                         // A truncate whose replacement apply also removed partitions
                         // reconciled the kept prefix with the removal above, before the
@@ -10765,12 +10799,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         }
                     }
                     if (timelineCapture != null && timelineSplice == null) {
-                        // The splice was never allowed to try because the replacement has not
-                        // applied, or the block above unwound before it could. A splice that
+                        // The block above unwound before the splice could try. A splice that
                         // tried and failed over an applied replacement already retired the
-                        // timeline ahead of its seal and freed the capture. The output the
-                        // timeline's roots describe has moved either way, so it must not
-                        // survive them.
+                        // timeline ahead of its seal and freed the capture, and one whose
+                        // replacement did not apply cut it back to the anchor's prefix and freed
+                        // it there. What is left is a turn that threw with the roots still
+                        // describing output the replay has moved under, so they must not survive
+                        // it.
                         retireCheckpointTimeline(instance);
                     }
                     Misc.free(timelineCapture);

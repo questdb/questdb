@@ -303,6 +303,20 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Asserts the timeline's logical entries are exactly the {@code (maxTimestamp, effective row
+     * position)} pairs given, in order. The position is the effective one, so it carries the
+     * retention corrections the difference array holds rather than what the entry itself stores.
+     */
+    protected void assertLadder(LiveViewInstance instance, long... expectedPairs) {
+        final LongList expected = new LongList();
+        for (long value : expectedPairs) {
+            expected.add(value);
+        }
+        final LongList actual = snapshotCheckpointLadder(instance);
+        Assert.assertEquals("checkpoint ladder (maxTimestamp, effective position)", expected.toString(), actual.toString());
+    }
+
+    /**
      * Every logical timeline entry of {@code instance} as {@code (maxTimestamp, effective row
      * position)}, ascending - the ladder a resume reads to decide how many live-view rows the
      * root it selects stands on.

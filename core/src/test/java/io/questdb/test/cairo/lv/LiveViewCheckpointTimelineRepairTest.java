@@ -2703,6 +2703,12 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // generation whose root positions it would read off that table, may not seal a
         // head, and may not consume the base range. It defers instead, and the deferred
         // repair simply runs again once the block lands.
+        //
+        // What the deferral leaves behind is the anchor's prefix. The roots at or above R
+        // describe output the replacement rewrites, so the capture drops them; the roots
+        // below R are the ones no row of it touches, and they stay behind a repair marker
+        // - which is what the resume executor's own deferral leaves, and what this route
+        // used to throw away by retiring the whole ladder on the way out.
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -2735,10 +2741,19 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         rowsBefore,
                         instance.getLvRowsTotal()
                 );
-                Assert.assertFalse(
-                        "the replacement supersedes what every root describes, so the"
-                                + " timeline must not outlive it",
+                Assert.assertTrue(
+                        "the roots below R survive a replacement that rewrites nothing under them",
                         hasTimeline(instance)
+                );
+                assertLadder(instance, ts(timestamp(10)), 1, ts(timestamp(20)), 2);
+                Assert.assertTrue(
+                        "the kept prefix has to stand behind a marker until a seal re-anchors the head",
+                        repairMarkerExists()
+                );
+                Assert.assertEquals(
+                        "the candidate went with the capture, so its descriptor may claim no file",
+                        0,
+                        repairDescriptorCount()
                 );
 
                 // The deferred repair is repeated, not resumed. The base range was never
@@ -2755,12 +2770,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         HISTORY_COMMITS + 1,
                         instance.getLvRowsTotal()
                 );
-                Assert.assertEquals(
-                        "a retired timeline starts over from the post-replay seal",
-                        1,
-                        entryCount(instance)
-                );
-                Assert.assertEquals(1, generation(instance));
+                // The repeated repair is the same head miss, and it stands on the prefix the
+                // deferral kept: it truncates at the same R and seals the frontier above it,
+                // so the ladder comes out as the two anchors below the correction plus a
+                // fresh head at the frontier - where the retire left a single root of its own
+                // and no anchor for a later correction to resume from.
+                assertLadder(instance, ts(timestamp(10)), 1, ts(timestamp(20)), 2, ts(timestamp(120)), 13);
+                Assert.assertFalse("the seal above the prefix resolves the marker", repairMarkerExists());
             }
 
             assertQuery("select ts, sym, s from lv order by ts")
