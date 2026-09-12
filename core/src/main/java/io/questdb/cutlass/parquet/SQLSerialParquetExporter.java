@@ -66,6 +66,7 @@ import java.io.Closeable;
 import java.io.File;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class SQLSerialParquetExporter extends BaseParquetExporter implements Closeable {
@@ -611,6 +612,10 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         return numOfFiles;
     }
 
+    SqlExecutionContextImpl getSqlExecutionContext() {
+        return sqlExecutionContext;
+    }
+
     private static class FileWriteCallback implements CopyExportRequestTask.StreamWriteParquetCallBack {
         private long fd;
         private FilesFacade ff;
@@ -631,9 +636,5 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             this.fd = fd;
             this.fileOffset = 0;
         }
-    }
-
-    SqlExecutionContextImpl getSqlExecutionContext() {
-        return sqlExecutionContext;
     }
 }

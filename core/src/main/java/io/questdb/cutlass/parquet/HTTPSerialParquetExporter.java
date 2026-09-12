@@ -48,6 +48,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 
 import org.jetbrains.annotations.Nullable;
+
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
 
@@ -246,21 +247,6 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         }
     }
 
-    /**
-     * The page-frame cursor that owns the current export mode's timer, or null when the mode
-     * streams a record cursor or no export is in progress.
-     */
-    private @Nullable PageFrameCursor livePageFrameCursor() {
-        if (exportMode == null) {
-            return null;
-        }
-        return switch (exportMode) {
-            case PAGE_FRAME_BACKED -> streamingPfc;
-            case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> task != null ? task.getPageFrameCursor() : null;
-            default -> null;
-        };
-    }
-
     private void clearTempTable() {
         if (!isTempTableOwned) {
             return;
@@ -283,6 +269,21 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
             cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    /**
+     * The page-frame cursor that owns the current export mode's timer, or null when the mode
+     * streams a record cursor or no export is in progress.
+     */
+    private @Nullable PageFrameCursor livePageFrameCursor() {
+        if (exportMode == null) {
+            return null;
+        }
+        return switch (exportMode) {
+            case PAGE_FRAME_BACKED -> streamingPfc;
+            case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> task != null ? task.getPageFrameCursor() : null;
+            default -> null;
+        };
     }
 
     private void processHybridStreamExport() throws Exception {
