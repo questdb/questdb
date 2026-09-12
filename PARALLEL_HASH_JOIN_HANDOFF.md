@@ -45,7 +45,7 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
    SYMBOL sorting, ratio evaluation, cursor reread and failure/reuse are tested.
    See [execution, merging and validation](docs/parallel-hash-join-group-by-execution.md).
 
-6. **Integrate planner selection, configuration, and diagnostics (including task 6a)** — this update.
+6. **Integrate planner selection, configuration, and diagnostics (including task 6a)** — commit `755ee06eac`.
    Ordinary SQL compilation selects the keyed shared-build operator when both
    `cairo.sql.parallel.hash.join.groupby.enabled` (default false) and the existing
    `cairo.sql.parallel.groupby.enabled` switch permit it, with positive configured
@@ -59,35 +59,46 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
    benchmark's planner adapter now expose both plans, phase timings and counters.
    See [planner, ownership, controls and diagnostics](docs/parallel-hash-join-group-by-planner.md).
 
-The branch now supports experimental automatic selection for eligible keyed queries.
-The experimental default remains false. Tasks 1–6 and 6a are complete; the RFC's
-2× end-to-end performance gate is still pending.
+7. **Publish the keyed prototype benchmark and enforce the early gate** — this update.
+   The fixed 100-million-row/four-worker primary comparison passes in both rounds:
+   ordinary/fused medians 2,323.627/335.099 ms (**6.934×**) and
+   2,321.217/333.964 ms (**6.951×**). No engine tuning or workload change was needed.
+   `HashJoinGroupByBenchmark --require-primary-gate=true` rejects altered primary
+   parameters and fails unless every repetition reaches the unrounded 2× target.
+   A sequential script reproduces the primary, one/two-worker, build-size,
+   selectivity and small-input cases, retaining commands, environment, plans,
+   ordered results and every sample. See the [benchmark report and raw data](docs/parallel-hash-join-group-by-benchmark.md).
 
-## Next pending task: 7
+The branch supports experimental automatic selection for eligible keyed queries.
+Tasks 1–7 and 6a are complete, including the early performance gate. The
+experimental default remains false; the gate permits Phase 2 work, not rollout.
 
-**Publish the keyed prototype benchmark and enforce the early gate.**
+## Next pending task: 8
 
-- Run the fixed primary workload: 100 million fact rows, 100,000 unique dimension
-  keys, fanout 1, 10% selected keys, seed 130, five years of warm native monthly
-  data, and four query workers. Preserve the original installed-capacity denominator.
-- Use the existing runner and
-  `'--candidate-compiler=org.questdb.HashJoinGroupByBenchmark$PlannerCandidateCompiler'`
-  to compile ordinary and enabled plans in the same JVM. Warm both, alternate at
-  least ten measured runs per arm, repeat the comparison, and consume final ordered
-  results. Build afresh on every execution; include all phases in total latency.
-- Publish source revision, generator and commands, hardware/JDK/configuration,
-  plans, ordered result checks, medians/spread, phase timings, and sampled peak
-  native memory. Measure one/two/four workers plus build-size/selectivity variants.
-- Require reproducible ≥2× median four-worker end-to-end speedup on the fixed
-  primary workload. If it misses, retain experimental status, profile and revise
-  Phase 1, then rerun before task 8. Report regressions and copied-payload memory
-  costs. Do not introduce a build-size cutoff or runtime fallback.
+**Add unkeyed aggregation through the same build/probe pipeline.**
 
-Task 6's small benchmark smoke check establishes integration only and does not
-satisfy this gate. The [comparison harness guide](docs/parallel-hash-join-group-by.md)
-and [planner metrics guide](docs/parallel-hash-join-group-by-planner.md) explain
-commands and measurements. Unkeyed execution, including the same flag matrix,
-remains task 8; broader qualification and rollout remain tasks 9–10.
+- Reuse the frozen build, matching, filtering and slot/lifecycle contracts. Add
+  scalar partial states and final merge following `AsyncGroupByNotKeyedAtom` and
+  `AsyncGroupByNotKeyedRecordCursorFactory`; do not allocate grouping maps.
+- Require both global parallel GROUP BY and experimental fused flags and positive
+  configured query workers. Extend result/EXPLAIN flag-combination coverage to
+  unkeyed INNER/LEFT/eligible normalized RIGHT queries.
+- Implement every declared allowlisted aggregate/type combination, including
+  `count(*)` and `count(expr)`, retaining existing null and result-type contracts.
+  Produce exactly one unkeyed row for empty aggregate input. Empty build/probe
+  and no matches yield empty input for INNER. LEFT/normalized RIGHT with empty
+  build or all misses must aggregate surviving preserved rows; empty probe or
+  post-join rejection of every candidate yields empty input.
+- Differentially test keyed and unkeyed aggregate/type combinations, duplicate
+  fanout, all-null arguments, null extension and each distinct empty-input cause.
+  Keep unsupported compiled aggregates excluded.
+
+The [comparison harness guide](docs/parallel-hash-join-group-by.md) and
+[planner metrics guide](docs/parallel-hash-join-group-by-planner.md) describe
+commands and measurements. Broader storage/concurrency/resource qualification
+remains task 9; completed-V1 benchmarks and separate rollout remain task 10.
+Do not infer default enablement or general outer/storage performance from the
+primary inner/native/low-cardinality benchmark. No build-size cutoff or fallback.
 
 Integration notes: children compile under **one enclosing query registration**.
 The factory consumes children/functions/interpreted filter context on constructor
@@ -98,6 +109,19 @@ keep ordinary execution. Probe filter takeover uses interpreted logical getters,
 releases unused JIT handles and composes peeled projection mappings. Ordinary
 serial probe filters that cannot be stolen keep the existing plan. Child partition-
 format guards continue to request normal recompilation; they are not bypassed.
+
+## Validation for task 7
+
+The benchmark package build and script syntax check passed. Eleven CLI checks
+reject invalid gate settings before data generation. Across nine matrix cases,
+**360 measured executions** match the ordered reference, with 459 explicit
+comparisons including warmups. The additional initial primary comparison retains
+40 measured executions, also matching results. The [report](docs/parallel-hash-join-group-by-benchmark.md)
+contains all timings, memory costs, commands, result checks and limitations.
+The small-probe/large-build diagnostic regressed by 6.8–12.9%; primary retained
+native memory was 1.97× ordinary. These costs remain explicit rollout inputs.
+No production engine code changed; task 6's regression results below were not
+rerun or replaced by this benchmark-only task.
 
 ## Validation for task 6
 

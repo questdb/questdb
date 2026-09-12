@@ -155,6 +155,7 @@ fused samples reported 100 build rows/keys, 8,320 retained build bytes, 100,000
 scanned rows, 9,946 matched/surviving pairs, zero null extensions and 120 final
 groups, with nonzero build/init/probe/merge timings.
 
-The small smoke workload validates integration only. Task 7's primary 100-million-row,
-repeatable 2× end-to-end performance gate remains pending; default enablement is
-still a separate rollout decision.
+The small smoke workload validates integration only. Task 7 subsequently passed
+the primary 100-million-row, repeatable 2× end-to-end performance gate; see the
+[keyed prototype benchmark](parallel-hash-join-group-by-benchmark.md). Default
+enablement remains a separate rollout decision after V1 qualification.

@@ -163,3 +163,33 @@ can miss brief peaks and includes shared native pools; this is not an exact quer
 memory-limit or per-phase measurement. It covers eager acquisition/build work.
 Task 6 adds exact operator counters/per-phase instrumentation for the acceptance
 gate. The small smoke run establishes reproducibility, not the RFC's 2x gate.
+
+
+## Run the task 7 acceptance gate and variants
+
+[The keyed prototype report](parallel-hash-join-group-by-benchmark.md) records the
+primary gate and worker/build/selectivity comparisons. Reproduce the sequential
+matrix with JDK 25, Maven 3, Bash, and the Linux system-information tools:
+
+```bash
+mvn -pl benchmarks -am package -DskipTests -Dmaven.test.skip=true
+bash benchmarks/parallel-hash-join-group-by.sh /tmp/hash-join-task7-results
+```
+
+The output directory must not already exist. Each case retains a separate fresh
+database under `/tmp`; the matrix needs about 20 GB of data storage. Keep other
+benchmarks, tests and builds stopped while measuring. The script records exact
+commands, environment, source revision and artifact hashes, and retains every
+sample, plan and ordered reference result. It runs the fixed four-worker primary
+case first, followed by one/two workers, 10k/1m dimension keys, 1%/50% selected
+keys, a small-input case, and a small-probe/large-build case. Variants are diagnostics, not substitute gate cases.
+
+Use `--require-primary-gate=true` with `PlannerCandidateCompiler` to run only the
+primary gate. The runner requires the fixed 100m/100k/10%/fanout-1/seed-130 input,
+four workers, at least three warmups, ten measured runs and two repetitions. It
+checks the plans and every ordered result before reporting samples. After all
+repetitions it compares each **unrounded** median speedup with 2×, prints PASS/FAIL
+and the minimum speedup, and exits unsuccessfully on failure. The displayed
+speedup is rounded to three decimal places. A miss keeps Phase 1 experimental and blocks Phase 2
+until profiling/revision and a successful rerun. Omitting the option preserves
+ordinary baseline-only and non-gating variant runs.

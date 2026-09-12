@@ -81,6 +81,17 @@ public class HashJoinGroupByBenchmark {
         int repetitions = (int) number(options, "repetitions", 2, 1, 100);
         CandidateCompiler candidate = options.containsKey("candidate-compiler")
                 ? (CandidateCompiler) Class.forName(options.get("candidate-compiler")).getConstructor().newInstance() : null;
+        String gateOption = options.getOrDefault("require-primary-gate", "false");
+        if (!gateOption.equals("true") && !gateOption.equals("false")) {
+            throw new IllegalArgumentException("require-primary-gate must be true or false");
+        }
+        boolean requirePrimaryGate = Boolean.parseBoolean(gateOption);
+        if (requirePrimaryGate && (candidate == null || rows != 100_000_000 || plants != 100_000
+                || selectedPercent != 10 || fanout != 1 || seed != 130 || workers != 4
+                || warmups < 3 || repetitions < 2)) {
+            throw new IllegalArgumentException("primary gate requires the fixed RFC 130 workload, a candidate compiler, "
+                    + "four workers, at least three warmups and two repetitions");
+        }
         Os.init();
         // A fresh directory prevents accidentally overwriting a developer's database.
         Path root = Files.createTempDirectory("hash-join-group-by-");
@@ -124,6 +135,8 @@ public class HashJoinGroupByBenchmark {
                     }
                     RecordCursorFactory[] factories = fused == null ? new RecordCursorFactory[]{baseline} : new RecordCursorFactory[]{baseline, fused};
                     List<ResultRow> expected = null;
+                    double minimumSpeedup = Double.POSITIVE_INFINITY;
+                    long resultChecks = 0;
                     System.out.println("arm,repetition,run,elapsed_ns,groups,sampled_native_peak_delta_bytes,retained_native_delta_bytes,build_rows,build_keys,build_bytes,scanned_rows,matched_pairs,null_extended_rows,surviving_rows,merge_cardinality,build_ns,init_ns,probe_ns,merge_ns");
                     for (int repetition = 0; repetition < repetitions; repetition++) {
                         List<List<Long>> elapsed = new ArrayList<>();
@@ -139,6 +152,7 @@ public class HashJoinGroupByBenchmark {
                                     System.out.println("# result=" + expected);
                                 } else {
                                     assertResults(expected, sample.result);
+                                    resultChecks++;
                                 }
                                 if (run >= 0) {
                                     elapsed.get(arm).add(sample.nanos);
@@ -153,10 +167,22 @@ public class HashJoinGroupByBenchmark {
                             double median = (times[(times.length - 1) / 2] + (double) times[times.length / 2]) / 2;
                             if (arm == 0) {
                                 baselineMedian = median;
+                            } else {
+                                minimumSpeedup = Math.min(minimumSpeedup, baselineMedian / median);
                             }
                             System.out.printf(Locale.ROOT, "# %s repetition=%d median_ms=%.3f min_ms=%.3f max_ms=%.3f %s%n",
                                     arm == 0 ? "baseline" : "candidate", repetition, median / 1e6, times[0] / 1e6,
                                     times[times.length - 1] / 1e6, arm == 0 ? "" : String.format(Locale.ROOT, "speedup=%.3f", baselineMedian / median));
+                        }
+                    }
+                    System.out.println("# result_checks=" + resultChecks);
+                    if (requirePrimaryGate) {
+                        boolean passed = minimumSpeedup >= 2;
+                        System.out.printf(Locale.ROOT, "# primary_gate=%s minimum_speedup=%.3f required_speedup=2.000%n",
+                                passed ? "PASS" : "FAIL", minimumSpeedup);
+                        if (!passed) {
+                            throw new IllegalStateException("RFC 130 primary gate failed; retain experimental status "
+                                    + "and revise Phase 1 before starting Phase 2");
                         }
                     }
                 }
@@ -251,7 +277,7 @@ public class HashJoinGroupByBenchmark {
 
     private static Map<String, String> options(String[] args) {
         Map<String, String> result = new HashMap<>();
-        List<String> names = Arrays.asList("rows", "plants", "selected-percent", "fanout", "seed", "workers", "warmups", "runs", "repetitions", "revision", "candidate-compiler");
+        List<String> names = Arrays.asList("rows", "plants", "selected-percent", "fanout", "seed", "workers", "warmups", "runs", "repetitions", "revision", "candidate-compiler", "require-primary-gate");
         for (String arg : args) {
             int eq = arg.indexOf('=');
             if (!arg.startsWith("--") || eq < 3 || !names.contains(arg.substring(2, eq))
