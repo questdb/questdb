@@ -702,7 +702,7 @@ public class CrashIngestWriter {
     private static final ThreadLocal<io.questdb.cairo.arr.DirectArray> ARRAY =
             ThreadLocal.withInitial(io.questdb.cairo.arr.DirectArray::new);
 
-    private static final io.questdb.std.str.Utf8String[] VARCHARS = {
+    static final io.questdb.std.str.Utf8String[] VARCHARS = {
             new io.questdb.std.str.Utf8String("a"),
             new io.questdb.std.str.Utf8String("bb"),
             new io.questdb.std.str.Utf8String("ccc"),

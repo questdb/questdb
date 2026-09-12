@@ -26,7 +26,7 @@ kernel. Current state -- **17 of 17 dimensions**, every one verified to actually
 | 10 | wide mixed-type table | `BatchedFlushDurabilityCrashTest` | `profile=wide` |
 | 11 | O3 merge path | `AdaptiveO3CrashSweep`, `AdaptiveO3LazyGap` | `profile=o3` |
 | 13 | sustained lazy gap | `AdaptiveO3LazyGap`, W2/W3/W5 | `QDB_EPOCH_MS=-1` |
-| 9 | **array column** | `ArrayCrashConsistencyTest` | **GAP** -- no positional put for `double[]` |
+| 9 | array column | `ArrayCrashConsistencyTest` | `profile=array` -- length varies per row (`id % 10`), CONTENTS verified |
 | 12 | structural DDL under load | `RandomizedAdaptiveCrashFuzzTest` | `QDB_DDL_EVERY_ROWS=N` |
 | 14 | multi-table | `AdaptiveMultiTableLazyGap` (W3) | `QDB_SIBLING_TABLE=true` |
 | 15 | mat-view | `AdaptiveMatViewLazyGap` (W4) | `QDB_MAT_VIEW=true` -- **found a real defect, see below** |
@@ -414,3 +414,15 @@ commit mode", which deleted `PerTableCommitModeTest` / `PerTableAdaptiveIsolatio
 A dimension whose Java counterpart has been deleted is not coverage, it is residue: the flag
 still parses, the sweep still goes green, and nothing is tested. Check this list against the
 Java suite whenever the branch merges.
+
+### The payload oracle
+
+`bitCheckRows` used to select only `id, v, s, ts`, so the array, varchar and wide profiles wrote
+their columns and the oracle never read them back: a torn array or varchar aux vector -- exactly
+what those dimensions exist to catch -- passed silently. Every extra column is a deterministic
+function of `id` (array length `id % 10` holding `id + j`, varchar indexed `id % 4`, wide columns
+arithmetic), so each is now checked per row and a mismatch is `SILENT_CORRUPTION`.
+
+Proven by negative control: inverting the expected array value makes the oracle fail
+(`SILENT_CORRUPTION payload id=1 profile=array`); restoring it passes on array, varchar and wide.
+A payload check that never executes is indistinguishable from one that always passes.

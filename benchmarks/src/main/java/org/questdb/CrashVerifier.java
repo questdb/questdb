@@ -530,6 +530,64 @@ public class CrashVerifier {
      * Bit-check every row 0..count-1 against the deterministic CrashIngestWriter formulas. Returns the
      * consistent row count; prints SILENT_CORRUPTION and exits (2) on the first wrong value / gap.
      */
+    /** The profile's extra columns, appended to the oracle's projection (empty when it has none). */
+    private static String payloadColumns() {
+        switch (CrashIngestWriter.PROFILE) {
+            case "varchar":
+                return ", vc";
+            case "array":
+                return ", arr";
+            case "wide":
+                return ", w0i, w0d, w0s";
+            default:
+                return "";
+        }
+    }
+
+    /**
+     * Verifies the profile's payload for one row against what CrashIngestWriter.putExtras
+     * wrote for that id. Returns null when the row is good, else a description of the
+     * mismatch. A recovered row whose PAYLOAD is wrong is corruption even when its id,
+     * ordering and contiguity are all correct -- which is all the oracle used to check.
+     */
+    private static String checkPayload(io.questdb.cairo.sql.Record r, long id) {
+        switch (CrashIngestWriter.PROFILE) {
+            case "varchar": {
+                final CharSequence vc = r.getVarcharA(4) == null ? null : r.getVarcharA(4).toString();
+                final String want = CrashIngestWriter.VARCHARS[(int) (id % CrashIngestWriter.VARCHARS.length)].toString();
+                return (vc != null && want.contentEquals(vc)) ? null : "varchar mismatch: got=" + vc + " want=" + want;
+            }
+            case "array": {
+                final io.questdb.cairo.arr.ArrayView a = r.getArray(4, io.questdb.cairo.ColumnType.encodeArrayType(io.questdb.cairo.ColumnType.DOUBLE, 1));
+                final int wantLen = (int) (id % 10);
+                if (a == null) {
+                    return wantLen == 0 ? null : "array null, want length " + wantLen;
+                }
+                if (a.getDimLen(0) != wantLen) {
+                    return "array length: got=" + a.getDimLen(0) + " want=" + wantLen;
+                }
+                for (int j = 0; j < wantLen; j++) {
+                    final double got = a.getDouble(j);
+                    if (got != (double) (id + j)) {
+                        return "array[" + j + "]: got=" + got + " want=" + (double) (id + j);
+                    }
+                }
+                return null;
+            }
+            case "wide": {
+                if (r.getInt(4) != (int) id) {
+                    return "wide i0: got=" + r.getInt(4) + " want=" + id;
+                }
+                if (r.getDouble(5) != id * 1.5) {
+                    return "wide d0: got=" + r.getDouble(5) + " want=" + (id * 1.5);
+                }
+                return null;
+            }
+            default:
+                return null;
+        }
+    }
+
     private static long bitCheckRows(CairoEngine engine, SqlExecutionContextImpl ctx, String[] SYMBOLS) throws SqlException {
         return bitCheckRows(engine, ctx, SYMBOLS, CrashIngestWriter.TABLE_NAME);
     }
@@ -544,7 +602,12 @@ public class CrashVerifier {
      * and must be recovered in one recover() pass (the W3 dimension).
      */
     private static long bitCheckRows(CairoEngine engine, SqlExecutionContextImpl ctx, String[] SYMBOLS, String table) throws SqlException {
-        final String sql = "select id, v, s, ts from " + table + " order by ts asc";
+        // Include the PROFILE'S OWN columns. Selecting only id/v/s/ts meant the array,
+        // varchar and wide profiles wrote their columns and the oracle never read them
+        // back -- a torn array or varchar aux vector, which is exactly what those
+        // dimensions exist to catch, would have passed silently. Every extra column is a
+        // deterministic function of id, so each is checkable.
+        final String sql = "select id, v, s, ts" + payloadColumns() + " from " + table + " order by ts asc";
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
              RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
             // TWO INDEPENDENT PROPERTIES, checked separately.
@@ -580,6 +643,16 @@ public class CrashVerifier {
 
                     final long expectedV = actualId * 2_654_435_761L;
                     final String expectedS = SYMBOLS[(int) (actualId % SYMBOLS.length)];
+
+                    // The profile's OWN columns, checked against what putExtras wrote for
+                    // this id. Without this the array/varchar/wide dimensions verified only
+                    // that rows came back -- never that their payload survived intact.
+                    final String payloadErr = checkPayload(rec, actualId);
+                    if (payloadErr != null) {
+                        System.out.printf("SILENT_CORRUPTION payload id=%d profile=%s: %s%n",
+                                actualId, CrashIngestWriter.PROFILE, payloadErr);
+                        System.exit(2);
+                    }
 
                     if (actualId < 0 || actualV != expectedV
                             || !expectedS.equals(String.valueOf(actualS))) {

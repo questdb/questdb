@@ -46,6 +46,7 @@ STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"
 BASE="$STATE_DIR/base"
 KEY="$BASE/id_ed25519"
 LOG="$STATE_DIR/flush-sweep.log"
+OUTDIR="$STATE_DIR/sweep-out/$MODE-w$WINDOW-$PROFILE-e${QDB_EPOCH_MS:-1000}-$$"
 RUN="$STATE_DIR/sweep-$MODE-w$WINDOW-$PROFILE-e$EPOCH-$$"
 STAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -117,7 +118,13 @@ for n in $(seq "$first" "$nflush"); do
         if sudo mount /dev/vdb /mnt/qdb 2>/dev/null; then \
             bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
         else echo 'MOUNT_FAILED'; fi")
-    line=$(echo "$out" | tail -1)
+    # Archive the FULL per-boundary output. The one-line verdict in $LOG is a summary,
+    # not evidence: every time a result needed explaining, the explanation was in the
+    # lines this used to throw away. Kept outside $RUN so it survives the success-path
+    # `rm -rf "$RUN"`.
+    mkdir -p "$OUTDIR"
+    printf '%s\n' "$out" > "$OUTDIR/flush-$n.out"
+    line=$(echo "$out" | grep -vE '^DETAIL' | tail -1)
     v=$(verdict_classify "$line")
     checked=$((checked + 1))
     echo "$STAMP sweep profile=$PROFILE epoch=$EPOCH mode=$MODE W=$WINDOW flush=$n/$nflush verdict=$v line=$line" >> "$LOG"
@@ -137,11 +144,13 @@ vm_kill "$RUN"
 if [ "$fails" -eq 0 ] && [ "${QDB_KEEP_RUN:-0}" != "1" ]; then
     rm -rf "$RUN"
     echo "sweep complete: $checked boundaries, 0 failures; log at $LOG"
+    echo "  full per-boundary output: $OUTDIR"
 elif [ "$fails" -eq 0 ]; then
     keep
     echo "sweep complete: $checked boundaries, 0 failures; log at $LOG"
 else
     keep
     echo "sweep complete: $checked boundaries, $fails FAILURES; log at $LOG"
+    echo "  full per-boundary output: $OUTDIR"
 fi
 [ "$fails" -eq 0 ]

@@ -114,6 +114,16 @@ case "$ARM" in
             [ -d "$DB" ] || why="$why db-root-absent"
             line="LOUD_FAILURE: verifier produced no verdict ($why)"
         fi
+        # Emit the verifier's FULL output, prefixed, BEFORE the verdict. Callers take the
+        # verdict with `tail -1` / `grep -m1`, so prefixed detail lines cannot be mistaken
+        # for it -- and the evidence stops being discarded here. Two layers of truncation
+        # (this function keeping only the verdict, and the sweep keeping only tail -1) are
+        # why per-view mat-view results kept vanishing and produced two WRONG conclusions
+        # about which dimensions were covered.
+        if [ "${QDB_VERIFY_FULL_OUTPUT:-true}" = "true" ]; then
+            sed 's/^/DETAIL /' "$vout" 2>/dev/null || true
+            [ -s "$verr" ] && sed 's/^/DETAIL-ERR /' "$verr" 2>/dev/null || true
+        fi
         rm -f "$vout" "$verr"
 
         # A cut early enough to land before the table was durably created makes
