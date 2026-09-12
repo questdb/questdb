@@ -6572,15 +6572,18 @@ public class SqlOptimiser implements Mutable {
                     rowsHi = ac.getRowsHiExpr() != null ? -rowsHi : Long.MIN_VALUE;
                 } else {
                     // A ROWS frame counts rows instead of measuring time, and every bounded ROWS
-                    // family sizes its ring buffer with (int) Math.abs(rowsHi), which carries no
-                    // width above Integer.MAX_VALUE - 3000000000 PRECEDING reads past that buffer
-                    // today and always has. Keep folding the widest width onto the sentinel here:
-                    // the fold is what turns that one width into a deterministic error instead of
-                    // an out-of-bounds read, and discriminating on the expression would take the
-                    // error away without making any ROWS width answer correctly. Correcting the
-                    // ROWS path calls for the over-int rejection that
-                    // NthValueWindowFunctionFactoryHelper already applies, which rejects finite
-                    // widths that compile today and so belongs to a change of its own.
+                    // family sizes its ring buffer with (int) Math.abs(rowsHi), which cannot carry
+                    // a width above Integer.MAX_VALUE. Reject such a width outright (the same
+                    // over-int rejection NthValueWindowFunctionFactoryHelper already applies to its
+                    // offsets at query-setup time) rather than fold it: the fold of the widest width
+                    // turns Long.MAX_VALUE into Long.MIN_VALUE whose (int) cast is 0 and divides
+                    // the ring's index modulus by zero, and every narrower over-int width truncates
+                    // to an arbitrary small buffer that reads past itself. UNBOUNDED PRECEDING
+                    // keeps its sentinel fold - an unbounded look-behind is precisely what the
+                    // ring's missing width means.
+                    if (rowsHi > Integer.MAX_VALUE && ac.getRowsHiExpr() != null) {
+                        throw SqlException.$(ac.getRowsHiKindPos(), "ROWS frame end exceeds maximum supported size [width=").put(rowsHi).put(", max=").put(Integer.MAX_VALUE).put(']');
+                    }
                     rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
                 }
                 break;
