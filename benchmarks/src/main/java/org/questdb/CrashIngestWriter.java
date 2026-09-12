@@ -190,7 +190,9 @@ public class CrashIngestWriter {
     static final long REBASE_AT_ROWS = Long.getLong("rebase.at.rows", -1L);
     static final boolean MAT_VIEW = Boolean.getBoolean("mat.view");
     static final String MV_NAME = "mv";
-    /** {view name, REFRESH clause}. MV_NAME stays first so existing single-view checks keep working. */
+    /**
+     * {view name, REFRESH clause}. MV_NAME stays first so existing single-view checks keep working.
+     */
     static final String[][] MV_VARIANTS = {
             {MV_NAME, "immediate"},
             {"mv_timer", "every 1m"},
@@ -546,7 +548,7 @@ public class CrashIngestWriter {
                 // also what the sweep's liveness assertion checks -- exiting here would be
                 // read as "the workload was not running", which is how a vacuous iteration
                 // was caught before.
-                for (;;) {
+                for (; ; ) {
                     Thread.sleep(1000);
                 }
             }
@@ -612,11 +614,15 @@ public class CrashIngestWriter {
     // ---------------------------------------------------------------------
     static final String PROFILE = System.getProperty("schema.profile", "bitmap");
 
-    /** Extra column DDL appended after the fixed 0..3 columns. */
+    /**
+     * Extra column DDL appended after the fixed 0..3 columns.
+     */
     private static String extraColumnsDdl() {
         switch (PROFILE) {
-            case "varchar": return ", vc varchar";
-            case "array":   return ", arr double[]";
+            case "varchar":
+                return ", vc varchar";
+            case "array":
+                return ", arr double[]";
             case "wide": {
                 StringBuilder sb = new StringBuilder();
                 for (int i = 0; i < 4; i++) {
@@ -626,17 +632,28 @@ public class CrashIngestWriter {
                 }
                 return sb.toString();
             }
-            default: return "";
+            default:
+                return "";
         }
     }
 
-    /** Index clause on the s column. */
+    /**
+     * Index clause on the s column.
+     */
     private static String indexClause() {
         switch (PROFILE) {
-            case "bitmap":   return " index";
-            case "posting":  return " index type posting";
-            case "covering": return " index type posting include (v)";
-            case "none": case "varchar": case "array": case "wide": case "o3": return "";
+            case "bitmap":
+                return " index";
+            case "posting":
+                return " index type posting";
+            case "covering":
+                return " index type posting include (v)";
+            case "none":
+            case "varchar":
+            case "array":
+            case "wide":
+            case "o3":
+                return "";
             default:
                 throw new IllegalArgumentException("unknown schema.profile: " + PROFILE);
         }
@@ -657,7 +674,9 @@ public class CrashIngestWriter {
         return BASE_TS + id * 1_000_000L;
     }
 
-    /** Write the profile's extra columns, starting at index 4. */
+    /**
+     * Write the profile's extra columns, starting at index 4.
+     */
     private static void putExtras(TableWriter.Row row, long id) {
         switch (PROFILE) {
             case "varchar":

@@ -50,7 +50,7 @@ import org.junit.Test;
  * durable ahead of the data it names -- the invariant class adaptive commit is built around -- surfacing on
  * the index rather than on {@code _txn}.
  *
- <h3>ROOT CAUSE: the bounds check is an assert, so it does not exist in production</h3>
+ * <h3>ROOT CAUSE: the bounds check is an assert, so it does not exist in production</h3>
  * <pre>
  *   // AbstractMemoryCR
  *   public long addressOf(long offset) {
@@ -86,7 +86,9 @@ public class BitmapIndexRollbackBoundsTest extends AbstractCairoTest {
     private static final int KEY = 0;
     private static final int N = 4096;
 
-    /** Mirrors BitmapIndexTest#create: the 3-arg writer ctor OPENS an index, it does not create one. */
+    /**
+     * Mirrors BitmapIndexTest#create: the 3-arg writer ctor OPENS an index, it does not create one.
+     */
     private static void create(CairoConfiguration configuration, Path path, CharSequence name, int valueBlockCapacity) {
         int plen = path.size();
         try {

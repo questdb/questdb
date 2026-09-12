@@ -423,6 +423,18 @@ public class BitmapIndexWriter implements IndexWriter {
             // do we have anything for the key?
             if (valueCount > 0) {
                 long blockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
+                // The header guards at open time only validate the key file as a whole; a torn or corrupt
+                // per-key entry can point past the mapped value extent. The seek below dereferences the
+                // offset without a bounds check, so on a production build that is a wild read, not an
+                // exception. Refuse it here, by name, so recovery fails cleanly instead of crashing.
+                if (blockOffset < 0 || blockOffset + blockCapacity > valueMemSize) {
+                    throw CairoException.critical(0)
+                            .put("bitmap index value block offset is out of bounds [key=").put(k)
+                            .put(", valueBlockOffset=").put(blockOffset)
+                            .put(", blockCapacity=").put(blockCapacity)
+                            .put(", valueMemSize=").put(valueMemSize)
+                            .put(", fd=").put(valueMem.getFd()).put(']');
+                }
                 BitmapIndexUtils.seekValueBlockRTL(valueCount, blockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);
 
                 if (valueCount != seekValueCount || blockOffset != seekValueBlockOffset) {
