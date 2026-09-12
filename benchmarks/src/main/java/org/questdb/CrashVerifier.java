@@ -553,10 +553,8 @@ public class CrashVerifier {
     }
 
     /**
-     * Bit-check every row 0..count-1 against the deterministic CrashIngestWriter formulas. Returns the
-     * consistent row count; prints SILENT_CORRUPTION and exits (2) on the first wrong value / gap.
+     * The profile's extra columns, appended to the oracle's projection (empty when it has none).
      */
-    /** The profile's extra columns, appended to the oracle's projection (empty when it has none). */
     private static String payloadColumns() {
         switch (CrashIngestWriter.PROFILE) {
             case "varchar":
@@ -614,6 +612,10 @@ public class CrashVerifier {
         }
     }
 
+    /**
+     * Bit-check every row 0..count-1 against the deterministic CrashIngestWriter formulas. Returns the
+     * consistent row count; prints SILENT_CORRUPTION and exits (2) on the first wrong value / gap.
+     */
     private static long bitCheckRows(CairoEngine engine, SqlExecutionContextImpl ctx, String[] SYMBOLS) throws SqlException {
         return bitCheckRows(engine, ctx, SYMBOLS, CrashIngestWriter.TABLE_NAME);
     }
