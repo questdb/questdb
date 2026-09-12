@@ -97,6 +97,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -15249,13 +15250,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Decides whether the WAL-loss re-derive must refuse outright because the base's applied
-     * metadata no longer resolves every column the view REFERENCES under the same name AND type
-     * ({@link LiveViewInstance#findFirstMissingOrRetypedColumn}, the same predicate
+     * Decides whether a rebuild from the applied base must refuse outright because the base's
+     * applied metadata no longer resolves every column the view REFERENCES under the same name AND
+     * type ({@link LiveViewInstance#findFirstMissingOrRetypedColumn}, the same predicate
      * {@code invalidateLiveViewsForBaseSchemaChange} invalidates on). Rebuilding across a dropped,
      * renamed or retyped referenced column would recompute the view over the NEW schema and commit
      * the result as if nothing happened, converting a loud, correct invalidation into silently wrong
      * output.
+     * <p>
+     * Both rebuilds that recompile ask it: {@link #rederiveFromAppliedBaseAfterWalLoss}, whose base
+     * WAL is gone for good, and {@link #recoverFromBaseMetadataDrift}, whose whole job is to adopt
+     * the metadata the base moved to. The drift recovery is the one an ordinary ALTER reaches:
+     * {@code ApplyWal2TableJob} applies a structural change to the base writer BEFORE it calls
+     * {@code invalidateLiveViewsForBaseSchemaChange}, so a refresh cycle that drifts inside that
+     * window recompiles against the broken schema with nothing having marked the view yet.
      * <p>
      * Reads the base metadata FRESH on every call, so
      * {@link #rederiveFromAppliedBaseAfterWalLoss} can ask both before the replay and again after a
@@ -15278,12 +15286,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * outside the guarded region rather than inside a try-with-resources.
      * <p>
      * On refusal, stashes the offending column name as the pending invalidation reason, which
-     * {@link #handleRefreshFailure} invalidates with, so {@code live_views().invalidation_reason}
-     * names the broken dependency exactly as the apply-side invalidation does.
+     * {@code refreshInstance} drains and invalidates with (and which
+     * {@link #handleRefreshFailure} prefers over its own budget message), so
+     * {@code live_views().invalidation_reason} names the broken dependency exactly as the
+     * apply-side invalidation does.
      *
-     * @return true when the caller must abandon the re-derive and let the view invalidate
+     * @return true when the caller must abandon the rebuild and let the view invalidate
      */
-    private boolean isRederiveRefusedForBrokenDependency(LiveViewInstance instance, TableToken baseToken, CairoException cause) {
+    private boolean isRederiveRefusedForBrokenDependency(LiveViewInstance instance, TableToken baseToken, FlyweightMessageContainer cause) {
         final String viewName = instance.getDefinition().getViewName();
         final String brokenColumn;
         TableMetadata baseMetadata = null;
@@ -15353,10 +15363,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     {@code refreshedUpToSeqTxn} is pinned back to {@code lastProcessedSeqTxn}
      *     so no phantom lead survives.</li>
      * </ul>
+     * Refuses both of them, before it frees anything, when the base's applied metadata no
+     * longer resolves a column the view REFERENCES under the same name and type
+     * ({@link #isRederiveRefusedForBrokenDependency}): the recompile would adopt the broken
+     * schema and republish the view's whole history from it.
+     * <p>
      * Returns {@code null} when recovery completed (or was re-armed for the next
-     * tick); otherwise the error the recovery replay failed with, which the caller
-     * feeds into the standard flush-retry accounting - and, for the ACTIVE rebuild,
-     * the window-state debt that error leaves behind.
+     * tick, or refused as above); otherwise the error the recovery replay failed with, which
+     * the caller feeds into the standard flush-retry accounting - and, for the ACTIVE rebuild,
+     * the window-state debt that error leaves behind. A refusal returns {@code null} with a
+     * pending invalidation reason stashed on the instance, which {@code refreshInstance} drains
+     * and invalidates with on the same turn, so the caller must not read {@code null} alone as
+     * "the view recovered" - {@link LiveViewInstance#hasPendingInvalidationReason()} tells the
+     * two apart.
      * <p>
      * Only an out-of-order correction reaches here on an ACTIVE view's ordinary path.
      * The raw-WAL forward drain reconciles the segment against the compiled base-scan
@@ -15367,8 +15386,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@link LiveViewRefreshSqlExecutionContext#getReader(TableToken, long)} refuses a
      * pinned reader whose version has moved.
      */
-    private Throwable recoverFromBaseMetadataDrift(LiveViewInstance instance) {
+    private Throwable recoverFromBaseMetadataDrift(LiveViewInstance instance, FlyweightMessageContainer cause) {
         final String viewName = instance.getDefinition().getViewName();
+        final TableToken baseToken = instance.getDefinition().getBaseTableToken();
+        // The recompile this recovery exists for adopts whatever schema the base moved to, and both
+        // branches below then recompute the view under it: the ACTIVE rebuild rewrites the whole
+        // durable tier with one REPLACE_RANGE, and the re-armed sweep re-sweeps from offset zero.
+        // A dropped, renamed or retyped REFERENCED column turns that into the silently wrong
+        // output the apply side's loud invalidation exists to prevent, so ask the same question the
+        // WAL-loss re-derive asks - and ask it before touching anything,
+        // prepareForBaseSchemaRecompile included: a refusal has no use for a recompile, and leaving
+        // the artifacts alone keeps the view serving its pre-drift rows until the invalidation
+        // lands.
+        //
+        // This is not the corner it reads as. ApplyWal2TableJob applies a structural change to the
+        // base writer BEFORE it calls invalidateLiveViewsForBaseSchemaChange, and the drift is
+        // raised by the very reader open that follows the change - so a refresh cycle inside that
+        // window reaches here with nothing having marked the view yet. What bounds the residue is
+        // the apply side landing microseconds later, exactly as the WAL-loss path documents; that
+        // marks the view invalid, and an invalid view stays queryable, so without the refusal the
+        // rows an operator reads off it are the ones the new schema produced.
+        //
+        // A null base token (the definition has not resolved one) skips the ask, like every other
+        // unreadable-base case: an unreadable base is a doubt, not a decision.
+        if (baseToken != null && isRederiveRefusedForBrokenDependency(instance, baseToken, cause)) {
+            return null;
+        }
         instance.prepareForBaseSchemaRecompile();
         if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
             // The recompiled factory expects the base's NEW metadata; the pinned base
@@ -15539,7 +15582,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // and the recovery's prepareForBaseSchemaRecompile() closes artifacts, which this
                 // file documents can throw. Catch it here so the refusal outcome is the same one the
                 // trailing catch (Throwable) would have produced.
-                recompiledError = recoverFromBaseMetadataDrift(instance);
+                recompiledError = recoverFromBaseMetadataDrift(instance, drift);
             } catch (Throwable recoveryFailure) {
                 LOG.error().$("live view could not re-derive from the applied base after base WAL loss [view=")
                         .$(viewName)
@@ -15550,6 +15593,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 LOG.error().$("live view could not re-derive from the applied base after base WAL loss [view=")
                         .$(viewName)
                         .$(", error=").$(recompiledError).I$();
+                return false;
+            }
+            if (instance.hasPendingInvalidationReason()) {
+                // The recovery asks the same broken-dependency question on its own account, against
+                // metadata it reads again. The ask above normally answers for both - they sit one
+                // log line apart - so this covers only a change landing inside that gap, where the
+                // recovery refused and returned null. Reporting a re-derive here would claim a
+                // recovery that did not happen and tick the recompile counter for it; the caller's
+                // budget branch invalidates with the stashed reason either way.
                 return false;
             }
             // The recompiled retry is the only thing separating this outcome from the plain success
@@ -16072,7 +16124,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(instance.getDefinition().getViewName()).I$();
             return null;
         }
-        if (t instanceof TableReferenceOutOfDateException) {
+        if (t instanceof TableReferenceOutOfDateException drift) {
             // The base table's metadata version drifted from the cached compiled factory:
             // a schema change that does not touch the view's referenced columns keeps the
             // view valid by design (invalidateLiveViewsForBaseSchemaChange leaves it
@@ -16080,8 +16132,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // reader's column layout, so LiveViewRefreshSqlExecutionContext.getReader
             // refused to serve the mismatched reader. Not a refresh failure: recompile
             // and rebuild instead of counting toward the invalidation budget.
-            t = recoverFromBaseMetadataDrift(instance);
+            t = recoverFromBaseMetadataDrift(instance, drift);
             if (t == null) {
+                // Recovered, re-armed, or refused for a broken dependency - the last of which
+                // leaves a pending invalidation reason that refreshInstance drains and
+                // invalidates with the moment this returns, naming the column that broke.
+                return null;
+            }
+            if (t instanceof CairoException driftCancelled && driftCancelled.isCancellation()) {
+                // Re-test after the reassignment, exactly as the mid-drain rebuild below does and
+                // for the same reason: the recovery's replay consults the same breaker, so a
+                // shutdown, a DROP, or the apply-side invalidation that raced this very drift
+                // surfaces here rather than at the guard above. Counting it toward the flush-retry
+                // budget is what that guard exists to prevent - it would invalidate a view durably
+                // on the way down, or bury the apply side's column-naming reason under this
+                // method's generic budget message.
+                LOG.info().$("live view refresh cancelled during metadata-drift rebuild [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", dropped=").$(instance.isDropped())
+                        .$(", invalid=").$(instance.isInvalid()).I$();
                 return null;
             }
             // The recovery replay itself failed; account for THAT error below.

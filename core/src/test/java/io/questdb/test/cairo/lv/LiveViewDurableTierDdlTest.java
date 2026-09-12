@@ -55,6 +55,7 @@ import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.Job;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
@@ -97,8 +98,10 @@ import java.util.function.BooleanSupplier;
  * leaves behind when its time quota stops it part-way, and the replacement of an out-of-order
  * repair or of a wholesale applied-base rebuild that did not land - whether that rebuild came from
  * a mid-drain failure, from a base metadata change, or from a base WAL segment that has gone for
- * good - plus which shape reaches the metadata-change recovery at all and what its own failure
- * leaves the view owing. Replica propagation belongs to a later stage.
+ * good - plus which shape reaches the metadata-change recovery at all, what its own failure leaves
+ * the view owing, what it does with a base column the view reads that a concurrent ALTER broke
+ * before anything marked the view, and what a cancellation arriving mid-rebuild does to the
+ * flush-retry budget. Replica propagation belongs to a later stage.
  */
 public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
@@ -5210,6 +5213,105 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testDriftRebuildCancelledMidFlightIsNotChargedToTheRetryBudget() throws Exception {
+        // The drift branch of handleRefreshFailure reassigns its error to whatever the recovery
+        // returned and then walks straight into the flush-retry accounting, with no re-test of the
+        // guard the method opens with. The mid-drain rebuild below it re-tests after the very same
+        // reassignment, and says why: the recovery's replay consults the same circuit breaker, so a
+        // shutdown, a DROP, or an invalidation that arrives mid-rebuild leaves through it as a
+        // cancellation rather than as a refresh fault - and charging one to the budget is how a
+        // shutdown that caught several views mid-scan invalidates them durably on the way down.
+        //
+        // The fixture takes the third of those, because it is the one that races this recovery by
+        // construction: an UPDATE applied to the base invalidates every dependent view
+        // (ApplyWal2TableJob's UpdateOperation.MAT_VIEW_INVALIDATION_REASON arm), and the drift
+        // recovery's rebuild is a single unlocalized replay over the whole view with no turn budget,
+        // so it is the longest window a concurrent applier has to land inside. The hook makes that
+        // call itself, at a base column file the rebuild opens - the same call the applier makes,
+        // placed rather than raced.
+        //
+        // What the charge costs is the diagnostic: the budget's own message overwrites the reason
+        // the invalidation just wrote, so live_views().invalidation_reason reads 'flush retry budget
+        // exhausted' for a view an UPDATE invalidated. A retry max of 1 makes that outcome the first
+        // failure's, rather than the fifth's; a breaker throttle of 0 makes the replay consult the
+        // breaker on every row rather than once per window, so the cancellation is the rebuild's
+        // and not a later turn's.
+        final String[] baseDir = new String[1];
+        // -1 disarmed; 0 invalidate at the next base partition x.d read and disarm.
+        final AtomicInteger armBaseRead = new AtomicInteger(-1);
+        setProperty(PropertyKey.CIRCUIT_BREAKER_THROTTLE, 0);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 1);
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armBaseRead.get() == 0
+                        && baseDir[0] != null
+                        && Utf8s.containsAscii(name, baseDir[0])
+                        && !Utf8s.containsAscii(name, "wal")
+                        && Utf8s.containsAscii(name, "2026-04-01")
+                        && Utf8s.endsWithAscii(name, "x.d")) {
+                    armBaseRead.set(-1);
+                    engine.invalidateLiveViewsForBaseTable(
+                            engine.verifyTableName("base"),
+                            UpdateOperation.MAT_VIEW_INVALIDATION_REASON
+                    );
+                }
+                return super.openRO(name);
+            }
+        }, () -> {
+            createMidDrainBaseAndView();
+            baseDir[0] = engine.verifyTableName("base").getDirName();
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'a', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' is not registered", instance);
+
+                // The view reads ts, sym and x, so the added column leaves it valid and moves the
+                // base metadata version past the factory - the route
+                // testBaseMetadataDriftRecoveryTakesTheCorrectionAndNotTheForwardCommit pins.
+                execute("ALTER TABLE base ADD COLUMN extra DOUBLE");
+                drainWalQueue();
+
+                capture.start();
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:03.000000Z', 'a', 4)");
+                drainWalQueue();
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:01.000000Z', 'a', 2)");
+                drainWalQueue();
+
+                armBaseRead.set(0);
+                for (int i = 0; i < 64 && armBaseRead.get() >= 0; i++) {
+                    job.run();
+                }
+                Assert.assertEquals("the rebuild's base read must actually have been reached",
+                        -1, armBaseRead.get());
+                capture.drain();
+                capture.assertLogged("live view refresh cancelled during metadata-drift rebuild [view=lv");
+                Assert.assertTrue("the concurrent invalidation must have marked the view",
+                        instance.isInvalid());
+                // The reason the invalidation wrote, not the budget's. Both producers end with the
+                // view invalid, so only the string tells them apart.
+                TestUtils.assertContains(
+                        instance.getInvalidationReason(),
+                        UpdateOperation.MAT_VIEW_INVALIDATION_REASON
+                );
+                Assert.assertEquals(
+                        "a cancellation must not reach the flush-retry budget",
+                        0,
+                        instance.getFlushRetryCount()
+                );
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
     public void testDriftRebuildWhoseReplacementDidNotApplyRepeatsItOnceItLands() throws Exception {
         // The second of the three callers that rebuild the whole window state from the applied base
         // and hand the result to the reconciliation gate. The mid-drain one is pinned above; this is
@@ -5372,6 +5474,95 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                                 2026-04-01T00:00:02.000000Z\ta\t3\t6.0
                                 2026-04-01T00:00:03.000000Z\ta\t4\t10.0
                                 2026-04-01T00:00:04.000000Z\ta\t5\t15.0
+                                """);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testDriftRecoveryRefusesARetypedReferencedColumn() throws Exception {
+        // The drift recovery recompiles against whatever the base moved to and then republishes the
+        // view's whole history from it - and it asked nothing about what moved. The WAL-loss
+        // re-derive asks twice before it rebuilds, because a dropped, renamed or retyped REFERENCED
+        // column makes that rebuild recompute the view over a schema its query was never created
+        // against and commit the result as if nothing happened. This recovery is the one an ordinary
+        // ALTER reaches, and it had no such check.
+        //
+        // The window is the one the WAL-loss path documents and ApplyWal2TableJob really opens: it
+        // applies a structural change to the base writer BEFORE it calls
+        // invalidateLiveViewsForBaseSchemaChange, and the drift is raised by the reader open that
+        // follows the change. The retype here lands while the instance is off the fan-out index, so
+        // the apply-side invalidation misses it exactly as it would while it is still a few
+        // instructions away from running - and, unlike a thread racing the drive, the outcome is not
+        // decided by timing. The instance keeps the factory it compiled against x INT.
+        //
+        // Measured on this fixture with the refusal reverted: the recompile succeeds (sum(x) is
+        // DOUBLE over INT and over LONG alike), the rebuild rewrites the whole tier through it, the
+        // view stays VALID with one refresh fault and its x column reads 1, 3, 0 for rows whose base
+        // values are 1, 2, 3. The refusal is what turns that into the invalidation the apply side
+        // was microseconds from writing anyway, naming the same column.
+        assertMemoryLeak(() -> {
+            createMidDrainBaseAndView();
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("""
+                        INSERT INTO base VALUES
+                        ('2026-04-01T00:00:00.000000Z', 'a', 1),
+                        ('2026-04-01T00:00:02.000000Z', 'a', 3)""");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' is not registered", instance);
+
+                Assert.assertSame(instance, engine.getLiveViewRegistry().removeView("lv"));
+                execute("ALTER TABLE base ALTER COLUMN x TYPE LONG");
+                drainWalQueue();
+                engine.getLiveViewRegistry().registerView(instance);
+                Assert.assertFalse(
+                        "the apply-side invalidation must have missed the unregistered view",
+                        instance.isInvalid()
+                );
+
+                capture.start();
+                setCurrentMicros(4_000_000L);
+                // The out-of-order correction: the one shape that reaches the recovery on an ACTIVE
+                // view's ordinary path.
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:01.000000Z', 'a', 2)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                capture.drain();
+                capture.assertLogged("live view cannot re-derive from the applied base across a base "
+                        + "schema change to a referenced column [view=lv, column=x");
+                capture.assertNotLogged(
+                        "live view recomputed window state from applied base [view=lv, cause=base table metadata change]");
+                Assert.assertTrue("a broken referenced column must invalidate the view", instance.isInvalid());
+                // The full guard string: the apply-side invalidation emits "[column=x]" under its own
+                // prefix, so the suffix alone would pass whichever producer marked the view.
+                TestUtils.assertContains(
+                        instance.getInvalidationReason(),
+                        "base schema change to a referenced column [column=x]"
+                );
+                Assert.assertEquals("the correction must fault exactly once, on the drift",
+                        1, instance.getRefreshFaultCount());
+
+                // An invalid view stays queryable, which is why the rows matter: these are the ones
+                // the old schema produced, untouched by a rebuild that never ran. The correction is
+                // not among them - the view stopped refreshing before it could take it.
+                Assert.assertEquals(2, instance.getLvRowsTotal());
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-04-01T00:00:00.000000Z\ta\t1\t1.0
+                                2026-04-01T00:00:02.000000Z\ta\t3\t4.0
                                 """);
             } finally {
                 capture.stop();
