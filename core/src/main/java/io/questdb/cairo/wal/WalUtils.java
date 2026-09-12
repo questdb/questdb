@@ -697,6 +697,206 @@ public class WalUtils {
                 || Chars.startsWith(name, WAL_NAME_BASE);
     }
 
+    /**
+     * A surgical alternative to invalidating a materialized view that a crash left AHEAD of its base.
+     *
+     * <p>Today a view whose {@code lastRefreshBaseTxn} exceeds the base's recovered txn is invalidated
+     * wholesale, so it serves nothing until a FULL refresh rebuilds it. That is correct but expensive:
+     * on a large view a crash that discards a handful of at-risk base txns costs a complete rebuild.
+     *
+     * <p>It is avoidable because every mat-view WAL commit records BOTH the base txn it derived from
+     * ({@link WalEventCursor.MatViewDataInfo#getLastRefreshBaseTableTxn()}) and the timestamp range it
+     * replaced. So the view's WAL is a log of (data, covering base txn) pairs, and the txns to undo are
+     * exactly those recorded above the surviving base txn.
+     *
+     * <p>INVARIANT this relies on: a view txn recorded with {@code baseTxn = N} was refreshed against a
+     * reader FIXED at applied base txn N (see MatViewRefreshJob's {@code engine.detachReader}), so it can
+     * only contain data derivable from base txns &lt;= N. Discarding exactly the txns with
+     * {@code baseTxn > cut} therefore leaves the view consistent with the base -- independently of WHAT
+     * those txns wrote, which is why this also covers O3 late data that a refresh-bound clamp cannot.
+     *
+     * <p>Walks the view's own sequencer transaction log BACKWARDS (same traversal as
+     * {@link #readMatViewState}), unioning the replaced ranges of every txn above the cut and stopping at
+     * the first txn at or below it. Returns false when the range cannot be bounded -- an unreadable event,
+     * an invalidation already in the log, or a log exhausted without reaching the cut -- and the caller
+     * must then fall back to invalidation. Never throws: a failed scan degrades to today's behaviour.
+     *
+     * @param baseTxnCut the base table's recovered txn; view txns recorded above this must be undone
+     * @param plan       out-parameter, populated only when this returns true
+     */
+    public static boolean findMatViewRepairPlan(
+            Path tablePath,
+            CairoConfiguration configuration,
+            MemoryCMR txnLogMemory,
+            WalEventReader walEventReader,
+            long baseTxnCut,
+            MatViewRepairPlan plan
+    ) {
+        plan.clear();
+        try (MemoryCMR mem = txnLogMemory) {
+            final int tablePathLen = tablePath.size();
+            mem.smallFile(configuration.getFilesFacade(), tablePath.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_TX_LOG);
+            if (mem.size() < TableTransactionLogFile.HEADER_SIZE) {
+                return false;
+            }
+            final int formatVersion = mem.getInt(TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET);
+            if (formatVersion == WAL_SEQUENCER_FORMAT_VERSION_V1) {
+                final long txnCount = mem.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+                if (txnCount <= 0 || mem.size() < TableTransactionLogFile.HEADER_SIZE + txnCount * TableTransactionLogV1.RECORD_SIZE) {
+                    return false;
+                }
+                for (long txn = txnCount - 1; txn >= 0; txn--) {
+                    final long offset = TableTransactionLogFile.HEADER_SIZE + txn * TableTransactionLogV1.RECORD_SIZE;
+                    final int verdict = inspectRepairTxn(mem, offset, tablePath, tablePathLen, walEventReader, baseTxnCut, plan);
+                    if (verdict != REPAIR_SCAN_CONTINUE) {
+                        return verdict == REPAIR_SCAN_DONE;
+                    }
+                }
+                return false;
+            }
+            if (formatVersion == WAL_SEQUENCER_FORMAT_VERSION_V2) {
+                final long txnCount = mem.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+                final long partSize = mem.getInt(TableTransactionLogFile.HEADER_SEQ_PART_SIZE_32);
+                if (txnCount <= 0 || partSize <= 0) {
+                    return false;
+                }
+                final long partCount = (txnCount + partSize - 1) / partSize;
+                try (MemoryCMR partMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())) {
+                    for (long part = partCount - 1; part >= 0; part--) {
+                        tablePath.trimTo(tablePathLen).concat(SEQ_DIR).concat(TXNLOG_PARTS_DIR).slash().put(part);
+                        partMem.smallFile(configuration.getFilesFacade(), tablePath.$(), MemoryTag.MMAP_TX_LOG);
+                        final long partTxnCount = Math.min(partSize, txnCount - part * partSize);
+                        for (long txn = partTxnCount - 1; txn >= 0; txn--) {
+                            final long offset = txn * TableTransactionLogV2.RECORD_SIZE;
+                            final int verdict = inspectRepairTxn(partMem, offset, tablePath, tablePathLen, walEventReader, baseTxnCut, plan);
+                            if (verdict != REPAIR_SCAN_CONTINUE) {
+                                return verdict == REPAIR_SCAN_DONE;
+                            }
+                        }
+                    }
+                }
+                return false;
+            }
+            return false;
+        } catch (Throwable th) {
+            // A repair is an OPTIMISATION over invalidation; it must never turn a recoverable
+            // database into a failed boot. Any scan failure degrades to the caller's fallback.
+            return false;
+        }
+    }
+
+    private static final int REPAIR_SCAN_CONTINUE = 0;
+    private static final int REPAIR_SCAN_DONE = 1;
+    private static final int REPAIR_SCAN_ABORT = 2;
+
+    /**
+     * One step of {@link #findMatViewRepairPlan}'s backward walk. Deliberately does NOT close
+     * {@code walEventReader} (unlike {@link #processTransaction}, which consumes it in a
+     * try-with-resources because it only ever reads ONE transaction) -- this scan reads many.
+     */
+    private static int inspectRepairTxn(
+            MemoryCMR mem,
+            long offset,
+            Path tablePath,
+            int tablePathLen,
+            WalEventReader walEventReader,
+            long baseTxnCut,
+            MatViewRepairPlan plan
+    ) {
+        final int walId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET);
+        final int segmentId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_OFFSET);
+        final int segmentTxn = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_TXN_OFFSET);
+        if (walId <= 0) {
+            plan.abortReason = "walId<=0 (" + walId + ")";
+            return REPAIR_SCAN_ABORT;
+        }
+        tablePath.trimTo(tablePathLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+        // MUST close between reads. WalEventReader documents itself as "re-usable AFTER close"
+        // and readMatViewState honours that with a try-with-resources per call -- it only ever
+        // reads one txn. Calling of() twice WITHOUT closing does not reposition the cursor: the
+        // second read returns the FIRST record's payload under a garbage type. Reproduced on a
+        // clean, never-crashed database: every cut reported the same "INVALIDATE ... baseTxn=8793
+        // reason=''" -- baseTxn identical to the newest txn, which is what gave it away.
+        final WalEventCursor cursor;
+        try {
+            walEventReader.close();
+            cursor = walEventReader.of(tablePath, segmentTxn);
+        } catch (Throwable th) {
+            plan.abortReason = "event open failed: " + th.getMessage();
+            return REPAIR_SCAN_ABORT;
+        }
+        if (cursor.getType() == MAT_VIEW_INVALIDATE) {
+            // MAT_VIEW_INVALIDATE is a DUAL-PURPOSE state record, not necessarily an invalidation:
+            // WalWriter.resetMatViewState "marks the materialized view as invalid OR RESETS its
+            // invalidation status, depending on the input values", and every refresh writes one with
+            // invalid=false to carry its refresh intervals. The view's WAL therefore alternates
+            // MAT_VIEW_DATA / MAT_VIEW_INVALIDATE, and branching on the TYPE aborted this scan one txn
+            // in, every time -- on crash states AND on a clean database that never invalidated anything.
+            // Branch on the FLAG.
+            final WalEventCursor.MatViewInvalidationInfo inv = cursor.getMatViewInvalidationInfo();
+            if (inv.isInvalid()) {
+                plan.abortReason = "genuine invalidation at segmentTxn=" + segmentTxn
+                        + " reason='" + inv.getInvalidationReason() + "'";
+                return REPAIR_SCAN_ABORT;
+            }
+            // A state record carries no rows of its own; the DATA txn beside it already accounts for
+            // them. Skip it, but let its watermark close the scan when it is at or below the cut.
+            if (inv.getLastRefreshBaseTableTxn() <= baseTxnCut && plan.txnsAboveCut > 0) {
+                plan.cutBaseTxn = inv.getLastRefreshBaseTableTxn();
+                return REPAIR_SCAN_DONE;
+            }
+            return REPAIR_SCAN_CONTINUE;
+        }
+        if (cursor.getType() != MAT_VIEW_DATA) {
+            plan.abortReason = "event type=" + cursor.getType() + " (not MAT_VIEW_DATA) at segmentTxn=" + segmentTxn;
+            return REPAIR_SCAN_ABORT;
+        }
+        final WalEventCursor.MatViewDataInfo info = cursor.getMatViewDataInfo();
+        final long baseTxn = info.getLastRefreshBaseTableTxn();
+        if (baseTxn <= baseTxnCut) {
+            plan.cutBaseTxn = baseTxn;
+            if (plan.txnsAboveCut == 0) {
+                plan.abortReason = "newest txn already at/below cut";
+                return REPAIR_SCAN_ABORT;
+            }
+            return REPAIR_SCAN_DONE;
+        }
+        long lo = info.getReplaceRangeTsLow();
+        long hi = info.getReplaceRangeTsHi();
+        if (lo >= hi) {
+            // No replace range recorded (e.g. a watermark-only commit): fall back to the data range.
+            lo = info.getMinTimestamp();
+            hi = info.getMaxTimestamp();
+        }
+        if (lo <= hi) {
+            plan.rangeLo = Math.min(plan.rangeLo, lo);
+            plan.rangeHi = Math.max(plan.rangeHi, hi);
+        }
+        plan.txnsAboveCut++;
+        return REPAIR_SCAN_CONTINUE;
+    }
+
+    /** Out-parameter for {@link #findMatViewRepairPlan}. */
+    public static class MatViewRepairPlan {
+        public String abortReason = "none";
+        public long cutBaseTxn = -1;
+        public long rangeHi = Long.MIN_VALUE;
+        public long rangeLo = Long.MAX_VALUE;
+        public int txnsAboveCut;
+
+        public void clear() {
+            abortReason = "none";
+            cutBaseTxn = -1;
+            rangeLo = Long.MAX_VALUE;
+            rangeHi = Long.MIN_VALUE;
+            txnsAboveCut = 0;
+        }
+
+        public boolean hasRange() {
+            return rangeLo <= rangeHi;
+        }
+    }
+
     private static boolean processTransaction(
             MemoryCMR mem,
             long offset,

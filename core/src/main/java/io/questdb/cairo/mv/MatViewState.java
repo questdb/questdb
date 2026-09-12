@@ -750,6 +750,46 @@ public class MatViewState implements QuietCloseable {
         telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
     }
 
+    /**
+     * Reason string marking an invalidation that a SURGICAL REPAIR can clear. A crash can leave a
+     * view holding aggregates for base txns the RPO window discarded; rather than forcing a FULL
+     * rebuild, the view is invalidated with THIS reason (so nothing stale is ever served -- the
+     * fail-safe direction) and a RANGE refresh recomputes only the affected window, then clears it.
+     * <p>
+     * Durable: it is persisted as the invalidation reason, so a crash DURING a repair is re-detected
+     * on the next load and the repair re-planned. In-memory {@link #repairPending} is what the
+     * refresh job consults, because {@link #markAsInvalid} does not retain the reason.
+     */
+    public static final String REPAIR_PENDING_REASON = "surgical repair pending";
+    private volatile boolean repairPending;
+    private volatile long repairRangeHi = Numbers.LONG_NULL;
+    private volatile long repairRangeLo = Numbers.LONG_NULL;
+
+    public void clearRepairPending() {
+        repairPending = false;
+        repairRangeLo = Numbers.LONG_NULL;
+        repairRangeHi = Numbers.LONG_NULL;
+    }
+
+    public long getRepairRangeHi() {
+        return repairRangeHi;
+    }
+
+    public long getRepairRangeLo() {
+        return repairRangeLo;
+    }
+
+    public boolean isRepairPending() {
+        return repairPending;
+    }
+
+    /** Arms a surgical repair over [lo, hi]; the view stays INVALID until the range refresh clears it. */
+    public void markRepairPending(long lo, long hi) {
+        repairRangeLo = lo;
+        repairRangeHi = hi;
+        repairPending = true;
+    }
+
     public void markAsInvalid(CharSequence invalidationReason) {
         if (!invalid) {
             telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, invalidationReason, 0);

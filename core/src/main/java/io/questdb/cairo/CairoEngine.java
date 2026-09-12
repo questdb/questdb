@@ -4489,6 +4489,31 @@ public class CairoEngine implements Closeable, WriterSource {
      * created so a freshly built store on promote is populated; when false, only a brand-new graph
      * entry gets its state created (the boot semantics).
      */
+    /**
+     * Plans a surgical repair for a materialized view left AHEAD of its base by a crash: which
+     * timestamp window the stranded view transactions touched, and which base txn to resume from.
+     * Returns false when the window cannot be bounded, in which case the caller must fall back to
+     * invalidation (a full rebuild). Never throws -- a repair is an optimisation over a behaviour
+     * that is already correct, so any failure degrades to that behaviour.
+     */
+    private boolean planMatViewRepair(TableToken viewToken, long baseTableLastTxn, WalUtils.MatViewRepairPlan plan) {
+        try (Path repairPath = new Path().of(configuration.getDbRoot())) {
+            repairPath.concat(viewToken);
+            return WalUtils.findMatViewRepairPlan(
+                    repairPath,
+                    configuration,
+                    Vm.getCMRInstance(configuration.getBypassWalFdCache()),
+                    new WalEventReader(configuration),
+                    baseTableLastTxn,
+                    plan
+            ) && plan.hasRange();
+        } catch (Throwable th) {
+            LOG.info().$("mat view repair planning failed [view=").$(viewToken)
+                    .$(", err=").$safe(th.getMessage()).I$();
+            return false;
+        }
+    }
+
     private void loadMatViewIntoStore(
             MatViewStateStore target,
             TableToken tableToken,
@@ -4568,6 +4593,24 @@ public class CairoEngine implements Closeable, WriterSource {
 
                 state.initFromReader(matViewStateReader);
                 if (state.isInvalid()) {
+                    // A crash DURING a surgical repair leaves the view invalid with this reason and
+                    // the in-memory arming lost. Re-plan and re-arm so the repair still completes;
+                    // until it does the view stays invalid, which is the fail-safe direction.
+                    if (Chars.equalsNc(MatViewState.REPAIR_PENDING_REASON, matViewStateReader.getInvalidationReason())) {
+                        final long baseTxnForRepair = getTableSequencerAPI().lastTxn(
+                                tableNameRegistry.getTableToken(viewDefinition.getBaseTableName()));
+                        final WalUtils.MatViewRepairPlan rearm = new WalUtils.MatViewRepairPlan();
+                        if (planMatViewRepair(tableToken, baseTxnForRepair, rearm)) {
+                            state.markRepairPending(rearm.rangeLo, rearm.rangeHi);
+                            state.setLastRefreshBaseTableTxn(rearm.cutBaseTxn);
+                            target.enqueueRangeRefresh(tableToken, rearm.rangeLo, rearm.rangeHi);
+                            LOG.info().$("mat view repair RE-ARMED after restart [view=").$(tableToken)
+                                    .$(", rangeLo=").$ts(rearm.rangeLo).$(", rangeHi=").$ts(rearm.rangeHi).I$();
+                        } else {
+                            LOG.info().$("mat view repair cannot be re-armed, full refresh required [view=")
+                                    .$(tableToken).I$();
+                        }
+                    }
                     return;
                 }
                 long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
@@ -4578,6 +4621,31 @@ public class CairoEngine implements Closeable, WriterSource {
                             .$(", matViewBaseTxn=").$(state.getLastRefreshBaseTxn())
                             .$(", baseTableTxn=").$(baseTableLastTxn)
                             .I$();
+                    // SURGICAL REPAIR. A crash can leave the view holding aggregates for base txns
+                    // the RPO window legitimately discarded. Invalidating is correct but forces a FULL
+                    // rebuild of the whole view. Instead recompute ONLY the window the stranded txns
+                    // touched.
+                    //
+                    // FAIL-SAFE BY CONSTRUCTION: the view is invalidated FIRST (with the repair reason)
+                    // and only the range refresh clears it. If the repair never runs, never completes,
+                    // or the process dies mid-way, the view stays invalid -- exactly today's behaviour.
+                    // The repair can only ever IMPROVE on that; it cannot leave stale rows queryable.
+                    final WalUtils.MatViewRepairPlan repairPlan = new WalUtils.MatViewRepairPlan();
+                    if (planMatViewRepair(tableToken, baseTableLastTxn, repairPlan)) {
+                        state.setLastRefreshBaseTableTxn(repairPlan.cutBaseTxn);
+                        state.markRepairPending(repairPlan.rangeLo, repairPlan.rangeHi);
+                        LOG.info().$("materialized view is ahead of base table, repairing surgically [view=").$(tableToken)
+                                .$(", undoTxns=").$(repairPlan.txnsAboveCut)
+                                .$(", resumeFromBaseTxn=").$(repairPlan.cutBaseTxn)
+                                .$(", rangeLo=").$ts(repairPlan.rangeLo)
+                                .$(", rangeHi=").$ts(repairPlan.rangeHi)
+                                .I$();
+                        target.enqueueInvalidate(tableToken, MatViewState.REPAIR_PENDING_REASON);
+                        target.enqueueRangeRefresh(tableToken, repairPlan.rangeLo, repairPlan.rangeHi);
+                        return;
+                    }
+                    LOG.info().$("materialized view is ahead of base table and cannot be repaired surgically, "
+                            + "full refresh required [view=").$(tableToken).$(", why=").$safe(repairPlan.abortReason).I$();
                     target.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
                 } else if (state.getLastRefreshBaseTxn() > -1 && hasBaseTableTruncateInWalGap(baseTableToken, state.getLastRefreshBaseTxn(), baseTableLastTxn)) {
                     // A truncate in the base WAL gap (lastRefreshBaseTxn, baseTableLastTxn] carries no

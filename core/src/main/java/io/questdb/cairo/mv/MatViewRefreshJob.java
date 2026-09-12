@@ -2190,7 +2190,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final boolean periodRefresh = rangeFrom == Numbers.LONG_NULL;
 
         final MatViewState viewState = stateStore.getViewState(viewToken);
-        if (viewState == null || viewState.hasPendingInvalidationReason() || viewState.isInvalid() || viewState.isDropped()) {
+        // A SURGICAL REPAIR is the one case where a range refresh runs on an INVALID view: the view
+        // was deliberately invalidated so nothing stale is served while exactly this refresh
+        // recomputes the affected window. Any OTHER invalidation still blocks, so this cannot be
+        // used to resurrect a view that genuinely needs a full rebuild.
+        final boolean repairing = viewState != null && viewState.isRepairPending();
+        if (viewState == null || viewState.isDropped()
+                || (!repairing && (viewState.hasPendingInvalidationReason() || viewState.isInvalid()))) {
             return false;
         }
 
@@ -2249,6 +2255,21 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
 
+            if (repairing) {
+                // CLEAR THE WINDOW FIRST. The refresh's replace range is derived from the refresh
+                // INTERVALS, which only cover where the base still HAS data. After a crash rollback an
+                // hour can lose ALL of its base rows, so no interval covers it, the replace range skips
+                // it, and its stale bucket survives a "successful" refresh -- observed as a view marked
+                // VALID still holding 1600 rows for an hour the base no longer has. A zero-row
+                // replace-range commit over the whole repair window deletes it up front; the refresh
+                // below then repopulates whatever the recovered base actually supports.
+                //
+                // Safe to do first: the view is INVALID until the repair completes, so this
+                // intermediate emptied state is never served, and a crash here leaves the repair armed.
+                fencedCommitWithParams(walWriter, rangeFrom, rangeTo, WAL_DEDUP_MODE_REPLACE_RANGE);
+                LOG.info().$("mat view repair cleared window before recompute [view=").$(viewToken)
+                        .$(", from=").$ts(driver, rangeFrom).$(", to=").$ts(driver, rangeTo).I$();
+            }
             try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
                 // Operate SQL on a fixed reader that has known max transaction visible. The reader
                 // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
@@ -2269,6 +2290,26 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // Refresh completed without a retriable failure; clear any accumulated retry
                     // backoff and counter so a future transient error starts from a fresh budget.
                     viewState.resetRefreshRetry();
+                    if (repairing) {
+                        // The repair landed: the stranded window has been recomputed from the
+                        // recovered base, so the view is consistent again. Clear the invalidation
+                        // DURABLY (a state record with invalid=false) -- only now, and only on the
+                        // success path, so a failure anywhere above leaves the view invalid.
+                        fencedResetMatViewState(
+                                walWriter,
+                                viewState.getLastRefreshBaseTxn(),
+                                microsecondClock.getTicks(),
+                                false,
+                                null,
+                                viewState.getLastPeriodHi(),
+                                null,
+                                Numbers.LONG_NULL
+                        );
+                        viewState.markAsValid();
+                        viewState.clearRepairPending();
+                        LOG.info().$("materialized view surgically repaired, invalidation cleared [view=").$(viewToken)
+                                .$(", from=").$ts(driver, rangeFrom).$(", to=").$ts(driver, rangeTo).I$();
+                    }
                 } finally {
                     refreshSqlExecutionContext.clearReader();
                     engine.attachReader(baseTableReader);
