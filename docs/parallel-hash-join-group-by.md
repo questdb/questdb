@@ -1,10 +1,12 @@
 # Parallel hash join / group by: phase 0 contract
 
-[RFC 130](https://github.com/questdb/rfc/discussions/130), implementation task 1.
+[RFC 130](https://github.com/questdb/rfc/discussions/130), implementation tasks 1–2.
 
-This change defines eligibility and a comparison harness. It does not select a
-fused execution operator. Default SQL plans, configuration, and EXPLAIN output
-remain unchanged. `SqlCodeGenerator.getHashJoinGroupByCandidate()` is the entry
+Task 1 defines eligibility and a comparison harness. Task 2 adds the
+[immutable build boundary](parallel-hash-join-group-by-build.md), including its
+storage comparison. The [handoff](../PARALLEL_HASH_JOIN_HANDOFF.md) records completed
+work and the next task. Neither task selects a fused execution operator. Default
+SQL plans, configuration, and EXPLAIN output remain unchanged. `SqlCodeGenerator.getHashJoinGroupByCandidate()` is the entry
 point to call on an optimized GROUP BY model **before** `generateSubQuery()`
 constructs the ordinary join. Phase 1 construction and phase 1/task 6 planner
 selection will consume this contract.
@@ -62,8 +64,9 @@ freeze an owned dictionary and encode all payloads with that dictionary's keys;
 include the null key and an empty dictionary for empty-build outer joins. Do not
 retain transient source-record strings or source symbol IDs after the build cursor
 closes. The dictionary lives through aggregate output and final sorting. Task 2
-chooses the concrete storage layout; this payload/type/lifetime scope is fixed
-before that choice. Every build allocation, dictionary, duplicate link, slot map,
+implements this contract in `IntHashJoinBuild`: aligned native payloads, long
+duplicate offsets, and an owned UTF-16 dictionary with independent probe views.
+Every build allocation, dictionary, duplicate link, slot map,
 and simultaneous source/destination merge allocation must be tracked.
 
 ## Storage and cached-factory validity
