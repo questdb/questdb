@@ -32,6 +32,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -167,16 +168,23 @@ public class GroupByMapFragment implements QuietCloseable {
     }
 
     public void shard() {
+        shard(null);
+    }
+
+    public void shard(@Nullable SqlExecutionCircuitBreaker circuitBreaker) {
         if (sharded) {
             return;
         }
 
-        reopenShards();
+        reopenShards(circuitBreaker);
 
         if (map.size() > 0) {
             RecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
+                if (circuitBreaker != null) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
                 final long hashCode = record.keyHashCode();
                 final Map shard = getShardMap(hashCode);
                 MapKey shardKey = shard.withKey();
@@ -190,7 +198,7 @@ public class GroupByMapFragment implements QuietCloseable {
         sharded = true;
     }
 
-    private void reopenShards() {
+    private void reopenShards(@Nullable SqlExecutionCircuitBreaker circuitBreaker) {
         int size = shards.size();
         if (size == 0) {
             // Phase 1: create + register + bind tracker. No native allocation here, so the
@@ -203,10 +211,16 @@ public class GroupByMapFragment implements QuietCloseable {
             // Phase 2: open. The only place a per-query OOM can fire; on a breach the list is
             // already full (size == NUM_SHARDS), so reuse never indexes past the end.
             for (int i = 0; i < NUM_SHARDS; i++) {
+                if (circuitBreaker != null) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
                 shards.getQuick(i).reopen();
             }
         } else {
             for (int i = 0; i < NUM_SHARDS; i++) {
+                if (circuitBreaker != null) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
                 GroupByMapStats stats = shardStats.getQuick(i);
                 int keyCapacity = targetKeyCapacity(configuration, workerCount, stats, false);
                 long heapSize = targetHeapSize(configuration, workerCount, stats, false);

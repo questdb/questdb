@@ -33,6 +33,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
@@ -277,7 +278,7 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     @Override
-    public void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
+    public void merge(Map srcMap, MapValueMergeFunction mergeFunc, @Nullable SqlExecutionCircuitBreaker circuitBreaker) {
         assert this != srcMap;
         long srcSize = srcMap.size();
         if (srcSize == 0) {
@@ -305,6 +306,9 @@ public class Unordered8Map implements Map, Reopenable {
         // Then we handle all non-zero keys.
         OUTER:
         for (long srcAddr = src8Map.memStart; srcAddr < src8Map.memLimit; srcAddr += entrySize) {
+            if (circuitBreaker != null) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
             long key = Unsafe.getLong(srcAddr);
             if (key == 0) {
                 continue;

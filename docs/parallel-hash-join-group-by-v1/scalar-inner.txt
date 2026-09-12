@@ -1,0 +1,237 @@
+# data_directory=/tmp/hash-join-v1-4843311317140580314 (retained for inspection)
+# options={groups=scalar, revision=39c741ac73fd8e70bcbcec7314e137667b4c10fc+working-tree} defaults: rows=10000000 plants=100000 selected-keys=min(plants,10000) source-rows=plants*fanout fanout=1 key-domain=plants hot-percent=0 workers=4 concurrency=1 warmups=3 runs=10 repetitions=2 join=inner groups=low post-filter=none probe-storage=native build-storage=native memory-limit=0 interval=full seed=130
+# SQL
+select count(*) joined_rows, count(p.installed_kwp) non_null_capacity, sum(r.energy_kwh) energy, avg(r.irradiance_wm2) irradiance, sum(r.energy_kwh) / nullif(sum(p.installed_kwp),0) specific_yield from fact_solar_readings r inner join (select * from dim_plant where country in ('ES','IT')) p on r.plant_id=p.plant_id where r.reading_ts >= '2020-01-01' and r.reading_ts < '2025-01-01'
+Log configuration loaded from default internal file.
+2026-09-12T21:00:57.712595Z I i.q.c.t.t.InputFormatConfiguration loading input format config [resource=/text_loader.json]
+2026-09-12T21:00:57.762787Z A i.q.c.CairoEngine loading functions from /home/puzpuzpuz/projects/questdb/benchmarks/target/benchmarks.jar
+2026-09-12T21:00:58.120720Z A i.q.c.CairoEngine loaded 1118 functions
+2026-09-12T21:00:58.121031Z I i.q.g.FunctionFactoryCache loading functions [test=true]
+2026-09-12T21:00:58.192507Z I i.q.c.m.EngineMigration upgrading database [version=429]
+2026-09-12T21:00:58.193594Z I i.q.c.m.EngineMigration upgraded tables to 429
+2026-09-12T21:00:58.195070Z I i.q.c.TableNameRegistryStore reloading tables file [path=/tmp/hash-join-v1-4843311317140580314/tables.d.0, threadId=3]
+2026-09-12T21:00:58.197490Z I i.q.c.TableNameRegistryStore reloading tables file [path=/tmp/hash-join-v1-4843311317140580314/tables.d.0, threadId=3]
+2026-09-12T21:00:58.202370Z I i.q.m.WorkerPool worker pool configured [pool=hash-join-v1-benchmark, workers=4, mode=LEGACY]
+# generator
+create table dim_plant as (select cast((x-1)/1 as int) plant_id, cast(case when (x-1)/1 < 10000 then case when ((x-1)/1)%2=0 then 'ES' else 'IT' end else 'DE' end as symbol) country, rnd_int(1,800,0)/8.0 installed_kwp, timestamp_sequence('2020-01-01',1578528000) reading_ts from long_sequence(100000,130,131)) timestamp(reading_ts) partition by month bypass wal;
+create table fact_solar_readings as (select cast(rnd_long(0,99999,0) as int) plant_id, timestamp_sequence('2020-01-01',15785280) reading_ts, rnd_int(0,1023,0)/1024.0 energy_kwh, rnd_int(0,4095,0)/4.0 irradiance_wm2 from long_sequence(10000000,132,133)) timestamp(reading_ts) partition by month bypass wal;
+2026-09-12T21:00:58.295656Z I i.q.c.CairoEngine locked [table=dim_plant, thread=3]
+2026-09-12T21:00:58.346795Z I i.q.c.TableWriter open 'dim_plant'
+2026-09-12T21:00:58.356317Z I i.q.c.TableWriter switched partition [path=/dim_plant/2020-01, rowCount=0]
+2026-09-12T21:00:58.361136Z I i.q.c.TableWriter switched partition [path=/dim_plant/2020-02, rowCount=0]
+2026-09-12T21:00:58.363145Z I i.q.c.TableWriter switched partition [path=/dim_plant/2020-03, rowCount=0]
+2026-09-12T21:00:58.364527Z I i.q.c.TableWriter switched partition [path=/dim_plant/2020-04, rowCount=0]
+2026-09-12T21:00:58.365736Z I i.q.c.TableWriter switched partition [path=/dim_plant/2020-05, rowCount=0]
+2026-09-12T21:00:58.366965Z I i.q.c.TableWriter switched partition [path=/dim_plant/2020-06, rowCount=0]
+2026-09-12T21:00:58.368365Z I i.q.c.TableWriter switched partition [path=/dim_plant/2020-07, rowCount=0]
+2026-09-12T21:00:58.369432Z I i.q.c.TableWriter switched partition [path=/dim_plant/2020-08, rowCount=0]
+2026-09-12T21:00:58.370593Z I i.q.c.TableWriter switched partition [path=/dim_plant/2020-09, rowCount=0]
+2026-09-12T21:00:58.371498Z I i.q.c.TableWriter switched partition [path=/dim_plant/2020-10, rowCount=0]
+2026-09-12T21:00:58.372462Z I i.q.c.TableWriter switched partition [path=/dim_plant/2020-11, rowCount=0]
+2026-09-12T21:00:58.373326Z I i.q.c.TableWriter switched partition [path=/dim_plant/2020-12, rowCount=0]
+2026-09-12T21:00:58.374225Z I i.q.c.TableWriter switched partition [path=/dim_plant/2021-01, rowCount=0]
+2026-09-12T21:00:58.375146Z I i.q.c.TableWriter switched partition [path=/dim_plant/2021-02, rowCount=0]
+2026-09-12T21:00:58.376218Z I i.q.c.TableWriter switched partition [path=/dim_plant/2021-03, rowCount=0]
+2026-09-12T21:00:58.377082Z I i.q.c.TableWriter switched partition [path=/dim_plant/2021-04, rowCount=0]
+2026-09-12T21:00:58.377860Z I i.q.c.TableWriter switched partition [path=/dim_plant/2021-05, rowCount=0]
+2026-09-12T21:00:58.378642Z I i.q.c.TableWriter switched partition [path=/dim_plant/2021-06, rowCount=0]
+2026-09-12T21:00:58.379407Z I i.q.c.TableWriter switched partition [path=/dim_plant/2021-07, rowCount=0]
+2026-09-12T21:00:58.380171Z I i.q.c.TableWriter switched partition [path=/dim_plant/2021-08, rowCount=0]
+2026-09-12T21:00:58.380965Z I i.q.c.TableWriter switched partition [path=/dim_plant/2021-09, rowCount=0]
+2026-09-12T21:00:58.381727Z I i.q.c.TableWriter switched partition [path=/dim_plant/2021-10, rowCount=0]
+2026-09-12T21:00:58.382524Z I i.q.c.TableWriter switched partition [path=/dim_plant/2021-11, rowCount=0]
+2026-09-12T21:00:58.383344Z I i.q.c.TableWriter switched partition [path=/dim_plant/2021-12, rowCount=0]
+2026-09-12T21:00:58.384344Z I i.q.c.TableWriter switched partition [path=/dim_plant/2022-01, rowCount=0]
+2026-09-12T21:00:58.385145Z I i.q.c.TableWriter switched partition [path=/dim_plant/2022-02, rowCount=0]
+2026-09-12T21:00:58.385870Z I i.q.c.TableWriter switched partition [path=/dim_plant/2022-03, rowCount=0]
+2026-09-12T21:00:58.386643Z I i.q.c.TableWriter switched partition [path=/dim_plant/2022-04, rowCount=0]
+2026-09-12T21:00:58.387504Z I i.q.c.TableWriter switched partition [path=/dim_plant/2022-05, rowCount=0]
+2026-09-12T21:00:58.388287Z I i.q.c.TableWriter switched partition [path=/dim_plant/2022-06, rowCount=0]
+2026-09-12T21:00:58.389069Z I i.q.c.TableWriter switched partition [path=/dim_plant/2022-07, rowCount=0]
+2026-09-12T21:00:58.389836Z I i.q.c.TableWriter switched partition [path=/dim_plant/2022-08, rowCount=0]
+2026-09-12T21:00:58.390643Z I i.q.c.TableWriter switched partition [path=/dim_plant/2022-09, rowCount=0]
+2026-09-12T21:00:58.391387Z I i.q.c.TableWriter switched partition [path=/dim_plant/2022-10, rowCount=0]
+2026-09-12T21:00:58.392101Z I i.q.c.TableWriter switched partition [path=/dim_plant/2022-11, rowCount=0]
+2026-09-12T21:00:58.392780Z I i.q.c.TableWriter switched partition [path=/dim_plant/2022-12, rowCount=0]
+2026-09-12T21:00:58.393460Z I i.q.c.TableWriter switched partition [path=/dim_plant/2023-01, rowCount=0]
+2026-09-12T21:00:58.394160Z I i.q.c.TableWriter switched partition [path=/dim_plant/2023-02, rowCount=0]
+2026-09-12T21:00:58.394804Z I i.q.c.TableWriter switched partition [path=/dim_plant/2023-03, rowCount=0]
+2026-09-12T21:00:58.395377Z I i.q.c.TableWriter switched partition [path=/dim_plant/2023-04, rowCount=0]
+2026-09-12T21:00:58.395882Z I i.q.c.TableWriter switched partition [path=/dim_plant/2023-05, rowCount=0]
+2026-09-12T21:00:58.396375Z I i.q.c.TableWriter switched partition [path=/dim_plant/2023-06, rowCount=0]
+2026-09-12T21:00:58.396884Z I i.q.c.TableWriter switched partition [path=/dim_plant/2023-07, rowCount=0]
+2026-09-12T21:00:58.397321Z I i.q.c.TableWriter switched partition [path=/dim_plant/2023-08, rowCount=0]
+2026-09-12T21:00:58.397740Z I i.q.c.TableWriter switched partition [path=/dim_plant/2023-09, rowCount=0]
+2026-09-12T21:00:58.398234Z I i.q.c.TableWriter switched partition [path=/dim_plant/2023-10, rowCount=0]
+2026-09-12T21:00:58.398701Z I i.q.c.TableWriter switched partition [path=/dim_plant/2023-11, rowCount=0]
+2026-09-12T21:00:58.399151Z I i.q.c.TableWriter switched partition [path=/dim_plant/2023-12, rowCount=0]
+2026-09-12T21:00:58.399613Z I i.q.c.TableWriter switched partition [path=/dim_plant/2024-01, rowCount=0]
+2026-09-12T21:00:58.400052Z I i.q.c.TableWriter switched partition [path=/dim_plant/2024-02, rowCount=0]
+2026-09-12T21:00:58.400437Z I i.q.c.TableWriter switched partition [path=/dim_plant/2024-03, rowCount=0]
+2026-09-12T21:00:58.400853Z I i.q.c.TableWriter switched partition [path=/dim_plant/2024-04, rowCount=0]
+2026-09-12T21:00:58.401241Z I i.q.c.TableWriter switched partition [path=/dim_plant/2024-05, rowCount=0]
+2026-09-12T21:00:58.401639Z I i.q.c.TableWriter switched partition [path=/dim_plant/2024-06, rowCount=0]
+2026-09-12T21:00:58.402052Z I i.q.c.TableWriter switched partition [path=/dim_plant/2024-07, rowCount=0]
+2026-09-12T21:00:58.402462Z I i.q.c.TableWriter switched partition [path=/dim_plant/2024-08, rowCount=0]
+2026-09-12T21:00:58.402877Z I i.q.c.TableWriter switched partition [path=/dim_plant/2024-09, rowCount=0]
+2026-09-12T21:00:58.403327Z I i.q.c.TableWriter switched partition [path=/dim_plant/2024-10, rowCount=0]
+2026-09-12T21:00:58.403850Z I i.q.c.TableWriter switched partition [path=/dim_plant/2024-11, rowCount=0]
+2026-09-12T21:00:58.404354Z I i.q.c.TableWriter switched partition [path=/dim_plant/2024-12, rowCount=0]
+2026-09-12T21:00:58.404817Z I i.q.c.CairoEngine unlocked [table=dim_plant]
+2026-09-12T21:00:58.416175Z I i.q.c.CairoEngine locked [table=fact_solar_readings, thread=3]
+2026-09-12T21:00:58.446772Z I i.q.c.TableWriter open 'fact_solar_readings'
+2026-09-12T21:00:58.449434Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2020-01, rowCount=0]
+2026-09-12T21:00:58.468915Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2020-02, rowCount=0]
+2026-09-12T21:00:58.483636Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2020-03, rowCount=0]
+2026-09-12T21:00:58.499198Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2020-04, rowCount=0]
+2026-09-12T21:00:58.512907Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2020-05, rowCount=0]
+2026-09-12T21:00:58.526765Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2020-06, rowCount=0]
+2026-09-12T21:00:58.540448Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2020-07, rowCount=0]
+2026-09-12T21:00:58.556727Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2020-08.0, rowCount=0]
+2026-09-12T21:00:58.571421Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2020-09.0, rowCount=0]
+2026-09-12T21:00:58.585180Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2020-10.0, rowCount=0]
+2026-09-12T21:00:58.599224Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2020-11.0, rowCount=0]
+2026-09-12T21:00:58.612906Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2020-12.0, rowCount=0]
+2026-09-12T21:00:58.626935Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2021-01.1, rowCount=0]
+2026-09-12T21:00:58.641397Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2021-02.1, rowCount=0]
+2026-09-12T21:00:58.654073Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2021-03.1, rowCount=0]
+2026-09-12T21:00:58.667924Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2021-04.1, rowCount=0]
+2026-09-12T21:00:58.681393Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2021-05.1, rowCount=0]
+2026-09-12T21:00:58.695195Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2021-06.1, rowCount=0]
+2026-09-12T21:00:58.710550Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2021-07.1, rowCount=0]
+2026-09-12T21:00:58.724706Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2021-08.2, rowCount=0]
+2026-09-12T21:00:58.738718Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2021-09.2, rowCount=0]
+2026-09-12T21:00:58.752290Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2021-10.2, rowCount=0]
+2026-09-12T21:00:58.766123Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2021-11.2, rowCount=0]
+2026-09-12T21:00:58.779645Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2021-12.2, rowCount=0]
+2026-09-12T21:00:58.794060Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2022-01.3, rowCount=0]
+2026-09-12T21:00:58.808961Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2022-02.3, rowCount=0]
+2026-09-12T21:00:58.821595Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2022-03.3, rowCount=0]
+2026-09-12T21:00:58.835576Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2022-04.3, rowCount=0]
+2026-09-12T21:00:58.848993Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2022-05.3, rowCount=0]
+2026-09-12T21:00:58.862781Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2022-06.3, rowCount=0]
+2026-09-12T21:00:58.876119Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2022-07.3, rowCount=0]
+2026-09-12T21:00:58.889879Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2022-08.4, rowCount=0]
+2026-09-12T21:00:58.903553Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2022-09.4, rowCount=0]
+2026-09-12T21:00:58.916758Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2022-10.4, rowCount=0]
+2026-09-12T21:00:58.930347Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2022-11.4, rowCount=0]
+2026-09-12T21:00:58.945608Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2022-12.4, rowCount=0]
+2026-09-12T21:00:58.959432Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2023-01.4, rowCount=0]
+2026-09-12T21:00:58.973129Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2023-02.5, rowCount=0]
+2026-09-12T21:00:58.985511Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2023-03.5, rowCount=0]
+2026-09-12T21:00:58.999244Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2023-04.5, rowCount=0]
+2026-09-12T21:00:59.012443Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2023-05.5, rowCount=0]
+2026-09-12T21:00:59.026022Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2023-06.5, rowCount=0]
+2026-09-12T21:00:59.039139Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2023-07.5, rowCount=0]
+2026-09-12T21:00:59.052778Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2023-08.6, rowCount=0]
+2026-09-12T21:00:59.066338Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2023-09.6, rowCount=0]
+2026-09-12T21:00:59.079435Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2023-10.6, rowCount=0]
+2026-09-12T21:00:59.093054Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2023-11.6, rowCount=0]
+2026-09-12T21:00:59.106161Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2023-12.6, rowCount=0]
+2026-09-12T21:00:59.119736Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2024-01.6, rowCount=0]
+2026-09-12T21:00:59.133368Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2024-02.7, rowCount=0]
+2026-09-12T21:00:59.146076Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2024-03.7, rowCount=0]
+2026-09-12T21:00:59.159617Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2024-04.7, rowCount=0]
+2026-09-12T21:00:59.172792Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2024-05.7, rowCount=0]
+2026-09-12T21:00:59.186458Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2024-06.7, rowCount=0]
+2026-09-12T21:00:59.199683Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2024-07.7, rowCount=0]
+2026-09-12T21:00:59.213585Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2024-08.8, rowCount=0]
+2026-09-12T21:00:59.227207Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2024-09.8, rowCount=0]
+2026-09-12T21:00:59.240427Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2024-10.8, rowCount=0]
+2026-09-12T21:00:59.254311Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2024-11.8, rowCount=0]
+2026-09-12T21:00:59.267607Z I i.q.c.TableWriter switched partition [path=/fact_solar_readings/2024-12.8, rowCount=0]
+2026-09-12T21:00:59.281170Z I i.q.c.CairoEngine unlocked [table=fact_solar_readings]
+2026-09-12T21:00:59.285868Z I i.q.g.CharacterStore resize [capacity=128]
+# baseline plan
+VirtualRecord
+  functions: [joined_rows,non_null_capacity,energy,irradiance,energy/nullif(sum,0)]
+    GroupBy vectorized: false
+      values: [count(*),count(installed_kwp),sum(energy_kwh),avg(irradiance_wm2),sum(installed_kwp)]
+        SelectedRecord
+            Hash Join Light
+              condition: p.plant_id=r.plant_id
+                PageFrame
+                    Row forward scan
+                    Interval forward scan on: fact_solar_readings
+                      intervals: [("2020-01-01T00:00:00.000000Z","2024-12-31T23:59:59.999999Z")]
+                Hash
+                    SelectedRecord
+                        Async JIT Filter workers: 4
+                          filter: country in [ES,IT]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: dim_plant
+
+# candidate plan
+VirtualRecord
+  functions: [joined_rows,non_null_capacity,energy,irradiance,energy/nullif(sum,0)]
+    Async Hash Join Group By workers: 4
+      logicalJoinType: inner
+      physicalJoinType: inner
+      inputSwapped: false
+      condition: r.plant_id=p.plant_id
+      buildStrategy: shared
+      aggregation: scalar
+      values: [count(*),count(p.installed_kwp),sum(r.energy_kwh),avg(r.irradiance_wm2),sum(p.installed_kwp)]
+        Probe
+            PageFrame
+                Row forward scan
+                Interval forward scan on: fact_solar_readings
+                  intervals: [("2020-01-01T00:00:00.000000Z","2024-12-31T23:59:59.999999Z")]
+        Build
+            SelectedRecord
+                Async JIT Filter workers: 4
+                  filter: country in [ES,IT]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: dim_plant
+
+arm,repetition,run,owner,elapsed_ns,groups,batch_ns,sampled_batch_native_peak_delta_bytes,sampled_query_peak_bytes,retained_query_bytes,build_rows,build_keys,build_bytes,scanned_rows,matched_pairs,null_extended_rows,surviving_rows,merge_cardinality,build_ns,init_ns,probe_ns,merge_ns
+# reference_groups=1 sha256=786caf5543b55e3800d5c724c7b415fb6e1ff62a5fd2e0140242bdc86c8ba955 preview=[[999862, 999862, 499492.4775390625, 512.1653715712769, 0.010082661050712724]]
+candidate,0,0,0,30332292,1,30579664,1344000,917504,787392,10000,10000,786432,10000000,999862,0,999862,1,1365070,78025,28799438,19426
+baseline,0,0,0,219444918,1,219691460,756492,327692,327692,,,,,,,,,,,,
+baseline,0,1,0,216715158,1,216968932,756492,327692,327692,,,,,,,,,,,,
+candidate,0,1,0,29467036,1,29695423,1160096,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,1214840,73437,28081086,19256
+candidate,0,2,0,27901480,1,28149504,1212928,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,1249926,100698,26415012,28834
+baseline,0,2,0,218104855,1,218359500,756492,327692,327692,,,,,,,,,,,,
+baseline,0,3,0,216500808,1,216725257,704532,327692,327692,,,,,,,,,,,,
+candidate,0,3,0,30149310,1,30377116,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,968550,108683,28973383,17854
+candidate,0,4,0,29343404,1,29522239,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,1050083,75801,28134655,13705
+baseline,0,4,0,215098797,1,215250712,708028,327692,327692,,,,,,,,,,,,
+baseline,0,5,0,217584221,1,217817678,344332,327692,327692,,,,,,,,,,,,
+candidate,0,5,0,30822809,1,31067075,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,719795,88525,29910324,26810
+candidate,0,6,0,28957594,1,29196670,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,716239,96029,28031794,31749
+baseline,0,6,0,214750406,1,214962111,344332,327692,327692,,,,,,,,,,,,
+baseline,0,7,0,213070426,1,213232049,344332,327692,327692,,,,,,,,,,,,
+candidate,0,7,0,27963056,1,28179830,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,821034,84158,26969308,17193
+candidate,0,8,0,30461714,1,30641691,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,907466,77595,29382046,9157
+baseline,0,8,0,214794849,1,214957954,344332,327692,327692,,,,,,,,,,,,
+baseline,0,9,0,218563030,1,218731646,344332,327692,327692,,,,,,,,,,,,
+candidate,0,9,0,31652540,1,31892889,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,850629,85559,30626112,19697
+# baseline repetition=0 median_ms=216.608 min_ms=213.070 max_ms=219.445 speedup=1.000 batch_median_ms=216.847 queries_per_second=4.612
+# candidate repetition=0 median_ms=29.808 min_ms=27.901 max_ms=31.653 speedup=7.267 batch_median_ms=30.036 queries_per_second=33.293
+baseline,1,0,0,214569568,1,214809076,344332,327692,327692,,,,,,,,,,,,
+candidate,1,0,0,35346032,1,35564419,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,662868,72786,34525208,19717
+candidate,1,1,0,27646844,1,27909876,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,700580,97462,26747644,18444
+baseline,1,1,0,216384761,1,216629117,344332,327692,327692,,,,,,,,,,,,
+baseline,1,2,0,215860431,1,216070613,344332,327692,327692,,,,,,,,,,,,
+candidate,1,2,0,28058033,1,28285276,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,778214,110136,27092088,17473
+candidate,1,3,0,29238448,1,29477775,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,636689,77215,28427803,16350
+baseline,1,3,0,215718035,1,215882321,344332,327692,327692,,,,,,,,,,,,
+baseline,1,4,0,213467398,1,213590179,344332,327692,327692,,,,,,,,,,,,
+candidate,1,4,0,30805336,1,31045375,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,627192,75662,30030889,16681
+candidate,1,5,0,27875301,1,28132321,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,685391,88144,27008701,16010
+baseline,1,5,0,214074513,1,214260731,344332,327692,327692,,,,,,,,,,,,
+baseline,1,6,0,213989474,1,214136168,344332,327692,327692,,,,,,,,,,,,
+candidate,1,6,0,31370492,1,31588529,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,562371,68418,30659193,19387
+candidate,1,7,0,30000352,1,30201949,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,642872,56115,29234371,12995
+baseline,1,7,0,217363901,1,217578271,344332,327692,327692,,,,,,,,,,,,
+baseline,1,8,0,215157396,1,215393658,344332,327692,327692,,,,,,,,,,,,
+candidate,1,8,0,29502411,1,29719858,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,653781,86782,28663314,16481
+candidate,1,9,0,30277761,1,30464539,820160,787392,787392,10000,10000,786432,10000000,999862,0,999862,1,645997,108332,29460543,8817
+baseline,1,9,0,215893883,1,216140434,344332,327692,327692,,,,,,,,,,,,
+# baseline repetition=1 median_ms=215.438 min_ms=213.467 max_ms=217.364 speedup=1.000 batch_median_ms=215.638 queries_per_second=4.637
+# candidate repetition=1 median_ms=29.751 min_ms=27.647 max_ms=35.346 speedup=7.241 batch_median_ms=29.961 queries_per_second=33.377
+# result_checks=51
+2026-09-12T21:01:05.904869Z I i.q.c.p.WriterPool closed [table=dim_plant, reason=POOL_CLOSED, by=3]
+2026-09-12T21:01:05.905350Z I i.q.c.p.WriterPool closed [table=fact_solar_readings, reason=POOL_CLOSED, by=3]

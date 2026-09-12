@@ -1603,6 +1603,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isParallelHashJoinGroupByEnabled() {
+            return sqlExecutionContext.isParallelHashJoinGroupByEnabled();
+        }
+
+        @Override
         public boolean isParallelGroupByEnabled() {
             return sqlExecutionContext.isParallelGroupByEnabled();
         }
@@ -1731,6 +1736,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
             sqlExecutionContext.setParallelFilterEnabled(parallelFilterEnabled);
+        }
+
+        @Override
+        public void setParallelHashJoinGroupByEnabled(boolean enabled) {
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(enabled);
         }
 
         @Override

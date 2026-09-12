@@ -27,6 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
@@ -119,7 +120,12 @@ public interface Map extends Mutable, Closeable, Reopenable {
 
     boolean isOpen();
 
-    void merge(Map srcMap, MapValueMergeFunction mergeFunc);
+    default void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
+        merge(srcMap, mergeFunc, null);
+    }
+
+    // The breaker belongs to the acquired merge slot, or is a thread-safe cancellation channel.
+    void merge(Map srcMap, MapValueMergeFunction mergeFunc, @Nullable SqlExecutionCircuitBreaker circuitBreaker);
 
     /**
      * Creates an independent cursor over the same materialized data.

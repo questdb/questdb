@@ -162,15 +162,15 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         return perWorkerLocks.acquireSlot(carrierId, circuitBreaker);
     }
 
-    public void mergeShard(int slotId, int shardIndex) {
-        mergeShard(shardIndex, getFunctionUpdater(slotId));
+    public void mergeShard(int slotId, int shardIndex, SqlExecutionCircuitBreaker circuitBreaker) {
+        mergeShard(shardIndex, getFunctionUpdater(slotId), circuitBreaker);
     }
 
     public void release(int slotId) {
         perWorkerLocks.releaseSlot(slotId);
     }
 
-    private Map mergeOwnerMap(GroupByFunctionsUpdater functionUpdater) {
+    private Map mergeOwnerMap(GroupByFunctionsUpdater functionUpdater, @Nullable SqlExecutionCircuitBreaker circuitBreaker) {
         final Map destMap = ownerFragment.reopenMap();
         final int perWorkerMapCount = perWorkerFragments.size();
 
@@ -201,7 +201,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         // Now do the actual merge.
         for (int i = 0; i < perWorkerMapCount; i++) {
             final Map srcMap = perWorkerFragments.getQuick(i).getMap();
-            destMap.merge(srcMap, functionUpdater);
+            destMap.merge(srcMap, functionUpdater, circuitBreaker);
             srcMap.close();
         }
 
@@ -215,7 +215,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         return destMap;
     }
 
-    private void mergeShard(int shardIndex, GroupByFunctionsUpdater functionUpdater) {
+    private void mergeShard(int shardIndex, GroupByFunctionsUpdater functionUpdater, SqlExecutionCircuitBreaker circuitBreaker) {
         assert sharded;
 
         final Map destMap = reopenDestShard(shardIndex);
@@ -255,11 +255,11 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         for (int i = 0; i < perWorkerMapCount; i++) {
             final GroupByMapFragment srcFragment = perWorkerFragments.getQuick(i);
             final Map srcMap = srcFragment.getShards().getQuick(shardIndex);
-            destMap.merge(srcMap, functionUpdater);
+            destMap.merge(srcMap, functionUpdater, circuitBreaker);
             srcMap.close();
         }
         // Merge shard from the owner fragment.
-        destMap.merge(srcOwnerMap, functionUpdater);
+        destMap.merge(srcOwnerMap, functionUpdater, circuitBreaker);
         srcOwnerMap.close();
 
         // Don't forget to update the stats.
@@ -361,7 +361,11 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     }
 
     Map mergeOwnerMap() {
-        return mergeOwnerMap(getFunctionUpdater(-1));
+        return mergeOwnerMap(null);
+    }
+
+    Map mergeOwnerMap(@Nullable SqlExecutionCircuitBreaker circuitBreaker) {
+        return mergeOwnerMap(getFunctionUpdater(-1), circuitBreaker);
     }
 
     /**
@@ -383,7 +387,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         postAggregationDoneLatch.reset();
 
         // First, make sure to shard all non-sharded maps, if any.
-        shardAll();
+        shardAll(circuitBreaker);
 
         // Next, merge each set of partial shard maps into the final shard map. This is done in parallel.
         final RingQueue<GroupByMergeShardTask> queue = messageBus.getGroupByMergeShardQueue();
@@ -401,7 +405,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                 if (isFiberOwner) {
                     lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
                 }
-                mergeShard(-1, shardIndex);
+                mergeShard(-1, shardIndex, circuitBreaker);
             }
             finalizeShardStats();
             return destShards;
@@ -411,7 +415,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         int ownCount = 0;
         int reclaimed = 0;
         int total = 0;
-        int mergedCount = 0; // used for work stealing decisions
+        int mergedCount = 0; // positive completed-task count; the latch counts down from zero
         long lastOwnerYieldNanos = QueryParallelFiberDispatcher.OWNER_YIELD_UNSET;
 
         try {
@@ -428,10 +432,10 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                             if (isOwnerParkable) {
                                 lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
                             }
-                            mergeShard(-1, shardIndex);
+                            mergeShard(-1, shardIndex, circuitBreaker);
                             ownCount++;
                             total++;
-                            mergedCount = postAggregationDoneLatch.getCount();
+                            mergedCount = -postAggregationDoneLatch.getCount();
                             break;
                         }
                         if (isOwnerParkable) {
@@ -441,7 +445,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                         } else {
                             Os.pause();
                         }
-                        mergedCount = postAggregationDoneLatch.getCount();
+                        mergedCount = -postAggregationDoneLatch.getCount();
                     } else {
                         queue.get(cursor).of(
                                 postAggregationCircuitBreaker,
@@ -511,7 +515,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                     } else {
                         Os.pause();
                     }
-                    mergedCount = postAggregationDoneLatch.getCount();
+                    mergedCount = -postAggregationDoneLatch.getCount();
                 }
             }
         }
@@ -544,10 +548,10 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         }
     }
 
-    void shardAll() {
-        ownerFragment.shard();
+    void shardAll(SqlExecutionCircuitBreaker circuitBreaker) {
+        ownerFragment.shard(circuitBreaker);
         for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
-            perWorkerFragments.getQuick(i).shard();
+            perWorkerFragments.getQuick(i).shard(circuitBreaker);
         }
     }
 }
