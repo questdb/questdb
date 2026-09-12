@@ -40,9 +40,42 @@ import io.questdb.griffin.engine.groupby.GroupByLongList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Rows;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf16Sink;
 
+/**
+ * Deterministic, parallel-capable {@code string_agg(str, delimiter)}.
+ * <p>
+ * Each group's map value holds two pointers:
+ * <pre>
+ * | valueIndex: char sink ptr | valueIndex+1: run-list ptr |
+ * +----------------------------+------------------------------+
+ * |          8 bytes           |            8 bytes           |
+ * +----------------------------+------------------------------+
+ * </pre>
+ * The char sink ({@link GroupByCharSink}) holds the raw characters of every accepted value,
+ * concatenated without gaps. The run list ({@link GroupByLongList}) is a flat sequence of
+ * (rowId, sinkLocation) pairs, one pair per run of values that arrived from the same page frame:
+ * <pre>
+ * | rowId (run start) | sinkLocation | rowId (run start) | sinkLocation | ...
+ * +---------------------+----------------+---------------------+----------------+
+ * |       8 bytes       |    8 bytes     |       8 bytes       |    8 bytes     |
+ * +---------------------+----------------+---------------------+----------------+
+ * </pre>
+ * {@code sinkLocation} locates a run inside the char sink:
+ * <pre>
+ * | offset into char sink | run length (chars) |
+ * +-------------------------+----------------------+
+ * |         32 bits         |       32 bits        |
+ * +-------------------------+----------------------+
+ * </pre>
+ * Worker threads append runs in an arbitrary order relative to each other, though values within
+ * a single run are always in scan order (one page frame is always scanned by one thread).
+ * Determinism is restored at read time: {@link #materialize} sorts runs by their starting rowId
+ * and concatenates them, reproducing the same output as a single-threaded scan regardless of how
+ * work was distributed across threads.
+ */
 class StringAggGroupByFunction extends StrFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
     private final char delimiter;
@@ -119,11 +152,6 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     }
 
     @Override
-    public String getName() {
-        return "string_agg";
-    }
-
-    @Override
     public CharSequence getStrA(Record rec) {
         return materialize(rec, resultSinkA);
     }
@@ -189,14 +217,14 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         final int srcSize = listB.size();
         for (int i = 0; i < srcSize; i += 2) {
             final long srcRowId = listB.get(i);
-            final long packed = listB.get(i + 1);
-            final int off = unpackOffset(packed);
-            final int len = unpackLen(packed);
+            final long sinkLocation = listB.get(i + 1);
+            final int off = unpackOffset(sinkLocation);
+            final int len = unpackLen(sinkLocation);
             listA.add(srcRowId);
             listA.add(pack(off + destCharOffset, len));
             totalMemoryUsed += len * 2 + 2;
-            assertSizeCompliance();
         }
+        assertSizeCompliance();
 
         destValue.putLong(valueIndex, sinkA.ptr());
         destValue.putLong(valueIndex + 1, listA.ptr());
@@ -230,24 +258,30 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         return ((long) offset << 32) | (len & 0xffffffffL);
     }
 
-    private static int unpackLen(long packed) {
-        return (int) packed;
+    private static int unpackLen(long sinkLocation) {
+        return (int) sinkLocation;
     }
 
-    private static int unpackOffset(long packed) {
-        return (int) (packed >>> 32);
+    private static int unpackOffset(long sinkLocation) {
+        return (int) (sinkLocation >>> 32);
     }
 
     private void append(long rowId, CharSequence str) {
-        final int offset = sinkA.length();
         final int len = str.length();
-        sinkA.put(str);
-        listA.add(rowId);
-        listA.add(pack(offset, len));
-        totalMemoryUsed += len * 2;
-        if (listA.size() > 2) {
-            totalMemoryUsed += 2;
+        final int size = listA.size();
+        final boolean sameRun = size > 0 && Rows.toPartitionIndex(rowId) == Rows.toPartitionIndex(listA.get(size - 2));
+        if (sameRun) {
+            final int startOffset = unpackOffset(listA.get(size - 1));
+            sinkA.putAscii(delimiter);
+            sinkA.put(str);
+            listA.set(size - 1, pack(startOffset, sinkA.length() - startOffset));
+        } else {
+            final int offset = sinkA.length();
+            sinkA.put(str);
+            listA.add(rowId);
+            listA.add(pack(offset, len));
         }
+        totalMemoryUsed += len * 2 + (size > 0 ? 2 : 0);
         assertSizeCompliance();
     }
 
@@ -268,9 +302,6 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         }
         listA.of(listPtr);
         final int size = listA.size();
-        if (size == 0) {
-            return null;
-        }
         final int count = size / 2;
         sortData.clear();
         sortData.ensureCapacity(size);
@@ -286,9 +317,9 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
             if (i > 0) {
                 resultSink.put(delimiter);
             }
-            final long packed = sortData.get(2L * i + 1);
-            final int off = unpackOffset(packed);
-            final int len = unpackLen(packed);
+            final long sinkLocation = sortData.get(2L * i + 1);
+            final int off = unpackOffset(sinkLocation);
+            final int len = unpackLen(sinkLocation);
             for (int j = 0; j < len; j++) {
                 resultSink.put(sinkA.charAt(off + j));
             }
