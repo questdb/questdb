@@ -1791,6 +1791,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelHashJoinGroupByEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isSqlParallelHorizonJoinEnabled() {
         return true;
     }

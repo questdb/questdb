@@ -49,7 +49,9 @@ import java.io.Closeable;
 public final class HashJoinGroupByMetadata implements Closeable {
     private final IntList buildColumns = new IntList();
     private final int buildKeyColumn;
+    private final ExpressionNode buildOnFilter;
     private final ObjList<QueryColumn> columns = new ObjList<>();
+    private final String condition;
     private final JoinRecordMetadata joinedMetadata;
     private final GenericRecordMetadata payloadMetadata = new GenericRecordMetadata();
     private final int probeColumnCount;
@@ -71,6 +73,8 @@ public final class HashJoinGroupByMetadata implements Closeable {
         probeColumnCount = probeMetadata.getColumnCount();
         probeKeyColumn = requireColumn(probeBaseColumns, candidate.getProbeKeyColumn());
         buildKeyColumn = requireColumn(buildBaseColumns, candidate.getBuildKeyColumn());
+        condition = candidate.getProbeModel().getName() + "." + probeMetadata.getColumnName(probeKeyColumn)
+                + "=" + candidate.getBuildModel().getName() + "." + buildMetadata.getColumnName(buildKeyColumn);
         joinedMetadata = new JoinRecordMetadata(configuration,
                 probeColumnCount + candidate.getRequiredBuildColumns().size());
         try {
@@ -99,13 +103,18 @@ public final class HashJoinGroupByMetadata implements Closeable {
                 int payload = build ? indexOf(required, baseColumn) : -1;
                 resolvedToJoined.add(build ? (payload < 0 ? -1 : probeColumnCount + payload) : column);
             }
+            IntList resolvedToBuild = new IntList();
+            for (int i = 0; i < resolved.getColumnCount(); i++) {
+                resolvedToBuild.add(candidate.isBuildColumn(i) ? indexOf(buildBaseColumns, candidate.getBaseColumnIndex(i)) : -1);
+            }
+            buildOnFilter = remap(candidate.getResolvedBuildOnFilter(), resolved, resolvedToBuild, buildMetadata);
             for (int i = 0; i < candidate.getResolvedColumns().size(); i++) {
                 QueryColumn column = candidate.getResolvedColumns().getQuick(i);
                 columns.add(QueryColumn.FACTORY.newInstance().of(column.getAlias(),
-                        remap(column.getAst(), resolved, resolvedToJoined)));
+                        remap(column.getAst(), resolved, resolvedToJoined, joinedMetadata)));
             }
             for (int i = 0; i < candidate.getResolvedPostJoinFilters().size(); i++) {
-                ExpressionNode filter = remap(candidate.getResolvedPostJoinFilters().getQuick(i), resolved, resolvedToJoined);
+                ExpressionNode filter = remap(candidate.getResolvedPostJoinFilters().getQuick(i), resolved, resolvedToJoined, joinedMetadata);
                 if (postJoinFilter == null) {
                     postJoinFilter = filter;
                 } else {
@@ -136,6 +145,10 @@ public final class HashJoinGroupByMetadata implements Closeable {
         return buildKeyColumn;
     }
 
+    public String getCondition() {
+        return condition;
+    }
+
     public RecordMetadata getJoinedMetadata() {
         return joinedMetadata;
     }
@@ -150,6 +163,10 @@ public final class HashJoinGroupByMetadata implements Closeable {
 
     public HashJoinGroupByRecord newRecord() {
         return new HashJoinGroupByRecord(probeColumnCount, payloadMetadata);
+    }
+
+    ExpressionNode getBuildOnFilter() {
+        return buildOnFilter;
     }
 
     ObjList<QueryColumn> getColumns() {
@@ -169,7 +186,7 @@ public final class HashJoinGroupByMetadata implements Closeable {
         return columns.indexOf(value, 0, columns.size());
     }
 
-    private ExpressionNode remap(ExpressionNode node, RecordMetadata resolved, IntList indexes) throws SqlException {
+    private static ExpressionNode remap(ExpressionNode node, RecordMetadata resolved, IntList indexes, RecordMetadata target) throws SqlException {
         if (node == null) {
             return null;
         }
@@ -179,14 +196,14 @@ public final class HashJoinGroupByMetadata implements Closeable {
             if (index < 0) {
                 throw SqlException.$(node.position, "missing hash join input column: ").put(node.token);
             }
-            token = joinedMetadata.getColumnName(index);
+            token = target.getColumnName(index);
         }
         ExpressionNode copy = ExpressionNode.FACTORY.newInstance().of(node.type, token, node.precedence, node.position);
         copy.paramCount = node.paramCount;
-        copy.lhs = remap(node.lhs, resolved, indexes);
-        copy.rhs = remap(node.rhs, resolved, indexes);
+        copy.lhs = remap(node.lhs, resolved, indexes, target);
+        copy.rhs = remap(node.rhs, resolved, indexes, target);
         for (int i = 0; i < node.args.size(); i++) {
-            copy.args.add(remap(node.args.getQuick(i), resolved, indexes));
+            copy.args.add(remap(node.args.getQuick(i), resolved, indexes, target));
         }
         return copy;
     }

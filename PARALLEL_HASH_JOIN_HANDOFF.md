@@ -35,7 +35,7 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
    It drains tasks before cleanup and retains SYMBOL backing through output.
    See [execution, ownership and validation](docs/parallel-hash-join-group-by-execution.md).
 
-5. **Connect keyed merging and the output cursor** — this update.
+5. **Connect keyed merging and the output cursor** — commit `a92b71c813`.
    The fused reducer switches from slot maps to sharded updates and uses the
    existing parallel shard merge and `ShardedMapCursor`. Small maps use the
    optimized owner merge. Native map merge loops and map redistribution accept
@@ -45,44 +45,76 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
    SYMBOL sorting, ratio evaluation, cursor reread and failure/reuse are tested.
    See [execution, merging and validation](docs/parallel-hash-join-group-by-execution.md).
 
-The branch executes the fused keyed operator through its explicit construction
-boundary. Default plans, configuration and automatic EXPLAIN selection remain
-unchanged. The RFC's 2× end-to-end gate is still pending.
+6. **Integrate planner selection, configuration, and diagnostics (including task 6a)** — this update.
+   Ordinary SQL compilation selects the keyed shared-build operator when both
+   `cairo.sql.parallel.hash.join.groupby.enabled` (default false) and the existing
+   `cairo.sql.parallel.groupby.enabled` switch permit it, with positive configured
+   query-worker slots. Planner construction preserves projected column mappings,
+   filters, aliases, interval scans, final projections/sorting/limits and normalized
+   RIGHT orientation. Probe-only WHERE predicates can become interval/input filters;
+   build-only ON residuals filter the build; build-side WHERE stays post-join.
+   Speculative filters are restored independently and resource transfer follows
+   successful capability checks. EXPLAIN describes orientation, filters, functions
+   and actual children without executing the build. Execution metrics and the
+   benchmark's planner adapter now expose both plans, phase timings and counters.
+   See [planner, ownership, controls and diagnostics](docs/parallel-hash-join-group-by-planner.md).
 
-## Next pending task: 6
+The branch now supports experimental automatic selection for eligible keyed queries.
+The experimental default remains false. Tasks 1–6 and 6a are complete; the RFC's
+2× end-to-end performance gate is still pending.
 
-**Integrate planner selection, configuration, and diagnostics.**
+## Next pending task: 7
 
-- Connect the candidate API to fused factory construction before the ordinary
-  join/group-by pipeline. Compile children and joined functions, preserve
-  projections, aliases, intervals and final ordering/limiting, then transfer
-  child/filter ownership only after all capability checks pass.
-- Add `cairo.sql.parallel.hash.join.groupby.enabled`, default false, and wire
-  configuration wrappers, SQL execution context and test overrides. Define
-  behavior with no query workers and existing parallel-aggregation controls.
-- Implement safe probe-filter takeover and post-join filtering with correct
-  predicate placement for INNER/LEFT and normalized RIGHT joins. Unsupported
-  shapes must retain their existing plans without leaked speculative resources.
-- Expand EXPLAIN with grouping/aggregate expressions, filters, join condition,
-  logical/physical orientation and input swapping, plus `buildStrategy: shared`.
-  EXPLAIN must not consume the build input.
-- Add benchmark instrumentation: build rows/keys/bytes, scanned rows, matched
-  pairs, null extensions, surviving candidates, merge cardinality, phase timings
-  and peak memory. Keep worker counters local until completion.
+**Publish the keyed prototype benchmark and enforce the early gate.**
 
-Completion requires enabled/disabled result and plan assertions for supported
-and rejected shapes, including aliases, filters, normalized RIGHT and larger
-builds. Do not introduce a build-size cutoff, runtime fallback or input replay.
-The keyed performance gate remains task 7; no speedup is claimed yet.
+- Run the fixed primary workload: 100 million fact rows, 100,000 unique dimension
+  keys, fanout 1, 10% selected keys, seed 130, five years of warm native monthly
+  data, and four query workers. Preserve the original installed-capacity denominator.
+- Use the existing runner and
+  `'--candidate-compiler=org.questdb.HashJoinGroupByBenchmark$PlannerCandidateCompiler'`
+  to compile ordinary and enabled plans in the same JVM. Warm both, alternate at
+  least ten measured runs per arm, repeat the comparison, and consume final ordered
+  results. Build afresh on every execution; include all phases in total latency.
+- Publish source revision, generator and commands, hardware/JDK/configuration,
+  plans, ordered result checks, medians/spread, phase timings, and sampled peak
+  native memory. Measure one/two/four workers plus build-size/selectivity variants.
+- Require reproducible ≥2× median four-worker end-to-end speedup on the fixed
+  primary workload. If it misses, retain experimental status, profile and revise
+  Phase 1, then rerun before task 8. Report regressions and copied-payload memory
+  costs. Do not introduce a build-size cutoff or runtime fallback.
 
-Integration notes: compile ordinary child factories under **one enclosing
-query registration**; do not nest independently registered `QueryProgress` roots.
+Task 6's small benchmark smoke check establishes integration only and does not
+satisfy this gate. The [comparison harness guide](docs/parallel-hash-join-group-by.md)
+and [planner metrics guide](docs/parallel-hash-join-group-by-planner.md) explain
+commands and measurements. Unkeyed execution, including the same flag matrix,
+remains task 8; broader qualification and rollout remain tasks 9–10.
+
+Integration notes: children compile under **one enclosing query registration**.
 The factory consumes children/functions/interpreted filter context on constructor
 entry, including failure, and borrows joined metadata only during construction.
-Functions/filter context must match its positive worker-slot count. Owner-only
-execution is supported by work stealing when no consumer threads are running;
-zero configured slots, unkeyed and compiled/JIT probe filters are not accepted by
-this construction boundary. Task 6 defines worker/control policy and filter takeover.
+Functions/filter context must match its positive slot count. Owner-only work
+stealing works without running consumer threads; zero configured query workers
+keep ordinary execution. Probe filter takeover uses interpreted logical getters,
+releases unused JIT handles and composes peeled projection mappings. Ordinary
+serial probe filters that cannot be stolen keep the existing plan. Child partition-
+format guards continue to request normal recompilation; they are not bypassed.
+
+## Validation for task 6
+
+See the [planner guide](docs/parallel-hash-join-group-by-planner.md) for the exact
+regression command and smoke invocation. **853 tests passed, 23 existing conditional
+cases skipped, zero remaining failures/errors** across 28 suites. The dynamic
+configuration suite passed with temporary isolated test ports after encountering
+an existing local server; those test-source changes were restored. The benchmark
+package passed, and all 40 measured smoke executions matched ordered results with
+consistent counters. These are integration checks, not the primary performance gate.
+Planner tests assert both
+results and selected plans with native-memory leak checks, including all flag
+combinations for INNER/LEFT/RIGHT at zero/one/four workers, filtered aliases,
+normalized interval extraction, unsupported fallback plan equality, larger builds,
+metrics/empty-build reuse, bind/SYMBOL and storage changes, and registered-query
+memory failure/cleanup/reuse. Existing forced execution, sharded-merge and
+concurrency/failure tests remain in the regression set.
 
 ## Contracts to preserve
 

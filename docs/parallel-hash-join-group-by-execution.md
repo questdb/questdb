@@ -1,10 +1,10 @@
 # Keyed fused hash join execution
 
 Implements [RFC 130](https://github.com/questdb/rfc/discussions/130) tasks 4–5.
-`AsyncHashJoinGroupByRecordCursorFactory` now executes forced keyed INNER and
-LEFT OUTER joins, including RIGHT joins whose inputs and expressions have already
-been normalized. Planner selection and configuration remain task 6. No SQL plan
-changes automatically, and the end-to-end performance gate remains pending.
+`AsyncHashJoinGroupByRecordCursorFactory` executes keyed INNER and LEFT OUTER
+joins, including normalized RIGHT joins. Task 6 adds [experimental planner selection
+and diagnostics](parallel-hash-join-group-by-planner.md). Selection remains off by
+default, and the end-to-end performance gate remains pending.
 
 ## Construction and ownership
 
@@ -25,7 +25,7 @@ The probe child must supply page frames. Its interval scan and direct projection
 mapping are preserved. Safely extracted probe predicates are passed separately
 as interpreted owner/worker functions in the filter context; the build retains
 its ordinary filtered cursor. This boundary does not detach filter wrappers or
-extract ON predicates. Task 6 must perform those planner ownership transfers.
+extract ON predicates. Task 6 performs those transfers in the planner.
 Compiled/JIT probe filters and unkeyed functions are rejected at construction.
 
 The frame sequence owns the atom. The atom owns copied build storage, slot
@@ -154,7 +154,18 @@ The shared regressions cover ordinary group-by and horizon memory limits,
 172 horizon-join cases, and 40 parallel fiber dispatcher cases. Task 4's earlier
 159-test result and the earlier component measurements remain historical records.
 
-These checks qualify the forced keyed pipeline. Task 6's planner selection and
-diagnostics, task 7's benchmark gate, and task 9's wider storage/concurrency
+These checks qualify the forced keyed pipeline. Task 6 adds planner selection and
+diagnostics below. Task 7's benchmark gate and task 9's wider storage/concurrency
 qualification remain pending. Earlier component storage measurements remain
 unchanged.
+
+
+## Task 6: automatic selection and diagnostics
+
+The [planner guide](parallel-hash-join-group-by-planner.md) documents the experimental
+configuration gate, global parallel GROUP BY control, child/filter transfer,
+projection remapping, normalized RIGHT probe-filter extraction, EXPLAIN and metrics.
+The explicit construction API remains usable by the earlier fault/concurrency tests;
+normal SQL compilation now selects it when both flags and the compiled capabilities
+permit it. No configured query workers means the ordinary plan; positive configured
+slots also support owner-only work stealing without active consumer threads.

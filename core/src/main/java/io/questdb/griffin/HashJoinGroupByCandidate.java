@@ -47,6 +47,7 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -54,7 +55,7 @@ import org.jetbrains.annotations.Nullable;
  * Pre-construction eligibility contract for RFC 130. This descriptor borrows optimized models:
  * use it before ordinary join generation mutates them, and never retain it in a cursor factory.
  * Analysis does not move filters, swap models, initialize functions, or adopt child factories.
- * Selection remains disabled until the fused factory and its storage guards are implemented.
+ * The planner selects only after verifying the compiled children and keyed functions.
  */
 public final class HashJoinGroupByCandidate {
     private final IntList baseColumnIndexes;
@@ -62,15 +63,23 @@ public final class HashJoinGroupByCandidate {
     private final int buildKeyColumn;
     private final ExpressionNode buildOnFilter;
     private final IntList columnSources;
+    private final LowerCaseCharSequenceIntHashMap[] inputColumns;
     private final IQueryModel joinModel;
     private final int logicalJoinType;
+    private final IntList postJoinFilterSources;
+    private final RecordMetadata probeBaseMetadata;
     private final int probeKeyColumn;
+    private final ExpressionNode resolvedBuildOnFilter;
     private final IntList requiredBuildColumns;
     private final ObjList<QueryColumn> resolvedColumns;
     private final RecordMetadata resolvedMetadata;
     private final ObjList<ExpressionNode> resolvedPostJoinFilters;
 
     private HashJoinGroupByCandidate(Analyzer analyzer, int probeKeyColumn, int buildKeyColumn) {
+        this.probeBaseMetadata = GenericRecordMetadata.copyOf(analyzer.sources[1 - analyzer.buildIndex]);
+        this.postJoinFilterSources = analyzer.postJoinFilterSources;
+        this.inputColumns = analyzer.inputColumns;
+        this.resolvedBuildOnFilter = analyzer.resolvedBuildOnFilter;
         this.baseColumnIndexes = analyzer.columnIndexes;
         this.columnSources = analyzer.columnSources;
         this.resolvedColumns = analyzer.resolvedColumns;
@@ -151,7 +160,7 @@ public final class HashJoinGroupByCandidate {
     /**
      * Compile-time frame capability only. Execution must use logical typed frame reads and
      * qualify native/Parquet/conversion paths before selection is enabled; see the RFC contract.
-     * This check borrows the filter. halfClose() is permitted only after successful construction.
+     * This check borrows the filter. Transfer follows all capability checks and worker compilation.
      */
     public static boolean supportsProbeFactory(RecordCursorFactory factory) {
         if (factory.supportsPageFrameCursor()) {
@@ -180,7 +189,8 @@ public final class HashJoinGroupByCandidate {
             FunctionParser parser,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (groupBy.getSelectModelType() != IQueryModel.SELECT_MODEL_GROUP_BY || groupBy.getSampleBy() != null) {
+        if (groupBy.getSelectModelType() != IQueryModel.SELECT_MODEL_GROUP_BY || groupBy.getSampleBy() != null
+                || !groupBy.isOptimisable() || groupBy.getSharedRefCount() > 0) {
             return null;
         }
         IQueryModel join = groupBy.getNestedModel();
@@ -258,6 +268,7 @@ public final class HashJoinGroupByCandidate {
                     return null;
                 }
             }
+            analyzer.captureInputColumns();
             int buildKey = keys.aIndexes.getQuick(0) == analyzer.buildIndex ? a : b;
             int probeKey = buildKey == a ? b : a;
             return new HashJoinGroupByCandidate(analyzer, analyzer.columnIndexes.getQuick(probeKey), analyzer.columnIndexes.getQuick(buildKey));
@@ -266,6 +277,19 @@ public final class HashJoinGroupByCandidate {
 
     int getBaseColumnIndex(int resolvedIndex) {
         return baseColumnIndexes.getQuick(resolvedIndex);
+    }
+
+    IntList getInputColumns(RecordMetadata metadata, boolean build) {
+        LowerCaseCharSequenceIntHashMap indexes = inputColumns[build ? buildIndex : 1 - buildIndex];
+        IntList result = new IntList(metadata.getColumnCount());
+        for (int i = 0; i < metadata.getColumnCount(); i++) {
+            result.add(indexes.get(metadata.getColumnName(i)));
+        }
+        return result;
+    }
+
+    ExpressionNode getResolvedBuildOnFilter() {
+        return resolvedBuildOnFilter;
     }
 
     ObjList<QueryColumn> getResolvedColumns() {
@@ -282,6 +306,26 @@ public final class HashJoinGroupByCandidate {
 
     boolean isBuildColumn(int resolvedIndex) {
         return columnSources.getQuick(resolvedIndex) == buildIndex;
+    }
+
+    /** Move preserved-probe WHERE conjuncts before child compilation, retaining interval extraction. */
+    void pushProbePostJoinFilters() {
+        IQueryModel table = baseTable(getProbeModel(), joinModel);
+        for (int i = resolvedPostJoinFilters.size() - 1; i >= 0; i--) {
+            if (postJoinFilterSources.getQuick(i) == (1 << (1 - buildIndex))) {
+                ExpressionNode filter = remapProbeFilter(resolvedPostJoinFilters.getQuick(i));
+                ExpressionNode existing = table.getWhereClause();
+                if (existing != null) {
+                    ExpressionNode and = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.OPERATION, "and", 0, filter.position);
+                    and.paramCount = 2;
+                    and.lhs = existing;
+                    and.rhs = filter;
+                    filter = and;
+                }
+                table.setWhereClause(filter);
+                resolvedPostJoinFilters.remove(i);
+            }
+        }
     }
 
     private static IQueryModel baseTable(IQueryModel input, IQueryModel join) {
@@ -302,7 +346,8 @@ public final class HashJoinGroupByCandidate {
     }
 
     private static boolean hasBarrier(IQueryModel model) {
-        return model.getLimitLo() != null || model.getLimitHi() != null || model.getUnionModel() != null
+        return !model.isOptimisable() || model.getSharedRefCount() > 0
+                || model.getLimitLo() != null || model.getLimitHi() != null || model.getUnionModel() != null
                 || model.getSelectModelType() == IQueryModel.SELECT_MODEL_DISTINCT
                 || model.getSampleBy() != null;
     }
@@ -313,20 +358,41 @@ public final class HashJoinGroupByCandidate {
                 || model.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE);
     }
 
+    private ExpressionNode remapProbeFilter(ExpressionNode node) {
+        if (node == null) {
+            return null;
+        }
+        CharSequence token = node.token;
+        if (node.type == ExpressionNode.LITERAL) {
+            token = probeBaseMetadata.getColumnName(baseColumnIndexes.getQuick(resolvedMetadata.getColumnIndex(token)));
+        }
+        ExpressionNode copy = ExpressionNode.FACTORY.newInstance().of(node.type, token, node.precedence, node.position);
+        copy.paramCount = node.paramCount;
+        copy.lhs = remapProbeFilter(node.lhs);
+        copy.rhs = remapProbeFilter(node.rhs);
+        for (int i = 0; i < node.args.size(); i++) {
+            copy.args.add(remapProbeFilter(node.args.getQuick(i)));
+        }
+        return copy;
+    }
+
     private static final class Analyzer {
         private final int buildIndex;
         private final IntList columnIndexes = new IntList();
         private final IntList columnSources = new IntList();
         private final SqlExecutionContext executionContext;
+        private final LowerCaseCharSequenceIntHashMap[] inputColumns = {new LowerCaseCharSequenceIntHashMap(), new LowerCaseCharSequenceIntHashMap()};
         private final IQueryModel join;
         private final int joinType;
         private final GenericRecordMetadata metadata = new GenericRecordMetadata();
         private final FunctionParser parser;
+        private final IntList postJoinFilterSources = new IntList();
         private final IntList requiredBuildColumns = new IntList();
         private final ObjList<QueryColumn> resolvedColumns = new ObjList<>();
         private final ObjList<ExpressionNode> resolvedPostJoinFilters = new ObjList<>();
         private final RecordMetadata[] sources;
         private ExpressionNode buildOnFilter;
+        private ExpressionNode resolvedBuildOnFilter;
         private int usedSources;
 
         private Analyzer(
@@ -354,6 +420,23 @@ public final class HashJoinGroupByCandidate {
             }
         }
 
+        private void captureInputColumns() {
+            int payloadSize = requiredBuildColumns.size();
+            for (int source = 0; source < 2; source++) {
+                IQueryModel input = join.getJoinModels().getQuick(source);
+                ObjList<QueryColumn> columns = input.getColumns();
+                int count = columns.size() > 0 ? columns.size() : sources[source].getColumnCount();
+                for (int i = 0; i < count; i++) {
+                    CharSequence name = columns.size() > 0 ? columns.getQuick(i).getName() : sources[source].getColumnName(i);
+                    int resolved = resolveInput(source, name, 0);
+                    if (resolved >= 0) {
+                        inputColumns[source].put(Chars.toString(name), columnIndexes.getQuick(resolved));
+                    }
+                }
+            }
+            requiredBuildColumns.setPos(payloadSize);
+        }
+
         private boolean checkBuildOnFilter(ExpressionNode node) throws SqlException {
             if (node == null) {
                 return true;
@@ -362,6 +445,9 @@ public final class HashJoinGroupByCandidate {
                 return false;
             }
             buildOnFilter = node;
+            int payloadSize = requiredBuildColumns.size();
+            resolvedBuildOnFilter = resolve(node, join, -1, 0);
+            requiredBuildColumns.setPos(payloadSize);
             return true;
         }
 
@@ -384,6 +470,7 @@ public final class HashJoinGroupByCandidate {
             }
             if (postJoin) {
                 resolvedPostJoinFilters.add(expression);
+                postJoinFilterSources.add(usedSources);
             }
             try (Function function = parser.parseFunction(expression, metadata, executionContext)) {
                 return function.getType() == ColumnType.BOOLEAN && function.supportsParallelism() && function.isStableWithinExecution();

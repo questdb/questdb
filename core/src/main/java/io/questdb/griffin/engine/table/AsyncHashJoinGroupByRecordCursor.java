@@ -48,6 +48,7 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
     private final CairoEngine engine;
     private final UnorderedPageFrameSequence<AsyncHashJoinGroupByAtom> frameSequence;
     private final HashJoinGroupByFunctions functions;
+    private final HashJoinGroupByMetrics metrics;
     private final PostAggregationCircuitBreaker mergeCircuitBreaker;
     private final SOUnboundedCountDownLatch mergeDoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger mergeStartedCounter = new AtomicInteger();
@@ -59,8 +60,9 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
     private MapRecordCursor mapCursor;
 
     AsyncHashJoinGroupByRecordCursor(CairoEngine engine, UnorderedPageFrameSequence<AsyncHashJoinGroupByAtom> frameSequence,
-                                    HashJoinGroupByFunctions functions) {
+                                    HashJoinGroupByFunctions functions, HashJoinGroupByMetrics metrics) {
         this.engine = engine;
+        this.metrics = metrics;
         this.mergeCircuitBreaker = new PostAggregationCircuitBreaker(engine);
         this.frameSequence = frameSequence;
         this.functions = functions;
@@ -146,11 +148,15 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
             try {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 AsyncHashJoinGroupByAtom atom = frameSequence.getAtom();
+                long start = System.nanoTime();
                 if (atom.shouldProbe()) {
                     frameSequence.prepareForDispatch();
                     atom.getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
                     frameSequence.dispatchAndAwait();
                 }
+                metrics.probeNanos = System.nanoTime() - start;
+                atom.collectMetrics(metrics);
+                start = System.nanoTime();
                 final GroupByShardingContext sharding = atom.getShardingContext();
                 if (sharding.isSharded()) {
                     // mergeShards drains every published task before returning or throwing.
@@ -169,6 +175,8 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
                 } else {
                     mapCursor = sharding.mergeOwnerMap(circuitBreaker).getCursor();
                 }
+                metrics.mergeNanos = System.nanoTime() - start;
+                metrics.mergeCardinality = mapCursor.size();
                 recordA.of(mapCursor.getRecord());
                 recordB.of(mapCursor.getRecordB());
             } catch (Throwable th) {

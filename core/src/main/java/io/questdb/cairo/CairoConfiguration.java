@@ -1293,6 +1293,8 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelGroupByEnabled();
 
+    boolean isSqlParallelHashJoinGroupByEnabled();
+
     boolean isSqlParallelHorizonJoinEnabled();
 
     boolean isSqlParallelReadParquetEnabled();

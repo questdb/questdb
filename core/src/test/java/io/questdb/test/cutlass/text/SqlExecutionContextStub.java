@@ -217,6 +217,11 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public boolean isParallelHashJoinGroupByEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isParallelGroupByEnabled() {
         return false;
     }
@@ -328,6 +333,10 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
 
     @Override
     public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
+    }
+
+    @Override
+    public void setParallelHashJoinGroupByEnabled(boolean enabled) {
     }
 
     @Override

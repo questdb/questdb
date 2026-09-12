@@ -33,6 +33,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinGroupByMetrics;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
@@ -122,7 +124,7 @@ public class HashJoinGroupByBenchmark {
                     }
                     RecordCursorFactory[] factories = fused == null ? new RecordCursorFactory[]{baseline} : new RecordCursorFactory[]{baseline, fused};
                     List<ResultRow> expected = null;
-                    System.out.println("arm,repetition,run,elapsed_ns,groups,sampled_native_peak_delta_bytes,retained_native_delta_bytes");
+                    System.out.println("arm,repetition,run,elapsed_ns,groups,sampled_native_peak_delta_bytes,retained_native_delta_bytes,build_rows,build_keys,build_bytes,scanned_rows,matched_pairs,null_extended_rows,surviving_rows,merge_cardinality,build_ns,init_ns,probe_ns,merge_ns");
                     for (int repetition = 0; repetition < repetitions; repetition++) {
                         List<List<Long>> elapsed = new ArrayList<>();
                         for (int arm = 0; arm < factories.length; arm++) {
@@ -140,8 +142,8 @@ public class HashJoinGroupByBenchmark {
                                 }
                                 if (run >= 0) {
                                     elapsed.get(arm).add(sample.nanos);
-                                    System.out.printf(Locale.ROOT, "%s,%d,%d,%d,%d,%d,%d%n", arm == 0 ? "baseline" : "candidate",
-                                            repetition, run, sample.nanos, sample.result.size(), sample.peak, sample.retained);
+                                    System.out.printf(Locale.ROOT, "%s,%d,%d,%d,%d,%d,%d,%s%n", arm == 0 ? "baseline" : "candidate",
+                                            repetition, run, sample.nanos, sample.result.size(), sample.peak, sample.retained, sample.metrics);
                                 }
                             }
                         }
@@ -197,9 +199,23 @@ public class HashJoinGroupByBenchmark {
                 long nanos = System.nanoTime() - start;
                 long retained = nativeBytes() - sampler.initial;
                 sampler.sample();
-                return new Sample(nanos, result, sampler.peak - sampler.initial, retained);
+                return new Sample(nanos, result, sampler.peak - sampler.initial, retained, metrics(factory));
             }
         }
+    }
+
+    private static String metrics(RecordCursorFactory factory) {
+        while (factory != null && !(factory instanceof AsyncHashJoinGroupByRecordCursorFactory)) {
+            factory = factory.getBaseFactory();
+        }
+        if (factory == null) {
+            return ",,,,,,,,,,,";
+        }
+        HashJoinGroupByMetrics m = ((AsyncHashJoinGroupByRecordCursorFactory) factory).getMetrics();
+        return m.getBuildRows() + "," + m.getBuildKeys() + "," + m.getBuildBytes() + "," + m.getScannedRows()
+                + "," + m.getMatchedPairs() + "," + m.getNullExtendedRows() + "," + m.getSurvivingRows()
+                + "," + m.getMergeCardinality() + "," + m.getBuildNanos() + "," + m.getInitNanos()
+                + "," + m.getProbeNanos() + "," + m.getMergeNanos();
     }
 
     private static void generate(CairoEngine engine, SqlExecutionContext context, long rows, int plants, int selectedPercent, int fanout, long seed) throws Exception {
@@ -269,6 +285,20 @@ public class HashJoinGroupByBenchmark {
         RecordCursorFactory compile(CairoEngine engine, SqlExecutionContext context, String sql) throws Exception;
     }
 
+    /** Enables the experimental planner only while compiling the candidate arm. */
+    public static final class PlannerCandidateCompiler implements CandidateCompiler {
+        @Override
+        public RecordCursorFactory compile(CairoEngine engine, SqlExecutionContext context, String sql) throws Exception {
+            boolean enabled = context.isParallelHashJoinGroupByEnabled();
+            context.setParallelHashJoinGroupByEnabled(true);
+            try {
+                return engine.select(sql, context);
+            } finally {
+                context.setParallelHashJoinGroupByEnabled(enabled);
+            }
+        }
+    }
+
     private static final class NativeSampler extends Thread implements AutoCloseable {
         private final long initial = nativeBytes();
         private volatile long peak = initial;
@@ -302,6 +332,6 @@ public class HashJoinGroupByBenchmark {
     private record ResultRow(String country, int year, int month, double energy, double irradiance, double yield) {
     }
 
-    private record Sample(long nanos, List<ResultRow> result, long peak, long retained) {
+    private record Sample(long nanos, List<ResultRow> result, long peak, long retained, String metrics) {
     }
 }

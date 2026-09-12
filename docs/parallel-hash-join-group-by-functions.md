@@ -3,7 +3,8 @@
 Implements [RFC 130](https://github.com/questdb/rfc/discussions/130) task 3. This
 compiles and evaluates joined expressions over constructed pairs. Task 4 now
 connects this boundary to the [keyed execution lifecycle](parallel-hash-join-group-by-execution.md).
-Planner selection remains task 6; default SQL plans and configuration are unchanged.
+Task 6 adds [experimental planner selection](parallel-hash-join-group-by-planner.md);
+the experimental setting defaults to false.
 
 ## Compilation and indexes
 

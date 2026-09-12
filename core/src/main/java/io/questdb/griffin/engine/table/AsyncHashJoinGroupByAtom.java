@@ -229,9 +229,22 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return failure;
     }
 
-    void build(RecordCursor cursor, SqlExecutionContext executionContext) {
+    void build(RecordCursor cursor, SqlExecutionContext executionContext, HashJoinGroupByMetrics metrics) {
         build.open(executionContext.getMemoryTracker(), executionContext.getCircuitBreaker());
         frozen = build.build(cursor, buildKeyColumn);
+        metrics.buildRows = frozen.getRowCount();
+        metrics.buildKeys = frozen.getKeyCount();
+        metrics.buildBytes = frozen.getSizeInBytes();
+    }
+
+    void collectMetrics(HashJoinGroupByMetrics metrics) {
+        for (int i = 0; i < slots.size(); i++) {
+            Slot slot = slots.getQuick(i);
+            metrics.scannedRows += slot.scannedRows;
+            metrics.matchedPairs += slot.matchedPairs;
+            metrics.nullExtendedRows += slot.nullExtendedRows;
+            metrics.survivingRows += slot.survivingRows;
+        }
     }
 
     AsyncFilterContext getFilterContext() {
@@ -283,6 +296,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         final HashJoinGroupByRecord joinedRecord;
         final ProbeRecord probeRecord = new ProbeRecord();
         FrozenHashJoinBuild.Probe probe;
+        long scannedRows;
+        long matchedPairs;
+        long nullExtendedRows;
+        long survivingRows;
 
         Slot(CairoEngine engine, HashJoinGroupByRecord joinedRecord) {
             this.joinedRecord = joinedRecord;
@@ -297,6 +314,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         }
 
         void clear() {
+            scannedRows = matchedPairs = nullExtendedRows = survivingRows = 0;
             joinedRecord.clear();
             probe = null;
             try {
