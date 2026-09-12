@@ -248,7 +248,14 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         }
         frameMemory = null;
-        filteredRows.clear();
+        // Enforce off-heap buffer management when rebound to a different query
+        if (!sameQueryExecution) {
+            filteredRows.resetCapacity();
+            dataAddresses.resetCapacity();
+            auxAddresses.resetCapacity();
+        } else {
+            filteredRows.clear();
+        }
         filteredRowCount = 0;
         errorMsg.clear();
         errorMessagePosition = 0;
