@@ -39,6 +39,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 
@@ -118,12 +119,7 @@ public class HashJoinGroupByBenchmark {
             engine.load();
             WorkerPoolUtils.setupQueryJobs(pool, engine);
             pool.start();
-            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, workers) {
-                @Override
-                public boolean shouldLogSql() {
-                    return false;
-                }
-            }.with(AllowAllSecurityContext.INSTANCE, null, null, -1, null)) {
+            try (BenchmarkContext context = new BenchmarkContext(engine, workers)) {
                 generate(engine, context, rows, plants, selectedPercent, fanout, seed);
                 try (
                         RecordCursorFactory baseline = engine.select(SQL, context);
@@ -137,7 +133,7 @@ public class HashJoinGroupByBenchmark {
                     List<ResultRow> expected = null;
                     double minimumSpeedup = Double.POSITIVE_INFINITY;
                     long resultChecks = 0;
-                    System.out.println("arm,repetition,run,elapsed_ns,groups,sampled_native_peak_delta_bytes,retained_native_delta_bytes,build_rows,build_keys,build_bytes,scanned_rows,matched_pairs,null_extended_rows,surviving_rows,merge_cardinality,build_ns,init_ns,probe_ns,merge_ns");
+                    System.out.println("arm,repetition,run,elapsed_ns,groups,sampled_native_peak_delta_bytes,retained_native_delta_bytes,build_rows,build_keys,build_bytes,scanned_rows,matched_pairs,null_extended_rows,surviving_rows,merge_cardinality,build_ns,init_ns,probe_ns,merge_ns,sampled_query_peak_bytes");
                     for (int repetition = 0; repetition < repetitions; repetition++) {
                         List<List<Long>> elapsed = new ArrayList<>();
                         for (int arm = 0; arm < factories.length; arm++) {
@@ -156,8 +152,8 @@ public class HashJoinGroupByBenchmark {
                                 }
                                 if (run >= 0) {
                                     elapsed.get(arm).add(sample.nanos);
-                                    System.out.printf(Locale.ROOT, "%s,%d,%d,%d,%d,%d,%d,%s%n", arm == 0 ? "baseline" : "candidate",
-                                            repetition, run, sample.nanos, sample.result.size(), sample.peak, sample.retained, sample.metrics);
+                                    System.out.printf(Locale.ROOT, "%s,%d,%d,%d,%d,%d,%d,%s,%d%n", arm == 0 ? "baseline" : "candidate",
+                                            repetition, run, sample.nanos, sample.result.size(), sample.peak, sample.retained, sample.metrics, sample.queryPeak);
                                 }
                             }
                         }
@@ -206,15 +202,15 @@ public class HashJoinGroupByBenchmark {
         }
     }
 
-    private static boolean equal(double a, double b) {
+    static boolean equal(double a, double b) {
         return Double.doubleToLongBits(a) == Double.doubleToLongBits(b)
                 || (Double.isFinite(a) && Double.isFinite(b) && Math.abs(a - b) <= 1e-10 * Math.max(1, Math.abs(a)));
     }
 
-    private static Sample execute(RecordCursorFactory factory, SqlExecutionContext context) throws Exception {
+    private static Sample execute(RecordCursorFactory factory, BenchmarkContext context) throws Exception {
         List<ResultRow> result = new ArrayList<>(120);
         // Start before acquisition: eager build/sort work inside getCursor must be measured too.
-        try (NativeSampler sampler = new NativeSampler()) {
+        try (NativeSampler sampler = new NativeSampler(context)) {
             long start = System.nanoTime();
             try (RecordCursor cursor = factory.getCursor(context)) {
                 Record record = cursor.getRecord();
@@ -225,12 +221,12 @@ public class HashJoinGroupByBenchmark {
                 long nanos = System.nanoTime() - start;
                 long retained = nativeBytes() - sampler.initial;
                 sampler.sample();
-                return new Sample(nanos, result, sampler.peak - sampler.initial, retained, metrics(factory));
+                return new Sample(nanos, result, sampler.peak - sampler.initial, retained, metrics(factory), sampler.queryPeaks[0]);
             }
         }
     }
 
-    private static String metrics(RecordCursorFactory factory) {
+    static String metrics(RecordCursorFactory factory) {
         while (factory != null && !(factory instanceof AsyncHashJoinGroupByRecordCursorFactory)) {
             factory = factory.getBaseFactory();
         }
@@ -267,7 +263,7 @@ public class HashJoinGroupByBenchmark {
         return bytes;
     }
 
-    private static long number(Map<String, String> options, String name, long defaultValue, long min, long max) {
+    static long number(Map<String, String> options, String name, long defaultValue, long min, long max) {
         long value = Long.parseLong(options.getOrDefault(name, Long.toString(defaultValue)));
         if (value < min || value > max) {
             throw new IllegalArgumentException(name + " must be in [" + min + ", " + max + "]");
@@ -288,7 +284,7 @@ public class HashJoinGroupByBenchmark {
         return result;
     }
 
-    private static void printPlan(String name, RecordCursorFactory factory, SqlExecutionContext context, boolean fused) {
+    static void printPlan(String name, RecordCursorFactory factory, SqlExecutionContext context, boolean fused) {
         TextPlanSink sink = new TextPlanSink();
         sink.of(factory, context);
         StringBuilder plan = new StringBuilder();
@@ -296,7 +292,8 @@ public class HashJoinGroupByBenchmark {
             plan.append(sink.getLine(i)).append('\n');
         }
         if (plan.toString().contains("Async Hash Join Group By") != fused
-                || (!fused && !plan.toString().contains("Hash Join Light"))) {
+                || (!fused && !plan.toString().contains("Hash Join Light")
+                && !plan.toString().contains("Hash Left Outer Join Light") && !plan.toString().contains("Hash Right Outer Join Light"))) {
             throw new IllegalStateException("unexpected " + name + " plan:\n" + plan);
         }
         System.out.println("# " + name + " plan\n" + plan);
@@ -325,13 +322,42 @@ public class HashJoinGroupByBenchmark {
         }
     }
 
-    private static final class NativeSampler extends Thread implements AutoCloseable {
-        private final long initial = nativeBytes();
-        private volatile long peak = initial;
+    static final class BenchmarkContext extends SqlExecutionContextImpl {
+        // Serialize sampling with unbinding so a pooled tracker cannot be attributed to its next owner.
+        private MemoryTracker sampledTracker;
+
+        BenchmarkContext(CairoEngine engine, int workers) {
+            super(engine, workers);
+            with(AllowAllSecurityContext.INSTANCE, null, null, -1, null);
+        }
+
+        @Override
+        public synchronized void setMemoryTracker(MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            sampledTracker = tracker;
+        }
+
+        synchronized long sampledMemory() {
+            return sampledTracker == null ? 0 : sampledTracker.getUsed();
+        }
+
+        @Override
+        public boolean shouldLogSql() {
+            return false;
+        }
+    }
+
+    static final class NativeSampler extends Thread implements AutoCloseable {
+        final long initial = nativeBytes();
+        final long[] queryPeaks;
+        private final BenchmarkContext[] contexts;
+        volatile long peak = initial;
         private volatile boolean running = true;
 
-        private NativeSampler() {
+        NativeSampler(BenchmarkContext... contexts) {
             super("hash-join-group-by-native-sampler");
+            this.contexts = contexts;
+            this.queryPeaks = new long[contexts.length];
             setDaemon(true);
             start();
         }
@@ -350,14 +376,17 @@ public class HashJoinGroupByBenchmark {
             }
         }
 
-        private synchronized void sample() {
+        synchronized void sample() {
             peak = Math.max(peak, nativeBytes());
+            for (int i = 0; i < contexts.length; i++) {
+                queryPeaks[i] = Math.max(queryPeaks[i], contexts[i].sampledMemory());
+            }
         }
     }
 
     private record ResultRow(String country, int year, int month, double energy, double irradiance, double yield) {
     }
 
-    private record Sample(long nanos, List<ResultRow> result, long peak, long retained, String metrics) {
+    private record Sample(long nanos, List<ResultRow> result, long peak, long retained, String metrics, long queryPeak) {
     }
 }

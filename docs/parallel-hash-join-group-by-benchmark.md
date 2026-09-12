@@ -1,5 +1,8 @@
 # Keyed fused hash join prototype benchmark
 
+> Completed-V1 measurements and the current rollout decision are in the
+> [task 10 report](parallel-hash-join-group-by-v1.md). This report retains its historical task scope.
+
 [RFC 130](https://github.com/questdb/rfc/discussions/130), task 7. Captured
 2026-09-12. The fixed primary workload passes the early **2× median end-to-end**
 gate in both repetitions. This permits task 8 (unkeyed aggregation); the

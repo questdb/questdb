@@ -1,6 +1,6 @@
 # Parallel hash join / fused aggregation handoff
 
-Updated 2026-09-12. Branch: `puzpuzpuz_parallel_fused_hash_join`.
+Updated 2026-09-13. Branch: `puzpuzpuz_parallel_fused_hash_join`.
 Draft PR: [questdb/questdb#7618](https://github.com/questdb/questdb/pull/7618).
 Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussions/130).
 
@@ -81,7 +81,7 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
    for keyed and scalar INNER/LEFT/normalized RIGHT execution. See
    [scalar execution and validation](docs/parallel-hash-join-group-by-unkeyed.md).
 
-9. **Complete storage, concurrency, and resource qualification** — this update.
+9. **Complete storage, concurrency, and resource qualification** — commit `39c741ac73`.
    The published V1 capability table is backed by plan-checked native/Parquet,
    mixed-partition, column-top and logical-conversion comparisons for all payload
    types on both inputs, keyed/scalar filtered storage guards, symbol/bind reuse
@@ -92,31 +92,49 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
    lifecycle/resource matrix. No engine change was required. See
    [coverage and reproduction](docs/parallel-hash-join-group-by-qualification.md).
 
+10. **Rebenchmark completed V1 and make rollout a separate change** — this update.
+    The fixed 100-million-row/four-worker primary gate passes again at
+    **7.179× and 7.144×** median speedup. A 44-case matrix covers keyed/scalar
+    INNER/LEFT/normalized RIGHT and both physical orientations, build footprints
+    and scan costs, match rates, post-filters, fanout/skew, group counts, worker
+    scaling, concurrent load, native/mixed/Parquet and verified cold storage,
+    plus an 88 MiB query limit. All 2,040 measured executions and 2,608 explicit
+    result comparisons pass. Per-query memory sampling supplements process-native
+    deltas. The rollout decision is **retain experimental default false**:
+    swapped RIGHT is 96–97% slower with a much larger copied build, and tiny
+    effective scans regress. The ten-million-row Parquet RIGHT pilot was stopped
+    during warmups; a repeated one-million-row native/Parquet pair is published.
+    See [completed-V1 results, limitations and rollout](docs/parallel-hash-join-group-by-v1.md).
+
 The branch supports experimental automatic selection for eligible keyed and
-unkeyed queries. Tasks 1–9 and 6a are complete, including the early keyed
-performance gate and V1 correctness/resource qualification. The experimental
-default remains false.
+unkeyed queries. **V1 tasks 1–10 and 6a are complete.** The completed-V1 report
+supports keeping the experimental default false. Default enablement has not been
+accepted and remains a separate reviewable configuration/planner change.
 
-## Next pending task: 10
+## Next pending RFC task: 11 (post-V1)
 
-**Rebenchmark completed V1 and make rollout a separate change.**
+**Implement parallel radix build as a separate strategy.**
 
-- Repeat the fixed primary acceptance gate on the completed implementation.
-- Run the RFC matrix across join types/orientations, build footprints and scan
-  costs, match rates, post-join selectivity, fanout, group counts, worker counts,
-  concurrent load and enabled storage formats. Include small effective inputs,
-  cold data, skew and near-limit memory cases.
-- Publish total latency, scaling, memory peaks and regressions, and use the
-  evidence to make a documented rollout decision. Keep the disable switch.
-- Default enablement, if justified, must be a separate reviewable configuration/
-  planner change. Do not add build-size thresholds, runtime fallback or replay.
+- Define hash-to-shard routing behind the frozen lookup interface.
+- Scan eligible build frames into slot-owned radix buffers and build independent
+  partitions, retaining all duplicates and common SYMBOL encoding.
+- Publish only after every build task finishes; keep probe/aggregation streaming
+  through the existing pipeline.
+- Test skew, empty shards, cancellation, memory overlap and cleanup/reuse.
+- Benchmark end-to-end crossover against owner build before defining strategy
+  selection; do not copy aggregation shard counts/thresholds without evidence.
 
-The [comparison harness guide](docs/parallel-hash-join-group-by.md),
-[planner metrics guide](docs/parallel-hash-join-group-by-planner.md), and historical
-[keyed benchmark report](docs/parallel-hash-join-group-by-benchmark.md) describe
-commands and measurements. Task 9 qualifies correctness, storage, concurrency
-and resources; it does not rerun task 7's gate or establish general outer/scalar/
-storage performance. Parallel radix build remains post-V1 task 11.
+There is no pending numbered V1 implementation task. Task 11 is post-V1 work,
+and task 12 specifies broader extensions separately. Keep the disable switch,
+`cairo.sql.parallel.hash.join.groupby.enabled=false`, and the global parallel
+GROUP BY gate. Do not add a build-size threshold, runtime fallback or replay.
+
+The [completed-V1 report](docs/parallel-hash-join-group-by-v1.md) and its
+[raw data/summary](docs/parallel-hash-join-group-by-v1/summary.csv) are the current
+performance evidence. The [task 7 report](docs/parallel-hash-join-group-by-benchmark.md)
+remains historical. Task 10 changes benchmark tools/docs only; it does not
+supersede task 9's correctness/resource qualification or claim completed scaling
+for the interrupted ten-million-row Parquet RIGHT pilot.
 
 Integration notes: children compile under **one enclosing query registration**.
 The factory consumes children/functions/interpreted filter context on constructor
@@ -127,6 +145,18 @@ keep ordinary execution. Probe filter takeover uses interpreted logical getters,
 releases unused JIT handles and composes peeled projection mappings. Ordinary
 serial probe filters that cannot be stolen keep the existing plan. Child partition-
 format guards continue to request normal recompilation; they are not bypassed.
+
+## Validation for task 10
+
+The benchmark package build, shell syntax checks, 16 CLI guards and twelve
+concurrent keyed/scalar orientation smoke workloads passed. The final 44-case
+matrix contains **2,040 measured executions and 2,608 result comparisons**, with
+zero mismatches; all 80 cold-cache preparations verified residency. The
+artifact validator rejects incomplete samples, missing checks and failed gates.
+The primary ordered reference exactly matches task 7. Source/jar hashes, both
+measurement environments, commands, plans, counters, memory estimates and every
+sample are retained in the [report](docs/parallel-hash-join-group-by-v1.md).
+No production engine code changed and the task 9 engine suites were not rerun.
 
 ## Validation for task 9
 
