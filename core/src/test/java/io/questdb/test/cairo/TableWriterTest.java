@@ -75,6 +75,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
@@ -516,6 +517,10 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnActualDirectoryFsyncFailurePoisonsEngine() throws Exception {
+        // TableWriter takes no table-directory fsync on Windows (there are no directory handles to
+        // fsync), so the fault this facade arms is never reached there and addColumn succeeds.
+        // POSIX-only by the shape of the product code; covered by the Linux and macOS legs.
+        org.junit.Assume.assumeFalse("table directory fsync seam is POSIX-only", Os.isWindows());
         try {
             assertMemoryLeak(() -> {
                 populateTable();
@@ -593,6 +598,8 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testAddColumnTableDirFsyncFailureCanBeRetried(int failAtDirOpen) throws Exception {
+        // Same seam as testAddColumnActualDirectoryFsyncFailurePoisonsEngine: no directory fsync on Windows.
+        org.junit.Assume.assumeFalse("table directory fsync seam is POSIX-only", Os.isWindows());
         assertMemoryLeak(() -> {
             populateTable();
             final class TableDirOpenFailureFacade extends TestFilesFacadeImpl {
