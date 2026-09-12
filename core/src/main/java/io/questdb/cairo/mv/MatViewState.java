@@ -806,7 +806,9 @@ public class MatViewState implements QuietCloseable {
         return repairPending;
     }
 
-    /** Arms a surgical repair over [lo, hi]; the view stays INVALID until the range refresh clears it. */
+    /**
+     * Arms a surgical repair over [lo, hi]; the view stays INVALID until the range refresh clears it.
+     */
     public void markRepairPending(long lo, long hi) {
         repairRangeLo = lo;
         repairRangeHi = hi;

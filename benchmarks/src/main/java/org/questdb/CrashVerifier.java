@@ -327,7 +327,7 @@ public class CrashVerifier {
                 }
                 try (SqlCompilerImpl c2 = new SqlCompilerImpl(engine);
                      RecordCursorFactory f2 = c2.compile(
-                             "select sum(cnt) total from " + CrashIngestWriter.MV_NAME, ctx)
+                                     "select sum(cnt) total from " + CrashIngestWriter.MV_NAME, ctx)
                              .getRecordCursorFactory();
                      RecordCursor cur = f2.getCursor(ctx)) {
                     long viewTotal = Long.MIN_VALUE;

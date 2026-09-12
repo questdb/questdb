@@ -872,7 +872,9 @@ public class WalUtils {
         return REPAIR_SCAN_CONTINUE;
     }
 
-    /** Out-parameter for {@link #findMatViewRepairPlan}. */
+    /**
+     * Out-parameter for {@link #findMatViewRepairPlan}.
+     */
     public static class MatViewRepairPlan {
         public String abortReason = "none";
         public long cutBaseTxn = -1;
