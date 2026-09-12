@@ -54,13 +54,11 @@ case "$ARM" in
         # runs ahead of durable, and asserting no-loss from it would either over-claim or report
         # phantom loss. Durable ack over QWP is refused by an OSS server outright, so there is no
         # way to observe the real durable frontier here today.
-        if [ "$MODE" != "sync" ] && [ "$MODE" != "SYNC" ]; then
-            echo "run-workload: qwp arm supports --mode=sync only (got $MODE)." >&2
-            echo "  An OSS server refuses request_durable_ack, so the client sees COMMIT acks;" >&2
-            echo "  those equal durability only at W=0. Use sync, or wait for the durable-ack" >&2
-            echo "  accessor (cursorSendLoopForTest) to land." >&2
-            exit 64
-        fi
+        # ADAPTIVE is now supported: the client records the SERVER's localDurableSeqTxn from
+        # wal_tables(), the same frontier the reference arm reads from SeqTxnTracker, so the
+        # F >= Wm bar applies. (Previously refused: without the local durable-ack tier the client
+        # could only see COMMIT acks, which equal durability at W=0 only.)
+        :
         ;;
     product)
         if [ "$WINDOW" -gt 0 ]; then
@@ -148,7 +146,9 @@ case "$ARM" in
         fi
         exec java $QDB_JVM -cp "$JAR" \
             -Dqwp.addr=localhost:9000 \
-            -Dqwp.durable.ack="${QDB_QWP_DURABLE_ACK:-off}" \
+            -Dqwp.durable.ack="${QDB_QWP_DURABLE_ACK:-local}" \
+            -Dqwp.sf.dir="${QDB_QWP_SF_DIR:-/mnt/qdb/sf}" \
+            -Dqwp.sf.durability="${QDB_QWP_SF_DURABILITY:-periodic}" \
             -Dqwp.batch="${QDB_QWP_BATCH:-1000}" \
             -Dmax.rows="${QDB_QWP_ROWS:-2000000000}" \
             org.questdb.QwpCrashIngestClient "$DB" >> /mnt/qdb/writer.log 2>&1

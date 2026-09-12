@@ -28,6 +28,7 @@ MATVIEW="${QDB_MAT_VIEW:-false}"
 PROFILE="${QDB_SCHEMA_PROFILE:-bitmap}"
 QWP="${QDB_QWP:-false}"
 REBASE="${QDB_REBASE:-false}"
+SFREPLAY="${QDB_SF_REPLAY:-false}"
 
 for a in "$@"; do
     case "$a" in
@@ -41,6 +42,7 @@ for a in "$@"; do
         --profile=*)   PROFILE="${a#*=}" ;;
         --qwp=*)       QWP="${a#*=}" ;;
         --rebase=*)    REBASE="${a#*=}" ;;
+        --sf-replay=*) SFREPLAY="${a#*=}" ;;
         *) echo "LOUD_FAILURE: verify.sh unknown argument $a"; exit 0 ;;
     esac
 done
@@ -83,6 +85,32 @@ case "$ARM" in
         # downstream. Observed for real -- at one flush boundary the JVM
         # produced ZERO output and the caller reported UNPARSEABLE with an
         # unrelated stray line picked up by `tail -1`.
+        # STORE-AND-FORWARD REPLAY. The server's RPO window may legitimately have discarded txns
+        # above Wm; the client held them in a DURABLE sf buffer that took the same power cut. Start
+        # the server and let a restarted client replay before judging, or the oracle measures the
+        # server's exposure alone and never tests the pairing that actually closes the gap.
+        if [ "$SFREPLAY" = "true" ]; then
+            setsid env QDB_CAIRO_COMMIT_MODE="$MODE" \
+                QDB_CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW="${WINDOW}us" \
+                java $QDB_JVM -cp "$JAR" io.questdb.ServerMain -d "$(dirname "$DB")" \
+                </dev/null >/mnt/qdb/replay-server.log 2>&1 &
+            for _ in $(seq 1 120); do
+                curl -s "http://localhost:9000/exec?query=select+1" >/dev/null 2>&1 && break
+                sleep 0.5
+            done
+            java $QDB_JVM -cp "$JAR" \
+                -Dqwp.addr=localhost:9000 \
+                -Dqwp.replay.only=true \
+                -Dqwp.durable.ack="${QDB_QWP_DURABLE_ACK:-local}" \
+                -Dqwp.sf.dir="${QDB_QWP_SF_DIR:-/mnt/qdb/sf}" \
+                -Dqwp.sf.durability="${QDB_QWP_SF_DURABILITY:-periodic}" \
+                org.questdb.QwpCrashIngestClient "$DB" >/mnt/qdb/replay-client.log 2>&1 || true
+            # Stop the server so the verifier opens the database itself, exactly as it does for
+            # every other arm -- a live writer would otherwise hold locks the verifier needs.
+            pkill -f "[S]erverMain -d" 2>/dev/null || true
+            sleep 3
+        fi
+
         vout=$(mktemp); verr=$(mktemp)
         # `|| rc=$?` is REQUIRED. Under `set -e` a non-zero exit -- which is the
         # NORMAL way this oracle signals a bad verdict, and the way a JVM crash

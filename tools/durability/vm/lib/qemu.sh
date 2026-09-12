@@ -36,8 +36,15 @@ PY
 #   device's traffic without becoming part of it.
 # Boots daemonized; writes $RUNDIR/qemu.pid, $RUNDIR/console.log and
 # $RUNDIR/cmdline. DATADISK may be "" (no data disk).
+# vm_boot RUNDIR BOOT DATA SSHPORT [SEED] [LOGDISK] [QWPPORT]
+#
+# QWPPORT (optional) additionally forwards the guest's 9000 to that HOST port, so a client
+# running OUTSIDE the VM can reach the server. That is the deployment the QWP arm models: the
+# client is on a DIFFERENT MACHINE, so a power cut kills the server and the client survives to
+# reconnect. Re-boot with the SAME QWPPORT and the client's reconnect policy finds the server
+# again at the address it already has.
 vm_boot() {
-    local rundir="$1" boot="$2" data="$3" port="$4" seed="${5:-}" logdisk="${6:-}"
+    local rundir="$1" boot="$2" data="$3" port="$4" seed="${5:-}" logdisk="${6:-}" qwpport="${7:-}"
     mkdir -p "$rundir"
     : > "$rundir/console.log"
 
@@ -68,7 +75,7 @@ vm_boot() {
     local args=(
         -enable-kvm -cpu host -smp 8 -m 16G
         -drive "file=$boot,if=virtio,format=qcow2,cache=none,aio=threads"
-        -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:$port-:22"
+        -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:$port-:22${qwpport:+,hostfwd=tcp:127.0.0.1:$qwpport-:9000}"
         -device virtio-net-pci,netdev=n0
         -serial "file:$rundir/console.log"
         -display none

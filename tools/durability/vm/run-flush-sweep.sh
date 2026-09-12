@@ -136,7 +136,7 @@ for n in $(seq "$first" "$nflush"); do
         sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
         sudo mkdir -p /mnt/qdb; \
         if sudo mount /dev/vdb /mnt/qdb 2>/dev/null; then \
-            bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --qwp=$([ "$ARM" = qwp ] && echo true || echo false) --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
+            bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --qwp=$([ "$ARM" = qwp ] && echo true || echo false) --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --sf-replay=$([ "$ARM" = qwp ] && echo "${QDB_SF_REPLAY:-true}" || echo false) --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
         else echo 'MOUNT_FAILED'; fi")
     # Archive the FULL per-boundary output. The one-line verdict in $LOG is a summary,
     # not evidence: every time a result needed explaining, the explanation was in the

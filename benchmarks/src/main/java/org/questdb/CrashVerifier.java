@@ -248,7 +248,9 @@ public class CrashVerifier {
         long rowsWatermark = 0L;
         long committedSeqTxn = 0L;      // C
         long localDurableSeqTxn = -1L;  // Wm
-        final File progressFile = new File(dbRoot, "_progress");
+        // The qwp arm's client is a separate process from the server and writes its own
+        // watermark file, carrying the SAME C / Wm pair read from the server's wal_tables().
+        final File progressFile = QWP ? new File(dbRoot, "_qwp_progress") : new File(dbRoot, "_progress");
         if (progressFile.exists()) {
             try {
                 final List<String> lines = Files.readAllLines(progressFile.toPath(), StandardCharsets.US_ASCII);
@@ -273,18 +275,14 @@ public class CrashVerifier {
                 + " C=" + committedSeqTxn + " Wm=" + localDurableSeqTxn
                 + " (C=committed seqTxn, Wm=durable-ack frontier, captured pre-cut)");
 
-        if (QWP) {
-            // Deliberate refusal, not an oversight. The QWP acked frontier is a COMMIT frontier;
-            // under ADAPTIVE W>0 it runs ahead of what is durable, so neither F>=Wm nor
-            // "everything acked survives" can be asserted from it. Running the qwp arm here would
-            // either over-claim or report phantom loss. Use --mode=sync for the no-loss bar; the
-            // structural oracle (identity/contiguity/no-dup/ts-monotonic) still runs in both.
-            System.out.println("LOUD_FAILURE: qwp arm has no sound no-loss oracle under adaptive"
-                    + " (durable ack is refused by an OSS server; acked != durable when W>0)."
-                    + " Run the qwp arm with --mode=sync, or wait for the durable-ack accessor.");
-            System.exit(1);
-        }
-
+        // The QWP arm now carries a REAL durable frontier: the client records the server's own
+        // localDurableSeqTxn from wal_tables(), which is the same quantity the reference arm reads
+        // from SeqTxnTracker in-process. So the adaptive bar (F >= Wm, at-risk txns in (Wm, C])
+        // applies to this arm unchanged, and the earlier refusal -- correct while the client could
+        // only see COMMIT acks -- no longer applies.
+        //
+        // It is still gated on the tier being GRANTED: with request_durable_ack off or refused the
+        // client writes Wm=-1, and a bar built on that would be vacuous rather than strict.
         final long count;
         final boolean suspended;
         final long lastTxn;
