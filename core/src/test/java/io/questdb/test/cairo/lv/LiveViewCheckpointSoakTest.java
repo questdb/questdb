@@ -209,7 +209,9 @@ public class LiveViewCheckpointSoakTest extends AbstractLiveViewTest {
                     writer,
                     instance.getLiveViewToken().getTableId(),
                     0,
+                    instance.getLifecycleIdentity(),
                     true,
+                    null,
                     100,
                     1,
                     8

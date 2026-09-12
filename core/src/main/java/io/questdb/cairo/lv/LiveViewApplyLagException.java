@@ -29,11 +29,15 @@ import io.questdb.std.CarrierLocal;
 
 /**
  * Cooperative-yield signal thrown by the live-view refresh worker when a
- * drain-triggered O3 replay needs the base table applied to a seqTxn that
- * {@code ApplyWal2TableJob} has not reached yet. Unlike a hard failure, this is
- * not an error condition: the refresh worker unwinds its current cycle without
- * advancing any watermark or touching the flush-retry budget, and the next
- * fallback scan re-triggers the view once the base apply has caught up.
+ * drain-triggered O3 replay, or a whole-view rebuild from the applied base,
+ * needs the base table applied to a seqTxn that {@code ApplyWal2TableJob} has
+ * not reached yet. Unlike a hard failure, this is not an error condition: the
+ * refresh worker unwinds its current cycle without advancing any watermark or
+ * touching the flush-retry budget, and the next fallback scan re-triggers the
+ * view once the base apply has caught up. A rebuild waits for the highest base
+ * transaction whose output the view's table may hold: a view that drains raw
+ * base WAL flushes ahead of the base's apply, and a rebuild pinned behind that
+ * point could not be compared against the rows the view holds.
  * <p>
  * It exists to keep the replay path <em>cooperative</em>. Block-spinning inside
  * {@code LiveViewRefreshJob.waitForApply} until the apply catches up starves the
@@ -43,11 +47,13 @@ import io.questdb.std.CarrierLocal;
  * spinning. Throwing instead yields the worker so the apply can proceed.
  * <p>
  * Deliberately NOT a {@link io.questdb.cairo.CairoException}: several O3-replay
- * callers wrap their work in a {@code catch (CairoException)} that recovers or
- * re-derives, and this signal must bypass all of them and reach the top-level
- * apply-lag handler in {@code LiveViewRefreshJob.refreshInstance}. It is a
- * thread-local flyweight (no stack trace, no per-throw allocation), reused
- * across refresh cycles on the same worker.
+ * and recovery callers wrap their work in a {@code catch (CairoException)} or a
+ * {@code catch (Throwable)} that recovers, re-derives or counts a failure, and
+ * this signal must bypass all of them and reach an apply-lag handler: the
+ * top-level one in {@code LiveViewRefreshJob.refreshInstance}, or, for a
+ * rebuild asked for from inside that method's failure handling, the arm that
+ * handling keeps for it. It is a thread-local flyweight (no stack trace, no
+ * per-throw allocation), reused across refresh cycles on the same worker.
  */
 public class LiveViewApplyLagException extends RuntimeException {
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};

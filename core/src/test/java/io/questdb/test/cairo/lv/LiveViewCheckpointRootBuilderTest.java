@@ -26,7 +26,6 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.lv.LiveViewCheckpointAnchorRootBuilder;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRootBuilder;
@@ -40,6 +39,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointRootBuilder;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
+import io.questdb.cairo.lv.LiveViewCheckpointWindowRootBuilder;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.LongList;
 import io.questdb.std.str.Path;
@@ -53,7 +53,10 @@ import java.nio.charset.StandardCharsets;
 
 public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
 
-    private static final byte[] ANCHOR_NAME = "w0".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] WINDOW_IDENTITY = "w0".getBytes(StandardCharsets.UTF_8);
+    // The manifest of a window whose only durable component is the anchor value, which is
+    // what a state root the builder only counts segments for needs to be.
+    private static final byte[] WINDOW_MANIFEST = new byte[]{0};
     private static final byte[] AVG_ID = "avg(double):w0:0".getBytes(StandardCharsets.UTF_8);
     private static final String LV_DIR = "lv_root_builder";
     private static final byte[] SUM_ID = "sum(long):w1:1".getBytes(StandardCharsets.UTF_8);
@@ -72,19 +75,19 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final LiveViewCheckpointPageRef avgRoot = buildInitialAvgRoot(20);
             final LiveViewCheckpointPageRef sumRoot = buildSumRoot(21);
-            final LiveViewCheckpointPageRef anchorRoot = buildAnchorRoot(22);
+            final LiveViewCheckpointPageRef windowRoot = buildWindowRoot(22);
             final LiveViewCheckpointPageRef checkpoint1 = new LiveViewCheckpointPageRef();
             final LongList referenced1 = new LongList();
             try (LiveViewCheckpointRootBuilder builder = new LiveViewCheckpointRootBuilder(configuration);
                  Path dir = new Path()) {
-                builder.begin(checkpointsDir(dir), 7, 123_456, 42, anchorRoot);
+                builder.begin(checkpointsDir(dir), 7, 123_456, 42, windowRoot);
                 builder.addFunction(sumRoot);
                 builder.addFunction(avgRoot);
                 builder.build(30, checkpoint1);
                 builder.getReferencedSegmentIds(referenced1);
             }
             // Data segments 1, 2 and 4 hold the functions' state pages; 20, 21 and
-            // 22 hold the function and anchor roots with their map pages, and 30
+            // 22 hold the function and window roots with their map pages, and 30
             // holds this root and its function directory.
             assertLongList(referenced1, 1, 2, 4, 20, 21, 22, 30);
 
@@ -112,7 +115,7 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
             final LongList referenced2 = new LongList();
             try (LiveViewCheckpointRootBuilder builder = new LiveViewCheckpointRootBuilder(configuration);
                  Path dir = new Path()) {
-                builder.begin(checkpointsDir(dir), 8, 223_456, 42, anchorRoot);
+                builder.begin(checkpointsDir(dir), 8, 223_456, 42, windowRoot);
                 builder.addFunction(avgRoot);
                 builder.addFunction(sumRoot);
                 builder.build(31, checkpoint2);
@@ -345,16 +348,38 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
         return new LiveViewCheckpointStatePageRef().of(segmentId, offset, 8, 8, 0x31, 0, 1, 0);
     }
 
-    private LiveViewCheckpointPageRef buildAnchorRoot(long metadataSegmentId) {
+    private LiveViewCheckpointPageRef buildWindowRoot(long metadataSegmentId) {
         final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
-        try (LiveViewCheckpointAnchorRootBuilder builder = new LiveViewCheckpointAnchorRootBuilder(configuration);
+        try (LiveViewCheckpointWindowRootBuilder builder = new LiveViewCheckpointWindowRootBuilder(configuration);
              Path dir = new Path()) {
-            builder.of(checkpointsDir(dir), new LiveViewCheckpointPageRef(), ANCHOR_NAME, ColumnType.TIMESTAMP_MICRO, new byte[]{1, 0, 0, 0});
-            builder.putPartition(key(1), 111);
-            builder.putPartition(key(2), 222);
+            builder.of(
+                    checkpointsDir(dir),
+                    new LiveViewCheckpointPageRef(),
+                    WINDOW_IDENTITY,
+                    ColumnType.TIMESTAMP_MICRO,
+                    new byte[]{1, 0, 0, 0},
+                    WINDOW_MANIFEST,
+                    Long.BYTES,
+                    true,
+                    null
+            );
+            builder.putPartition(key(1), anchorState(111), false);
+            builder.putPartition(key(2), anchorState(222), false);
             builder.build(metadataSegmentId, root);
         }
         return root;
+    }
+
+    /**
+     * One window entry's payload for a manifest declaring no components beside the anchor:
+     * the anchor value's eight little-endian bytes and nothing else.
+     */
+    private static byte[] anchorState(long anchorValue) {
+        final byte[] state = new byte[Long.BYTES];
+        for (int i = 0; i < Long.BYTES; i++) {
+            state[i] = (byte) (anchorValue >>> (i * Byte.SIZE));
+        }
+        return state;
     }
 
     private LiveViewCheckpointPageRef buildInitialAvgRoot(long metadataSegmentId) {

@@ -283,6 +283,41 @@ public final class LiveViewCompiledPlan {
     }
 
     /**
+     * Resolves a window-input column back to the base-scan column it passes through, or
+     * {@code -1} when it is computed rather than passed through.
+     * <p>
+     * This is the tail of {@link #traceOutputColumnToBaseScan(int)}, entered at the
+     * window's input rather than at the view's output, and it answers a different
+     * question: a PARTITION BY key resolves against
+     * {@link #getWindowInputMetadata() the window's input}, so tracing it to a base column
+     * is what decides whether that key is a base column an index can name or an expression
+     * only a full scan can produce.
+     *
+     * @param windowInputColumnIndex a column index into {@link #getWindowInputMetadata()}
+     * @return the column index into {@link #getBaseScanMetadata()}, or {@code -1}
+     */
+    public int traceWindowInputColumnToBaseScan(int windowInputColumnIndex) {
+        int index = windowInputColumnIndex;
+        if (index < 0) {
+            return -1;
+        }
+        if (inputProjection != null) {
+            index = traceThroughProjection(inputProjection, index);
+            if (index < 0) {
+                return -1;
+            }
+        }
+        if (inputMapping != null) {
+            final IntList crossIndex = inputMapping.getColumnCrossIndex();
+            if (index >= crossIndex.size()) {
+                return -1;
+            }
+            index = crossIndex.getQuick(index);
+        }
+        return index >= 0 && index < getBaseScanMetadata().getColumnCount() ? index : -1;
+    }
+
+    /**
      * Rebuilds the compiled nodes between the base scan and the window over {@code source},
      * so the window sees rows in the shape its functions were compiled against. Returns
      * {@code source} unchanged when the window reads the scan directly.

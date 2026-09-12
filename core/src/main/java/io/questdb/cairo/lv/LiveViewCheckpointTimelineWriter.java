@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -71,14 +72,14 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
     private long lastSegmentBytes;
     private int lastSegmentPageCount;
-    private LiveViewCheckpointTimelineNode[] dropPool = new LiveViewCheckpointTimelineNode[0];
-    private LiveViewCheckpointTimelineNode[] leftPool = new LiveViewCheckpointTimelineNode[0];
+    private final ObjList<LiveViewCheckpointTimelineNode> dropPool = new ObjList<>();
+    private final ObjList<LiveViewCheckpointTimelineNode> leftPool = new ObjList<>();
     private final LiveViewCheckpointTimelineNode newRootBuilder = new LiveViewCheckpointTimelineNode();
     private final LongList releasedSegmentIds = new LongList();
-    private InsertResult[] resultPool = new InsertResult[0];
-    private LiveViewCheckpointTimelineNode[] rightPool = new LiveViewCheckpointTimelineNode[0];
-    private LiveViewCheckpointPageRef[] spliceRefPool = new LiveViewCheckpointPageRef[0];
-    private LiveViewCheckpointPageRef[] truncateRefPool = new LiveViewCheckpointPageRef[0];
+    private final ObjList<InsertResult> resultPool = new ObjList<>();
+    private final ObjList<LiveViewCheckpointTimelineNode> rightPool = new ObjList<>();
+    private final ObjList<LiveViewCheckpointPageRef> spliceRefPool = new ObjList<>();
+    private final ObjList<LiveViewCheckpointPageRef> truncateRefPool = new ObjList<>();
 
     public LiveViewCheckpointTimelineWriter(@NotNull CairoConfiguration configuration) {
         this(configuration, 64, 64);
@@ -137,6 +138,17 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     }
 
     /**
+     * Releases the reader's mappings and any in-flight segment while keeping every
+     * shell, so the writer can serve the next publication without holding a
+     * mapping into a file a retire or compaction unlinks.
+     */
+    public void detach() {
+        reader.detach();
+        segmentWriter.discard();
+        releasedSegmentIds.clear();
+    }
+
+    /**
      * @return the metadata segment of every page the last mutation superseded -
      * the path copy's own old pages plus every page of a subtree a truncate
      * dropped - one element per page, for the caller to release against the
@@ -180,7 +192,7 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
      */
     public void splice(
             @NotNull LiveViewCheckpointPageRef oldRoot,
-            @NotNull LiveViewCheckpointTimelineEntry[] entries,
+            @NotNull ObjList<LiveViewCheckpointTimelineEntry> entries,
             int entryCount,
             long newSegmentId,
             @NotNull LiveViewCheckpointPageRef newRootOut
@@ -262,13 +274,11 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     }
 
     private LiveViewCheckpointTimelineNode dropAt(int depth) {
-        if (depth >= dropPool.length) {
-            dropPool = growNodes(dropPool, depth + 1);
-        }
-        LiveViewCheckpointTimelineNode node = dropPool[depth];
+        growNodes(dropPool, depth + 1);
+        LiveViewCheckpointTimelineNode node = dropPool.getQuick(depth);
         if (node == null) {
             node = new LiveViewCheckpointTimelineNode();
-            dropPool[depth] = node;
+            dropPool.setQuick(depth, node);
         }
         return node;
     }
@@ -322,13 +332,11 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     }
 
     private LiveViewCheckpointTimelineNode leftAt(int depth) {
-        if (depth >= leftPool.length) {
-            leftPool = growNodes(leftPool, depth + 1);
-        }
-        LiveViewCheckpointTimelineNode node = leftPool[depth];
+        growNodes(leftPool, depth + 1);
+        LiveViewCheckpointTimelineNode node = leftPool.getQuick(depth);
         if (node == null) {
             node = new LiveViewCheckpointTimelineNode();
-            leftPool[depth] = node;
+            leftPool.setQuick(depth, node);
         }
         return node;
     }
@@ -357,52 +365,38 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     }
 
     private InsertResult resultAt(int depth) {
-        if (depth >= resultPool.length) {
-            final InsertResult[] grown = new InsertResult[depth + 1];
-            System.arraycopy(resultPool, 0, grown, 0, resultPool.length);
-            resultPool = grown;
+        while (resultPool.size() <= depth) {
+            resultPool.add(null);
         }
-        InsertResult res = resultPool[depth];
+        InsertResult res = resultPool.getQuick(depth);
         if (res == null) {
             res = new InsertResult();
-            resultPool[depth] = res;
+            resultPool.setQuick(depth, res);
         }
         return res;
     }
 
     private LiveViewCheckpointTimelineNode rightAt(int depth) {
-        if (depth >= rightPool.length) {
-            rightPool = growNodes(rightPool, depth + 1);
-        }
-        LiveViewCheckpointTimelineNode node = rightPool[depth];
+        growNodes(rightPool, depth + 1);
+        LiveViewCheckpointTimelineNode node = rightPool.getQuick(depth);
         if (node == null) {
             node = new LiveViewCheckpointTimelineNode();
-            rightPool[depth] = node;
+            rightPool.setQuick(depth, node);
         }
         return node;
     }
 
     private LiveViewCheckpointPageRef spliceRefAt(int depth) {
-        if (depth >= spliceRefPool.length) {
-            final LiveViewCheckpointPageRef[] grown = new LiveViewCheckpointPageRef[depth + 1];
-            System.arraycopy(spliceRefPool, 0, grown, 0, spliceRefPool.length);
-            spliceRefPool = grown;
-        }
-        LiveViewCheckpointPageRef ref = spliceRefPool[depth];
-        if (ref == null) {
-            ref = new LiveViewCheckpointPageRef();
-            spliceRefPool[depth] = ref;
-        }
-        return ref;
+        return refAt(spliceRefPool, depth);
     }
 
-    private void spliceRec(long seg, long off, long len, LiveViewCheckpointTimelineEntry[] entries, int lo, int hi, int depth) {
+    private void spliceRec(long seg, long off, long len, ObjList<LiveViewCheckpointTimelineEntry> entries, int lo, int hi, int depth) {
         final LiveViewCheckpointTimelineNode node = leftAt(depth);
         reader.openAndDecode(seg, off, len, node);
         releasedSegmentIds.add(seg);
         if (node.isLeaf()) {
             for (int r = lo; r < hi; r++) {
-                final LiveViewCheckpointTimelineEntry e = entries[r];
+                final LiveViewCheckpointTimelineEntry e = entries.getQuick(r);
                 final int pos = node.findEntry(e.maxTimestamp, e.checkpointId);
                 if (pos < 0) {
                     throw CairoException.critical(0)
@@ -421,7 +415,12 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
             if (ci + 1 < c) {
                 final long nextMinTs = node.childMinMaxTimestamp[ci + 1];
                 final long nextMinId = node.childMinCheckpointId[ci + 1];
-                while (r < hi && LiveViewCheckpointTimeline.compareKey(entries[r].maxTimestamp, entries[r].checkpointId, nextMinTs, nextMinId) < 0) {
+                while (r < hi && LiveViewCheckpointTimeline.compareKey(
+                        entries.getQuick(r).maxTimestamp,
+                        entries.getQuick(r).checkpointId,
+                        nextMinTs,
+                        nextMinId
+                ) < 0) {
                     r++;
                 }
             } else {
@@ -437,17 +436,7 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     }
 
     private LiveViewCheckpointPageRef truncateRefAt(int depth) {
-        if (depth >= truncateRefPool.length) {
-            final LiveViewCheckpointPageRef[] grown = new LiveViewCheckpointPageRef[depth + 1];
-            System.arraycopy(truncateRefPool, 0, grown, 0, truncateRefPool.length);
-            truncateRefPool = grown;
-        }
-        LiveViewCheckpointPageRef ref = truncateRefPool[depth];
-        if (ref == null) {
-            ref = new LiveViewCheckpointPageRef();
-            truncateRefPool[depth] = ref;
-        }
-        return ref;
+        return refAt(truncateRefPool, depth);
     }
 
     /**
@@ -517,10 +506,22 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
         lastSegmentPageCount++;
     }
 
-    private static LiveViewCheckpointTimelineNode[] growNodes(LiveViewCheckpointTimelineNode[] src, int size) {
-        final LiveViewCheckpointTimelineNode[] dst = new LiveViewCheckpointTimelineNode[size];
-        System.arraycopy(src, 0, dst, 0, src.length);
-        return dst;
+    private static void growNodes(ObjList<LiveViewCheckpointTimelineNode> pool, int size) {
+        while (pool.size() < size) {
+            pool.add(null);
+        }
+    }
+
+    /**
+     * @return the reference shell {@code pool} holds for {@code depth}, built on
+     * first use. A tree deepens a level at a time and never shrinks, so the pool
+     * stops growing as soon as the deepest descent has run once.
+     */
+    private static LiveViewCheckpointPageRef refAt(ObjList<LiveViewCheckpointPageRef> pool, int depth) {
+        while (pool.size() <= depth) {
+            pool.add(new LiveViewCheckpointPageRef());
+        }
+        return pool.getQuick(depth);
     }
 
     /**

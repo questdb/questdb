@@ -134,9 +134,10 @@ import org.jetbrains.annotations.Nullable;
  * alone says they are: {@code L} is the start of the segment holding {@code R} and
  * {@code H} the end of the segment holding {@code changeMaxTs}. Both are
  * key-independent, so the anchor path needs no insert-only proof - it is the RANGE
- * path's shape with the segment standing in for the width. The one thing it does
- * need is that every window function on the view is actually reset by that anchor,
- * which the compiler decides before it hands the plan over.
+ * path's shape with the segment standing in for the width, down to localizing
+ * behind an {@code EOF} bound when the anchor names no segment end at all. The one
+ * thing it does need is that every window function on the view is actually reset by
+ * that anchor, which the compiler decides before it hands the plan over.
  * <p>
  * A factory may carry more than one of the three shapes, and then the plan takes
  * their <b>union</b>: the earliest {@code L} and the latest {@code H} any of them
@@ -147,11 +148,14 @@ import org.jetbrains.annotations.Nullable;
  * a function's own {@code H} has converged, so re-emitting it reproduces what is
  * already stored there. What may not be widened is the <i>tag</i>. {@code EOF}
  * sits above every timestamp, so one arm that proves no finite bound sinks the
- * union to {@code EOF} - and a ROWS or anchored function cannot survive that
- * (see {@link #isRuntimeStatePreserved()}), so a factory holding one declines the
- * whole localization rather than promoting a runtime that has lost its keys. The
- * caller is responsible for handing over a complete set: every window function
- * must be covered by one of the three, or none of them describes the view.
+ * union to {@code EOF} - and a ROWS function cannot survive that (see
+ * {@link #isRuntimeStatePreserved()}), so a factory holding one declines the whole
+ * localization rather than promoting a runtime that has lost its keys. RANGE and
+ * the anchor both survive it, because both expire by time: the state a promotion
+ * drops belongs to keys whose frame - or whose segment - has already thrown it
+ * away. The caller is responsible for handing over a complete set: every window
+ * function must be covered by one of the three, or none of them describes the
+ * view.
  * <p>
  * Which of the two dispositions runs is decided on price, not on availability. A
  * resume reads {@code [anchorMaxTs + 1, EOF)} - its high bound is end-of-frame, so
@@ -190,7 +194,10 @@ public final class LiveViewCheckpointRepairPlan {
     /**
      * The runtime window state has not reached the convergence boundary the
      * dependencies proved, so the change sits inside the frame the runtime currently
-     * holds and the pre-repair state cannot be put back over the replay's.
+     * holds and the pre-repair state cannot be put back over the replay's. A ROWS
+     * dependency only: RANGE and the anchor read the same comparison as an {@code EOF}
+     * tag and promote what the replay ends on, which for a frame that expires by time
+     * drops nothing a whole-history replay would have held.
      */
     public static final int DENIAL_FRONTIER_BELOW_CONVERGENCE = 2;
     /**
@@ -219,13 +226,17 @@ public final class LiveViewCheckpointRepairPlan {
     /**
      * The incorporated range holds no upper bound on what it touched - a non-DATA or
      * structural entry, an unclassified apply-ahead range, or a caller that tracks
-     * none - so no shape can name a convergence boundary.
+     * none - so no shape can name a convergence boundary. Only a ROWS dependency turns
+     * that into a denial; RANGE and the anchor localize behind the {@code EOF} bound it
+     * leaves.
      */
     public static final int DENIAL_NO_CHANGE_CEILING = 6;
     /**
-     * A shape that needs a finite convergence boundary could not name one: the RANGE
-     * arithmetic overflowed the timestamp range, the anchor segment has no
-     * representable end, or the discovered bound does not clear {@code R}.
+     * A shape that needs a finite convergence boundary could not name one, or named one
+     * that describes an empty replacement: the ROWS discovery proved no bound, and
+     * either it or the anchor segment produced an end that does not clear {@code R}. An
+     * anchor that names no segment end at all is not this - that is an {@code EOF} bound
+     * the anchor localizes behind.
      */
     public static final int DENIAL_NO_CONVERGENCE_BOUND = 7;
     /**
@@ -241,7 +252,9 @@ public final class LiveViewCheckpointRepairPlan {
     /**
      * The view cannot say where its runtime window state stands, because that state
      * travels through the checkpoint freeze/restore contract and this view's functions
-     * do not support it.
+     * do not support it. A ROWS dependency only, for the same reason as
+     * {@link #DENIAL_NO_CHANGE_CEILING}: without the frontier there is nothing to put
+     * back, and only ROWS needs the pre-repair state put back.
      */
     public static final int DENIAL_NO_RUNTIME_FRONTIER = 10;
     /**
@@ -270,7 +283,11 @@ public final class LiveViewCheckpointRepairPlan {
     public static final int DENIAL_UNCLASSIFIED_APPLY_AHEAD = 14;
     /**
      * The runtime has produced output that is not yet on disk, so a replacement stopping
-     * at a finite {@code H} would neither re-emit it nor leave it stored.
+     * at a finite {@code H} would neither re-emit it nor leave it stored. The anchor arm
+     * declines on the same term even though its own repair would come out {@code EOF}
+     * and re-emit the tail: a repair runs against a quiesced runtime, so the term holds
+     * on the ordinary path and the un-flushed lead stays a case the anchor path never
+     * reasons about.
      */
     public static final int DENIAL_UNFLUSHED_OUTPUT = 15;
     /**
@@ -291,13 +308,25 @@ public final class LiveViewCheckpointRepairPlan {
      * and replays only the tail above it.
      */
     public static final int DISPOSITION_RESUME_FROM_ANCHOR = 2;
+    /**
+     * The anchor source a per-segment plan is derived against: none. A resume runs to
+     * end-of-frame, so letting one win the price comparison would put back the union
+     * range the decomposition exists to avoid.
+     */
+    private static final AnchorSource NO_ANCHORS = (ceilTs, out) -> false;
     private long anchorCheckpointId;
     // Scratch the anchor searches read into. Worker-owned, overwritten by every
     // lookup; only the two identity fields around it survive a plan.
     private final LiveViewCheckpointTimelineEntry anchorEntry = new LiveViewCheckpointTimelineEntry();
+    private long anchorLogicalStateBytes;
     private long anchorMaxTs;
     private long applyAheadMinTs;
     private long changeMaxTs;
+    // The base seqTxn this repair commits at and advances its watermarks to. The
+    // pinned snapshot's own seqTxn for a repair that materialises the whole change
+    // set, and the pre-repair watermark for a per-segment repair, which corrects one
+    // closed segment and leaves the rest of the change set unconsumed.
+    private long commitSeqTxn;
     private long correctionTs;
     // Why this repair reads the whole view history, or resumed instead of rebuilding:
     // one DENIAL_* code, DENIAL_NONE when nothing was denied. Localization is decided
@@ -400,9 +429,11 @@ public final class LiveViewCheckpointRepairPlan {
      */
     public void copyFrom(@NotNull LiveViewCheckpointRepairPlan other) {
         this.anchorCheckpointId = other.anchorCheckpointId;
+        this.anchorLogicalStateBytes = other.anchorLogicalStateBytes;
         this.anchorMaxTs = other.anchorMaxTs;
         this.applyAheadMinTs = other.applyAheadMinTs;
         this.changeMaxTs = other.changeMaxTs;
+        this.commitSeqTxn = other.commitSeqTxn;
         this.correctionTs = other.correctionTs;
         this.denialReason = other.denialReason;
         this.disposition = other.disposition;
@@ -429,6 +460,14 @@ public final class LiveViewCheckpointRepairPlan {
      */
     public long getAnchorCheckpointId() {
         return anchorCheckpointId;
+    }
+
+    /**
+     * @return decoded state bytes attributed to the selected anchor root, or zero when
+     * this plan does not resume from an anchor
+     */
+    public long getAnchorLogicalStateBytes() {
+        return anchorLogicalStateBytes;
     }
 
     /**
@@ -461,12 +500,20 @@ public final class LiveViewCheckpointRepairPlan {
 
     /**
      * @return the base {@code seqTxn} the repair commits at and advances its
-     * watermarks to. Always the pinned snapshot's {@code seqTxn}: the replay
-     * materialises everything that snapshot holds, including any transaction
-     * apply raced past the trigger.
+     * watermarks to. The pinned snapshot's {@code seqTxn} for a repair that
+     * materialises the whole change set, because the replay reads everything that
+     * snapshot holds, including any transaction apply raced past the trigger.
+     * <p>
+     * A per-segment repair ({@link #ofSegment}) commits at the pre-repair watermark
+     * instead. It corrects one closed segment and leaves every other part of the
+     * change set unconsumed, so advancing over the snapshot would declare base
+     * transactions whose output the view does not hold. Leaving the watermark where it
+     * was makes the segment repair idempotent: a crash before the residual repair
+     * finishes replays the same change set, and re-running a whole-segment recompute
+     * over the same base produces the same rows.
      */
     public long getCommitSeqTxn() {
-        return pinnedSeqTxn;
+        return commitSeqTxn;
     }
 
     /**
@@ -793,6 +840,9 @@ public final class LiveViewCheckpointRepairPlan {
         denialReason = DENIAL_NONE;
         this.triggerSeqTxn = triggerSeqTxn;
         this.pinnedSeqTxn = pinnedSeqTxn;
+        // The whole change set is materialised from the pinned snapshot, so the
+        // watermark advances over it. ofSegment overwrites this afterwards.
+        this.commitSeqTxn = pinnedSeqTxn;
         this.changeMaxTs = changeMaxTs;
         // H starts pinned to end-of-frame and is lowered only by deriveHighBound
         // below, which runs after the floors and only for a localized rebuild. A
@@ -833,6 +883,7 @@ public final class LiveViewCheckpointRepairPlan {
         // nor re-read. A non-DATA / recovery trigger carries no timestamp to search
         // with and anchors nothing.
         anchorCheckpointId = Numbers.LONG_NULL;
+        anchorLogicalStateBytes = 0;
         anchorMaxTs = Numbers.LONG_NULL;
         boolean hasAnchor = lateRowTs != Numbers.LONG_NULL && anchors.findAnchorBelow(lateRowTs, anchorEntry);
         if (hasAnchor && applyAhead) {
@@ -842,6 +893,7 @@ public final class LiveViewCheckpointRepairPlan {
         }
         if (hasAnchor) {
             anchorCheckpointId = anchorEntry.checkpointId;
+            anchorLogicalStateBytes = Math.max(0, anchorEntry.logicalStateBytes);
             anchorMaxTs = anchorEntry.maxTimestamp;
         }
         // The anchor's state already covers rows up to and including its maxTs, so a
@@ -908,8 +960,117 @@ public final class LiveViewCheckpointRepairPlan {
         } else {
             disposition = DISPOSITION_BOUNDARY_REBUILD;
             anchorCheckpointId = Numbers.LONG_NULL;
+            anchorLogicalStateBytes = 0;
             anchorMaxTs = Numbers.LONG_NULL;
         }
+    }
+
+    /**
+     * Classifies one <b>closed anchor segment</b> of an already-decomposed change set,
+     * rather than the change set as a whole.
+     * <p>
+     * The union range a whole-change-set plan derives is what makes a deep correction
+     * expensive: {@code changeMaxTs} is the highest timestamp anything in the change set
+     * touched, so a commit carrying rows at the head and rows a month back puts {@code H}
+     * at the end of <i>today's</i> segment - above the runtime frontier, which denies the
+     * localization outright - and the resume that replaces it replays and rewrites the
+     * whole month. Neither is a property of the correction: under a pure fixed-anchor plan
+     * the anchor resets every stateful function at the segment boundary, so the rows in
+     * one old segment reach that segment's output and nothing else.
+     * <p>
+     * So the bounds come out of the same derivation with the segment's own extremes
+     * standing in for the change set's: {@code L} at the segment's start, {@code H} at its
+     * end, and a replacement covering that range alone. Two inputs are deliberately
+     * withheld:
+     * <ul>
+     *     <li><b>the anchor source.</b> A resume reads {@code [anchorMaxTs + 1, EOF)} -
+     *     its high bound is end-of-frame - so winning the price comparison would put the
+     *     union range back. A segment repair is the localized rebuild or it is nothing;
+     *     the caller falls back to the whole-change-set plan when this returns false.</li>
+     *     <li><b>the apply-ahead range.</b> The caller classified the whole range
+     *     {@code (fromSeqTxn, E]} row by row to produce the decomposition, so the ahead
+     *     range's rows are already in the segment they belong to. Re-deriving its scalar
+     *     minimum here would drop the retire floor back to the deepest row in the whole
+     *     change set and widen every segment's bounds into the union again.</li>
+     * </ul>
+     * {@code viewLowerBoundTimestamp} still clamps the correction floor, but the
+     * {@code DENIAL_VIEW_START_FLOOR} guard behind it cannot fire the way it does for a
+     * RANGE or ROWS shape: a floor landing on {@code S} leaves those reading the whole view
+     * history, while a segment repair still reads one segment. It is left in place because
+     * a floor at {@code S} also means the segment arithmetic and the view's boundary
+     * disagree about where this repair starts, and the caller's fallback is cheap.
+     *
+     * @param segmentMinTs            the lowest in-view timestamp the change set touched
+     *                                inside this segment, already clamped above the view's
+     *                                {@code START FROM} boundary by the decomposition
+     * @param segmentMaxTs            the highest in-view timestamp the change set touched
+     *                                inside this segment
+     * @param viewLowerBoundTimestamp the view's {@code START FROM} boundary {@code S}
+     * @param pinnedSeqTxn            {@code seqTxn} of the pinned base reader ({@code E}),
+     *                                the snapshot the replay reads from
+     * @param commitSeqTxn            the watermark this repair commits at - the pre-repair
+     *                                value, since the rest of the change set stays
+     *                                unconsumed. See {@link #getCommitSeqTxn()}
+     * @param anchorPlan              the view's fixed anchor segment; never null, because a
+     *                                change set only decomposes for a view that has one
+     * @param durableOutputMaxTs      the highest designated timestamp the live-view table
+     *                                durably holds
+     * @param runtimeFrontierTs       the highest designated timestamp the runtime window
+     *                                state has incorporated
+     * @return true when the segment came back localized behind a finite convergence
+     * boundary, which is the only shape a per-segment repair may run in. A segment that
+     * localized behind an {@code EOF} bound - which a whole-change-set anchored repair
+     * runs in, but this one may not - comes back false carrying the denial the missing
+     * finite bound implies
+     */
+    public boolean ofSegment(
+            long segmentMinTs,
+            long segmentMaxTs,
+            long viewLowerBoundTimestamp,
+            long pinnedSeqTxn,
+            long commitSeqTxn,
+            @NotNull LiveViewCheckpointAnchorPlan anchorPlan,
+            long durableOutputMaxTs,
+            long runtimeFrontierTs
+    ) throws SqlException {
+        of(
+                NO_ANCHORS,
+                segmentMinTs,
+                viewLowerBoundTimestamp,
+                // Trigger and pin quoted as the same value so no apply-ahead
+                // classification is required: the caller already did it row by row.
+                pinnedSeqTxn,
+                pinnedSeqTxn,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL,
+                null,
+                anchorPlan,
+                true,
+                durableOutputMaxTs,
+                segmentMaxTs,
+                runtimeFrontierTs,
+                null
+        );
+        this.commitSeqTxn = commitSeqTxn;
+        if (localized && highBoundTag != HighBoundTag.FINITE) {
+            // The anchor arm localizes behind an EOF bound, and a whole-change-set repair
+            // takes that: it replaces [R, +inf) and promotes what the replay ends on. A
+            // per-segment repair cannot, because it replaces one segment and leaves the
+            // ones above it in place - an EOF bound would have it read out the tail it
+            // decomposed the change set to avoid. So it declines, and names the input the
+            // finite bound was missing rather than reporting nothing denied.
+            localized = false;
+            // Put the whole-history floors back with it, so a declined segment reads
+            // exactly as any other unlocalized plan rather than carrying bounds nothing
+            // may run on.
+            outputLowTs = viewLowerBoundTimestamp;
+            replayLowTs = viewLowerBoundTimestamp;
+            isReplayStateKeyComplete = false;
+            denialReason = runtimeFrontierTs == Numbers.LONG_NULL
+                    ? DENIAL_NO_RUNTIME_FRONTIER
+                    : DENIAL_FRONTIER_BELOW_CONVERGENCE;
+        }
+        return localized;
     }
 
     /**
@@ -967,8 +1128,13 @@ public final class LiveViewCheckpointRepairPlan {
      *     {@code segmentStart(t)}, because the reset there put every function on the
      *     anchor back to identity, and a row at {@code m} reaches output only within
      *     {@code m}'s own segment. Both are pure timestamp arithmetic - no key domain
-     *     enters either - and {@code segmentStart} is monotone, so the floor taken at
-     *     {@code R} bounds every row above it. The floor is deliberately not
+     *     enters either. Both also rest on the segment being an interval of the
+     *     timestamp, which a zone floor need not make it: a DST fall-back can hand one
+     *     anchor value two disjoint intervals, and an {@code H} at the end of the lower
+     *     one would leave the upper one holding stale output. That is the plan's to
+     *     refuse rather than this arm's to reason about, and
+     *     {@link LiveViewCheckpointAnchorPlan#getSegmentEndExclusive} does refuse it,
+     *     which reaches this arm as {@code H = EOF}. The floor is deliberately not
      *     {@code segmentStart(changeMaxTs)}: the replacement re-emits from {@code R},
      *     and when a non-durable lead dropped {@code R} into an earlier segment the
      *     replay has to reconstruct that segment's state too.</li>
@@ -996,7 +1162,15 @@ public final class LiveViewCheckpointRepairPlan {
      *     The last closes the direction the frontier does not: output that exists only
      *     in an un-flushed lead or a rolled-back draft sits above the durable frontier,
      *     and a replacement stopping at {@code H} would neither re-emit it nor leave it
-     *     on disk.</li>
+     *     on disk. Only the ROWS arm turns a missing input into a denial; the RANGE and
+     *     anchor arms read all three as an {@code EOF} tag and localize behind it. The
+     *     anchor arm keeps the durability term as a denial of its own even so. The
+     *     {@code EOF} repair it would otherwise take is not unsafe - it clamps {@code R}
+     *     at {@code durableOutputMaxTs}, re-emits the whole tail and promotes what the
+     *     replay ends on - but a repair runs against a quiesced runtime whose output is
+     *     already flushed, so keeping the term costs the ordinary repair nothing and
+     *     leaves the un-flushed lead a case the anchor path never has to reason
+     *     about.</li>
      *     <li>the frontier must sit at or above the union's {@code H}, which proves the
      *     change is outside the frame the runtime currently holds - so the pre-repair
      *     state is correct and must be restored rather than replaced by the state the
@@ -1009,15 +1183,19 @@ public final class LiveViewCheckpointRepairPlan {
      *     lands above them, and the comparison refuses. Which is why the caller's ceiling
      *     has to cover the whole incorporated range rather than the triggering commit
      *     alone.</li>
-     *     <li>a ROWS or anchored function cannot be localized behind an {@code EOF}
-     *     bound. Neither expires by time - a ROWS frame holds a key's last {@code Nmax}
-     *     rows however old they are, and an anchored function holds its segment - so a
-     *     key with no row at or above {@code R} keeps state a replay from {@code L}
-     *     never sees. Only a finite {@code H} puts the pre-repair runtime state back
-     *     over the replay's (see {@link #isRuntimeStatePreserved()}); an {@code EOF} one
-     *     would promote the replay's state and lose exactly those keys. A RANGE-only
-     *     view localizes its floor either way, because its frame at any row at or above
-     *     {@code R} reaches no further back than {@code L}.</li>
+     *     <li>a ROWS function cannot be localized behind an {@code EOF} bound. A ROWS
+     *     frame never expires by time - it holds a key's last {@code Nmax} rows however
+     *     old they are - so a key with no row at or above {@code R} keeps state a replay
+     *     from {@code L} never sees. Only a finite {@code H} puts the pre-repair runtime
+     *     state back over the replay's (see {@link #isRuntimeStatePreserved()}); an
+     *     {@code EOF} one would promote the replay's state and lose exactly those keys.
+     *     RANGE and the anchor localize their floors behind either tag, and for the same
+     *     reason: both expire by time. A RANGE frame at any row at or above {@code R}
+     *     reaches no further back than {@code L}; and for an anchor, {@code L} is the
+     *     start of {@code R}'s segment, so a key with no row at or above {@code L} has
+     *     no row in that segment at all - the anchor resets its accumulator the moment
+     *     its next row arrives, and it emits nothing at or above {@code R} in the
+     *     meantime. The promotion loses only state the anchor was going to discard.</li>
      * </ul>
      * Everything collapses to the whole-history rebuild - both floors at {@code S} and
      * {@code H} left at end-of-frame - when there is no change floor, when the live-view
@@ -1074,7 +1252,10 @@ public final class LiveViewCheckpointRepairPlan {
         final boolean isHighBoundDerivable = changeMaxTs != Numbers.LONG_NULL
                 && runtimeFrontierTs != Numbers.LONG_NULL
                 && durableOutputMaxTs >= runtimeFrontierTs;
-        final boolean isFiniteHighRequired = hasRows || hasAnchor;
+        // Only ROWS needs a finite H. An anchor segment expires by time the way a RANGE
+        // frame does, so it localizes behind an EOF bound on the same argument; see the
+        // anchor arm below.
+        final boolean isFiniteHighRequired = hasRows;
         if (isFiniteHighRequired && !isHighBoundDerivable) {
             // The three inputs fail for three different reasons, and an operator can act
             // on each: a change set nothing bounds from above, a view whose functions
@@ -1085,6 +1266,18 @@ public final class LiveViewCheckpointRepairPlan {
                     : runtimeFrontierTs == Numbers.LONG_NULL
                       ? DENIAL_NO_RUNTIME_FRONTIER
                       : DENIAL_UNFLUSHED_OUTPUT;
+            return;
+        }
+        // The anchor arm keeps the unflushed-output term on its own, because the arm can
+        // still come out FINITE: when the frontier has already reached the end of
+        // changeMaxTs's segment the guard below leaves H at that end, and then output the
+        // runtime holds in (durableOutputMaxTs, runtimeFrontierTs] is neither re-emitted
+        // by the replacement nor on disk, while the restore hands back a runtime that
+        // believes it emitted it. The other two terms are not the anchor's to keep - a
+        // missing ceiling or a missing frontier resolve to EOF rather than to a finite H
+        // that stops short of output nothing holds.
+        if (hasAnchor && durableOutputMaxTs < runtimeFrontierTs) {
+            denialReason = DENIAL_UNFLUSHED_OUTPUT;
             return;
         }
         long lowTs = Long.MAX_VALUE;
@@ -1102,19 +1295,41 @@ public final class LiveViewCheckpointRepairPlan {
             }
         }
         if (hasAnchor) {
-            final long armHighTs = anchorPlan.getSegmentEndExclusive(changeMaxTs);
-            // No representable segment end - a sub-resolution anchor period, or the
-            // topmost segment - is H = EOF, which an anchored function cannot survive.
-            // Neither can an end at or below R, which happens only when every changed row
-            // sits below the view's own boundary and leaves the replacement range empty.
-            if (armHighTs == Numbers.LONG_NULL || armHighTs <= outputFloor) {
+            // The segment end is computed only when the inputs it reads are sane, exactly
+            // as the RANGE arm computes its arithmetic. changeMaxTs is LONG_NULL =
+            // Long.MIN_VALUE when nothing bounds the change from above, and
+            // getSegmentEndExclusive floors that before it advances: under a non-zero
+            // alignment origin the floor returns the origin, and under an epoch-aligned
+            // one it underflows to a near-Long.MAX_VALUE "end". Neither reports
+            // LONG_NULL, so the call is kept behind the guard rather than asked to
+            // report on it.
+            final long armHighTs = isHighBoundDerivable
+                    ? anchorPlan.getSegmentEndExclusive(changeMaxTs)
+                    : Numbers.LONG_NULL;
+            if (armHighTs == Numbers.LONG_NULL) {
+                // No representable segment end - a sub-resolution anchor period, the
+                // topmost segment, or an input the guard above withheld - is H = EOF,
+                // which an anchored function survives. A key with no row at or above L
+                // has no row in R's segment at all, so the anchor is about to reset its
+                // accumulator the moment its next row arrives and it emits nothing at or
+                // above R in the meantime; promoting the replay's state therefore loses
+                // only state the anchor was going to discard. See
+                // isRuntimeStatePreserved().
+                isHighEof = true;
+            } else if (armHighTs <= outputFloor) {
+                // An end at or below R is a different thing entirely, and stays a denial
+                // behind either tag: it happens only when every changed row sits below
+                // the view's own boundary, which leaves the replacement range empty.
                 denialReason = DENIAL_NO_CONVERGENCE_BOUND;
                 return;
+            } else {
+                highTs = Math.max(highTs, armHighTs);
             }
-            highTs = Math.max(highTs, armHighTs);
             // getSegmentStart reports Long.MIN_VALUE for a segment that is open below -
             // every row under a non-zero alignment origin shares one - and the clamp
             // resolves it to S, which is as far down as the rebuild would read anyway.
+            // The floor stands whether or not the arm proved a ceiling: L is derived from
+            // R alone, and an arm that names no H still names where R's segment starts.
             lowTs = Math.min(lowTs, Math.max(viewLowerBoundTimestamp, anchorPlan.getSegmentStart(outputFloor)));
         }
         if (hasRows) {

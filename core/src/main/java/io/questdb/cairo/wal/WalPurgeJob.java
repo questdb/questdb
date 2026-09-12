@@ -555,15 +555,25 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         // Live views publish lv_consumed_seqTxn through this purge floor
-        // alongside mat-view consumers. Both dropped and invalid views release
-        // their floor, mirroring the mat-view arm above. Invalidation is
-        // terminal for a live view - there is no in-place revalidation path,
+        // alongside mat-view consumers. Dropped, invalid and blocked views - a
+        // format block or a refused rebuild - all release their floor, mirroring
+        // the mat-view arm above. Invalidation
+        // is terminal for a live view - there is no in-place revalidation path,
         // the refresh worker permanently skips an invalid view, and its
         // lvConsumed / head checkpoint would otherwise freeze forever. Keeping
         // the floor pinned would clamp safeToPurgeTxn to that frozen value and
         // block base WAL purging indefinitely while the base keeps ingesting.
         // Re-CREATE requires a DROP first and seeds through an MVCC snapshot
         // reader, not the raw base WAL, so the retained WAL is never load-bearing.
+        // A blocked view releases for the same reason and not because its WAL is
+        // worthless: its floor is frozen too, so any hold it takes grows without
+        // bound, and it grows the base table WAL that every other writer and view
+        // on that base shares. See LiveViewCheckpointRecoveryPhase for what that
+        // costs a view whose recovery could later have resumed from its timeline.
+        // A view whose rebuild waits for the base's apply is not blocked and keeps
+        // its floor, as any refreshing view does. Its hold is bounded where a block's
+        // is not: the wait ends once the base applies the commit it names, so the
+        // applied WAL it keeps from purge never runs past that commit.
         // Skip the LV arm when no LiveViewRefreshJob will run - the feature is off, or the
         // dedicated live view refresh pool has no workers. In either case nothing advances
         // lvConsumedSeqTxn / headCheckpointBaseSeqTxn, and clamping to those frozen values would
@@ -598,7 +608,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         final boolean readOnly = engine.isReadOnlyMode();
         for (int v = 0, n = liveViewSink.size(); v < n; v++) {
             final LiveViewInstance instance = liveViewSink.getQuick(v);
-            if (instance.isDropped() || instance.isInvalid()) {
+            if (instance.isDropped() || instance.isInvalid() || instance.isCheckpointRecoveryBlocked()) {
                 continue;
             }
             final long lvConsumed = instance.getStateReader().getLvConsumedSeqTxn();

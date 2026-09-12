@@ -150,7 +150,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         private long rowNumber;
         // Single-writer (refresh worker), not volatile.
         private long tombstoneCount;
-        // The row counter's slot in LiveViewWindow's fused map value, or -1 when this
+        // The row counter's slot in the fused map value WindowMapState owns, or -1 when this
         // function owns its state in the map above as it always has. Installed and
         // cleared by the window-state plan, both on the refresh worker.
         private int windowStateRowCountSlot = -1;
@@ -224,6 +224,15 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             return WindowAccumulatorProjection.PROJECTION_COUNT;
         }
 
+        /**
+         * The whole image is the one counter: the row number is the partition's row count
+         * so far, and nothing behind it is retained.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Long.BYTES;
+        }
+
         @Override
         public LiveViewCheckpointDependency checkpointDependency() {
             return checkpointDependency;
@@ -237,8 +246,8 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
             if (isWindowStateOwned()) {
-                // The sweep rebuilt the window's fused map and the counter rode across
-                // inside the entries it kept. There is no second map to prune.
+                // A bound function keeps no partition map of its own: the group owns the
+                // one entry the counter lives in, and there is no second map to prune.
                 return;
             }
             // RowNumber implements WindowFunction directly (no BasePartitionedWindowFunction),
@@ -372,7 +381,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void markPartitionAlive(Record record) {
+        public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
+            // The flag goes unread on purpose: this override keeps no checkpoint dirty
+            // set, so every seal full-scans it. See BasePartitionedWindowFunction's
+            // markCheckpointPartitionDirty - naming some of a cadence's keys and not the
+            // rest is the one outcome that is worse than naming none.
             if (isWindowStateOwned()) {
                 // Nothing of this function's is tombstoned any more: the window keeps the
                 // one value this row touches alive, for the whole group.

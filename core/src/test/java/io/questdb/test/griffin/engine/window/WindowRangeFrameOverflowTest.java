@@ -64,16 +64,16 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
     // adjacent pair is far enough apart that the frame below admits some rows and not others.
     private static final String SERIES =
             "(SELECT generate_series ts, 1 k, generate_series::long x" +
-                    " FROM generate_series((-4611686018427387904)::timestamp, 4611686018427387904::timestamp, 2305843009213693952L))";
+                    " FROM generate_series((-4_611_686_018_427_387_904)::timestamp, 4_611_686_018_427_387_904::timestamp, 2_305_843_009_213_693_952L))";
     // 7e18 reaches back over three of the four steps but not over all four, so the last row's
     // frame must drop the first row and keep the other three.
-    private static final String WINDOW = " RANGE BETWEEN 7000000000000000000 PRECEDING AND CURRENT ROW)";
+    private static final String WINDOW = " RANGE BETWEEN 7_000_000_000_000_000_000 PRECEDING AND CURRENT ROW)";
     // The lagging shape, whose low bound is unbounded and whose high bound is what each row is
     // measured against. 8e18 is wider than the three steps between the first row and the fourth,
     // so the first row does not reach any frame until the last one - where the distance is the
     // 2^63 that overflows. Every other case here measures against the frame's low bound; this is
     // the one that measures against its high bound.
-    private static final String LAGGING_WINDOW = " RANGE BETWEEN UNBOUNDED PRECEDING AND 8000000000000000000 PRECEDING)";
+    private static final String LAGGING_WINDOW = " RANGE BETWEEN UNBOUNDED PRECEDING AND 8_000_000_000_000_000_000 PRECEDING)";
     // Three rows one second apart, the smallest table on which an empty frame and a cumulative
     // one differ at every row.
     private static final String THREE_ROWS = """
@@ -188,7 +188,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
             // truncate to exactly 0: the frame end silently became CURRENT ROW and the query ran
             // a running total rather than the lagging window asked for. On micros the narrowing
             // caps hours long before the multiply does, so the ceiling names 2^31 - 1 hours.
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 4294967296 HOUR PRECEDING) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 4_294_967_296 HOUR PRECEDING) FROM tab")
                     .noLeakCheck()
                     .fails(74, "RANGE frame end is out of range for the designated timestamp [width=4294967296 hour, max=2147483647 hour]");
         });
@@ -201,7 +201,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
 
             // The high bound runs through the same conversion, and its error names the end of
             // the frame rather than the start.
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 300000 DAY PRECEDING) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 300_000 DAY PRECEDING) FROM tab")
                     .noLeakCheck()
                     .fails(74, "RANGE frame end is out of range for the designated timestamp [width=300000 day, max=106751 day]");
         });
@@ -216,7 +216,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
             // a negative value that reads as a legal lagging end bound of the wrong magnitude -
             // about 49 thousand years rather than the 634 thousand asked for. Nothing caught this
             // one: the query returned rows over the narrower frame.
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 20000000000000 SECOND PRECEDING) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 20_000_000_000_000 SECOND PRECEDING) FROM tab")
                     .noLeakCheck()
                     .fails(74, "RANGE frame end is out of range for the designated timestamp [width=20000000000000 second, max=9223372036854 second]");
         });
@@ -230,7 +230,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
             // One second past the ceiling wraps onto a positive value, which frame validation
             // then turned away as a FOLLOWING frame end - the right refusal for a cause the user
             // did not write. The width is now named instead.
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 9223372036855 SECOND PRECEDING) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 9_223_372_036_855 SECOND PRECEDING) FROM tab")
                     .noLeakCheck()
                     .fails(74, "RANGE frame end is out of range for the designated timestamp [width=9223372036855 second, max=9223372036854 second]");
         });
@@ -243,7 +243,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
 
             // The conversion narrows days to int, so this width used to truncate to exactly 0:
             // the frame silently became CURRENT ROW and every window read one row.
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 4294967296 DAY PRECEDING AND CURRENT ROW) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 4_294_967_296 DAY PRECEDING AND CURRENT ROW) FROM tab")
                     .noLeakCheck()
                     .fails(50, "RANGE frame start is out of range for the designated timestamp [width=4294967296 day, max=106751 day]");
         });
@@ -257,7 +257,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
             // 300000 days of nanoseconds wrapped onto a negative value, which reads as a legal
             // width of the wrong magnitude - about 236 years rather than the 821 asked for.
             // Nothing caught this one: the query returned rows over the narrower frame.
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 300000 DAY PRECEDING AND CURRENT ROW) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 300_000 DAY PRECEDING AND CURRENT ROW) FROM tab")
                     .noLeakCheck()
                     .fails(50, "RANGE frame start is out of range for the designated timestamp [width=300000 day, max=106751 day]");
         });
@@ -271,7 +271,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
             // 200000 days of nanoseconds wrapped onto a positive value, which frame validation
             // then turned away as a FOLLOWING frame start - the right refusal for a cause the
             // user did not write. The width is now named instead.
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 200000 DAY PRECEDING AND CURRENT ROW) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 200_000 DAY PRECEDING AND CURRENT ROW) FROM tab")
                     .noLeakCheck()
                     .fails(50, "RANGE frame start is out of range for the designated timestamp [width=200000 day, max=106751 day]");
         });
@@ -463,7 +463,8 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
             // ring's first read an offset into memory it never allocated, an AssertionError under
             // -ea and an unchecked read of native address 0 without it. Correcting the ROWS path
             // means rejecting an over-int width outright, which also rejects finite widths that
-            // compile today, so it belongs to a change of its own.
+            // compile today, so it belongs to a change of its own - tracked as questdb#7522, which
+            // this test will have to be changed rather than merely satisfied by.
             try {
                 printSql("SELECT ts, avg(j) OVER (ORDER BY ts" + WIDEST_LAGGING_END_ROWS + " FROM tab");
                 Assert.fail("expected ArithmeticException");
@@ -552,7 +553,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
 
             // Micros carry three orders of magnitude more days than nanos do, so the ceiling
             // has to follow the column's resolution rather than a fixed magnitude.
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 106751991 DAY PRECEDING AND CURRENT ROW) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 106_751_991 DAY PRECEDING AND CURRENT ROW) FROM tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -562,7 +563,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000000Z\t1.0
                             2261-01-01T00:00:00.000000Z\t3.0
                             """);
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 106751992 DAY PRECEDING AND CURRENT ROW) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 106_751_992 DAY PRECEDING AND CURRENT ROW) FROM tab")
                     .noLeakCheck()
                     .fails(50, "RANGE frame start is out of range for the designated timestamp [width=106751992 day, max=106751991 day]");
         });
@@ -578,7 +579,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
             // the ceiling has to follow the column's resolution at this end of the frame too. The
             // 9999 row's frame stops in the year 9177 and still reaches the 1970 row; the 1970
             // row's frame stops before anything was written.
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 300000 DAY PRECEDING) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 300_000 DAY PRECEDING) FROM tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -590,7 +591,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
                             """);
             // The widest end bound micros carry reaches back past every row, so both frames are
             // empty - the point is that it compiles at all.
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 106751991 DAY PRECEDING) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 106_751_991 DAY PRECEDING) FROM tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -600,7 +601,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000000Z\tnull
                             9999-01-01T00:00:00.000000Z\tnull
                             """);
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 106751992 DAY PRECEDING) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 106_751_992 DAY PRECEDING) FROM tab")
                     .noLeakCheck()
                     .fails(74, "RANGE frame end is out of range for the designated timestamp [width=106751992 day, max=106751991 day]");
         });
@@ -614,7 +615,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
 
             // 106751 days is the widest nanosecond frame that fits, and it reaches back over
             // the whole 291 years the two rows span: the second row sees both.
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 106751 DAY PRECEDING AND CURRENT ROW) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 106_751 DAY PRECEDING AND CURRENT ROW) FROM tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -624,7 +625,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000000000Z\t1.0
                             2261-01-01T00:00:00.000000000Z\t3.0
                             """);
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 106752 DAY PRECEDING AND CURRENT ROW) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN 106_752 DAY PRECEDING AND CURRENT ROW) FROM tab")
                     .noLeakCheck()
                     .fails(50, "RANGE frame start is out of range for the designated timestamp [width=106752 day, max=106751 day]");
         });
@@ -638,7 +639,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
 
             // 100000 days - 273 years - is a lagging end bound nanos do carry: the 2261 row's
             // frame stops in the year 1987 and still reaches the 1970 row.
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 100000 DAY PRECEDING) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 100_000 DAY PRECEDING) FROM tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -650,7 +651,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
                             """);
             // The widest end bound nanos carry reaches back past the 291 years the rows span, so
             // both frames are empty - the point is that it compiles at all.
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 106751 DAY PRECEDING) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 106_751 DAY PRECEDING) FROM tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -660,7 +661,7 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000000000Z\tnull
                             2261-01-01T00:00:00.000000000Z\tnull
                             """);
-            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 106752 DAY PRECEDING) FROM tab")
+            assertQuery("SELECT ts, sum(j) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 106_752 DAY PRECEDING) FROM tab")
                     .noLeakCheck()
                     .fails(74, "RANGE frame end is out of range for the designated timestamp [width=106752 day, max=106751 day]");
         });

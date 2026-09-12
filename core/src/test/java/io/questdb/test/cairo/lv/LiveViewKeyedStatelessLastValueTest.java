@@ -257,6 +257,39 @@ public class LiveViewKeyedStatelessLastValueTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testStatelessCallWrappedInArithmeticProjectsItsValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // The eligibility test proves this shape compiles; what a CREATE cannot show is
+            // that the value arrives. The arithmetic sits above the window factory as a
+            // projection the refresh evaluates per row on the way out, so a projection bound
+            // to the wrong column stores wrong numbers while the CREATE still succeeds - and
+            // this shape carries no reject to fail on any more.
+            execute("CREATE LIVE VIEW lv_wrapped FLUSH EVERY 100ms START FROM NOW AS "
+                    + "SELECT ts, sym, " + FN + " OVER (" + FRAME + ") + 1 AS l FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int commit = 1; commit <= COMMITS; commit++) {
+                    commitDense(job, commit);
+                }
+                driveRefreshToQuiescence(job);
+                // On this frame the stateless call answers with the current row's own
+                // argument, so the oracle is that argument plus one. commitDense plants a
+                // NULL every seventh row of one key and every fifth of the other, which the
+                // addition must carry through as a NULL rather than as a one.
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "(SELECT ts, sym, x + 1 AS l FROM base) ORDER BY 2, 1",
+                        "(SELECT ts, sym, l FROM lv_wrapped) ORDER BY 2, 1",
+                        LOG,
+                        true
+                );
+                assertNoRefreshFaults("lv_wrapped");
+            }
+        });
+    }
+
     private static String timestamp(int second) {
         return String.format(
                 "2026-01-%02dT%02d:%02d:%02d.000000Z",

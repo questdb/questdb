@@ -26,13 +26,23 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Correctness suite for live views over a DEDUP-enabled base table. Such a view
@@ -1097,6 +1107,107 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                     .returns("sym\ttag\tts\trn\n" +
                             "a\tx\t2026-01-01T00:00:01.000000Z\t1\n" +
                             "a\tz\t2026-01-01T00:00:02.000000Z\t2\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testTransientBaseMetadataFaultKeepsTheDedupRoute() throws Exception {
+        // isDedupBase decides the routing for a whole refresh cycle, so a metadata read that
+        // FAILS must not be answered "not a dedup base". A wrong "no" routes the cycle down the
+        // raw-WAL path, whose cross-commit trigger (txnMinTs < latestSeen, strict) misses an
+        // equality-at-the-frontier replacement - the exact case
+        // testFrontierTimestampReplacementReflectedNoDuplicate pins - so the replacement lands as
+        // an additive duplicate row and gets committed with recordRefreshSuccess().
+        //
+        // The fault is one-shot and lands on the base's _meta open that isDedupBase makes:
+        // releaseAllReaders() empties the metadata pool, so the borrow rebuilds the tenant from
+        // the file rather than reusing a pooled one. That models the transient metadata read
+        // failures TableReaderMetadataTenantImpl raises over a perfectly healthy base
+        // ("Transaction read timeout" / "Metadata read timeout" under metadata churn), which is
+        // why the following cycle - reading the same healthy base - then succeeds.
+        //
+        // errno 13 (EACCES) is deliberately not one of Files.isErrnoFileCannotRead()'s errnos:
+        // one of those would make TableUtils.handleMetadataLoadException spin to the deadline
+        // instead of throwing, and this suite runs on a simulated-year spin timeout.
+        final AtomicBoolean metaOpenFaultArmed = new AtomicBoolean();
+        final AtomicBoolean metaOpenFaultServed = new AtomicBoolean();
+        final AtomicReference<String> baseMetaPathTail = new AtomicReference<>();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return metaOpenFaultServed.compareAndSet(true, false) ? 13 : super.errno();
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                return serveFault(name) ? -1 : super.openRO(name);
+            }
+
+            @Override
+            public long openRONoCache(LPSZ name) {
+                return serveFault(name) ? -1 : super.openRONoCache(name);
+            }
+
+            private boolean serveFault(LPSZ name) {
+                final String tail = baseMetaPathTail.get();
+                if (tail != null && metaOpenFaultArmed.get() && Utf8s.endsWithAscii(name, tail)) {
+                    metaOpenFaultArmed.set(false);
+                    metaOpenFaultServed.set(true);
+                    return true;
+                }
+                return false;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP, g SYMBOL) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (sym, val, ts) VALUES " +
+                        "('a', 10, '2026-01-01T00:00:01.000000Z'), " +
+                        "('a', 20, '2026-01-01T00:00:02.000000Z'), " +
+                        "('a', 30, '2026-01-01T00:00:03.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final TableToken baseToken = instance.getDefinition().getBaseTableToken();
+
+                // The dedup UPSERT replaces the row sitting at exactly the frontier ts.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (sym, val, ts) VALUES ('a', 99, '2026-01-01T00:00:03.000000Z')");
+                drainWalQueue();
+
+                baseMetaPathTail.set(baseToken.getDirName() + Files.SEPARATOR + TableUtils.META_FILE_NAME);
+                engine.releaseAllReaders();
+                metaOpenFaultArmed.set(true);
+                drainJob(job);
+                Assert.assertFalse(
+                        "the one-shot base metadata fault was never served, so this case tests nothing",
+                        metaOpenFaultArmed.get()
+                );
+
+                // Fault gone. The retry reads the same healthy base and must converge on it.
+                driveRefreshToQuiescence(job);
+            }
+            assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("sym\tval\tts\trn\n" +
+                            "a\t10\t2026-01-01T00:00:01.000000Z\t1\n" +
+                            "a\t20\t2026-01-01T00:00:02.000000Z\t2\n" +
+                            "a\t99\t2026-01-01T00:00:03.000000Z\t3\n");
+            Assert.assertTrue(
+                    "an unreadable base metadata must reach handleRefreshFailure, not be answered"
+                            + " \"not a dedup base\" and route the cycle down the raw-WAL path",
+                    instance.getRefreshFaultCount() > 0
+            );
             execute("DROP LIVE VIEW lv");
         });
     }

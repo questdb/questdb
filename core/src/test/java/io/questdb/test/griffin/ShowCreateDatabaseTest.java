@@ -946,6 +946,42 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentRecreateLiveViewUnderSameNameSkipsReplacement() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            node1.setProperty(PropertyKey.CAIRO_LIVE_VIEW_ENABLED, true);
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view victim_lv flush every 1s start from now as " +
+                    "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base where x > 0");
+            drainWalQueue();
+
+            // The hook runs after appendObjectDdl's token-identity pre-check, but before the live-view
+            // delegate opens its cursor. The replacement was not part of the dump snapshot and must not
+            // be emitted even though standalone SHOW CREATE LIVE VIEW follows same-name replacement.
+            final boolean[] fired = {false};
+            final ObjList<String> statements = drive(new HookedDatabaseFactory(
+                    ShowCreateDatabaseRecordCursorFactory.INCLUDE_SCHEMA,
+                    token -> {
+                        if (!fired[0] && "victim_lv".contentEquals(token.getTableName())) {
+                            fired[0] = true;
+                            executeQuietly("drop live view victim_lv");
+                            executeQuietly("create live view victim_lv flush every 2s start from now as " +
+                                    "select ts, x, count(*) over (partition by x order by ts rows between 2 preceding and current row) as rn from base where x > 1");
+                            drainWalQueue();
+                        }
+                        return null;
+                    }
+            ));
+
+            Assert.assertTrue("live-view recreate hook must have fired", fired[0]);
+            final String dump = statements.toString();
+            Assert.assertEquals(dump, 1, statements.size());
+            Assert.assertTrue(dump, dump.contains("CREATE TABLE 'base'"));
+            Assert.assertFalse("replacement live view must be skipped", dump.contains("victim_lv"));
+        });
+    }
+
+    @Test
     public void testGenuineCairoExceptionForPresentObjectPropagates() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
@@ -1124,6 +1160,12 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
         protected RecordCursorFactory matViewFactory(TableToken token) {
             final RecordCursorFactory replacement = hook.replace(token);
             return replacement != null ? replacement : super.matViewFactory(token);
+        }
+
+        @Override
+        protected RecordCursorFactory liveViewFactory(TableToken token) {
+            final RecordCursorFactory replacement = hook.replace(token);
+            return replacement != null ? replacement : super.liveViewFactory(token);
         }
 
         @Override

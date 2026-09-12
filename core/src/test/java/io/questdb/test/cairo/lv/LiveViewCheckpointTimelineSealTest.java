@@ -28,7 +28,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.lv.LiveViewCheckpointAnchorRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
@@ -41,6 +40,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
+import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
@@ -264,13 +264,13 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     @Test
     public void testNormalCadenceAppendsPermanentRootsAndPublishesCompleteState() throws Exception {
         assertMemoryLeak(() -> {
-            // The shape this case describes is the legacy one - an anchor root beside a
-            // per-function root whose state is a data page - so its window function has to
-            // be one the fused plan leaves residual and one that writes a page rather than
-            // inlining. The exponential moving average is both: it declares no accumulator
-            // family and no fixed width, so its whole image goes to a data segment, which
-            // is what the reference counting below is about. It replaced ksum here when the
-            // compensated total joined the group.
+            // The shape this case describes is the anchor-only one - a window root carrying
+            // the anchor value alone beside a per-function root whose state is a data page
+            // - so its window function has to be one the plan leaves residual and one that
+            // writes a page rather than inlining. The exponential moving average is both:
+            // it declares no accumulator family and no fixed width, so its whole image goes
+            // to a data segment, which is what the reference counting below is about. It
+            // replaced ksum here when the compensated total joined the group.
             createPageBackedAnchoredView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 appendAndRefresh(job, 10, 1);
@@ -284,7 +284,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                         LiveViewCheckpointGenerationPin pin = store.pin();
                         LiveViewCheckpointTimelineReader reader = openTimelineReader(instance);
                         LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
-                        LiveViewCheckpointAnchorRoot anchorRoot = new LiveViewCheckpointAnchorRoot(configuration);
+                        LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(configuration);
                         LiveViewCheckpointFunctionDirectory functions =
                                 new LiveViewCheckpointFunctionDirectory(configuration);
                         Path checkpointsDir = checkpointsDir(instance)
@@ -334,13 +334,25 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                     root.of(checkpointsDir, latest.rootRef);
                     Assert.assertEquals(latest.checkpointId, root.getCheckpointId());
                     Assert.assertEquals(latest.maxTimestamp, root.getMaxTimestamp());
-                    final LiveViewCheckpointPageRef anchorRootRef = new LiveViewCheckpointPageRef();
-                    root.getAnchorRootRef(anchorRootRef);
-                    Assert.assertFalse(anchorRootRef.isNull());
-                    anchorRoot.of(checkpointsDir, anchorRootRef);
-                    Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, anchorRoot.getAnchorValueType());
+                    final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
+                    root.getStateRootRef(stateRootRef);
+                    Assert.assertFalse(stateRootRef.isNull());
+                    // An anchored seal publishes a window root whatever its functions are.
+                    // This view has no fusible one, so the root carries a manifest declaring
+                    // zero components and a payload that is the anchor value and nothing
+                    // else - which is what the eight-byte scalar assertion below reads.
+                    Assert.assertTrue(
+                            "an anchored view seals a window root",
+                            windowRoot.ofIfWindowRoot(checkpointsDir, stateRootRef)
+                    );
+                    Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, windowRoot.getAnchorValueType());
+                    Assert.assertEquals(
+                            "the anchor-only payload is the anchor value alone",
+                            Long.BYTES,
+                            windowRoot.getTotalInlineStateBytes()
+                    );
                     final LiveViewCheckpointPageRef anchorMapRootRef = new LiveViewCheckpointPageRef();
-                    anchorRoot.getPartitionMapRootRef(anchorMapRootRef);
+                    windowRoot.getPartitionMapRootRef(anchorMapRootRef);
                     Assert.assertFalse(anchorMapRootRef.isNull());
                     try (LiveViewCheckpointPartitionMapReader anchorMap =
                                  new LiveViewCheckpointPartitionMapReader(configuration)) {
@@ -366,7 +378,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                                 Assert.assertEquals(1, entry.referenceCount);
                             }
                         });
-                        // The anchor reaches no data segment, so the newest root's
+                        // The window root reaches no data segment, so the newest root's
                         // only one is the function state the same seal wrote. Every
                         // other segment it names is its own boundary metadata.
                         Assert.assertEquals(1, countRootDataSegments(directory, root));
@@ -678,6 +690,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                                 new LiveViewCheckpointTimelineStoreReader(configuration)
                 ) {
                     reader.of(checkpointsDir);
+                    final int visitorIdentity = reader.getVisitorShellIdentityForTest();
                     reader.restore(
                             ts("2026-01-01T00:00:20.000000Z"),
                             1,
@@ -686,6 +699,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             anchorWindow
                     );
                     assertRuntimeSnapshot(dayOne, functions, anchorWindow);
+                    Assert.assertEquals(visitorIdentity, reader.getVisitorShellIdentityForTest());
+                    Assert.assertTrue(reader.isVisitorShellStateClearForTest());
 
                     reader.restore(
                             ts("2026-01-02T00:00:10.000000Z"),
@@ -695,6 +710,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             anchorWindow
                     );
                     assertRuntimeSnapshot(dayTwo, functions, anchorWindow);
+                    Assert.assertEquals(visitorIdentity, reader.getVisitorShellIdentityForTest());
+                    Assert.assertTrue(reader.isVisitorShellStateClearForTest());
                 }
                 assertNoRefreshFaults("lv");
             }
@@ -811,6 +828,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());
                             TestUtils.assertContains(e.getFlyweightMessage(), "data segment file length mismatch");
                         }
+                        Assert.assertTrue(reader.isVisitorShellStateClearForTest());
                     }
                 }
                 assertRuntimeSnapshot(before, functions, null);

@@ -27,9 +27,23 @@ package io.questdb.cairo.lv;
 /**
  * Logical lifecycle state of a live view.
  * <p>
- * Derived state, not a persisted field. The combination of registry visibility
- * (locked / committed / marked-dropped), {@code _lv.s.invalid}, and
- * {@code _lv.s.seedState} uniquely determines the state.
+ * Derived state, not a persisted field. Registry visibility (locked / committed /
+ * marked-dropped), {@code _lv.s.invalid}, {@code _lv.s.seedState} and the
+ * recovery block together determine the state.
+ * <p>
+ * Three of those four signals are durable. The fourth, the recovery block, is
+ * re-derived on every start - from the checkpoint superblock for a format block
+ * ({@link LiveViewCheckpointRecoveryPhase#BLOCKED}), by the restart's own
+ * recovery for a refused rebuild
+ * ({@link LiveViewCheckpointRecoveryPhase#REBUILD_BLOCKED}) - and it reports as
+ * {@link #INVALID} because that is what it is to an operator: refresh has
+ * stopped, the rows the view already has stay queryable, and the way back is a
+ * re-CREATE. Reporting it under a status of its own would hide it from the
+ * queries operators already run to find stopped views.
+ * {@code live_views().checkpoint_recovery_phase} is what tells them apart. A
+ * rebuild that waits for its base table's apply
+ * ({@link LiveViewCheckpointRecoveryPhase#REBUILD_DEFERRED}) is not a block and
+ * does not enter here: the view has not stopped, so it reports {@link #ACTIVE}.
  */
 public enum LiveViewLifecycleState {
     /**
@@ -86,20 +100,27 @@ public enum LiveViewLifecycleState {
      * therefore means "the instance has been marked dropped" and resolves to
      * {@link #DROPPING}.
      *
-     * @param registryVisible {@code true} iff the live view has a committed
-     *                        registry entry not marked for drop
-     * @param invalid         {@code _lv.s.invalid}
-     * @param seeding         {@code _lv.s.seedState == SEEDING}
+     * @param registryVisible        {@code true} iff the live view has a committed
+     *                               registry entry not marked for drop
+     * @param invalid                {@code _lv.s.invalid}
+     * @param recoveryBlocked        the view's recovery stopped rather than finished:
+     *                               its checkpoint timeline declares a format version
+     *                               this build does not implement, or its rebuild from
+     *                               the applied base was refused. Reports as
+     *                               {@link #INVALID}: refresh is stopped either way, and
+     *                               an operator looking for stopped views must find it
+     * @param seeding                {@code _lv.s.seedState == SEEDING}
      */
     public static LiveViewLifecycleState derive(
             boolean registryVisible,
             boolean invalid,
+            boolean recoveryBlocked,
             boolean seeding
     ) {
         if (!registryVisible) {
             return DROPPING;
         }
-        if (invalid) {
+        if (invalid || recoveryBlocked) {
             return INVALID;
         }
         return seeding ? SEEDING : ACTIVE;
