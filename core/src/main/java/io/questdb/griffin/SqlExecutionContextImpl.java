@@ -779,7 +779,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private void checkNoMountedQueryOwner() {
         if (queryRegistryOwnerId > -1) {
             throw new IllegalStateException(
-                    "cannot reset SQL execution context while a query owner is mounted [ownerId="
+                    "cannot rebind SQL execution context while a query owner is mounted [ownerId="
                             + queryRegistryOwnerId
                             + ']'
             );

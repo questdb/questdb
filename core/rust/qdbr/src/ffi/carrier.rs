@@ -32,7 +32,9 @@
 
 use std::cell::Cell;
 
-use qdb_core::memory_tracker::{detach_thread_local, detach_thread_local_if, publish_thread_local};
+use qdb_core::memory_tracker::{
+    detach_thread_local, detach_thread_local_if, publish_thread_local, MemoryScope, MemoryTracker,
+};
 
 thread_local! {
     static CARRIER_ID: Cell<i32> = const { Cell::new(-1) };
@@ -48,21 +50,47 @@ pub extern "C" fn qdb_carrier_current() -> i32 {
     CARRIER_ID.with(|c| c.get())
 }
 
+/// Credits `bytes` to the tracker through the thread-local Resource Group delta.
 #[no_mangle]
-pub extern "C" fn qdb_memory_tracker_detach() {
-    detach_thread_local();
+pub extern "C" fn qdb_memory_tracker_credit(tracker_address: i64, bytes: i64) {
+    tracker(tracker_address).credit(bytes as usize);
 }
 
+/// A zero `tracker_address` detaches whatever binding the thread holds;
+/// otherwise only a binding to that tracker and generation is detached.
 #[no_mangle]
-pub extern "C" fn qdb_memory_tracker_detach_if(tracker_address: i64, generation: i64) {
-    if tracker_address > 0 && generation > 0 {
+pub extern "C" fn qdb_memory_tracker_detach(tracker_address: i64, generation: i64) {
+    if tracker_address == 0 {
+        detach_thread_local();
+    } else {
         detach_thread_local_if(tracker_address as usize, generation as usize);
+    }
+}
+
+/// Charges `bytes` to the tracker. Returns 0 on success, otherwise the code of
+/// the breached scope: 1 query, 2 process, 3 group, 4 tracker configuration.
+#[no_mangle]
+pub extern "C" fn qdb_memory_tracker_try_charge(tracker_address: i64, bytes: i64) -> i32 {
+    match tracker(tracker_address).try_charge(bytes as usize) {
+        Ok(()) => 0,
+        Err(breach) => match breach.scope {
+            MemoryScope::Query => 1,
+            MemoryScope::Process => 2,
+            MemoryScope::Group => 3,
+            MemoryScope::Configuration | MemoryScope::Global => 4,
+        },
     }
 }
 
 #[no_mangle]
 pub extern "C" fn qdb_memory_tracker_publish() {
     publish_thread_local();
+}
+
+/// Tracker blocks stay mapped until engine shutdown; Java only passes the
+/// address of a live block.
+fn tracker<'a>(tracker_address: i64) -> &'a MemoryTracker {
+    unsafe { &*(tracker_address as usize as *const MemoryTracker) }
 }
 
 #[cfg(test)]

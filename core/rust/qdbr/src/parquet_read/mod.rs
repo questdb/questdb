@@ -1,4 +1,4 @@
-use crate::allocator::AcVec;
+use crate::allocator::{AcVec, QdbAllocator};
 use qdb_core::col_type::ColumnType;
 
 pub mod column_sink;
@@ -20,7 +20,7 @@ pub struct DecodeContext {
     pub file_size: u64,
     pub dict_decompress_buffer: Vec<u8>,
     pub decompress_buffer: Vec<u8>,
-    pub varchar_slice_buf_pool: Vec<Vec<u8>>,
+    pub varchar_slice_buf_pool: PageBufferPool,
     /// Scratch outer-vec for varchar_slice data-page buffers, hoisted out of the
     /// per-column-chunk decode loop so the heap-allocated outer storage is reused
     /// across calls. The inner `Vec<u8>` buffers are still moved into
@@ -38,38 +38,84 @@ impl DecodeContext {
             file_size,
             dict_decompress_buffer: Vec::new(),
             decompress_buffer: Vec::new(),
-            varchar_slice_buf_pool: Vec::new(),
+            varchar_slice_buf_pool: PageBufferPool::default(),
             varchar_slice_page_bufs_scratch: Vec::new(),
             varchar_slice_dict_bufs_scratch: Vec::new(),
         }
     }
 }
 
-/// Scope guard that empties the VarcharSlice reuse pool and scratch vecs when it
-/// drops, so a row-group decode releases them on success and error paths alike.
-///
-/// During an untracked decode the column loop parks a column's old
-/// `page_buffers` in `varchar_slice_buf_pool` so the next column can reuse them.
-/// A tracker-bound decode drops old buffers before crediting their physical
-/// capacity, preserving the hard ceiling. Both modes stage in-flight page/dict
-/// buffers in the scratch vecs. On a successful return the
-/// scratch vecs have already drained into `ColumnChunkBuffers::page_buffers`
-/// (counted by the Java byte budget via `page_buffers_size`) and only unused
-/// spares remain in the pool, so the drop is equivalent to the previous explicit
-/// end-of-decode pool clear. On an error return the parked and in-flight buffers
-/// are still in the context; without the guard they would survive as RSS
-/// invisible to the cache budget until the decoder is destroyed, because Java
-/// only closes the `RowGroupBuffers` shell when a decode fails — the configured
-/// cache budget could read zero while the context still held varchar page bytes.
-///
-/// Clearing the scratch vecs on an error frees buffers that the failed chunk's
-/// aux entries may still point into. That is safe because no caller reads a
-/// chunk after a failed decode (the Java cache evicts and closes the shell),
-/// and the next decode would free those buffers anyway when it clears the
-/// scratch vecs at the start of each column chunk.
-///
-/// Same-slot reuse is preserved for untracked decodes: the next decode re-parks
-/// the live `page_buffers` it drains from `ColumnChunkBuffers`.
+/// Spare VarcharSlice page buffers parked between the column chunks of one row-group
+/// decode. A parked buffer keeps the per-query charge for its capacity, so reuse cannot
+/// bypass the memory ceiling: the charge moves to the chunk that takes the buffer, and
+/// whatever is still parked is credited when the pool is released.
+#[derive(Default)]
+pub struct PageBufferPool {
+    allocator: Option<QdbAllocator>,
+    bufs: Vec<Vec<u8>>,
+    charged: usize,
+}
+
+impl PageBufferPool {
+    #[cfg(test)]
+    pub(crate) fn bufs(&self) -> &[Vec<u8>] {
+        &self.bufs
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bufs.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.bufs.len()
+    }
+
+    pub fn park(&mut self, buf: Vec<u8>) {
+        self.charged += buf.capacity();
+        self.bufs.push(buf);
+    }
+
+    pub(crate) fn pooled_capacity(&self) -> usize {
+        self.bufs.last().map_or(0, Vec::capacity)
+    }
+
+    pub(crate) fn release(&mut self) {
+        if let Some(allocator) = self.allocator.take() {
+            allocator.credit_tracked(self.charged);
+        }
+        self.charged = 0;
+        self.bufs.clear();
+    }
+
+    pub(crate) fn take(&mut self, owner: &mut ColumnChunkBuffers) -> Vec<u8> {
+        let Some(buf) = self.bufs.pop() else {
+            return Vec::new();
+        };
+        let capacity = buf.capacity();
+        debug_assert!(self.charged >= capacity);
+        self.charged -= capacity;
+        owner.page_buffers_charged += capacity;
+        buf
+    }
+
+    fn park_all(&mut self, allocator: &QdbAllocator, bufs: &mut Vec<Vec<u8>>) {
+        if self.allocator.is_none() {
+            self.allocator = Some(allocator.clone());
+        }
+        for buf in bufs.iter() {
+            self.charged += buf.capacity();
+        }
+        self.bufs.append(bufs);
+    }
+}
+
+/// Scope guard that releases the VarcharSlice reuse pool and scratch vecs when it drops, so
+/// a row-group decode returns them on success and error paths alike. On success the scratch
+/// vecs have already drained into `ColumnChunkBuffers::page_buffers` and only spares remain
+/// in the pool; on an error the parked and in-flight buffers would otherwise survive as RSS
+/// invisible to the Java cache budget, because Java only closes the `RowGroupBuffers` shell
+/// when a decode fails. Freeing scratch buffers the failed chunk's aux entries still point
+/// into is safe: no caller reads a chunk after a failed decode.
 pub struct VarcharSliceBufGuard<'a> {
     ctx: &'a mut DecodeContext,
 }
@@ -87,7 +133,7 @@ impl<'a> VarcharSliceBufGuard<'a> {
 
 impl Drop for VarcharSliceBufGuard<'_> {
     fn drop(&mut self) {
-        self.ctx.varchar_slice_buf_pool.clear();
+        self.ctx.varchar_slice_buf_pool.release();
         self.ctx.varchar_slice_page_bufs_scratch.clear();
         self.ctx.varchar_slice_dict_bufs_scratch.clear();
     }
@@ -301,7 +347,7 @@ mod tests {
         let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
 
         // Simulate buffers parked or staged by an in-flight decode.
-        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_buf_pool.park(vec![0u8; 4096]);
         ctx.varchar_slice_page_bufs_scratch.push(vec![0u8; 1024]);
         ctx.varchar_slice_dict_bufs_scratch.push(vec![0u8; 1024]);
 
@@ -356,7 +402,7 @@ mod tests {
         let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
 
         // Simulate buffers parked or staged by an in-flight decode.
-        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_buf_pool.park(vec![0u8; 4096]);
         ctx.varchar_slice_page_bufs_scratch.push(vec![0u8; 1024]);
         ctx.varchar_slice_dict_bufs_scratch.push(vec![0u8; 1024]);
 

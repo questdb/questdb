@@ -317,19 +317,6 @@ public class WorkerPool implements Closeable {
         return haltAndRelease(true, System.nanoTime() + Math.max(0, timeoutNanos), false);
     }
 
-    @TestOnly
-    public boolean hasJobForTesting(Class<? extends Job> jobClass) {
-        for (int i = 0; i < workerCount; i++) {
-            final ObjHashSet<Job> jobs = workerJobs.getQuick(i);
-            for (int j = 0, n = jobs.size(); j < n; j++) {
-                if (jobClass.isInstance(jobs.get(j))) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
     public boolean isFiberHost() {
         return mode == WorkerPoolMode.FIBER_HOST;
     }

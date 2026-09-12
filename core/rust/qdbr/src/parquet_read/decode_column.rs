@@ -47,6 +47,7 @@ use crate::parquet_read::decode::{
 use crate::parquet_read::row_groups::{
     decompress_varchar_slice_data, decompress_varchar_slice_dict,
 };
+use crate::parquet_read::PageBufferPool;
 use crate::parquet_read::{ColumnChunkBuffers, DecodeContext};
 
 /// Decode a single i64 timestamp value from a column chunk. Both the `_pm`
@@ -582,7 +583,7 @@ fn decompress_data_page<'a>(
     page: &'a parquet2::read::SlicedDataPage<'a>,
     decompress_buffer: &'a mut Vec<u8>,
     varchar_slice_page_bufs: &'a mut Vec<Vec<u8>>,
-    varchar_slice_buf_pool: &mut Vec<Vec<u8>>,
+    varchar_slice_buf_pool: &mut PageBufferPool,
     bufs: &mut ColumnChunkBuffers,
 ) -> ParquetResult<crate::parquet_read::page::DataPage<'a>> {
     if is_varchar_slice {
@@ -603,7 +604,7 @@ fn finish_varchar_slice(
     bufs: &mut ColumnChunkBuffers,
     varchar_slice_page_bufs: &mut Vec<Vec<u8>>,
     varchar_slice_dict_bufs: &mut Vec<Vec<u8>>,
-    _varchar_slice_buf_pool: &mut Vec<Vec<u8>>,
+    _varchar_slice_buf_pool: &mut PageBufferPool,
 ) {
     if is_varchar_slice {
         if !bufs.data_vec.is_empty() {

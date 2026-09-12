@@ -44,6 +44,7 @@ import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionOwner;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -70,7 +71,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware {
 
     private static final Log LOG = LogFactory.getLog(QwpEgressProcessorState.class);
-    private static final long SQL_EXECUTION_OWNER_UNINITIALIZED = Long.MIN_VALUE;
     // Test-only default overrides for the CACHE_RESET soft caps. Set these
     // before opening a connection so every new {@link QwpEgressProcessorState}
     // picks them up in its constructor; set back to {@code -1} at the end of
@@ -108,6 +108,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * streaming turns both sites into true data races. The atomic makes the
      * fix durable regardless of which dispatcher variant is active.
      */
+    private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
     private final AtomicLong streamingCreditRemaining = new AtomicLong();
     // Compression negotiated at handshake time. codec == COMPRESSION_NONE (default)
     // sends RESULT_BATCH bytes raw; COMPRESSION_ZSTD compresses the region after
@@ -188,10 +189,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     private int pendingHandshakeBytes;
     private int recvBufferLen;
-    private boolean isSqlExecutionOwnerMounted;
     private SecurityContext securityContext;
-    private SqlExecutionContext sqlExecutionOwnerContext;
-    private long sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
     /**
      * Streaming-state for an in-flight query. Populated when the query starts; cleared
      * (and resources freed) on completion, error, or disconnect. Lets the upgrade
@@ -387,17 +385,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             SqlExecutionContext executionContext,
             short compiledQueryType
     ) {
-        if (sqlExecutionOwnerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
-            throw new IllegalStateException("QWP SQL execution owner is already initialized");
-        }
-        final long ownerId = executionContext.getCairoEngine().beginSqlExecution(
-                query,
-                executionContext,
-                compiledQueryType
-        );
-        sqlExecutionOwnerContext = executionContext;
-        sqlExecutionOwnerId = ownerId;
-        isSqlExecutionOwnerMounted = ownerId > -1;
+        sqlExecutionOwner.begin(query, executionContext, compiledQueryType);
     }
 
     public void beginStreaming(
@@ -652,16 +640,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * Idempotent -- safe to call from completion, error, or disconnect paths.
      */
     public void endSqlExecutionOwner() {
-        final long ownerId = sqlExecutionOwnerId;
-        try {
-            if (ownerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
-                sqlExecutionOwnerContext.getCairoEngine().endSqlExecution(ownerId, sqlExecutionOwnerContext);
-            }
-        } finally {
-            isSqlExecutionOwnerMounted = false;
-            sqlExecutionOwnerContext = null;
-            sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
-        }
+        sqlExecutionOwner.end();
     }
 
     public void endStreaming() {
@@ -872,7 +851,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     public boolean isSqlExecutionOwnerStarted() {
-        return sqlExecutionOwnerId != SQL_EXECUTION_OWNER_UNINITIALIZED;
+        return sqlExecutionOwner.isStarted();
     }
 
     /**
@@ -977,24 +956,17 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         try {
             suspendStreamingTimer();
         } finally {
-            unmountSqlExecutionOwner();
+            sqlExecutionOwner.unmount();
         }
     }
 
     public void publishSqlExecutionOwner(CharSequence query, boolean containsSecret) {
-        if (sqlExecutionOwnerId > -1) {
-            sqlExecutionOwnerContext.getCairoEngine().publishSqlExecutionQuery(
-                    sqlExecutionOwnerId,
-                    query,
-                    containsSecret,
-                    sqlExecutionOwnerContext
-            );
-        }
+        sqlExecutionOwner.publish(query, containsSecret);
     }
 
     public void resumeSqlExecutionOwner() {
         resumeStreamingTimer();
-        mountSqlExecutionOwner();
+        sqlExecutionOwner.mount();
     }
 
     /**
@@ -1132,23 +1104,4 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return zstdCompressScratchAddr;
     }
 
-    private void mountSqlExecutionOwner() {
-        if (sqlExecutionOwnerId > -1 && !isSqlExecutionOwnerMounted) {
-            sqlExecutionOwnerContext.getCairoEngine().mountSqlExecution(
-                    sqlExecutionOwnerId,
-                    sqlExecutionOwnerContext
-            );
-            isSqlExecutionOwnerMounted = true;
-        }
-    }
-
-    private void unmountSqlExecutionOwner() {
-        if (sqlExecutionOwnerId > -1 && isSqlExecutionOwnerMounted) {
-            sqlExecutionOwnerContext.getCairoEngine().unmountSqlExecution(
-                    sqlExecutionOwnerId,
-                    sqlExecutionOwnerContext
-            );
-            isSqlExecutionOwnerMounted = false;
-        }
-    }
 }

@@ -100,9 +100,14 @@ public final class CarrierIdentity {
         }
     }
 
-    public static void detachMemoryTracker() {
+    /**
+     * Charges bytes to a Resource Group tracker through the OS-thread-local
+     * delta. Returns 0 on success, otherwise the breached scope code that
+     * {@link io.questdb.std.MemoryTracker} turns into the limit error.
+     */
+    public static int chargeMemoryTracker(long trackerAddress, long bytes) {
         try {
-            MemoryTrackerSymbols.DETACH.invokeExact();
+            return (int) MemoryTrackerSymbols.CHARGE.invokeExact(trackerAddress, bytes);
         } catch (RuntimeException | Error e) {
             throw e;
         } catch (Throwable t) {
@@ -110,9 +115,24 @@ public final class CarrierIdentity {
         }
     }
 
+    public static void creditMemoryTracker(long trackerAddress, long bytes) {
+        try {
+            MemoryTrackerSymbols.CREDIT.invokeExact(trackerAddress, bytes);
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new AssertionError(t);
+        }
+    }
+
+    /**
+     * Publishes and drops the current thread's Resource Group delta. A zero
+     * tracker address detaches whatever binding the thread holds; otherwise
+     * only a binding to that tracker and generation is detached.
+     */
     public static void detachMemoryTracker(long trackerAddress, long generation) {
         try {
-            MemoryTrackerSymbols.DETACH_IF.invokeExact(trackerAddress, generation);
+            MemoryTrackerSymbols.DETACH.invokeExact(trackerAddress, generation);
         } catch (RuntimeException | Error e) {
             throw e;
         } catch (Throwable t) {
@@ -183,34 +203,34 @@ public final class CarrierIdentity {
      * the base carrier ABI.
      */
     private static final class MemoryTrackerSymbols {
+        private static final MethodHandle CHARGE;
+        private static final MethodHandle CREDIT;
         private static final MethodHandle DETACH;
-        private static final MethodHandle DETACH_IF;
         private static final MethodHandle PUBLISH;
 
         static {
-            final SymbolLookup lookup = SymbolLookup.loaderLookup();
-            final Linker linker = Linker.nativeLinker();
-            DETACH = linker.downcallHandle(
-                    lookup.find("qdb_memory_tracker_detach").orElseThrow(
-                            () -> new ExceptionInInitializerError(
-                                    "symbol qdb_memory_tracker_detach not found in libquestdbr"
-                            )),
-                    FunctionDescriptor.ofVoid(),
-                    Linker.Option.critical(false));
-            DETACH_IF = linker.downcallHandle(
-                    lookup.find("qdb_memory_tracker_detach_if").orElseThrow(
-                            () -> new ExceptionInInitializerError(
-                                    "symbol qdb_memory_tracker_detach_if not found in libquestdbr"
-                            )),
-                    FunctionDescriptor.ofVoid(ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG),
-                    Linker.Option.critical(false));
-            PUBLISH = linker.downcallHandle(
-                    lookup.find("qdb_memory_tracker_publish").orElseThrow(
-                            () -> new ExceptionInInitializerError(
-                                    "symbol qdb_memory_tracker_publish not found in libquestdbr"
-                            )),
-                    FunctionDescriptor.ofVoid(),
-                    Linker.Option.critical(false));
+            CHARGE = downcall(
+                    "qdb_memory_tracker_try_charge",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG)
+            );
+            CREDIT = downcall(
+                    "qdb_memory_tracker_credit",
+                    FunctionDescriptor.ofVoid(ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG)
+            );
+            DETACH = downcall(
+                    "qdb_memory_tracker_detach",
+                    FunctionDescriptor.ofVoid(ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG)
+            );
+            PUBLISH = downcall("qdb_memory_tracker_publish", FunctionDescriptor.ofVoid());
+        }
+
+        private static MethodHandle downcall(String symbol, FunctionDescriptor descriptor) {
+            return Linker.nativeLinker().downcallHandle(
+                    SymbolLookup.loaderLookup().find(symbol).orElseThrow(
+                            () -> new ExceptionInInitializerError("symbol " + symbol + " not found in libquestdbr")),
+                    descriptor,
+                    Linker.Option.critical(false)
+            );
         }
     }
 

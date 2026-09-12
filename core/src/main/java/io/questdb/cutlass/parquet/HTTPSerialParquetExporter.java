@@ -47,6 +47,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 
+import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
 
@@ -89,12 +90,6 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
             cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
-    }
-
-    @Override
-    public void of(CopyExportRequestTask task) {
-        this.task = task;
-        this.circuitBreaker = task.getCircuitBreaker();
     }
 
     public CopyExportRequestTask.Phase process() throws Exception {
@@ -210,25 +205,14 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
     }
 
     public void resumeCursorTimer() {
-        if (exportMode == null) {
-            return;
-        }
-        switch (exportMode) {
-            case CURSOR_BASED -> {
-                if (fullCursor != null) {
-                    fullCursor.resumeTimer();
-                }
+        if (exportMode == ParquetExportMode.CURSOR_BASED) {
+            if (fullCursor != null) {
+                fullCursor.resumeTimer();
             }
-            case PAGE_FRAME_BACKED -> {
-                if (streamingPfc != null) {
-                    streamingPfc.resumeTimer();
-                }
-            }
-            case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> {
-                final PageFrameCursor taskPageFrameCursor = task != null ? task.getPageFrameCursor() : null;
-                if (taskPageFrameCursor != null) {
-                    taskPageFrameCursor.resumeTimer();
-                }
+        } else {
+            final PageFrameCursor pageFrameCursor = livePageFrameCursor();
+            if (pageFrameCursor != null) {
+                pageFrameCursor.resumeTimer();
             }
         }
     }
@@ -250,27 +234,31 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
     }
 
     public void suspendCursorTimer() {
+        if (exportMode == ParquetExportMode.CURSOR_BASED) {
+            if (fullCursor != null) {
+                fullCursor.suspendTimer();
+            }
+        } else {
+            final PageFrameCursor pageFrameCursor = livePageFrameCursor();
+            if (pageFrameCursor != null) {
+                pageFrameCursor.suspendTimer();
+            }
+        }
+    }
+
+    /**
+     * The page-frame cursor that owns the current export mode's timer, or null when the mode
+     * streams a record cursor or no export is in progress.
+     */
+    private @Nullable PageFrameCursor livePageFrameCursor() {
         if (exportMode == null) {
-            return;
+            return null;
         }
-        switch (exportMode) {
-            case CURSOR_BASED -> {
-                if (fullCursor != null) {
-                    fullCursor.suspendTimer();
-                }
-            }
-            case PAGE_FRAME_BACKED -> {
-                if (streamingPfc != null) {
-                    streamingPfc.suspendTimer();
-                }
-            }
-            case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> {
-                final PageFrameCursor taskPageFrameCursor = task != null ? task.getPageFrameCursor() : null;
-                if (taskPageFrameCursor != null) {
-                    taskPageFrameCursor.suspendTimer();
-                }
-            }
-        }
+        return switch (exportMode) {
+            case PAGE_FRAME_BACKED -> streamingPfc;
+            case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> task != null ? task.getPageFrameCursor() : null;
+            default -> null;
+        };
     }
 
     private void clearTempTable() {

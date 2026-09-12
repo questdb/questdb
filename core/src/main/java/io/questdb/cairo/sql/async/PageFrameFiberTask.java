@@ -33,7 +33,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
-import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.FiberTask;
@@ -47,13 +46,7 @@ import org.jetbrains.annotations.Nullable;
 
 final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(PageFrameFiberTask.class);
-    private @Nullable FiberDispatchContext batchDispatchContext;
-    private long batchDispatchOwnerId;
-    private Fiber batchFiber;
-    private long batchMountVersion;
-    private boolean batchPollDue;
-    private long batchRowsSinceCheck;
-    private long batchStartNanos;
+    private final PageFrameReduceDispatcher.Batch batch;
     private final SqlExecutionCircuitBreakerWrapper circuitBreaker;
     private final PageFrameReduceDispatcher dispatcher;
     private long orderedCursor = -1;
@@ -75,6 +68,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             FiberTaskPool<PageFrameFiberTask> pool,
             PageFrameReduceDispatcher dispatcher
     ) {
+        this.batch = new PageFrameReduceDispatcher.Batch(dispatcher.getBatchPolicy());
         this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(
                 engine,
                 engine.getConfiguration().getCircuitBreakerConfiguration()
@@ -201,19 +195,13 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     @Override
     protected boolean runStep() {
         SuspensionScope.enterTimerShards(timerShards);
-        batchDispatchContext = Fiber.captureDispatchContext();
-        batchDispatchOwnerId = getQueryRegistryOwnerId(batchDispatchContext);
-        batchFiber = Fiber.current();
-        batchMountVersion = batchFiber.getMountVersion();
-        batchStartNanos = dispatcher.getBatchClockTicks();
-        batchRowsSinceCheck = 0;
-        batchPollDue = false;
+        batch.begin();
         if (orderedFrameSequence != null) {
             final RingQueue<PageFrameReduceTask> queue = orderedQueue;
             final MCSequence subSeq = orderedSubSeq;
             orderedFrameSequence.enterReducerCancellationScope();
             reduceOrderedFrame(subSeq, orderedCursor, orderedReduceTask, orderedFrameSequence);
-            while (!hasNoPendingTasks(subSeq) && continueBatch()) {
+            while (!hasNoPendingTasks(subSeq) && batch.shouldContinue()) {
                 final long cursor;
                 while (true) {
                     final long next = subSeq.next();
@@ -232,7 +220,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 orderedReduceTask = reduceTask;
                 orderedFrameSequence = frameSequence;
                 frameSequence.enterReducerCancellationScope();
-                pollOrSwitchDispatchContext(frameSequence.getDispatchContext());
+                batch.switchTo(frameSequence.getDispatchContext());
                 reduceOrderedFrame(subSeq, cursor, reduceTask, frameSequence);
             }
         } else if (unorderedFrameSequence != null) {
@@ -240,7 +228,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             final MCSequence subSeq = unorderedSubSeq;
             unorderedFrameSequence.enterReducerCancellationScope();
             reduceUnorderedFrame(unorderedFrameIndex, unorderedFrameSequence);
-            while (!hasNoPendingTasks(subSeq) && continueBatch()) {
+            while (!hasNoPendingTasks(subSeq) && batch.shouldContinue()) {
                 final long cursor;
                 while (true) {
                     final long next = subSeq.next();
@@ -270,7 +258,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 unorderedFrameIndex = frameIndex;
                 unorderedFrameSequence = frameSequence;
                 frameSequence.enterReducerCancellationScope();
-                pollOrSwitchDispatchContext(frameSequence.getDispatchContext());
+                batch.switchTo(frameSequence.getDispatchContext());
                 reduceUnorderedFrame(frameIndex, frameSequence);
             }
         }
@@ -285,10 +273,6 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             primary.addSuppressed(failure);
         }
         return primary;
-    }
-
-    private static long getQueryRegistryOwnerId(@Nullable FiberDispatchContext context) {
-        return context != null ? context.getQueryRegistryOwnerId() : -1;
     }
 
     private static boolean hasNoPendingTasks(MCSequence subSeq) {
@@ -337,54 +321,6 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         }
     }
 
-    private boolean continueBatch() {
-        if (batchRowsSinceCheck < dispatcher.getBatchCheckRows()) {
-            return true;
-        }
-        batchRowsSinceCheck = 0;
-        batchPollDue = true;
-        refreshBatchClock();
-        return switch (dispatcher.checkBatch(batchStartNanos)) {
-            case PageFrameReduceDispatcher.BATCH_CONTINUE -> true;
-            case PageFrameReduceDispatcher.BATCH_YIELD -> {
-                if (!Fiber.yieldCooperatively()) {
-                    yield false;
-                }
-                batchMountVersion = batchFiber.getMountVersion();
-                batchStartNanos = dispatcher.getBatchClockTicks();
-                yield true;
-            }
-            default -> false;
-        };
-    }
-
-    private void refreshBatchClock() {
-        final long mountVersion = batchFiber.getMountVersion();
-        if (mountVersion != batchMountVersion) {
-            // time spent unmounted must not count against the batch
-            batchMountVersion = mountVersion;
-            batchStartNanos = dispatcher.getBatchClockTicks();
-        }
-    }
-
-    private void pollOrSwitchDispatchContext(@Nullable FiberDispatchContext nextContext) {
-        // Query leases may pool and mutate a context object after its owner finishes. The owner ID
-        // snapshot prevents reference-identity ABA from running a later query on the previous grant.
-        final long nextOwnerId = getQueryRegistryOwnerId(nextContext);
-        if (batchDispatchContext != nextContext || batchDispatchOwnerId != nextOwnerId) {
-            if (!Fiber.yieldForDispatch(nextContext)) {
-                throw new IllegalStateException("page frame reducer could not switch dispatch context");
-            }
-            refreshBatchClock();
-        } else if (batchPollDue) {
-            Fiber.pollMountedDispatchTicket();
-            refreshBatchClock();
-        }
-        batchPollDue = false;
-        batchDispatchContext = nextContext;
-        batchDispatchOwnerId = nextOwnerId;
-    }
-
     // The frame stays bound while the reducer runs, so a park freezes owning exactly this cursor;
     // the cleared binding is what tells completeOwnership() the cursor is already done.
     private void reduceOrderedFrame(
@@ -396,7 +332,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         this.orderedCursor = cursor;
         this.orderedReduceTask = reduceTask;
         this.orderedFrameSequence = frameSequence;
-        batchRowsSinceCheck += reduceTask.getFrameRowCount();
+        batch.addRows(reduceTask.getFrameRowCount());
         try {
             if (frameSequence.isActive()) {
                 circuitBreaker.init(frameSequence.getCircuitBreaker());
@@ -437,7 +373,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private void reduceUnorderedFrame(int frameIndex, UnorderedPageFrameSequence<?> frameSequence) {
         this.unorderedFrameIndex = frameIndex;
         this.unorderedFrameSequence = frameSequence;
-        batchRowsSinceCheck += frameSequence.getFrameRowCount(frameIndex);
+        batch.addRows(frameSequence.getFrameRowCount(frameIndex));
         try {
             if (frameSequence.isActive()) {
                 circuitBreaker.init(frameSequence.getCircuitBreaker());
@@ -472,6 +408,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     }
 
     private void recycle() {
+        batch.clear();
         clearBinding();
         circuitBreaker.clear();
         try {

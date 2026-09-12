@@ -41,6 +41,7 @@ import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlExecutionOwner;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.network.PeerDisconnectedException;
@@ -57,7 +58,6 @@ import java.io.Closeable;
 
 public class ExportQueryProcessorState implements Mutable, Closeable {
 
-    private static final long SQL_EXECUTION_OWNER_UNINITIALIZED = Long.MIN_VALUE;
     final StringSink fileName = new StringSink();
     final HybridColumnMaterializer materializer = new HybridColumnMaterializer();
     final DirectLongList materializerColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
@@ -66,6 +66,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     private final StringSink errorMessage = new StringSink();
     private final ExportModel exportModel = new ExportModel();
     private final HttpConnectionContext httpConnectionContext;
+    private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
     private final ParquetWriteCallback writeCallback = new ParquetWriteCallback();
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     int columnIndex;
@@ -95,12 +96,9 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     long timeout;
     private CreateTableOperation createParquetOp;
     private int errorPosition;
-    private boolean isSqlExecutionOwnerMounted;
     private String parquetExportTableName;
     private boolean queryCacheable = false;
     private HTTPSerialParquetExporter serialParquetExporter;
-    private SqlExecutionContext sqlExecutionOwnerContext;
-    private long sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
 
     public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, CopyExportContext copyContext) {
         this.httpConnectionContext = httpConnectionContext;
@@ -113,29 +111,31 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             SqlExecutionContext executionContext,
             short compiledQueryType
     ) {
-        if (sqlExecutionOwnerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
-            throw new IllegalStateException("HTTP export SQL execution owner is already initialized");
-        }
-        final long ownerId = executionContext.getCairoEngine().beginSqlExecution(
-                query,
-                executionContext,
-                compiledQueryType
-        );
-        sqlExecutionOwnerContext = executionContext;
-        sqlExecutionOwnerId = ownerId;
-        isSqlExecutionOwnerMounted = ownerId > -1;
+        sqlExecutionOwner.begin(query, executionContext, compiledQueryType);
     }
 
     @Override
     public void clear() {
+        release(false);
+    }
+
+    @Override
+    public void close() {
+        release(true);
+    }
+
+    /**
+     * Releases everything the state holds, in the order the resources depend on each other. The
+     * HTTP exporter closes the task's Rust writer and drops a materialized temporary table while
+     * the task identity is still intact, the task itself goes before the cursor unregisters its
+     * tracker, and the execution owner ends last. A closing state frees the pooled task,
+     * materializer and column data instead of clearing them and never caches its factory back.
+     */
+    private void release(boolean isClosing) {
         delimiter = ',';
         fileName.clear();
         rnd = null;
         record = null;
-
-        // The HTTP exporter owns any materialized temporary table. Let it close the
-        // task's Rust writer and drop that table while task identity is still intact.
-        // All resources still disappear before the cursor unregisters its tracker.
         Throwable cleanupFailure = null;
         if (serialParquetExporter != null) {
             try {
@@ -143,22 +143,36 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             } catch (Throwable th) {
                 cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
             }
+            if (isClosing) {
+                serialParquetExporter = null;
+            }
         }
-        cleanupFailure = Misc.clearBestEffort(cleanupFailure, task);
+        if (isClosing) {
+            final CopyExportRequestTask task = this.task;
+            this.task = null;
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, task);
+        } else {
+            cleanupFailure = Misc.clearBestEffort(cleanupFailure, task);
+        }
         final RecordCursor cursor = this.cursor;
         this.cursor = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
         final PageFrameCursor pageFrameCursor = this.pageFrameCursor;
         this.pageFrameCursor = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, pageFrameCursor);
-        cleanupFailure = Misc.clearBestEffort(cleanupFailure, materializer);
-        cleanupFailure = Misc.clearBestEffort(cleanupFailure, materializerColumnData);
+        if (isClosing) {
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, materializer);
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, materializerColumnData);
+        } else {
+            cleanupFailure = Misc.clearBestEffort(cleanupFailure, materializer);
+            cleanupFailure = Misc.clearBestEffort(cleanupFailure, materializerColumnData);
+        }
         firstParquetWriteCall = true;
 
         final RecordCursorFactory recordCursorFactory = this.recordCursorFactory;
         this.recordCursorFactory = null;
         if (recordCursorFactory != null) {
-            if (queryCacheable) {
+            if (queryCacheable && !isClosing) {
                 try {
                     httpConnectionContext.getSelectCache().put(sqlText, recordCursorFactory);
                 } catch (Throwable th) {
@@ -198,52 +212,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         serialExporterInit = false;
         writeCallback.of(null, null);
         try {
-            endSqlExecutionOwner();
-        } catch (Throwable th) {
-            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
-        }
-        CairoException.rethrowCleanupFailure(cleanupFailure);
-    }
-
-    @Override
-    public void close() {
-        // See clear(): the exporter must release a materialized temporary table
-        // while the task still carries its export identity.
-        Throwable cleanupFailure = null;
-        final HTTPSerialParquetExporter serialParquetExporter = this.serialParquetExporter;
-        this.serialParquetExporter = null;
-        if (serialParquetExporter != null) {
-            try {
-                serialParquetExporter.clearExportResources();
-            } catch (Throwable th) {
-                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
-            }
-        }
-        final CopyExportRequestTask task = this.task;
-        this.task = null;
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, task);
-        final RecordCursor cursor = this.cursor;
-        this.cursor = null;
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
-        final PageFrameCursor pageFrameCursor = this.pageFrameCursor;
-        this.pageFrameCursor = null;
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, pageFrameCursor);
-        final RecordCursorFactory recordCursorFactory = this.recordCursorFactory;
-        this.recordCursorFactory = null;
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, recordCursorFactory);
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, materializer);
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, materializerColumnData);
-        try {
-            releaseExportEntry();
-        } catch (Throwable th) {
-            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
-        }
-        final CreateTableOperation createParquetOp = this.createParquetOp;
-        this.createParquetOp = null;
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, createParquetOp);
-        writeCallback.of(null, null);
-        try {
-            endSqlExecutionOwner();
+            sqlExecutionOwner.end();
         } catch (Throwable th) {
             cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
         }
@@ -278,19 +247,12 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         try {
             suspendCursorTimer();
         } finally {
-            unmountSqlExecutionOwner();
+            sqlExecutionOwner.unmount();
         }
     }
 
     public void publishSqlExecutionOwner(boolean containsSecret) {
-        if (sqlExecutionOwnerId > -1) {
-            sqlExecutionOwnerContext.getCairoEngine().publishSqlExecutionQuery(
-                    sqlExecutionOwnerId,
-                    sqlText,
-                    containsSecret,
-                    sqlExecutionOwnerContext
-            );
-        }
+        sqlExecutionOwner.publish(sqlText, containsSecret);
     }
 
     public void resumeCursorTimer() {
@@ -306,7 +268,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     public void resumeSqlExecutionOwner() {
         if (hasActiveSqlExecutionWork()) {
             resumeCursorTimer();
-            mountSqlExecutionOwner();
+            sqlExecutionOwner.mount();
         }
     }
 
@@ -335,19 +297,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private void endSqlExecutionOwner() {
-        final long ownerId = sqlExecutionOwnerId;
-        try {
-            if (ownerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
-                sqlExecutionOwnerContext.getCairoEngine().endSqlExecution(ownerId, sqlExecutionOwnerContext);
-            }
-        } finally {
-            isSqlExecutionOwnerMounted = false;
-            sqlExecutionOwnerContext = null;
-            sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
-        }
-    }
-
     private boolean hasActiveSqlExecutionWork() {
         if (!exportModel.isParquetFormat()) {
             return (cursor != null || pageFrameCursor != null)
@@ -367,16 +316,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         };
     }
 
-    private void mountSqlExecutionOwner() {
-        if (sqlExecutionOwnerId > -1 && !isSqlExecutionOwnerMounted) {
-            sqlExecutionOwnerContext.getCairoEngine().mountSqlExecution(
-                    sqlExecutionOwnerId,
-                    sqlExecutionOwnerContext
-            );
-            isSqlExecutionOwnerMounted = true;
-        }
-    }
-
     private void releaseExportEntry() {
         final long copyID = this.copyID;
         this.copyID = -1;
@@ -385,16 +324,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             if (entry != null) {
                 copyExportContext.releaseEntry(entry);
             }
-        }
-    }
-
-    private void unmountSqlExecutionOwner() {
-        if (sqlExecutionOwnerId > -1 && isSqlExecutionOwnerMounted) {
-            sqlExecutionOwnerContext.getCairoEngine().unmountSqlExecution(
-                    sqlExecutionOwnerId,
-                    sqlExecutionOwnerContext
-            );
-            isSqlExecutionOwnerMounted = false;
         }
     }
 

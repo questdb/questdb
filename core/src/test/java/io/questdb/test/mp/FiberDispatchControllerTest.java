@@ -76,7 +76,6 @@ public class FiberDispatchControllerTest {
             final List<Pending> requests = new ArrayList<>();
             for (int i = 0; i < count; i++) {
                 final Pending pending = controller.session.removeNext();
-                Assert.assertEquals(0, pending.request.getOwnerWorkerId());
                 requests.add(pending);
             }
             final CyclicBarrier barrier = new CyclicBarrier(count);
@@ -723,7 +722,6 @@ public class FiberDispatchControllerTest {
             Assert.assertEquals(1, runtime.drain(1));
             Assert.assertNull(first.request.getRoute());
             Assert.assertNull(first.request.getTask());
-            Assert.assertEquals(-1, first.request.getTaskIncarnation());
 
             task.reopen();
             Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));

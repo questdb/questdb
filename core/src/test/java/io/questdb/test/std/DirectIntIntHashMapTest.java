@@ -31,7 +31,6 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -234,28 +233,12 @@ public class DirectIntIntHashMapTest {
     }
 
     private static final class TestMemoryTracker extends MemoryTracker {
-        private long nativeAddress;
-
-        private TestMemoryTracker() {
-            nativeAddress = Unsafe.malloc(Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
-            Vect.memset(nativeAddress, Unsafe.MEMORY_TRACKER_BLOCK_SIZE, 0);
-        }
 
         @Override
         public void close() {
-            if (nativeAddress != 0) {
-                freeNativeAllocators();
-                nativeAddress = Unsafe.free(
-                        nativeAddress,
-                        Unsafe.MEMORY_TRACKER_BLOCK_SIZE,
-                        MemoryTag.NATIVE_MEMORY_TRACKER
-                );
+            if (nativeAddress() != 0) {
+                destroyNativeBlock();
             }
-        }
-
-        @Override
-        public long getLimit() {
-            return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET);
         }
 
         @Override
@@ -264,18 +247,8 @@ public class DirectIntIntHashMapTest {
         }
 
         @Override
-        public long getUsed() {
-            return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET);
-        }
-
-        @Override
         public MemoryTrackerWorkload getWorkload() {
             return MemoryTrackerWorkload.QUERY;
-        }
-
-        @Override
-        public long nativeAddress() {
-            return nativeAddress;
         }
     }
 }

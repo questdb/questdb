@@ -623,19 +623,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
     }
 
-    private static void freeCompiledQueryAfterOwnerStartFailure(CompiledQuery cq, Throwable ownerStartFailure) {
-        Throwable cleanupFailure = null;
-        try {
-            cq.closeAllButSelect();
-        } catch (Throwable th) {
-            cleanupFailure = th;
-        }
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cq.getOperation());
-        if (cleanupFailure != null && cleanupFailure != ownerStartFailure) {
-            ownerStartFailure.addSuppressed(cleanupFailure);
-        }
-    }
-
     /**
      * Returns {@code true} when a compiled query should stream result rows back
      * to the client. {@code SELECT} and {@code EXPLAIN} always do; {@code
@@ -1262,7 +1249,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                                         state.beginSqlExecutionOwner(decoder.sql, sqlCtx, type);
                                     }
                                 } catch (RuntimeException | Error e) {
-                                    freeCompiledQueryAfterOwnerStartFailure(cq, e);
+                                    cq.freeAfterOwnerStartFailure(e);
                                     throw e;
                                 }
                                 state.publishSqlExecutionOwner(decoder.sql, sqlCtx.containsSecret());

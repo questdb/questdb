@@ -300,19 +300,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             throw CairoException.nonCritical().put("cannot open record cursor while page-frame cursor is open");
         }
         if (!cursor.isOpen) {
-            this.executionContext = executionContext;
-            CharSequence sqlText = queryTrace.queryText;
-            sqlId = registry.register(sqlText, executionContext);
-            clock = executionContext.getCairoEngine().getConfiguration().getNanosecondClock();
-            beginNanos = clock.getTicks();
-            clientWaitAccumNanos = 0;
-            clientWaitStartNanos = -1;
-            firstRowNanos = -1;
-            logStart(sqlId, sqlText, executionContext, jit);
-            final ExecutionState executionState = executionContext.getExecutionState();
-            if (executionState != null) {
-                executionState.onExecutionStart(executionContext);
-            }
+            beginExecution(executionContext);
             // Install this factory as the reader-pool supervisor for the duration of cursor
             // open, so every table reader the query borrows while building the cursor is
             // attributed to it for leak detection. The supervisor lives on the
@@ -362,19 +350,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             throw CairoException.nonCritical().put("cannot open page-frame cursor while record cursor is open");
         }
         if (!pageFrameCursor.isOpen) {
-            this.executionContext = executionContext;
-            CharSequence sqlText = queryTrace.queryText;
-            sqlId = registry.register(sqlText, executionContext);
-            clock = executionContext.getCairoEngine().getConfiguration().getNanosecondClock();
-            beginNanos = clock.getTicks();
-            clientWaitAccumNanos = 0;
-            clientWaitStartNanos = -1;
-            firstRowNanos = -1;
-            logStart(sqlId, sqlText, executionContext, jit);
-            final ExecutionState executionState = executionContext.getExecutionState();
-            if (executionState != null) {
-                executionState.onExecutionStart(executionContext);
-            }
+            beginExecution(executionContext);
             // See getCursor: supervise only the synchronous cursor-open window, on the
             // context so it survives a cont park/resume, and restore on return.
             final ResourcePoolSupervisor<TableReader> prevSupervisor = executionContext.getReaderPoolSupervisor();
@@ -480,6 +456,22 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     private static void appendLeakedReaderNames(ObjList<TableReader> leakedReaders, int leakedReadersCount, LogRecord log) {
         for (int i = 0; i < leakedReadersCount; i++) {
             log.$(", leaked=").$(leakedReaders.getQuick(i).getTableToken());
+        }
+    }
+
+    private void beginExecution(SqlExecutionContext executionContext) {
+        this.executionContext = executionContext;
+        final CharSequence sqlText = queryTrace.queryText;
+        sqlId = registry.register(sqlText, executionContext);
+        clock = executionContext.getCairoEngine().getConfiguration().getNanosecondClock();
+        beginNanos = clock.getTicks();
+        clientWaitAccumNanos = 0;
+        clientWaitStartNanos = -1;
+        firstRowNanos = -1;
+        logStart(sqlId, sqlText, executionContext, jit);
+        final ExecutionState executionState = executionContext.getExecutionState();
+        if (executionState != null) {
+            executionState.onExecutionStart(executionContext);
         }
     }
 

@@ -38,7 +38,6 @@ import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
 import io.questdb.std.DirectLongLongSortedList;
-import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.tasks.GroupByLongTopKTask;
 import org.jetbrains.annotations.NotNull;
@@ -185,23 +184,14 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
             try {
-                MemoryTracker.detachResourceMemoryCurrentThread();
-            } catch (Throwable cleanupFailure) {
-                failure = Misc.foldCleanupFailure(failure, cleanupFailure);
-            }
-            try {
-                doneLatch.countDown();
+                doneLatch.detachResourceMemoryAndCountDown();
             } catch (Throwable cleanupFailure) {
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
             CairoException.rethrowCleanupFailure(failure);
             return;
         }
-        try {
-            MemoryTracker.detachResourceMemoryCurrentThread();
-        } finally {
-            doneLatch.countDown();
-        }
+        doneLatch.detachResourceMemoryAndCountDown();
     }
 
     @Override

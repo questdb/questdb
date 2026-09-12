@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlExecutionOwner;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -64,9 +65,8 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     private final @Nullable FiberRuntime fiberRuntime;
     private final StringSink fileName = new StringSink();
     private final @NotNull MicrosecondClock microsecondClock;
+    private final SqlExecutionOwner owner = new SqlExecutionOwner();
     private @Nullable MemoryTracker activeLegacyMemoryTracker;
-    private @Nullable SqlExecutionContextImpl activeOwnerContext;
-    private long activeOwnerId = -1;
     private boolean isClosed;
     private volatile boolean isFiberActive;
     private volatile boolean isRequestLoaded;
@@ -147,7 +147,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     break;
                 }
             } catch (Throwable th) {
-                cleanupFailure = addCleanupFailure(cleanupFailure, th);
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
             }
         }
         final SQLSerialParquetExporter exporter = serialExporter;
@@ -169,6 +169,18 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     }
 
     @Override
+    protected boolean canRun() {
+        if (isFiberActive) {
+            return false;
+        }
+        if (isRequestLoaded) {
+            launchLoadedRequest();
+            return false;
+        }
+        return true;
+    }
+
+    @Override
     protected boolean doRun(long cursor, WorkerContext workerContext) {
         try {
             final CopyExportRequestTask task = queue.get(cursor);
@@ -183,28 +195,6 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             launchLoadedRequest();
         }
         return true;
-    }
-
-    @Override
-    protected boolean canRun() {
-        if (isFiberActive) {
-            return false;
-        }
-        if (isRequestLoaded) {
-            launchLoadedRequest();
-            return false;
-        }
-        return true;
-    }
-
-    private static Throwable addCleanupFailure(@Nullable Throwable primary, Throwable failure) {
-        if (primary == null) {
-            return failure;
-        }
-        if (primary != failure) {
-            primary.addSuppressed(failure);
-        }
-        return primary;
     }
 
     private void cancelLoadedRequest(CharSequence message) {
@@ -268,7 +258,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             try {
                 failLoadedRequest(th.getMessage());
             } catch (Throwable cleanupFailure) {
-                th = addCleanupFailure(th, cleanupFailure);
+                th = Misc.foldCleanupFailure(th, cleanupFailure);
             }
             CairoException.rethrowCleanupFailure(th);
             return;
@@ -305,17 +295,15 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             }
             serialExporter.of(localTaskCopy);
             final SqlExecutionContextImpl executionContext = serialExporter.getSqlExecutionContext();
-            final long ownerId = engine.beginSqlExecution(entry.getSqlText(), executionContext, CompiledQuery.SELECT);
-            activeOwnerContext = executionContext;
-            activeOwnerId = ownerId;
+            owner.begin(entry.getSqlText(), executionContext, CompiledQuery.SELECT);
             final MemoryTracker memoryTracker;
-            if (ownerId > -1) {
+            if (owner.getId() > -1) {
                 memoryTracker = executionContext.getMemoryTracker();
                 if (memoryTracker == null) {
                     throw new IllegalStateException("managed copy export owner has no memory tracker");
                 }
                 localTaskCopy.setMemoryTracker(memoryTracker);
-                engine.publishSqlExecutionQuery(ownerId, entry.getSqlText(), entry.containsSecret(), executionContext);
+                owner.publish(entry.getSqlText(), entry.containsSecret());
             } else {
                 memoryTracker = engine.getMemoryTrackerProvider().acquire(
                         localTaskCopy.getSecurityContext(),
@@ -409,12 +397,9 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
         if (!isRequestLoaded) {
             return;
         }
-        final long ownerId = activeOwnerId;
-        final SqlExecutionContextImpl executionContext = activeOwnerContext;
+        final boolean isManaged = owner.getId() > -1;
         final MemoryTracker legacyMemoryTracker = activeLegacyMemoryTracker;
         activeLegacyMemoryTracker = null;
-        activeOwnerContext = null;
-        activeOwnerId = -1;
         final CopyExportContext.ExportTaskEntry entry = localTaskCopy.getEntry();
         Throwable cleanupFailure = null;
         try {
@@ -427,22 +412,21 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             try {
                 exporter.clearMemoryTracker();
             } catch (Throwable th) {
-                cleanupFailure = addCleanupFailure(cleanupFailure, th);
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
             }
         }
-        if (ownerId > -1 && executionContext != null) {
-            try {
-                engine.endSqlExecution(ownerId, executionContext);
-            } catch (Throwable th) {
-                cleanupFailure = addCleanupFailure(cleanupFailure, th);
-            }
-        } else {
+        try {
+            owner.end();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        if (!isManaged) {
             cleanupFailure = Misc.freeBestEffort(cleanupFailure, legacyMemoryTracker);
         }
         try {
             copyContext.releaseEntry(entry);
         } catch (Throwable th) {
-            cleanupFailure = addCleanupFailure(cleanupFailure, th);
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
         } finally {
             isRequestLoaded = false;
         }
@@ -538,7 +522,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
         try {
             task.clear();
         } catch (Throwable th) {
-            transferFailure = addCleanupFailure(transferFailure, th);
+            transferFailure = Misc.foldCleanupFailure(transferFailure, th);
         }
         if (transferFailure != null) {
             final CharSequence message = transferFailure.getMessage();
@@ -546,7 +530,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                 try {
                     failLoadedRequest(message);
                 } catch (Throwable cleanupFailure) {
-                    transferFailure = addCleanupFailure(transferFailure, cleanupFailure);
+                    transferFailure = Misc.foldCleanupFailure(transferFailure, cleanupFailure);
                 }
             } else {
                 transferFailure = Misc.freeBestEffort(transferFailure, selectFactory);
@@ -563,12 +547,12 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                             copyID
                     );
                 } catch (Throwable statusFailure) {
-                    transferFailure = addCleanupFailure(transferFailure, statusFailure);
+                    transferFailure = Misc.foldCleanupFailure(transferFailure, statusFailure);
                 }
                 try {
                     copyContext.releaseEntry(entry);
                 } catch (Throwable cleanupFailure) {
-                    transferFailure = addCleanupFailure(transferFailure, cleanupFailure);
+                    transferFailure = Misc.foldCleanupFailure(transferFailure, cleanupFailure);
                 }
             }
             CairoException.rethrowCleanupFailure(transferFailure);

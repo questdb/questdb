@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberDispatchContext;
-import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
@@ -179,11 +178,7 @@ public class LatestByTask implements QuietCloseable, Mutable {
             try {
                 frameMemoryPool.close();
             } finally {
-                try {
-                    MemoryTracker.detachResourceMemoryCurrentThread();
-                } finally {
-                    doneLatch.countDown();
-                }
+                doneLatch.detachResourceMemoryAndCountDown();
             }
         }
     }

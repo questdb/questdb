@@ -24,6 +24,20 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.MemoryTracker;
+
 public interface CountDownLatchSPI {
     void countDown();
+
+    /**
+     * Completes a parallel task on the current carrier: publishes and drops the
+     * carrier's Resource Group memory delta, then counts down even if that fails.
+     */
+    default void detachResourceMemoryAndCountDown() {
+        try {
+            MemoryTracker.detachResourceMemoryCurrentThread();
+        } finally {
+            countDown();
+        }
+    }
 }

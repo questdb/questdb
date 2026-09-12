@@ -81,32 +81,16 @@ public final class FiberDispatchRequest {
      * path can commit, or when rollback itself proves the request state corrupt. Runtime
      * publication must not throw after the Fiber becomes visible to a consumer.
      */
-    public boolean grant(long dispatchEpoch, FiberDispatchTicket ticket) {
-        if (!grantWithoutPublication(dispatchEpoch, ticket)) {
-            return false;
-        }
-        return publishGrantedOrFail(dispatchEpoch, ticket, null);
-    }
-
-    public long getDispatchEpoch() {
-        return dispatchEpoch(lifecycleState);
+    public @Nullable FiberDispatchRequestState getControllerState() {
+        return controllerState;
     }
 
     public @Nullable FiberDispatchContext getDispatchContext() {
         return dispatchContext;
     }
 
-    public @Nullable FiberDispatchRequestState getControllerState() {
-        return controllerState;
-    }
-
-    public int getLastMountWorkerId() {
-        return fiber.getLastMountWorkerId();
-    }
-
-    public int getOwnerWorkerId() {
-        final FiberRuntime.OwnerContext ownerContext = this.ownerContext;
-        return ownerContext != null ? ownerContext.getWorkerId() : FiberRuntime.NO_WORKER;
+    public long getDispatchEpoch() {
+        return dispatchEpoch(lifecycleState);
     }
 
     public @Nullable FiberDispatchRoute getRoute() {
@@ -121,8 +105,11 @@ public final class FiberDispatchRequest {
         return task;
     }
 
-    public long getTaskIncarnation() {
-        return taskIncarnation;
+    public boolean grant(long dispatchEpoch, FiberDispatchTicket ticket) {
+        if (!grantDirect(dispatchEpoch, ticket)) {
+            return false;
+        }
+        return publishGrantedOrFail(dispatchEpoch, ticket, null);
     }
 
     /**
@@ -215,25 +202,19 @@ public final class FiberDispatchRequest {
     }
 
     boolean grantDirect(long dispatchEpoch, FiberDispatchTicket ticket) {
-        return grantWithoutPublication(dispatchEpoch, ticket);
+        if (ticket == null) {
+            throw new IllegalArgumentException("Fiber dispatch ticket must not be null");
+        }
+        final long requested = packLifecycleState(dispatchEpoch, STATE_REQUESTED);
+        if (!Unsafe.cas(this, LIFECYCLE_STATE_OFFSET, requested, packLifecycleState(dispatchEpoch, STATE_GRANTING))) {
+            return false;
+        }
+        this.ticket = ticket;
+        lifecycleState = packLifecycleState(dispatchEpoch, STATE_GRANTED);
+        return true;
     }
 
     boolean grantFailure(long dispatchEpoch, Throwable failure, FiberDispatchTicket failureTicket) {
-        return grantFailureWithoutPublication(dispatchEpoch, failure, failureTicket);
-    }
-
-    boolean grantFailureAndPublish(long dispatchEpoch, Throwable failure, FiberDispatchTicket failureTicket) {
-        if (!grantFailureWithoutPublication(dispatchEpoch, failure, failureTicket)) {
-            return false;
-        }
-        return publishGrantedOrFail(dispatchEpoch, failureTicket, failure);
-    }
-
-    private boolean grantFailureWithoutPublication(
-            long dispatchEpoch,
-            Throwable failure,
-            FiberDispatchTicket failureTicket
-    ) {
         if (failure == null) {
             throw new IllegalArgumentException("Fiber dispatch failure must not be null");
         }
@@ -250,6 +231,21 @@ public final class FiberDispatchRequest {
         return true;
     }
 
+    boolean grantFailureAndPublish(long dispatchEpoch, Throwable failure, FiberDispatchTicket failureTicket) {
+        if (!grantFailure(dispatchEpoch, failure, failureTicket)) {
+            return false;
+        }
+        return publishGrantedOrFail(dispatchEpoch, failureTicket, failure);
+    }
+
+    void markDirectPending(long dispatchEpoch) {
+        if (lifecycleState != packLifecycleState(dispatchEpoch, STATE_REQUESTED)
+                || route != FiberDispatchRoute.DIRECT) {
+            throw invalidLifecycleState("mark direct pending", lifecycleState);
+        }
+        route = FiberDispatchRoute.DIRECT_PENDING;
+    }
+
     void validateForMount() {
         final FiberTask task = this.task;
         if (fiber.getAssignedTask() != task
@@ -262,14 +258,6 @@ public final class FiberDispatchRequest {
                             + ']'
             );
         }
-    }
-
-    void markDirectPending(long dispatchEpoch) {
-        if (lifecycleState != packLifecycleState(dispatchEpoch, STATE_REQUESTED)
-                || route != FiberDispatchRoute.DIRECT) {
-            throw invalidLifecycleState("mark direct pending", lifecycleState);
-        }
-        route = FiberDispatchRoute.DIRECT_PENDING;
     }
 
     private static long dispatchEpoch(long lifecycleState) {
@@ -298,19 +286,6 @@ public final class FiberDispatchRequest {
         ticket = null;
     }
 
-    private boolean grantWithoutPublication(long dispatchEpoch, FiberDispatchTicket ticket) {
-        if (ticket == null) {
-            throw new IllegalArgumentException("Fiber dispatch ticket must not be null");
-        }
-        final long requested = packLifecycleState(dispatchEpoch, STATE_REQUESTED);
-        if (!Unsafe.cas(this, LIFECYCLE_STATE_OFFSET, requested, packLifecycleState(dispatchEpoch, STATE_GRANTING))) {
-            return false;
-        }
-        this.ticket = ticket;
-        lifecycleState = packLifecycleState(dispatchEpoch, STATE_GRANTED);
-        return true;
-    }
-
     private IllegalStateException invalidLifecycleState(CharSequence operation, long lifecycleState) {
         return new IllegalStateException(
                 "invalid Fiber dispatch request state [operation=" + operation
@@ -336,7 +311,7 @@ public final class FiberDispatchRequest {
                 );
             }
             final Throwable terminalFailure = dispatchFailure != null ? dispatchFailure : publicationFailure;
-            if (!grantFailureWithoutPublication(dispatchEpoch, terminalFailure, ticket)) {
+            if (!grantFailure(dispatchEpoch, terminalFailure, ticket)) {
                 return false;
             }
             try {

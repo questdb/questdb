@@ -24,14 +24,23 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.Bootstrap;
+import io.questdb.DynamicPropServerConfiguration;
+import io.questdb.FactoryProviderImpl;
+import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.network.PlainSocket;
+import io.questdb.network.SocketFactory;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -42,12 +51,15 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class QueryTimingHttpTest extends AbstractBootstrapTest {
-    private static final Log LOG = LogFactory.getLog(QueryTimingHttpTest.class);
     private static final int CLIENT_RECEIVE_BUFFER_SIZE = 1_024;
+    private static final Log LOG = LogFactory.getLog(QueryTimingHttpTest.class);
     private static final int MIN_RESPONSE_SIZE = 4_000_000;
-    private static final long READ_PAUSE_MILLIS = 750;
     private static final String TABLE_DDL = """
             CREATE TABLE timing_tab AS (
                 SELECT x, rnd_str(128, 128, 0) AS s
@@ -76,28 +88,16 @@ public class QueryTimingHttpTest extends AbstractBootstrapTest {
     }
 
     private static void assertEventually(TestServerMain serverMain, String query) throws Exception {
-        int sleepMillis = 100;
-        while (true) {
-            Thread.sleep(sleepMillis);
-            try {
-                serverMain.assertSql(
-                        "SELECT count() FROM _query_trace "
-                                + "WHERE query_text = '" + query.replace("'", "''") + "' "
-                                + "AND client_wait_micros > 0 "
-                                + "AND client_wait_micros <= execution_micros "
-                                + "AND first_row_micros IS NOT NULL "
-                                + "AND first_row_micros >= 0 "
-                                + "AND first_row_micros <= execution_micros",
-                        "count\n1\n"
-                );
-                return;
-            } catch (AssertionError e) {
-                if (sleepMillis >= 6_400) {
-                    throw e;
-                }
-                sleepMillis *= 2;
-            }
-        }
+        TestUtils.assertEventually(() -> serverMain.assertSql(
+                "SELECT count() FROM _query_trace "
+                        + "WHERE query_text = '" + query.replace("'", "''") + "' "
+                        + "AND client_wait_micros > 0 "
+                        + "AND client_wait_micros <= execution_micros "
+                        + "AND first_row_micros IS NOT NULL "
+                        + "AND first_row_micros >= 0 "
+                        + "AND first_row_micros <= execution_micros",
+                "count\n1\n"
+        ));
     }
 
     private static void assertParquetExportMode(TestServerMain serverMain, String query, ParquetExportMode expectedExportMode) throws Exception {
@@ -122,19 +122,14 @@ public class QueryTimingHttpTest extends AbstractBootstrapTest {
 
     private static void assertSlowClientTiming(String path, String query, ParquetExportMode expectedExportMode) throws Exception {
         assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "127.0.0.1:0",
-                    PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "1024"
-            )) {
+            final CountDownLatch sendBlocked = new CountDownLatch(1);
+            try (TestServerMain serverMain = newServer(sendBlocked)) {
+                serverMain.start();
                 serverMain.execute(TABLE_DDL);
                 if (expectedExportMode != null) {
                     assertParquetExportMode(serverMain, query, expectedExportMode);
                 }
-                int responseSize = executeSlowGet(serverMain.getHttpServerPort(), path, query);
+                int responseSize = executeSlowGet(serverMain.getHttpServerPort(), path, query, sendBlocked);
                 LOG.info().$("slow client response [path=").$(path).$(", bytes=").$(responseSize).I$();
                 Assert.assertTrue("response must exceed kernel buffering [bytes=" + responseSize + ']', responseSize > MIN_RESPONSE_SIZE);
                 assertEventually(serverMain, query);
@@ -142,7 +137,7 @@ public class QueryTimingHttpTest extends AbstractBootstrapTest {
         });
     }
 
-    private static int executeSlowGet(int port, String path, String query) throws Exception {
+    private static int executeSlowGet(int port, String path, String query, CountDownLatch sendBlocked) throws Exception {
         try (Socket socket = new Socket()) {
             socket.setReceiveBufferSize(CLIENT_RECEIVE_BUFFER_SIZE);
             socket.setSoTimeout(300_000);
@@ -160,7 +155,8 @@ public class QueryTimingHttpTest extends AbstractBootstrapTest {
             output.write(request.getBytes(StandardCharsets.US_ASCII));
             output.flush();
 
-            Thread.sleep(READ_PAUSE_MILLIS);
+            // Begin reading only after the server encounters TCP backpressure.
+            Assert.assertTrue("server did not block sending the response", sendBlocked.await(30, TimeUnit.SECONDS));
 
             InputStream input = new BufferedInputStream(socket.getInputStream());
             String statusLine = readAsciiLine(input);
@@ -197,6 +193,52 @@ public class QueryTimingHttpTest extends AbstractBootstrapTest {
                 Assert.assertEquals('\n', input.read());
             }
         }
+    }
+
+    private static TestServerMain newServer(CountDownLatch sendBlocked) {
+        final Map<String, String> env = new HashMap<>(System.getenv());
+        env.put(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false");
+        env.put(PropertyKey.HTTP_BIND_TO.getEnvVarName(), "127.0.0.1:0");
+        env.put(PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false");
+        env.put(PropertyKey.HTTP_NET_SND_BUF_SIZE.getEnvVarName(), "1024");
+        env.put(PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "1024");
+        env.put(PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false");
+        env.put(PropertyKey.PG_ENABLED.getEnvVarName(), "false");
+        env.put(PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "true");
+        return new TestServerMain(new Bootstrap(new PropBootstrapConfiguration() {
+            @Override
+            public Map<String, String> getEnv() {
+                return env;
+            }
+
+            @Override
+            public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
+                return new DynamicPropServerConfiguration(
+                        bootstrap.getRootDirectory(),
+                        bootstrap.loadProperties(),
+                        getEnv(),
+                        bootstrap.getLog(),
+                        bootstrap.getBuildInformation(),
+                        FilesFacadeImpl.INSTANCE,
+                        bootstrap.getMicrosecondClock(),
+                        (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
+                            @Override
+                            public SocketFactory getHttpSocketFactory() {
+                                return (nf, log) -> new PlainSocket(nf, log) {
+                                    @Override
+                                    public int send(long bufferPtr, int bufferLen) {
+                                        final int sent = super.send(bufferPtr, bufferLen);
+                                        if (sent == 0) {
+                                            sendBlocked.countDown();
+                                        }
+                                        return sent;
+                                    }
+                                };
+                            }
+                        }
+                );
+            }
+        }, Bootstrap.getServerMainArgs(root)));
     }
 
     private static String readAsciiLine(InputStream input) throws Exception {

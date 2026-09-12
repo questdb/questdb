@@ -58,8 +58,8 @@ import java.util.concurrent.atomic.LongAdder;
 public final class PageFrameReduceDispatcher implements FiberRuntimeConfigurationListener, FiberRuntimeQuiesceListener, QuietCloseable {
     // A batch keeps its carrier while nobody else needs it. Once the slice has elapsed it yields at
     // the next frame boundary to any queued Fiber, and after the batch budget it returns to the host
-    // worker regardless, so the pool's housekeeping Jobs run. Managed reducers poll their dispatch
-    // ticket at every frame boundary either way.
+    // worker regardless, so the pool's housekeeping Jobs run. Managed reducers also poll their
+    // dispatch ticket at the first frame boundary after the row threshold.
     static final int BATCH_CONTINUE = 0;
     static final int BATCH_RETURN = 2;
     static final int BATCH_YIELD = 1;
@@ -74,10 +74,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private static final int QUIESCE_OPEN = 0;
     private static final int QUIESCE_REQUESTED = 1;
     private static final int REASON_TAIL_PROGRESS_POLL = -1;
-    private final LongAdder batchSliceYieldCount = new LongAdder();
-    private final LongAdder batchTimeoutCount = new LongAdder();
+    private final BatchPolicy batchPolicy;
     private final MessageBus messageBus;
-    private final NanosecondClock nanosecondClock;
     private final AtomicLong progressVersion = new AtomicLong();
     private final FiberEventWaitQueue progressWaitQueue =
             new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
@@ -88,9 +86,6 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private final MillisecondClock timerClock;
     private final long timerIntervalMillis;
     private final TimerShards timerShards;
-    private volatile long batchCheckRows = DEFAULT_BATCH_CHECK_ROWS;
-    private volatile long batchNanos = DEFAULT_BATCH_NANOS;
-    private volatile long batchSliceNanos = DEFAULT_BATCH_SLICE_NANOS;
     private volatile boolean isClosed;
 
     public PageFrameReduceDispatcher(CairoEngine engine, MessageBus messageBus, FiberRuntime runtime) {
@@ -104,8 +99,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             FiberRuntime runtime,
             NanosecondClock nanosecondClock
     ) {
+        this.batchPolicy = new BatchPolicy(runtime, nanosecondClock);
         this.messageBus = messageBus;
-        this.nanosecondClock = nanosecondClock;
         this.runtime = runtime;
         this.taskPool = new FiberTaskPool<>(
                 runtime.getMaxLiveFiberCount(),
@@ -404,23 +399,25 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     }
 
     public long getBatchCheckRows() {
-        return batchCheckRows;
+        return batchPolicy.getCheckRows();
     }
 
+    @TestOnly
     public long getBatchNanos() {
-        return batchNanos;
+        return batchPolicy.getNanos();
     }
 
+    @TestOnly
     public long getBatchSliceNanos() {
-        return batchSliceNanos;
+        return batchPolicy.getSliceNanos();
     }
 
     public long getBatchSliceYieldCount() {
-        return batchSliceYieldCount.sum();
+        return batchPolicy.getSliceYieldCount();
     }
 
     public long getBatchTimeoutCount() {
-        return batchTimeoutCount.sum();
+        return batchPolicy.getTimeoutCount();
     }
 
     @TestOnly
@@ -492,17 +489,17 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
 
     @TestOnly
     public void setBatchCheckRowsForTesting(long batchCheckRows) {
-        this.batchCheckRows = batchCheckRows >= 0 ? batchCheckRows : DEFAULT_BATCH_CHECK_ROWS;
+        batchPolicy.setCheckRows(batchCheckRows);
     }
 
     @TestOnly
     public void setBatchNanosForTesting(long batchNanos) {
-        this.batchNanos = batchNanos > 0 ? batchNanos : DEFAULT_BATCH_NANOS;
+        batchPolicy.setNanos(batchNanos);
     }
 
     @TestOnly
     public void setBatchSliceNanosForTesting(long batchSliceNanos) {
-        this.batchSliceNanos = batchSliceNanos > 0 ? batchSliceNanos : DEFAULT_BATCH_SLICE_NANOS;
+        batchPolicy.setSliceNanos(batchSliceNanos);
     }
 
     @TestOnly
@@ -856,21 +853,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         return isLeased;
     }
 
-    int checkBatch(long batchStartNanos) {
-        final long elapsedNanos = getBatchClockTicks() - batchStartNanos;
-        if (elapsedNanos >= batchNanos) {
-            batchTimeoutCount.increment();
-            return BATCH_RETURN;
-        }
-        if (elapsedNanos >= batchSliceNanos && !Fiber.isMountedDispatchTimeSliced() && runtime.hasQueuedWork()) {
-            batchSliceYieldCount.increment();
-            return BATCH_YIELD;
-        }
-        return BATCH_CONTINUE;
-    }
-
-    long getBatchClockTicks() {
-        return nanosecondClock.getTicks();
+    BatchPolicy getBatchPolicy() {
+        return batchPolicy;
     }
 
     boolean isProgressWaitTerminated(
@@ -955,4 +939,169 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         }
     }
 
+    /**
+     * Per-reducer batch state: the row and time budget of the current mount and the dispatch
+     * context the batch runs under.
+     */
+    static final class Batch {
+        private final BatchPolicy policy;
+        private @Nullable FiberDispatchContext dispatchContext;
+        private long dispatchOwnerId;
+        private Fiber fiber;
+        private long mountVersion;
+        private boolean pollDue;
+        private long rowsSinceCheck;
+        private long startNanos;
+
+        Batch(BatchPolicy policy) {
+            this.policy = policy;
+        }
+
+        void addRows(long rowCount) {
+            rowsSinceCheck += rowCount;
+        }
+
+        void begin() {
+            dispatchContext = Fiber.captureDispatchContext();
+            dispatchOwnerId = queryRegistryOwnerId(dispatchContext);
+            fiber = Fiber.current();
+            mountVersion = fiber.getMountVersion();
+            startNanos = policy.ticks();
+            rowsSinceCheck = 0;
+            pollDue = false;
+        }
+
+        void clear() {
+            dispatchContext = null;
+            fiber = null;
+        }
+
+        /**
+         * Whether the batch may take another entry. Yields the carrier first when the slice has
+         * elapsed and another Fiber is queued.
+         */
+        boolean shouldContinue() {
+            if (rowsSinceCheck < policy.getCheckRows()) {
+                return true;
+            }
+            rowsSinceCheck = 0;
+            pollDue = true;
+            refreshClock();
+            return switch (policy.check(startNanos)) {
+                case BATCH_CONTINUE -> true;
+                case BATCH_YIELD -> {
+                    if (!Fiber.yieldCooperatively()) {
+                        yield false;
+                    }
+                    mountVersion = fiber.getMountVersion();
+                    startNanos = policy.ticks();
+                    yield true;
+                }
+                default -> false;
+            };
+        }
+
+        /**
+         * Moves the batch to the next entry's dispatch context, staying on the carrier when the
+         * controller grants the new context directly. Query leases may pool and mutate a context
+         * object after its owner finishes, so the owner ID snapshot prevents reference-identity
+         * ABA from running a later query on the previous grant. An unchanged context polls the
+         * mounted ticket once the row threshold has been reached.
+         */
+        void switchTo(@Nullable FiberDispatchContext nextContext) {
+            final long nextOwnerId = queryRegistryOwnerId(nextContext);
+            if (dispatchContext != nextContext || dispatchOwnerId != nextOwnerId) {
+                if (!Fiber.switchDispatchContext(nextContext)) {
+                    throw new IllegalStateException("reducer could not switch dispatch context");
+                }
+                refreshClock();
+            } else if (pollDue) {
+                Fiber.pollMountedDispatchTicket();
+                refreshClock();
+            }
+            pollDue = false;
+            dispatchContext = nextContext;
+            dispatchOwnerId = nextOwnerId;
+        }
+
+        private static long queryRegistryOwnerId(@Nullable FiberDispatchContext context) {
+            return context != null ? context.getQueryRegistryOwnerId() : -1;
+        }
+
+        private void refreshClock() {
+            final long currentMountVersion = fiber.getMountVersion();
+            if (currentMountVersion != mountVersion) {
+                // time spent unmounted must not count against the batch
+                mountVersion = currentMountVersion;
+                startNanos = policy.ticks();
+            }
+        }
+    }
+
+    /**
+     * Batch budget shared by every reducer of one dispatcher.
+     */
+    static final class BatchPolicy {
+        private final NanosecondClock clock;
+        private final FiberRuntime runtime;
+        private final LongAdder sliceYieldCount = new LongAdder();
+        private final LongAdder timeoutCount = new LongAdder();
+        private volatile long checkRows = DEFAULT_BATCH_CHECK_ROWS;
+        private volatile long nanos = DEFAULT_BATCH_NANOS;
+        private volatile long sliceNanos = DEFAULT_BATCH_SLICE_NANOS;
+
+        BatchPolicy(FiberRuntime runtime, NanosecondClock clock) {
+            this.clock = clock;
+            this.runtime = runtime;
+        }
+
+        int check(long batchStartNanos) {
+            final long elapsedNanos = clock.getTicks() - batchStartNanos;
+            if (elapsedNanos >= nanos) {
+                timeoutCount.increment();
+                return BATCH_RETURN;
+            }
+            if (elapsedNanos >= sliceNanos && !Fiber.isMountedDispatchTimeSliced() && runtime.hasQueuedWork()) {
+                sliceYieldCount.increment();
+                return BATCH_YIELD;
+            }
+            return BATCH_CONTINUE;
+        }
+
+        long getCheckRows() {
+            return checkRows;
+        }
+
+        long getNanos() {
+            return nanos;
+        }
+
+        long getSliceNanos() {
+            return sliceNanos;
+        }
+
+        long getSliceYieldCount() {
+            return sliceYieldCount.sum();
+        }
+
+        long getTimeoutCount() {
+            return timeoutCount.sum();
+        }
+
+        void setCheckRows(long checkRows) {
+            this.checkRows = checkRows >= 0 ? checkRows : DEFAULT_BATCH_CHECK_ROWS;
+        }
+
+        void setNanos(long nanos) {
+            this.nanos = nanos > 0 ? nanos : DEFAULT_BATCH_NANOS;
+        }
+
+        void setSliceNanos(long sliceNanos) {
+            this.sliceNanos = sliceNanos > 0 ? sliceNanos : DEFAULT_BATCH_SLICE_NANOS;
+        }
+
+        long ticks() {
+            return clock.getTicks();
+        }
+    }
 }

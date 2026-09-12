@@ -126,6 +126,7 @@ import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.griffin.SqlCompilerFactoryImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionLease;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -169,7 +170,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.str.MutableCharSink;
@@ -2263,10 +2263,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.getCopyOf(srcReader, executionContext.getReaderPoolSupervisor());
     }
 
-    public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
-        return readerPool.entries();
-    }
-
     public void getReaderPoolEntries(ConcurrentHashMap.EntryCursor<AbstractMultiTenantPool.Entry<ReaderPool.R>> cursor) {
         readerPool.entries(cursor);
     }
@@ -3199,7 +3195,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * <p>
      * The base engine deliberately has no execution-admission or scheduling policy.
      */
-    public @Nullable QuietCloseable onSqlExecutionRegistered(
+    public @Nullable SqlExecutionLease onSqlExecutionRegistered(
             long queryId,
             SqlExecutionContext executionContext,
             FiberCancellationSignal cancellationSignal,
@@ -4306,7 +4302,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 instance.tryFreeRuntimeStateIfInvalid();
             }
         } finally {
-            // The sink is carrier-local and outlives the call, so instances left in
+            // The sink is fiber-local and outlives the call, so instances left in
             // it stay reachable - including views a concurrent DROP retires - until
             // the next invalidation overwrites the list. Release them here instead.
             sink.clear();

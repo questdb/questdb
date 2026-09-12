@@ -27,6 +27,7 @@ package io.questdb.metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.CompiledQuery;
@@ -86,15 +87,10 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
         TableWriter writer = null;
         try {
             writer = acquireTableWriter();
-            if (writer.getMetadata().getColumnIndexQuiet(COLUMN_CLIENT_WAIT_MICROS) < 0) {
-                writer.addColumn(COLUMN_CLIENT_WAIT_MICROS, ColumnType.LONG, sqlExecutionContext.getSecurityContext());
-            }
-            if (writer.getMetadata().getColumnIndexQuiet(COLUMN_FIRST_ROW_MICROS) < 0) {
-                writer.addColumn(COLUMN_FIRST_ROW_MICROS, ColumnType.LONG, sqlExecutionContext.getSecurityContext());
-            }
-            if (writer.getMetadata().getColumnIndexQuiet(COLUMN_RESOURCE_GROUP_CPU_WAIT_MICROS) < 0) {
-                writer.addColumn(COLUMN_RESOURCE_GROUP_CPU_WAIT_MICROS, ColumnType.LONG, sqlExecutionContext.getSecurityContext());
-            }
+            final SecurityContext securityContext = sqlExecutionContext.getSecurityContext();
+            addLongColumnIfMissing(writer, COLUMN_CLIENT_WAIT_MICROS, securityContext);
+            addLongColumnIfMissing(writer, COLUMN_FIRST_ROW_MICROS, securityContext);
+            addLongColumnIfMissing(writer, COLUMN_RESOURCE_GROUP_CPU_WAIT_MICROS, securityContext);
             final TableRecordMetadata metadata = writer.getMetadata();
             queryTextColumnIndex = metadata.getColumnIndex(COLUMN_QUERY_TEXT);
             executionMicrosColumnIndex = metadata.getColumnIndex(COLUMN_EXECUTION_MICROS);
@@ -114,6 +110,12 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
     @Override
     public void close() throws IOException {
         tableWriter.close();
+    }
+
+    private static void addLongColumnIfMissing(TableWriter writer, String name, SecurityContext securityContext) {
+        if (writer.getMetadata().getColumnIndexQuiet(name) < 0) {
+            writer.addColumn(name, ColumnType.LONG, securityContext);
+        }
     }
 
     private TableWriter acquireTableWriter() throws SqlException {

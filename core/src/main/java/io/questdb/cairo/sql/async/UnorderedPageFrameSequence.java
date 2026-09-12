@@ -68,6 +68,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public class UnorderedPageFrameSequence<T extends StatefulAtom> extends AbstractPageFrameSequence implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
+    private static final long MAX_TAIL_SPIN_NANOS = 16_000L;
+    private static final int TAIL_SPIN_OUTSTANDING_FRAMES = 2;
     private final MillisecondClock clock;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AsyncQueryErrorState errorState = new AsyncQueryErrorState("unexpected reduce error");
@@ -116,7 +118,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             this.clock = configuration.getMillisecondClock();
             this.tailSpinTimeoutNanos = Math.max(
                     0,
-                    Math.min(configuration.getSqlParallelWorkStealingSpinTimeout(), 16_000L)
+                    Math.min(configuration.getSqlParallelWorkStealingSpinTimeout(), MAX_TAIL_SPIN_NANOS)
             );
             this.workStealingStrategy = configuration.getFactoryProvider()
                     .getWorkStealingStrategy(configuration, sharedQueryWorkerCount, atom);
@@ -530,7 +532,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                 || !isActive()
                 || isUninterruptible
                 || queuedCount < 1
-                || !doneLatch.done(Math.max(0, queuedCount - 2))) {
+                || !doneLatch.done(Math.max(0, queuedCount - TAIL_SPIN_OUTSTANDING_FRAMES))) {
             return false;
         }
         hasTailSpun = true;

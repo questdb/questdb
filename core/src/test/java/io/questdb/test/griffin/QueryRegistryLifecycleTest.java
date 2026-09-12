@@ -53,7 +53,6 @@ import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -440,14 +439,27 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
             try (
                     CairoEngine ownerEngine = new CairoEngine(configuration) {
                         @Override
-                        public QuietCloseable onSqlExecutionRegistered(
+                        public SqlExecutionLease onSqlExecutionRegistered(
                                 long queryId,
                                 SqlExecutionContext executionContext,
                                 FiberCancellationSignal cancellationSignal,
                                 long cancellationGeneration
                         ) {
                             acquired.incrementAndGet();
-                            return closed::incrementAndGet;
+                            return new SqlExecutionLease() {
+                                @Override
+                                public void close() {
+                                    closed.incrementAndGet();
+                                }
+
+                                @Override
+                                public void mount() {
+                                }
+
+                                @Override
+                                public void unmount() {
+                                }
+                            };
                         }
                     };
                     SqlExecutionContextImpl context = new SqlExecutionContextImpl(ownerEngine, 1).with(AllowAllSecurityContext.INSTANCE)
@@ -1699,7 +1711,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
         }
 
         @Override
-        public QuietCloseable onSqlExecutionRegistered(
+        public SqlExecutionLease onSqlExecutionRegistered(
                 long queryId,
                 SqlExecutionContext executionContext,
                 FiberCancellationSignal cancellationSignal,

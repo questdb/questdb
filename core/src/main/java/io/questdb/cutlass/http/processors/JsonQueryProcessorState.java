@@ -43,6 +43,8 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionOwner;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -94,7 +96,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_UPDATE_CONFIRMATION = QUERY_INSERT_CONFIRMATION + 1; // 16
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
-    private static final long SQL_EXECUTION_OWNER_UNINITIALIZED = Long.MIN_VALUE;
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     private final StringSink columnNameSink = new StringSink();
     private final ObjList<String> columnNames = new ObjList<>();
@@ -108,6 +109,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final Clock nanosecondClock;
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
+    private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
     private final long statementTimeout;
     private byte apiVersion = DEFAULT_API_VERSION;
     private long clientWaitAccumNanos;
@@ -127,7 +129,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private int errorPosition;
     private long executeStartNanos;
     private boolean explain = false;
-    private boolean isSqlExecutionOwnerMounted;
     private boolean noMeta = false;
     // Operation is stored here to be retried
     private Operation operation;
@@ -144,7 +145,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private RecordCursorFactory recordCursorFactory;
     private Rnd rnd;
     private long skip;
-    private long sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
     private long stop;
     private boolean timings = false;
     private long updateRecords;
@@ -219,7 +219,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             clientWaitAccumNanos = 0;
             clientWaitStartNanos = -1;
         } finally {
-            clearSqlExecutionOwner();
+            sqlExecutionOwner.end();
         }
     }
 
@@ -236,7 +236,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             clearFactory();
             freeAsyncOperation();
         } finally {
-            clearSqlExecutionOwner();
+            sqlExecutionOwner.end();
         }
     }
 
@@ -325,10 +325,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return rnd;
     }
 
-    public long getSqlExecutionOwnerId() {
-        return sqlExecutionOwnerId;
-    }
-
     public long getStatementTimeout() {
         return statementTimeout;
     }
@@ -342,7 +338,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public boolean isSqlExecutionOwnerStarted() {
-        return sqlExecutionOwnerId != SQL_EXECUTION_OWNER_UNINITIALIZED;
+        return sqlExecutionOwner.isStarted();
     }
 
     public void logBufferTooSmall() {
@@ -358,16 +354,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 .$("`]").$();
     }
 
+    public void beginSqlExecutionOwner(
+            CharSequence query,
+            SqlExecutionContext executionContext,
+            short compiledQueryType
+    ) {
+        sqlExecutionOwner.begin(query, executionContext, compiledQueryType);
+    }
+
     public void mountSqlExecutionOwner() {
-        final long ownerId = sqlExecutionOwnerId;
-        if (ownerId > -1 && !isSqlExecutionOwnerMounted) {
-            final var executionContext = httpConnectionContext.getSqlExecutionContext();
-            if (executionContext == null) {
-                throw new IllegalStateException("HTTP SQL execution owner has no execution context");
-            }
-            executionContext.getCairoEngine().mountSqlExecution(ownerId, executionContext);
-            isSqlExecutionOwnerMounted = true;
-        }
+        sqlExecutionOwner.mount();
     }
 
     public void onResumeConfirmation(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
@@ -399,6 +395,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_DONE;
         readyForNextRequest(getHttpConnectionContext());
         response.sendChunk(true);
+    }
+
+    public void publishSqlExecutionOwner(boolean containsSecret) {
+        sqlExecutionOwner.publish(query, containsSecret);
     }
 
     public void parkSqlExecutionOwner() {
@@ -463,16 +463,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.rnd = rnd;
     }
 
-    public void setSqlExecutionOwnerId(long sqlExecutionOwnerId) {
-        if (this.sqlExecutionOwnerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
-            throw new IllegalStateException("HTTP SQL execution owner is already initialized");
-        }
-        if (sqlExecutionOwnerId < -1) {
-            throw new IllegalArgumentException("HTTP SQL execution owner ID is invalid");
-        }
-        this.sqlExecutionOwnerId = sqlExecutionOwnerId;
-        isSqlExecutionOwnerMounted = sqlExecutionOwnerId > -1;
-    }
 
     public void startExecutionTimer() {
         this.executeStartNanos = nanosecondClock.getTicks();
@@ -521,31 +511,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void unmountSqlExecutionOwner() {
-        final long ownerId = sqlExecutionOwnerId;
-        if (ownerId > -1 && isSqlExecutionOwnerMounted) {
-            final var executionContext = httpConnectionContext.getSqlExecutionContext();
-            if (executionContext == null) {
-                throw new IllegalStateException("HTTP SQL execution owner has no execution context");
-            }
-            executionContext.getCairoEngine().unmountSqlExecution(ownerId, executionContext);
-            isSqlExecutionOwnerMounted = false;
-        }
-    }
-
-    private void clearSqlExecutionOwner() {
-        final long ownerId = sqlExecutionOwnerId;
-        try {
-            if (ownerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
-                final var executionContext = httpConnectionContext.getSqlExecutionContext();
-                if (executionContext == null) {
-                    throw new IllegalStateException("HTTP SQL execution owner has no execution context");
-                }
-                executionContext.getCairoEngine().endSqlExecution(ownerId, executionContext);
-            }
-        } finally {
-            sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
-            isSqlExecutionOwnerMounted = false;
-        }
+        sqlExecutionOwner.unmount();
     }
 
     private static byte parseApiVersion(HttpRequestHeader header) {

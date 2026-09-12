@@ -85,7 +85,6 @@ public class MatViewTimerJob extends SynchronizedJob {
     // Monotonic timestamp of the previous tick, Numbers.LONG_NULL until the job runs for the first
     // time. See reportTickGap().
     private long lastTickNanos = Numbers.LONG_NULL;
-    private int removedTimerCount; // temporary value used by filterByDirName
     @TestOnly
     private long tickGapStallThresholdNanos = TICK_GAP_STALL_THRESHOLD_NANOS;
 
@@ -199,7 +198,9 @@ public class MatViewTimerJob extends SynchronizedJob {
                     .$(", ex=").$(th)
                     .I$();
         } finally {
-            addRegisteredTimers(viewToken, created);
+            if (created != 0) {
+                state.addRegisteredTimers(created);
+            }
         }
     }
 
@@ -295,13 +296,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     }
 
     private boolean filterByDirName(Timer timer) {
-        if (filteredDirName == null || !filteredDirName.equals(timer.getMatViewToken().getDirName())) {
-            return false;
-        }
-        // removeIf() calls this predicate exactly once per timer and removes every one it accepts,
-        // so counting the matches here counts the removals.
-        removedTimerCount++;
-        return true;
+        return filteredDirName != null && filteredDirName.equals(timer.getMatViewToken().getDirName());
     }
 
     private boolean processExpiredTimers(long nowMicros) {
@@ -437,18 +432,17 @@ public class MatViewTimerJob extends SynchronizedJob {
     // this having found something is what stranded such a view with no scheduler after an ALTER.
     private void removeTimers(TableToken viewToken) {
         filteredDirName = viewToken.getDirName();
-        removedTimerCount = 0;
-        final boolean isRemoved;
+        final int queuedBefore = timerQueue.size();
         try {
-            // Remove all timers for the given view, if any.
-            isRemoved = timerQueue.removeIf(filterByDirName);
+            timerQueue.removeIf(filterByDirName);
         } finally {
             filteredDirName = null;
         }
-        addRegisteredTimers(viewToken, -removedTimerCount);
-        if (isRemoved) {
+        final int removed = queuedBefore - timerQueue.size();
+        addRegisteredTimers(viewToken, -removed);
+        if (removed > 0) {
             LOG.info().$("unregistered timers for materialized view [view=").$(viewToken)
-                    .$(", count=").$(removedTimerCount)
+                    .$(", count=").$(removed)
                     .I$();
         } else {
             LOG.info().$("timers for materialized view not found [view=").$(viewToken).I$();
@@ -535,23 +529,10 @@ public class MatViewTimerJob extends SynchronizedJob {
                     addRegisteredTimers(timer.getMatViewToken(), -1);
                 } catch (Throwable ignore) {
                 }
-                // processExpiredTimers() calls this method from a finally, so the logging carries its
-                // own swallow: a throw escaping here would replace the in-flight exception AND abandon
-                // every timer this loop has not put back yet -- the batch loss the finally exists to
-                // prevent. AsyncLogRecord.$(Throwable) releases the log ring slot and RETHROWS when
-                // formatting `th` fails, which an OutOfMemoryError can do in exactly the OOM case this
-                // catch exists for. In this chain $(Sinkable) (the TableToken) and $(Throwable)
-                // self-release the slot; $(CharSequence) and $(int) do not -- getType() returns byte,
-                // which widens to int -- so the trailing rec.I$() returns it if one of THOSE throws,
-                // and I$() no-ops unless a record is in progress, so it cannot double-release.
-                // PostingIndexWriter.close() documents this pattern at length.
-                // error(), not critical(): critical() routes through Sequence.nextBully(), which spins
-                // until a ring slot frees. ServerMain.setupMatViewJobs assigns this job to the dedicated
-                // mat view pool that also runs MatViewRefreshJob, so under the saturated log an OOM
-                // produces, critical() would park that pool, refreshes included, rather than drop a
-                // line. A lost timer stalls one view's refresh until restart or an ALTER; it corrupts
-                // nothing, and materialized_views() keeps reporting view_status='valid', with only the
-                // last_refresh timestamps standing still.
+                // Runs from the finally of processExpiredTimers(), so the logging must not throw: a
+                // throw here would replace the in-flight exception and abandon the timers not yet put
+                // back. The slot-release pattern is documented in PostingIndexWriter.close(). error()
+                // rather than critical() so a saturated log ring cannot park the mat view pool.
                 try {
                     LogRecord rec = LOG.error();
                     try {

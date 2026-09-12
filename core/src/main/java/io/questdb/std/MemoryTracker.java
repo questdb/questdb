@@ -37,10 +37,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * may initialize the versioned Resource Group tail in the same cache line.
  *
  * <p>Plain OSS trackers publish every allocation synchronously. A Resource
- * Group tracker batches a signed delta in carrier-local state and publishes it
- * when the adaptive threshold or an execution boundary is reached. This keeps
- * the successful hot path allocation-free and free of shared atomics while
- * bounding temporarily unpublished usage.</p>
+ * Group tracker batches a signed delta in OS-thread-local state owned by
+ * libquestdbr, shared by Java and native allocations, and publishes it when
+ * the adaptive threshold or an execution boundary is reached.</p>
  */
 public abstract class MemoryTracker implements Closeable {
 
@@ -52,9 +51,10 @@ public abstract class MemoryTracker implements Closeable {
     private static final long RESOURCE_MEMORY_MAGIC_OFFSET = 16;
     private static final long RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES = 64 * 1024;
     private static final long RESOURCE_MEMORY_PROCESS_OFFSET = 40;
-    private static final CarrierLocal<ResourceMemoryThreadState> RESOURCE_MEMORY_THREAD_STATE =
-            new CarrierLocal<>(ResourceMemoryThreadState::new);
     private static final long RESOURCE_MEMORY_THRESHOLD_OFFSET = 24;
+    private static final int SCOPE_GROUP = 3;
+    private static final int SCOPE_PROCESS = 2;
+    private static final int SCOPE_QUERY = 1;
 
     // Covered-index buffers are released by a reusable reduce-task pool after
     // the owning query has ended. Their outstanding charge is reconciled at
@@ -63,7 +63,13 @@ public abstract class MemoryTracker implements Closeable {
     // One Rust QdbAllocator per native memory tag, created lazily and retained
     // for the lifetime of this pooled tracker.
     private final long[] nativeAllocators = new long[MemoryTag.SIZE - MemoryTag.NATIVE_DEFAULT];
+    private long nativeAddress;
     private long resourceMemoryGeneration;
+
+    protected MemoryTracker() {
+        nativeAddress = Unsafe.malloc(Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
+        Vect.memset(nativeAddress, Unsafe.MEMORY_TRACKER_BLOCK_SIZE, 0);
+    }
 
     public final void addCoveredBytes(long delta) {
         if (delta != 0) {
@@ -75,25 +81,19 @@ public abstract class MemoryTracker implements Closeable {
     public abstract void close();
 
     /**
-     * Publishes and detaches Java and qdbr native state owned by the current
+     * Publishes and detaches the Resource Group delta owned by the current
      * carrier. Execution-segment completion and carrier shutdown call this
      * method. The disabled fast path is one volatile read.
      */
     public static void detachResourceMemoryCurrentThread() {
-        if (RESOURCE_MEMORY_ACTIVE_TRACKER_COUNT.get() == 0) {
-            return;
-        }
-        final ResourceMemoryThreadState state = RESOURCE_MEMORY_THREAD_STATE.getIfPresent();
-        try {
-            if (state != null) {
-                state.detach();
-            }
-        } finally {
-            CarrierIdentity.detachMemoryTracker();
+        if (RESOURCE_MEMORY_ACTIVE_TRACKER_COUNT.get() != 0) {
+            CarrierIdentity.detachMemoryTracker(0, 0);
         }
     }
 
-    public abstract long getLimit();
+    public final long getLimit() {
+        return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET);
+    }
 
     public abstract long getQueryId();
 
@@ -102,26 +102,22 @@ public abstract class MemoryTracker implements Closeable {
      * bounded carrier-local deltas that are not visible until the next publish
      * boundary.
      */
-    public abstract long getUsed();
+    public final long getUsed() {
+        return Math.max(Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET), 0);
+    }
 
     public abstract MemoryTrackerWorkload getWorkload();
 
-    public abstract long nativeAddress();
+    public final long nativeAddress() {
+        return nativeAddress;
+    }
 
     /**
-     * Publishes Java and qdbr native deltas without detaching the current
-     * carrier. Cooperative circuit-breaker polls call this method.
+     * Publishes the current carrier's Resource Group delta without detaching
+     * it. Cooperative circuit-breaker polls call this method.
      */
     public static void publishResourceMemoryCurrentThread() {
-        if (RESOURCE_MEMORY_ACTIVE_TRACKER_COUNT.get() == 0) {
-            return;
-        }
-        final ResourceMemoryThreadState state = RESOURCE_MEMORY_THREAD_STATE.getIfPresent();
-        try {
-            if (state != null) {
-                state.publish();
-            }
-        } finally {
+        if (RESOURCE_MEMORY_ACTIVE_TRACKER_COUNT.get() != 0) {
             CarrierIdentity.publishMemoryTracker();
         }
     }
@@ -134,7 +130,7 @@ public abstract class MemoryTracker implements Closeable {
     }
 
     protected final void clearResourceMemory() {
-        final long base = nativeAddress();
+        final long base = nativeAddress;
         if (Unsafe.getLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET) != RESOURCE_MEMORY_MAGIC) {
             throw new IllegalStateException("Resource Group memory tracker is not configured");
         }
@@ -143,44 +139,8 @@ public abstract class MemoryTracker implements Closeable {
         Unsafe.putLongVolatile(base + RESOURCE_MEMORY_THRESHOLD_OFFSET, 0);
         Unsafe.putLongVolatile(base + RESOURCE_MEMORY_GROUP_OFFSET, 0);
         Unsafe.putLongVolatile(base + RESOURCE_MEMORY_PROCESS_OFFSET, 0);
-        final int activeTrackerCount = RESOURCE_MEMORY_ACTIVE_TRACKER_COUNT.decrementAndGet();
-        if (activeTrackerCount < 0) {
-            RESOURCE_MEMORY_ACTIVE_TRACKER_COUNT.incrementAndGet();
+        if (RESOURCE_MEMORY_ACTIVE_TRACKER_COUNT.decrementAndGet() < 0) {
             throw new IllegalStateException("Resource Group memory tracker counter underflow");
-        }
-    }
-
-    protected final void configureResourceMemory(long groupAddress, long processAddress) {
-        if (groupAddress == 0 || processAddress == 0) {
-            throw new IllegalArgumentException("Resource Group memory node addresses must be non-zero");
-        }
-        final long base = nativeAddress();
-        resourceMemoryGeneration = resourceMemoryGeneration == Long.MAX_VALUE
-                ? 1
-                : resourceMemoryGeneration + 1;
-        Unsafe.putLongVolatile(base + RESOURCE_MEMORY_CONTEXT_COUNT_OFFSET, 0);
-        Unsafe.putLongVolatile(base + RESOURCE_MEMORY_GROUP_OFFSET, groupAddress);
-        Unsafe.putLongVolatile(base + RESOURCE_MEMORY_PROCESS_OFFSET, processAddress);
-        Unsafe.putLongVolatile(
-                base + RESOURCE_MEMORY_THRESHOLD_OFFSET,
-                calculateUnpublishedThreshold(base, groupAddress, processAddress)
-        );
-        Unsafe.putLongVolatile(base + RESOURCE_MEMORY_GENERATION_OFFSET, resourceMemoryGeneration);
-        Unsafe.putLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET, RESOURCE_MEMORY_MAGIC);
-        final int activeTrackerCount = RESOURCE_MEMORY_ACTIVE_TRACKER_COUNT.incrementAndGet();
-        if (activeTrackerCount < 1) {
-            RESOURCE_MEMORY_ACTIVE_TRACKER_COUNT.decrementAndGet();
-            Unsafe.putLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET, 0);
-            throw new IllegalStateException("Resource Group memory tracker counter overflow");
-        }
-    }
-
-    protected final synchronized void freeNativeAllocators() {
-        for (int i = 0; i < nativeAllocators.length; i++) {
-            if (nativeAllocators[i] != 0) {
-                Unsafe.freeTrackerNativeAllocator(nativeAllocators[i]);
-                nativeAllocators[i] = 0;
-            }
         }
     }
 
@@ -189,12 +149,11 @@ public abstract class MemoryTracker implements Closeable {
      * detached before the tracker can be recycled.
      */
     protected final void closeResourceMemory() {
-        final long base = nativeAddress();
+        final long base = nativeAddress;
         if (Unsafe.getLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET) != RESOURCE_MEMORY_MAGIC) {
             return;
         }
-        final long generation = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_GENERATION_OFFSET);
-        detachCurrentBinding(base, generation);
+        CarrierIdentity.detachMemoryTracker(base, Unsafe.getLongVolatile(base + RESOURCE_MEMORY_GENERATION_OFFSET));
         final long contextCount = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_CONTEXT_COUNT_OFFSET);
         if (contextCount != 0) {
             throw new IllegalStateException(
@@ -207,12 +166,40 @@ public abstract class MemoryTracker implements Closeable {
         }
     }
 
+    protected final void configureResourceMemory(long groupAddress, long processAddress) {
+        if (groupAddress == 0 || processAddress == 0) {
+            throw new IllegalArgumentException("Resource Group memory node addresses must be non-zero");
+        }
+        final long base = nativeAddress;
+        Unsafe.putLongVolatile(base + RESOURCE_MEMORY_CONTEXT_COUNT_OFFSET, 0);
+        Unsafe.putLongVolatile(base + RESOURCE_MEMORY_GROUP_OFFSET, groupAddress);
+        Unsafe.putLongVolatile(base + RESOURCE_MEMORY_PROCESS_OFFSET, processAddress);
+        Unsafe.putLongVolatile(
+                base + RESOURCE_MEMORY_THRESHOLD_OFFSET,
+                calculateUnpublishedThreshold(base, groupAddress, processAddress)
+        );
+        Unsafe.putLongVolatile(base + RESOURCE_MEMORY_GENERATION_OFFSET, ++resourceMemoryGeneration);
+        Unsafe.putLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET, RESOURCE_MEMORY_MAGIC);
+        RESOURCE_MEMORY_ACTIVE_TRACKER_COUNT.incrementAndGet();
+    }
+
+    /**
+     * Releases all native memory owned by this tracker: the counter block and
+     * every per-tag Rust allocator. A destroyed tracker ignores further
+     * reservations and releases.
+     */
+    protected final void destroyNativeBlock() {
+        freeNativeAllocators();
+        nativeAddress = Unsafe.free(nativeAddress, Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
+    }
+
     protected final void updateResourceMemoryLimit(long expectedGroupAddress, long limit) {
         if (expectedGroupAddress == 0 || limit < 0) {
             throw new IllegalArgumentException("invalid Resource Group memory limit update");
         }
-        final long base = nativeAddress();
-        if (!isExpectedResourceMemoryBinding(base, expectedGroupAddress)) {
+        final long base = nativeAddress;
+        if (Unsafe.getLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET) != RESOURCE_MEMORY_MAGIC
+                || Unsafe.getLongVolatile(base + RESOURCE_MEMORY_GROUP_OFFSET) != expectedGroupAddress) {
             return;
         }
         final long processAddress = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_PROCESS_OFFSET);
@@ -238,72 +225,40 @@ public abstract class MemoryTracker implements Closeable {
     }
 
     final void release(long bytes) {
-        if (bytes <= 0) {
-            return;
-        }
-        final long base = nativeAddress();
-        if (base == 0) {
+        final long base = nativeAddress;
+        if (bytes <= 0 || base == 0) {
             return;
         }
         if (Unsafe.getLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET) == RESOURCE_MEMORY_MAGIC) {
-            final long generation = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_GENERATION_OFFSET);
-            final long groupAddress = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_GROUP_OFFSET);
-            final long processAddress = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_PROCESS_OFFSET);
-            validateResourceBinding(base, generation, groupAddress, processAddress);
-            RESOURCE_MEMORY_THREAD_STATE.get().release(
-                    this,
-                    base,
-                    generation,
-                    groupAddress,
-                    processAddress,
-                    bytes,
-                    unpublishedThreshold(base)
-            );
-        } else {
-            creditExact(base, bytes);
+            CarrierIdentity.creditMemoryTracker(base, bytes);
+            return;
+        }
+        final long usedAddress = base + Unsafe.MEMORY_TRACKER_USED_OFFSET;
+        final long previous = Unsafe.getUnsafe().getAndAddLong(null, usedAddress, -bytes);
+        if (previous < bytes) {
+            assert false : "memory tracker underflow [used=" + (previous - bytes) + ", size=" + bytes + ']';
+            Unsafe.getUnsafe().getAndAddLong(null, usedAddress, bytes - previous);
         }
     }
 
     final void reserve(long bytes, int memoryTag) {
-        if (bytes <= 0) {
+        final long base = nativeAddress;
+        if (bytes <= 0 || base == 0) {
             return;
         }
-        final long base = nativeAddress();
-        if (base == 0) {
-            return;
-        }
-        if (Unsafe.getLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET) != RESOURCE_MEMORY_MAGIC) {
-            reserveExact(base, bytes, memoryTag);
-            return;
-        }
-        final long generation = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_GENERATION_OFFSET);
-        final long groupAddress = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_GROUP_OFFSET);
-        final long processAddress = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_PROCESS_OFFSET);
-        validateResourceBinding(base, generation, groupAddress, processAddress);
-        RESOURCE_MEMORY_THREAD_STATE.get().reserve(
-                this,
-                base,
-                generation,
-                groupAddress,
-                processAddress,
-                bytes,
-                memoryTag,
-                unpublishedThreshold(base)
-        );
-    }
-
-    private static void addPublished(long address, long delta) {
-        final long usedAddress = address + Unsafe.MEMORY_TRACKER_USED_OFFSET;
-        while (true) {
-            final long used = Unsafe.getLongVolatile(usedAddress);
-            final long next = used + delta;
-            if (((used ^ next) & (delta ^ next)) < 0) {
-                throw new IllegalStateException("Resource Group memory counter overflow");
+        if (Unsafe.getLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET) == RESOURCE_MEMORY_MAGIC) {
+            final int scope = CarrierIdentity.chargeMemoryTracker(base, bytes);
+            if (scope != 0) {
+                throwLimitExceeded(scope, bytes, memoryTag);
             }
-            if (Unsafe.getUnsafe().compareAndSwapLong(null, usedAddress, used, next)) {
-                return;
-            }
+            return;
         }
+        final long limit = getLimit();
+        final long used = getUsed();
+        if (limit != 0 && used + bytes > limit) {
+            throwLimitExceeded("query", limit, used, bytes, memoryTag);
+        }
+        Unsafe.getUnsafe().getAndAddLong(null, base + Unsafe.MEMORY_TRACKER_USED_OFFSET, bytes);
     }
 
     private static long calculateUnpublishedThreshold(long base, long groupAddress, long processAddress) {
@@ -326,311 +281,52 @@ public abstract class MemoryTracker implements Closeable {
         return Math.max(1, Math.min(RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES, narrowestLimit / 1024));
     }
 
-    private static void creditExact(long address, long bytes) {
-        final long usedAddress = address + Unsafe.MEMORY_TRACKER_USED_OFFSET;
-        final long previous = Unsafe.getUnsafe().getAndAddLong(null, usedAddress, -bytes);
-        if (previous < bytes) {
-            assert false : "memory tracker underflow [used=" + (previous - bytes) + ", size=" + bytes + ']';
-            Unsafe.getUnsafe().getAndAddLong(null, usedAddress, bytes - previous);
-        }
-    }
-
-    private static void decrementContextCount(long base) {
-        final long address = base + RESOURCE_MEMORY_CONTEXT_COUNT_OFFSET;
-        final long previous = Unsafe.getUnsafe().getAndAddLong(null, address, -1);
-        if (previous < 1) {
-            Unsafe.getUnsafe().getAndAddLong(null, address, 1);
-            throw new IllegalStateException("Resource Group memory context counter underflow");
-        }
-    }
-
-    private static void detachCurrentBinding(long base, long generation) {
-        final ResourceMemoryThreadState state = RESOURCE_MEMORY_THREAD_STATE.getIfPresent();
-        try {
-            if (state != null) {
-                state.detachIf(base, generation);
+    private synchronized void freeNativeAllocators() {
+        for (int i = 0; i < nativeAllocators.length; i++) {
+            if (nativeAllocators[i] != 0) {
+                Unsafe.freeTrackerNativeAllocator(nativeAllocators[i]);
+                nativeAllocators[i] = 0;
             }
-        } finally {
-            CarrierIdentity.detachMemoryTracker(base, generation);
         }
     }
 
-    private static void incrementContextCount(long base) {
-        final long address = base + RESOURCE_MEMORY_CONTEXT_COUNT_OFFSET;
-        final long previous = Unsafe.getUnsafe().getAndAddLong(null, address, 1);
-        if (previous < 0 || previous == Long.MAX_VALUE) {
-            Unsafe.getUnsafe().getAndAddLong(null, address, -1);
-            throw new IllegalStateException("Resource Group memory context counter overflow");
-        }
-    }
-
-    private static boolean isExpectedResourceMemoryBinding(long base, long expectedGroupAddress) {
-        return Unsafe.getLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET) == RESOURCE_MEMORY_MAGIC
-                && Unsafe.getLongVolatile(base + RESOURCE_MEMORY_GROUP_OFFSET) == expectedGroupAddress;
-    }
-
-    private static boolean isResourceBindingValid(
-            long base,
-            long generation,
-            long groupAddress,
-            long processAddress
-    ) {
-        return Unsafe.getLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET) == RESOURCE_MEMORY_MAGIC
-                && Unsafe.getLongVolatile(base + RESOURCE_MEMORY_GENERATION_OFFSET) == generation
-                && Unsafe.getLongVolatile(base + RESOURCE_MEMORY_GROUP_OFFSET) == groupAddress
-                && Unsafe.getLongVolatile(base + RESOURCE_MEMORY_PROCESS_OFFSET) == processAddress;
-    }
-
-    private static long publishedUsed(long address) {
-        return Math.max(Unsafe.getLongVolatile(address + Unsafe.MEMORY_TRACKER_USED_OFFSET), 0);
-    }
-
-    private void publishBoundaryDelta(
-            long base,
-            long generation,
-            long groupAddress,
-            long processAddress,
-            long delta
-    ) {
-        if (delta == 0 || !isResourceBindingValid(base, generation, groupAddress, processAddress)) {
-            return;
-        }
-        if (delta == Long.MIN_VALUE) {
-            throw new IllegalStateException("Resource Group memory counter overflow");
-        }
-        final long rollbackDelta = -delta;
-        addPublished(base, delta);
-        boolean processPublished = false;
-        try {
-            addPublished(processAddress, delta);
-            processPublished = true;
-            addPublished(groupAddress, delta);
-        } catch (Throwable th) {
-            if (processPublished) {
-                addPublished(processAddress, rollbackDelta);
+    private void throwLimitExceeded(int scope, long bytes, int memoryTag) {
+        final long base = nativeAddress;
+        final String scopeName;
+        final long address;
+        switch (scope) {
+            case SCOPE_QUERY -> {
+                scopeName = "query";
+                address = base;
             }
-            addPublished(base, rollbackDelta);
-            throw th;
+            case SCOPE_PROCESS -> {
+                scopeName = "process";
+                address = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_PROCESS_OFFSET);
+            }
+            case SCOPE_GROUP -> {
+                scopeName = "group";
+                address = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_GROUP_OFFSET);
+            }
+            default -> throw new IllegalStateException("Resource Group memory tracker has incomplete hierarchy");
         }
+        throwLimitExceeded(
+                scopeName,
+                Unsafe.getLongVolatile(address + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET),
+                Math.max(Unsafe.getLongVolatile(address + Unsafe.MEMORY_TRACKER_USED_OFFSET), 0),
+                bytes,
+                memoryTag
+        );
     }
 
-    private void publishEnforcedDelta(
-            long base,
-            long generation,
-            long groupAddress,
-            long processAddress,
-            long delta,
-            long requestedBytes,
-            int memoryTag
-    ) {
-        if (!isResourceBindingValid(base, generation, groupAddress, processAddress)) {
-            throw new IllegalStateException("Resource Group memory tracker binding changed during allocation");
-        }
-        if (!tryAddPublished(base, delta)) {
-            throwLimitExceeded(memoryTag, "query", base, requestedBytes);
-        }
-        if (!tryAddPublished(processAddress, delta)) {
-            addPublished(base, -delta);
-            throwLimitExceeded(memoryTag, "process", processAddress, requestedBytes);
-        }
-        if (!tryAddPublished(groupAddress, delta)) {
-            addPublished(processAddress, -delta);
-            addPublished(base, -delta);
-            throwLimitExceeded(memoryTag, "group", groupAddress, requestedBytes);
-        }
-    }
-
-    private void reserveExact(long address, long bytes, int memoryTag) {
-        final long limit = Unsafe.getLongVolatile(address + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET);
-        final long used = publishedUsed(address);
-        if ((limit == 0 || used <= limit && bytes <= limit - used)
-                && used <= Long.MAX_VALUE - bytes) {
-            Unsafe.getUnsafe().getAndAddLong(null, address + Unsafe.MEMORY_TRACKER_USED_OFFSET, bytes);
-            return;
-        }
-        throw CairoException.nonCritical().setOutOfMemory(true)
-                .put("query memory limit exceeded [workload=").put(getWorkload().name())
-                .put(", queryId=").put(getQueryId())
-                .put(", limit=").put(limit)
-                .put(", used=").put(used)
-                .put(", size=").put(bytes)
-                .put(", memoryTag=").put(memoryTag)
-                .put(']');
-    }
-
-    private void throwLimitExceeded(int memoryTag, CharSequence scope, long address, long bytes) {
-        final long limit = Unsafe.getLongVolatile(address + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET);
-        final long used = publishedUsed(address);
+    private void throwLimitExceeded(String scope, long limit, long used, long bytes, int memoryTag) {
         throw CairoException.nonCritical().setOutOfMemory(true)
                 .put("query memory limit exceeded [workload=").put(getWorkload().name())
                 .put(", queryId=").put(getQueryId())
                 .put(", scope=").put(scope)
-                .put(", reason=limit")
                 .put(", limit=").put(limit)
                 .put(", used=").put(used)
                 .put(", size=").put(bytes)
                 .put(", memoryTag=").put(memoryTag)
                 .put(']');
-    }
-
-    private static boolean tryAddPublished(long address, long delta) {
-        final long usedAddress = address + Unsafe.MEMORY_TRACKER_USED_OFFSET;
-        final long limit = Unsafe.getLongVolatile(address + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET);
-        while (true) {
-            final long used = Unsafe.getLongVolatile(usedAddress);
-            final long next = used + delta;
-            if (((used ^ next) & (delta ^ next)) < 0 || (limit > 0 && next > limit)) {
-                return false;
-            }
-            if (Unsafe.getUnsafe().compareAndSwapLong(null, usedAddress, used, next)) {
-                return true;
-            }
-        }
-    }
-
-    private static long unpublishedThreshold(long base) {
-        final long threshold = Unsafe.getLongVolatile(base + RESOURCE_MEMORY_THRESHOLD_OFFSET);
-        if (threshold < 1 || threshold > RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES) {
-            throw new IllegalStateException("Resource Group memory tracker has invalid unpublished threshold: " + threshold);
-        }
-        return threshold;
-    }
-
-    private static void validateResourceBinding(
-            long base,
-            long generation,
-            long groupAddress,
-            long processAddress
-    ) {
-        if (generation == 0 || groupAddress == 0 || processAddress == 0
-                || !isResourceBindingValid(base, generation, groupAddress, processAddress)) {
-            throw new IllegalStateException("Resource Group memory tracker has incomplete hierarchy");
-        }
-    }
-
-    private static final class ResourceMemoryThreadState {
-        private long delta;
-        private long generation;
-        private long groupAddress;
-        private MemoryTracker owner;
-        private long processAddress;
-        private long trackerAddress;
-
-        private void bind(
-                MemoryTracker owner,
-                long trackerAddress,
-                long generation,
-                long groupAddress,
-                long processAddress
-        ) {
-            if (this.trackerAddress == trackerAddress && this.generation == generation) {
-                return;
-            }
-            detach();
-            validateResourceBinding(trackerAddress, generation, groupAddress, processAddress);
-            this.generation = generation;
-            this.groupAddress = groupAddress;
-            this.owner = owner;
-            this.processAddress = processAddress;
-            this.trackerAddress = trackerAddress;
-            incrementContextCount(trackerAddress);
-            if (!isResourceBindingValid(trackerAddress, generation, groupAddress, processAddress)) {
-                decrementContextCount(trackerAddress);
-                clear();
-                throw new IllegalStateException("Resource Group memory tracker changed while binding carrier state");
-            }
-        }
-
-        private void clear() {
-            delta = 0;
-            generation = 0;
-            groupAddress = 0;
-            owner = null;
-            processAddress = 0;
-            trackerAddress = 0;
-        }
-
-        private void detach() {
-            if (trackerAddress == 0) {
-                return;
-            }
-            try {
-                publish();
-            } finally {
-                if (isResourceBindingValid(trackerAddress, generation, groupAddress, processAddress)) {
-                    decrementContextCount(trackerAddress);
-                }
-                clear();
-            }
-        }
-
-        private void detachIf(long trackerAddress, long generation) {
-            if (this.trackerAddress == trackerAddress && this.generation == generation) {
-                detach();
-            }
-        }
-
-        private void publish() {
-            if (delta == 0) {
-                return;
-            }
-            if (isResourceBindingValid(trackerAddress, generation, groupAddress, processAddress)) {
-                owner.publishBoundaryDelta(trackerAddress, generation, groupAddress, processAddress, delta);
-            }
-            delta = 0;
-        }
-
-        private void release(
-                MemoryTracker owner,
-                long trackerAddress,
-                long generation,
-                long groupAddress,
-                long processAddress,
-                long bytes,
-                long threshold
-        ) {
-            bind(owner, trackerAddress, generation, groupAddress, processAddress);
-            final long next = Math.subtractExact(delta, bytes);
-            if (next <= -threshold) {
-                owner.publishBoundaryDelta(trackerAddress, generation, groupAddress, processAddress, next);
-                delta = 0;
-            } else {
-                delta = next;
-            }
-        }
-
-        private void reserve(
-                MemoryTracker owner,
-                long trackerAddress,
-                long generation,
-                long groupAddress,
-                long processAddress,
-                long bytes,
-                int memoryTag,
-                long threshold
-        ) {
-            bind(owner, trackerAddress, generation, groupAddress, processAddress);
-            final long previous = delta;
-            final long next = Math.addExact(previous, bytes);
-            if (next >= threshold) {
-                try {
-                    owner.publishEnforcedDelta(
-                            trackerAddress,
-                            generation,
-                            groupAddress,
-                            processAddress,
-                            next,
-                            bytes,
-                            memoryTag
-                    );
-                    delta = 0;
-                } catch (Throwable th) {
-                    delta = previous;
-                    throw th;
-                }
-            } else {
-                delta = next;
-            }
-        }
     }
 }

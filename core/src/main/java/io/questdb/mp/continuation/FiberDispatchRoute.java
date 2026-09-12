@@ -25,10 +25,20 @@
 package io.questdb.mp.continuation;
 
 public enum FiberDispatchRoute {
-    DIRECT,
-    DIRECT_PENDING,
-    DISPATCH_YIELD,
-    POST_PROCESS_RESIGNAL,
-    REQUEST_RUN,
-    SHUTDOWN_CLEANUP
+    DIRECT(false, false),
+    DIRECT_PENDING(true, false),
+    DISPATCH_YIELD(true, false),
+    POST_PROCESS_RESIGNAL(true, false),
+    REQUEST_RUN(true, true),
+    SHUTDOWN_CLEANUP(false, false);
+
+    // Whether a granted request may prefer the Fiber's last mounting Worker when it wakes a peer.
+    final boolean isLastMountPreferenceAllowed;
+    // Whether a granted request may use the owning Worker's local queue.
+    final boolean isLocalPublicationAllowed;
+
+    FiberDispatchRoute(boolean isLocalPublicationAllowed, boolean isLastMountPreferenceAllowed) {
+        this.isLastMountPreferenceAllowed = isLastMountPreferenceAllowed;
+        this.isLocalPublicationAllowed = isLocalPublicationAllowed;
+    }
 }

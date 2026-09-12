@@ -32,7 +32,6 @@ use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
 const GATE_ORDERING: Ordering = Ordering::SeqCst;
 const RESOURCE_MEMORY_MAGIC: usize = 0x5144_4252_474D_454D;
-const RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES: usize = 64 * 1024;
 const RMW_ORDERING: Ordering = Ordering::AcqRel;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -44,12 +43,19 @@ pub struct Breach {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum MemoryScope {
+    /// The Resource Group tracker binding is invalid.
     Configuration,
+    /// The global RSS memory limit, shared by every allocation.
+    Global,
+    /// The Resource Group aggregate memory limit.
     Group,
+    /// The managed-query process safety limit.
     Process,
+    /// The per-workload memory tracker.
     Query,
 }
 
+#[derive(Default)]
 #[repr(C)]
 struct MemoryNode {
     used: AtomicIsize,
@@ -60,10 +66,10 @@ struct MemoryNode {
 /// `{used, limit}` ABI. Published Resource Group counters are signed because a
 /// free may be published by a different carrier before the allocating
 /// carrier's positive delta.
+#[derive(Default)]
 #[repr(C)]
 pub struct MemoryTracker {
-    used: AtomicIsize,
-    limit: AtomicUsize,
+    node: MemoryNode,
     resource_magic: AtomicUsize,
     resource_threshold: AtomicUsize,
     resource_group: AtomicUsize,
@@ -74,8 +80,9 @@ pub struct MemoryTracker {
 
 const _: () = assert!(
     size_of::<MemoryTracker>() == 64
-        && std::mem::offset_of!(MemoryTracker, used) == 0
-        && std::mem::offset_of!(MemoryTracker, limit) == 8
+        && std::mem::offset_of!(MemoryTracker, node) == 0
+        && std::mem::offset_of!(MemoryNode, used) == 0
+        && std::mem::offset_of!(MemoryNode, limit) == 8
         && std::mem::offset_of!(MemoryTracker, resource_magic) == 16
         && std::mem::offset_of!(MemoryTracker, resource_threshold) == 24
         && std::mem::offset_of!(MemoryTracker, resource_group) == 32
@@ -121,12 +128,7 @@ impl ResourceMemoryThreadState {
         self.group_address = group_address;
         self.process_address = process_address;
         self.tracker_address = tracker_address;
-        let previous = tracker.resource_context_count.fetch_add(1, RMW_ORDERING);
-        if previous < 0 || previous == isize::MAX {
-            tracker.resource_context_count.fetch_sub(1, RMW_ORDERING);
-            self.clear();
-            return Err(tracker.configuration_breach());
-        }
+        tracker.resource_context_count.fetch_add(1, RMW_ORDERING);
         if !tracker.binding_valid(generation, group_address, process_address) {
             tracker.resource_context_count.fetch_sub(1, RMW_ORDERING);
             self.clear();
@@ -184,7 +186,7 @@ impl ResourceMemoryThreadState {
             .checked_sub(bytes)
             .ok_or_else(|| tracker.configuration_breach())?;
         if next <= -(threshold as isize) {
-            tracker.publish_boundary_delta(generation, group_address, process_address, next)?;
+            tracker.publish_boundary_delta(generation, group_address, process_address, next);
             self.delta = 0;
         } else {
             self.delta = next;
@@ -201,7 +203,7 @@ impl ResourceMemoryThreadState {
         // into a recycled binding.
         let tracker = unsafe { &*(self.tracker_address as *const MemoryTracker) };
         if tracker.binding_valid(self.generation, self.group_address, self.process_address) {
-            let _ = self.publish();
+            self.publish();
             let previous = tracker.resource_context_count.fetch_sub(1, RMW_ORDERING);
             debug_assert!(previous >= 1, "Resource Group context-count underflow");
         }
@@ -214,21 +216,18 @@ impl ResourceMemoryThreadState {
         }
     }
 
-    fn publish(&mut self) -> Result<(), Breach> {
+    fn publish(&mut self) {
         if self.delta == 0 || self.tracker_address == 0 {
-            return Ok(());
+            return;
         }
         let tracker = unsafe { &*(self.tracker_address as *const MemoryTracker) };
-        if tracker.binding_valid(self.generation, self.group_address, self.process_address) {
-            tracker.publish_boundary_delta(
-                self.generation,
-                self.group_address,
-                self.process_address,
-                self.delta,
-            )?;
-        }
+        tracker.publish_boundary_delta(
+            self.generation,
+            self.group_address,
+            self.process_address,
+            self.delta,
+        );
         self.delta = 0;
-        Ok(())
     }
 }
 
@@ -238,84 +237,57 @@ thread_local! {
 }
 
 pub fn detach_thread_local() {
-    RESOURCE_MEMORY_THREAD_STATE.with(|cell| {
-        let mut state = cell.get();
-        state.detach();
-        cell.set(state);
-    });
+    with_thread_state(ResourceMemoryThreadState::detach);
 }
 
 pub fn detach_thread_local_if(tracker_address: usize, generation: usize) {
-    RESOURCE_MEMORY_THREAD_STATE.with(|cell| {
-        let mut state = cell.get();
-        state.detach_if(tracker_address, generation);
-        cell.set(state);
-    });
+    with_thread_state(|state| state.detach_if(tracker_address, generation));
 }
 
 pub fn publish_thread_local() {
-    RESOURCE_MEMORY_THREAD_STATE.with(|cell| {
-        let mut state = cell.get();
-        let _ = state.publish();
-        cell.set(state);
-    });
+    with_thread_state(ResourceMemoryThreadState::publish);
 }
 
-impl Default for MemoryTracker {
-    fn default() -> Self {
-        Self::new()
-    }
+fn with_thread_state<R>(f: impl FnOnce(&mut ResourceMemoryThreadState) -> R) -> R {
+    RESOURCE_MEMORY_THREAD_STATE.with(|cell| {
+        let mut state = cell.get();
+        let result = f(&mut state);
+        cell.set(state);
+        result
+    })
 }
 
 impl MemoryTracker {
     pub fn new() -> Self {
-        Self {
-            used: AtomicIsize::new(0),
-            limit: AtomicUsize::new(0),
-            resource_magic: AtomicUsize::new(0),
-            resource_threshold: AtomicUsize::new(0),
-            resource_group: AtomicUsize::new(0),
-            resource_process: AtomicUsize::new(0),
-            resource_context_count: AtomicIsize::new(0),
-            resource_generation: AtomicUsize::new(0),
-        }
+        Self::default()
     }
 
-    pub fn charge_unchecked(&self, bytes: usize) {
-        if let Ok(bytes) = isize::try_from(bytes) {
-            self.used.fetch_add(bytes, RMW_ORDERING);
-        }
-    }
-
-    /// Credit a charge on the regular allocator path. Resource Group counters
-    /// are locally accumulated; the returned value still satisfies allocator underflow
-    /// assertions but is not an exact pre-credit snapshot in that mode.
-    pub fn credit(&self, bytes: usize) -> usize {
+    /// Credits a charge on the regular allocator path. Resource Group credits
+    /// accumulate in the thread-local delta and are dropped, under a debug
+    /// assertion, when the binding is no longer valid.
+    pub fn credit(&self, bytes: usize) {
         if bytes == 0 {
-            return self.used();
+            return;
         }
         if self.resource_magic.load(GATE_ORDERING) != RESOURCE_MEMORY_MAGIC {
-            return Self::credit_exact(self.query_node(), bytes);
+            Self::credit_exact(&self.node, bytes);
+            return;
         }
         let result = self.resource_binding().and_then(
             |(generation, group_address, process_address, threshold)| {
-                RESOURCE_MEMORY_THREAD_STATE.with(|cell| {
-                    let mut state = cell.get();
-                    let result = state.credit(
+                with_thread_state(|state| {
+                    state.credit(
                         self,
                         generation,
                         group_address,
                         process_address,
                         bytes,
                         threshold,
-                    );
-                    cell.set(state);
-                    result
+                    )
                 })
             },
         );
         debug_assert!(result.is_ok(), "invalid Resource Group credit: {result:?}");
-        bytes
     }
 
     /// Immediate counterpart used by coarse, cross-thread Enterprise leases.
@@ -325,23 +297,23 @@ impl MemoryTracker {
             return;
         }
         if self.resource_magic.load(GATE_ORDERING) != RESOURCE_MEMORY_MAGIC {
-            Self::credit_exact(self.query_node(), bytes);
+            Self::credit_exact(&self.node, bytes);
             return;
         }
         if let Ok((generation, group_address, process_address, _)) = self.resource_binding() {
             let Ok(delta) = isize::try_from(bytes).map(|value| -value) else {
                 return;
             };
-            let _ = self.publish_boundary_delta(generation, group_address, process_address, delta);
+            self.publish_boundary_delta(generation, group_address, process_address, delta);
         }
     }
 
     pub fn limit(&self) -> usize {
-        self.limit.load(GATE_ORDERING)
+        self.node.limit.load(GATE_ORDERING)
     }
 
     pub fn set_limit(&self, limit: usize) {
-        self.limit.store(limit, GATE_ORDERING);
+        self.node.limit.store(limit, GATE_ORDERING);
     }
 
     pub fn try_charge(&self, bytes: usize) -> Result<(), Breach> {
@@ -352,18 +324,15 @@ impl MemoryTracker {
             return self.try_charge_plain(bytes);
         }
         let (generation, group_address, process_address, threshold) = self.resource_binding()?;
-        RESOURCE_MEMORY_THREAD_STATE.with(|cell| {
-            let mut state = cell.get();
-            let result = state.charge(
+        with_thread_state(|state| {
+            state.charge(
                 self,
                 generation,
                 group_address,
                 process_address,
                 bytes,
                 threshold,
-            );
-            cell.set(state);
-            result
+            )
         })
     }
 
@@ -381,23 +350,7 @@ impl MemoryTracker {
     }
 
     pub fn used(&self) -> usize {
-        Self::non_negative(self.used.load(GATE_ORDERING))
-    }
-
-    fn add_published(node: &MemoryNode, delta: isize) -> Result<isize, ()> {
-        loop {
-            let used = node.used.load(GATE_ORDERING);
-            let Some(next) = used.checked_add(delta) else {
-                return Err(());
-            };
-            if node
-                .used
-                .compare_exchange_weak(used, next, RMW_ORDERING, GATE_ORDERING)
-                .is_ok()
-            {
-                return Ok(used);
-            }
-        }
+        Self::non_negative(self.node.used.load(GATE_ORDERING))
     }
 
     fn binding_valid(
@@ -420,51 +373,42 @@ impl MemoryTracker {
         }
     }
 
-    fn credit_exact(node: &MemoryNode, bytes: usize) -> usize {
+    fn credit_exact(node: &MemoryNode, bytes: usize) {
         let Ok(bytes) = isize::try_from(bytes) else {
-            return Self::non_negative(node.used.load(GATE_ORDERING));
+            return;
         };
         let previous = node.used.fetch_sub(bytes, RMW_ORDERING);
         if previous < bytes {
             node.used.fetch_add(bytes - previous.max(0), RMW_ORDERING);
         }
-        Self::non_negative(previous)
     }
 
     fn non_negative(value: isize) -> usize {
         value.max(0) as usize
     }
 
+    /// Applies an unenforced delta to the query, process and group counters.
+    /// A credit may reach the counters before the matching charge, so the
+    /// counters are signed and no limit is checked here.
     fn publish_boundary_delta(
         &self,
         generation: usize,
         group_address: usize,
         process_address: usize,
         delta: isize,
-    ) -> Result<(), Breach> {
+    ) {
         if delta == 0 || !self.binding_valid(generation, group_address, process_address) {
-            return Ok(());
+            return;
         }
-        let rollback_delta = delta
-            .checked_neg()
-            .ok_or_else(|| self.configuration_breach())?;
         let (group, process) = unsafe {
             (
                 &*(group_address as *const MemoryNode),
                 &*(process_address as *const MemoryNode),
             )
         };
-        Self::add_published(self.query_node(), delta).map_err(|_| self.configuration_breach())?;
-        if Self::add_published(process, delta).is_err() {
-            let _ = Self::add_published(self.query_node(), rollback_delta);
-            return Err(self.configuration_breach());
-        }
-        if Self::add_published(group, delta).is_err() {
-            let _ = Self::add_published(process, rollback_delta);
-            let _ = Self::add_published(self.query_node(), rollback_delta);
-            return Err(self.configuration_breach());
-        }
-        Ok(())
+        self.node.used.fetch_add(delta, RMW_ORDERING);
+        process.used.fetch_add(delta, RMW_ORDERING);
+        group.used.fetch_add(delta, RMW_ORDERING);
     }
 
     fn publish_enforced_delta(
@@ -484,21 +428,17 @@ impl MemoryTracker {
             )
         };
         let bytes = delta as usize;
-        Self::reserve_node(self.query_node(), bytes, MemoryScope::Query)?;
+        Self::reserve_node(&self.node, bytes, MemoryScope::Query)?;
         if let Err(breach) = Self::reserve_node(process, bytes, MemoryScope::Process) {
-            let _ = Self::add_published(self.query_node(), -delta);
+            self.node.used.fetch_sub(delta, RMW_ORDERING);
             return Err(breach);
         }
         if let Err(breach) = Self::reserve_node(group, bytes, MemoryScope::Group) {
-            let _ = Self::add_published(process, -delta);
-            let _ = Self::add_published(self.query_node(), -delta);
+            process.used.fetch_sub(delta, RMW_ORDERING);
+            self.node.used.fetch_sub(delta, RMW_ORDERING);
             return Err(breach);
         }
         Ok(())
-    }
-
-    fn query_node(&self) -> &MemoryNode {
-        unsafe { &*(self as *const MemoryTracker as *const MemoryNode) }
     }
 
     fn reserve_node(node: &MemoryNode, bytes: usize, scope: MemoryScope) -> Result<(), Breach> {
@@ -539,13 +479,7 @@ impl MemoryTracker {
         let group_address = self.resource_group.load(GATE_ORDERING);
         let process_address = self.resource_process.load(GATE_ORDERING);
         let threshold = self.resource_threshold.load(GATE_ORDERING);
-        if generation == 0
-            || group_address == 0
-            || process_address == 0
-            || threshold == 0
-            || threshold > RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES
-            || !self.binding_valid(generation, group_address, process_address)
-        {
+        if generation == 0 || group_address == 0 || process_address == 0 || threshold == 0 {
             return Err(self.configuration_breach());
         }
         Ok((generation, group_address, process_address, threshold))
@@ -566,7 +500,7 @@ impl MemoryTracker {
                 used,
             });
         }
-        self.used.fetch_add(bytes, RMW_ORDERING);
+        self.node.used.fetch_add(bytes, RMW_ORDERING);
         Ok(())
     }
 }
@@ -575,6 +509,8 @@ impl MemoryTracker {
 mod tests {
     use super::*;
     use std::sync::{Arc, Barrier};
+
+    const RESOURCE_MEMORY_MAX_UNPUBLISHED_BYTES: usize = 64 * 1024;
 
     fn bind_resource_nodes(tracker: &MemoryTracker, group: &MemoryNode, process: &MemoryNode) {
         let threshold = unpublished_threshold(tracker, group, process);
@@ -676,7 +612,7 @@ mod tests {
                 charged.wait();
                 tracker_b.credit(32);
                 detach_thread_local();
-                assert_eq!(tracker_b.used.load(GATE_ORDERING), -32);
+                assert_eq!(tracker_b.node.used.load(GATE_ORDERING), -32);
                 credited.wait();
             });
         });
@@ -751,7 +687,7 @@ mod tests {
         let view = unsafe { &*(address as *const MemoryTracker) };
         view.try_charge(512).unwrap();
         assert_eq!(tracker.used(), 512);
-        assert_eq!(view.credit(512), 512);
+        view.credit(512);
         assert_eq!(tracker.used(), 0);
     }
 
@@ -769,7 +705,7 @@ mod tests {
                 used: 1024,
             })
         );
-        assert_eq!(tracker.credit(1024), 1024);
+        tracker.credit(1024);
         assert_eq!(tracker.used(), 0);
     }
 
@@ -777,9 +713,9 @@ mod tests {
     fn zero_byte_operations_are_noops() {
         let tracker = MemoryTracker::new();
         tracker.set_limit(8);
-        tracker.charge_unchecked(8);
+        tracker.try_charge(8).unwrap();
         tracker.try_charge(0).unwrap();
-        assert_eq!(tracker.credit(0), 8);
+        tracker.credit(0);
         assert_eq!(tracker.used(), 8);
     }
 }

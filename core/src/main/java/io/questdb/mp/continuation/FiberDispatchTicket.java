@@ -32,13 +32,6 @@ package io.questdb.mp.continuation;
  */
 public interface FiberDispatchTicket {
     /**
-     * Invoked from an explicitly cooperative execution boundary while this ticket owns the
-     * currently mounted Fiber segment. Implementations must keep the ordinary path allocation-free.
-     */
-    default void onCooperativePoll() {
-    }
-
-    /**
      * Whether {@link #onCooperativePoll()} ends the mounted segment on the ticket's own time
      * slice. Batching loops then leave slice fairness to the ticket.
      */
@@ -46,7 +39,21 @@ public interface FiberDispatchTicket {
         return false;
     }
 
+    /**
+     * Invoked from an explicitly cooperative execution boundary while this ticket owns the
+     * currently mounted Fiber segment. Implementations must keep the ordinary path allocation-free.
+     */
+    default void onCooperativePoll() {
+    }
+
     void onMount(FiberDispatchRequest request);
+
+    /**
+     * Replaces the re-submission promised by {@link #onUnmountBeforeRedispatch} when a driver
+     * failure retires the Fiber before the runtime re-submits its request.
+     */
+    default void onRedispatchAbandoned(FiberDispatchRequest request) {
+    }
 
     void onUnmount(FiberDispatchRequest request, boolean wasMounted);
 
@@ -57,12 +64,5 @@ public interface FiberDispatchTicket {
      */
     default void onUnmountBeforeRedispatch(FiberDispatchRequest request) {
         onUnmount(request, true);
-    }
-
-    /**
-     * Replaces the re-submission promised by {@link #onUnmountBeforeRedispatch} when a driver
-     * failure retires the Fiber before the runtime re-submits its request.
-     */
-    default void onRedispatchAbandoned(FiberDispatchRequest request) {
     }
 }

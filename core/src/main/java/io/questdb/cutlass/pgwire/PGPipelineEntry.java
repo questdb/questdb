@@ -52,6 +52,7 @@ import io.questdb.griffin.ReadOnlyStatementGate;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionOwner;
 import io.questdb.griffin.engine.functions.bind.ArrayBindVariable;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -134,7 +135,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private static final int SYNC_DESCRIBE = 2;
     private static final int SYNC_DONE = 5;
     private static final int SYNC_PARSE = 0;
-    private static final long SQL_EXECUTION_OWNER_UNINITIALIZED = Long.MIN_VALUE;
     // Test seam: when non-null, fireParkedUpdateMintObserver() runs this hook just before the parked-writer
     // UPDATE branch (index < 0) externalizes via commit() + apply(), i.e. inside the role-switch read-lock
     // hold once the fence below is in place. This branch never reaches OperationDispatcher, so the
@@ -182,6 +182,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final CancellationBinding queryCancellation = new CancellationBinding();
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
+    private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
     boolean isCopy;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
@@ -213,9 +214,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private MemoryTracker queryMemoryTracker;
     private boolean selectIsCacheable = true;
     private long sqlAffectedRowCount = 0;
-    private SqlExecutionContext sqlExecutionOwnerContext;
-    private long sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
-    private boolean sqlExecutionOwnerMounted;
     // The count of rows sent that have been sent to the client per fetch. Client can either
     // fetch all rows at once, or in batches. In case of full fetch, this is the
     // count of rows in the cursor. If client fetches in batches, this is the count
@@ -370,9 +368,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         queryMemoryTracker = null;
         sqlAffectedRowCount = 0;
         endSqlExecutionOwner();
-        sqlExecutionOwnerContext = null;
-        sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
-        sqlExecutionOwnerMounted = false;
         sqlReturnRowCount = 0;
         sqlReturnRowCountLimit = 0;
         sqlReturnRowCountToBeSent = 0;
@@ -3560,14 +3555,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             SqlExecutionContext executionContext,
             short compiledQueryType
     ) {
-        if (sqlExecutionOwnerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
-            throw new IllegalStateException("PG pipeline entry already has a SQL execution owner");
-        }
         executionContext.getCircuitBreaker().resetTimer();
-        final long ownerId = engine.beginSqlExecution(query, executionContext, compiledQueryType);
-        sqlExecutionOwnerContext = executionContext;
-        sqlExecutionOwnerId = ownerId;
-        sqlExecutionOwnerMounted = ownerId > -1;
+        sqlExecutionOwner.begin(query, executionContext, compiledQueryType);
     }
 
     /**
@@ -3726,32 +3715,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     void endSqlExecutionOwner() {
-        final long ownerId = sqlExecutionOwnerId;
-        if (ownerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
-            final SqlExecutionContext executionContext = sqlExecutionOwnerContext;
-            try {
-                engine.endSqlExecution(ownerId, executionContext);
-            } finally {
-                sqlExecutionOwnerContext = null;
-                sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
-                sqlExecutionOwnerMounted = false;
-            }
-        }
+        sqlExecutionOwner.end();
     }
 
     boolean hasSqlExecutionOwner() {
-        return sqlExecutionOwnerId != SQL_EXECUTION_OWNER_UNINITIALIZED;
-    }
-
-    boolean isSqlExecutionOwnerMounted() {
-        return sqlExecutionOwnerMounted;
+        return sqlExecutionOwner.isStarted();
     }
 
     void mountSqlExecutionOwner() {
-        if (sqlExecutionOwnerId > -1 && !sqlExecutionOwnerMounted) {
-            engine.mountSqlExecution(sqlExecutionOwnerId, sqlExecutionOwnerContext);
-            sqlExecutionOwnerMounted = true;
-        }
+        sqlExecutionOwner.mount();
     }
 
     void mountSqlExecutionOwnerForSync() {
@@ -3769,14 +3741,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     void publishSqlExecutionOwner() {
-        if (sqlExecutionOwnerId > -1) {
-            engine.publishSqlExecutionQuery(
-                    sqlExecutionOwnerId,
-                    sqlText,
-                    sqlTextHasSecret,
-                    sqlExecutionOwnerContext
-            );
-        }
+        sqlExecutionOwner.publish(sqlText, sqlTextHasSecret);
     }
 
     void resumeSqlExecutionOwner() {
@@ -3796,10 +3761,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     void unmountSqlExecutionOwner() {
-        if (sqlExecutionOwnerId > -1 && sqlExecutionOwnerMounted) {
-            engine.unmountSqlExecution(sqlExecutionOwnerId, sqlExecutionOwnerContext);
-            sqlExecutionOwnerMounted = false;
-        }
+        sqlExecutionOwner.unmount();
     }
 
     void unmountSqlExecutionOwnerAfterExecute() {

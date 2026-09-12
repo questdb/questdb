@@ -38,6 +38,7 @@ import io.questdb.std.Os;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import org.jetbrains.annotations.Nullable;
 
 abstract class AbstractPageFrameSequence {
     private static final int CANCEL_REASON_REDUCER_ERROR = -2;
@@ -112,7 +113,7 @@ abstract class AbstractPageFrameSequence {
 
     public abstract SqlExecutionCircuitBreaker getCircuitBreaker();
 
-    public FiberDispatchContext getDispatchContext() {
+    public @Nullable FiberDispatchContext getDispatchContext() {
         return dispatchContext;
     }
 

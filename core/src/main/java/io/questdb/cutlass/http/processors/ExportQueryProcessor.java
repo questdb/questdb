@@ -187,7 +187,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.beginSqlExecutionOwner(state.sqlText, sqlExecutionContext, cc.getType());
                     } catch (RuntimeException | Error e) {
                         if (state.recordCursorFactory == null) {
-                            freeCompiledQueryAfterOwnerStartFailure(cc, e);
+                            cc.freeAfterOwnerStartFailure(e);
                         }
                         throw e;
                     }
@@ -283,7 +283,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
-                    doResumeSend(context, false);
+                    doResumeSend(context);
                 } catch (CairoException e) {
                     if (state.isQueryCacheable()) {
                         state.setQueryCacheable(e.isCacheable());
@@ -355,7 +355,24 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         try {
-            doResumeSend(context, true);
+            final ExportQueryProcessorState state = LV.get(context);
+            if (state != null) {
+                // with() resets all per-execution bindings, including the query owner. It is valid
+                // only after parkRequest() has unmounted the owner. The initial execution context was
+                // already configured before beginSqlExecutionOwner(), so resetting it there would
+                // detach a live mounted owner from its context.
+                final NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+                final SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
+                sqlExecutionContext.with(context.getSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
+                LOG.debug().$("resume [fd=").$(context.getFd()).I$();
+                if (!state.pausedQuery) {
+                    context.resumeResponseSend();
+                } else {
+                    state.pausedQuery = false;
+                }
+                state.resumeSqlExecutionOwner();
+            }
+            doResumeSend(context);
         } catch (CairoError | CairoException e) {
             // this is something we didn't expect
             // log the exception and disconnect
@@ -364,19 +381,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 logInternalError(e, state);
             }
             throw ServerDisconnectException.INSTANCE;
-        }
-    }
-
-    private static void freeCompiledQueryAfterOwnerStartFailure(CompiledQuery cc, Throwable ownerStartFailure) {
-        Throwable cleanupFailure = null;
-        try {
-            cc.closeAllButSelect();
-        } catch (Throwable th) {
-            cleanupFailure = th;
-        }
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cc.getOperation());
-        if (cleanupFailure != null && cleanupFailure != ownerStartFailure) {
-            ownerStartFailure.addSuppressed(cleanupFailure);
         }
     }
 
@@ -877,33 +881,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         readyForNextRequest(context);
     }
 
-    private void doResumeSend(
-            HttpConnectionContext context,
-            boolean resuming
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void doResumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         ExportQueryProcessorState state = LV.get(context);
         if (state == null) {
             return;
         }
-
-        if (resuming) {
-            // with() resets all per-execution bindings, including the query owner. It is valid only
-            // after parkRequest() has unmounted the owner. The initial execution context was already
-            // configured before beginSqlExecutionOwner(), so resetting it here would detach a live
-            // mounted owner from its context and make terminal cleanup order-dependent.
-            NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
-            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
-            sqlExecutionContext.with(context.getSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
-            LOG.debug().$("resume [fd=").$(context.getFd()).I$();
-
-            if (!state.pausedQuery) {
-                context.resumeResponseSend();
-            } else {
-                state.pausedQuery = false;
-            }
-            state.resumeSqlExecutionOwner();
-        }
-
         final HttpChunkedResponse response = context.getChunkedResponse();
 
         if (state.getExportModel().isParquetFormat()) {

@@ -33,6 +33,7 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorState;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.test.AbstractTest;
@@ -58,7 +59,8 @@ public class JsonQueryProcessorResourceLifecycleTest extends AbstractTest {
             ) {
                 context.getOrCreateSqlExecutionContext(engine, 1);
                 try (JsonQueryProcessorState state = new JsonQueryProcessorState(context, cairoConfiguration.getNanosecondClock(), null)) {
-                    state.setSqlExecutionOwnerId(7);
+                    engine.nextOwnerId = 7;
+                    state.beginSqlExecutionOwner("SELECT 1", context.getSqlExecutionContext(), CompiledQuery.SELECT);
 
                     state.mountSqlExecutionOwner();
                     Assert.assertEquals(0, engine.mountCount);
@@ -89,7 +91,8 @@ public class JsonQueryProcessorResourceLifecycleTest extends AbstractTest {
                 context.getOrCreateSqlExecutionContext(engine, 1);
                 try (JsonQueryProcessorState state = new JsonQueryProcessorState(context, cairoConfiguration.getNanosecondClock(), null)) {
                     state.setCursor(new TrackingRecordCursor(engine.events));
-                    state.setSqlExecutionOwnerId(7);
+                    engine.nextOwnerId = 7;
+                    state.beginSqlExecutionOwner("SELECT 1", context.getSqlExecutionContext(), CompiledQuery.SELECT);
                     state.startExecutionTimer();
 
                     state.parkSqlExecutionOwner();
@@ -117,7 +120,8 @@ public class JsonQueryProcessorResourceLifecycleTest extends AbstractTest {
             ) {
                 context.getOrCreateSqlExecutionContext(engine, 1);
                 try (JsonQueryProcessorState state = new JsonQueryProcessorState(context, cairoConfiguration.getNanosecondClock(), null)) {
-                    state.setSqlExecutionOwnerId(7);
+                    engine.nextOwnerId = 7;
+                    state.beginSqlExecutionOwner("SELECT 1", context.getSqlExecutionContext(), CompiledQuery.SELECT);
                     state.startExecutionTimer();
 
                     state.parkSqlExecutionOwner();
@@ -149,7 +153,8 @@ public class JsonQueryProcessorResourceLifecycleTest extends AbstractTest {
                 context.getOrCreateSqlExecutionContext(engine, 1);
                 try (JsonQueryProcessorState state = new JsonQueryProcessorState(context, cairoConfiguration.getNanosecondClock(), null)) {
                     state.setOperationFuture(new PendingOperationFuture());
-                    state.setSqlExecutionOwnerId(11);
+                    engine.nextOwnerId = 11;
+                    state.beginSqlExecutionOwner("SELECT 1", context.getSqlExecutionContext(), CompiledQuery.SELECT);
                     state.startExecutionTimer();
 
                     assertRetry(processor, state);
@@ -177,7 +182,8 @@ public class JsonQueryProcessorResourceLifecycleTest extends AbstractTest {
             ) {
                 context.getOrCreateSqlExecutionContext(engine, 1);
                 try (JsonQueryProcessorState state = new JsonQueryProcessorState(context, cairoConfiguration.getNanosecondClock(), null)) {
-                    state.setSqlExecutionOwnerId(-1);
+                    engine.nextOwnerId = -1;
+                    state.beginSqlExecutionOwner("SELECT 1", context.getSqlExecutionContext(), CompiledQuery.SELECT);
                 }
                 Assert.assertEquals(1, engine.endCount);
                 Assert.assertEquals(-1, engine.endedOwnerId);
@@ -276,14 +282,20 @@ public class JsonQueryProcessorResourceLifecycleTest extends AbstractTest {
     }
 
     private static final class TrackingCairoEngine extends CairoEngine {
+        private final List<String> events = new ArrayList<>();
         private int endCount;
         private long endedOwnerId = Long.MIN_VALUE;
-        private final List<String> events = new ArrayList<>();
         private int mountCount;
+        private long nextOwnerId;
         private int unmountCount;
 
         private TrackingCairoEngine(DefaultTestCairoConfiguration configuration) {
             super(configuration);
+        }
+
+        @Override
+        public long beginSqlExecution(CharSequence query, SqlExecutionContext executionContext, short compiledQueryType) {
+            return nextOwnerId;
         }
 
         @Override

@@ -72,11 +72,11 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private final PinnableContinuation continuation;
     private final @Nullable FiberDispatchRequest dispatchRequest;
     private final Rnd fiberAsyncRandom;
+    private final ObjList<Object> fiberLocalSlots = new ObjList<>();
     private final Rnd fiberRandom;
     private final Outcome outcomeScratch = new Outcome();
     private final FiberPool pool;
     private final SuspensionScope.RoleSwitchReadLockState roleSwitchReadLocks = new SuspensionScope.RoleSwitchReadLockState();
-    private final ObjList<Object> scratch = new ObjList<>();
     private final FiberWaitCoordinator waitCoordinator;
     private FiberCancellationSignal assignedCancellationSignal;
     private long assignedCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
@@ -156,8 +156,8 @@ public final class Fiber implements FiberWaitCoordinator.Target {
      * carrier. False outside a mounted Fiber.
      */
     public static boolean hasQueuedRuntimeWork() {
-        final Fiber fiber = current();
-        return fiber != null && isMounted() && fiber.pool.getRuntime().hasQueuedWork();
+        final Fiber fiber = mountedOrNull();
+        return fiber != null && fiber.pool.getRuntime().hasQueuedWork();
     }
 
     public static boolean isMounted() {
@@ -165,8 +165,8 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     public static boolean isMountedDispatchTimeSliced() {
-        final Fiber fiber = current();
-        if (fiber != null && isMounted()) {
+        final Fiber fiber = mountedOrNull();
+        if (fiber != null) {
             final FiberDispatchTicket ticket = fiber.mountedDispatchTicket;
             return ticket != null && ticket.isTimeSliced();
         }
@@ -187,8 +187,8 @@ public final class Fiber implements FiberWaitCoordinator.Target {
      * presence alone does not imply that the poll enforced a scheduling boundary.
      */
     public static boolean pollMountedDispatchTicketAndCheckYield() {
-        final Fiber fiber = current();
-        if (fiber != null && isMounted()) {
+        final Fiber fiber = mountedOrNull();
+        if (fiber != null) {
             final FiberDispatchTicket ticket = fiber.mountedDispatchTicket;
             if (ticket != null) {
                 final FiberDispatchRequest request = fiber.dispatchRequest;
@@ -483,6 +483,11 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return new IllegalStateException("invalid fiber wait state [state=" + state + ']');
     }
 
+    private static @Nullable Fiber mountedOrNull() {
+        final Fiber fiber = current();
+        return fiber != null && isMounted() ? fiber : null;
+    }
+
     private static long packExecutionState(long token, int state) {
         return (token << EXECUTION_STATE_BITS) | state;
     }
@@ -582,7 +587,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 ? new IllegalStateException("fiber task leaked role-switch read lock [depth=" + leakedDepth + ']')
                 : null;
         final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
-        final ObjList<Object> previousSlots = FiberLocal.enter(scratch);
+        final ObjList<Object> previousSlots = FiberLocal.enter(fiberLocalSlots);
         final Fiber previousFiber = scope.fiber;
         final SuspensionScope.Mode previousMode = scope.mode;
         final SuspensionScope.Mode savedMode = roleSwitchReadLocks.getPreviousMode();
@@ -769,9 +774,9 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         }
     }
 
-    void freeScratch() {
-        Misc.freeObjListIfCloseable(scratch);
-        scratch.clear();
+    void freeFiberLocals() {
+        Misc.freeObjListIfCloseable(fiberLocalSlots);
+        fiberLocalSlots.clear();
     }
 
     FiberTask getAssignedTask() {
@@ -1046,7 +1051,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         if (scope.roleSwitchReadLocks.hasAny() || scope.roleSwitchWriteLockDepth > 0) {
             throw new IllegalStateException("fiber mount would hide a carrier role-switch lock");
         }
-        final ObjList<Object> previousSlots = FiberLocal.enter(scratch);
+        final ObjList<Object> previousSlots = FiberLocal.enter(fiberLocalSlots);
         final Fiber previousFiber = scope.fiber;
         final FiberCancellationSignal previousCancellationSignal = scope.cancellationSignal;
         final long previousCancellationSignalGeneration = scope.cancellationSignalGeneration;

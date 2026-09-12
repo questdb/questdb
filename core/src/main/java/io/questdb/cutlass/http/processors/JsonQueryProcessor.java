@@ -200,11 +200,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 // queries with sensitive info are not cached, doLog = true
                 if (!state.isSqlExecutionOwnerStarted()) {
                     try {
-                        state.setSqlExecutionOwnerId(engine.beginSqlExecution(
-                                state.getQuery(),
-                                sqlExecutionContext,
-                                CompiledQuery.SELECT
-                        ));
+                        state.beginSqlExecutionOwner(state.getQuery(), sqlExecutionContext, CompiledQuery.SELECT);
                     } catch (RuntimeException | Error e) {
                         // The cache poll transferred ownership to this request, but an admission
                         // failure happened before executeCachedSelect() could hand it to the state.
@@ -216,12 +212,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                     }
                 }
                 try {
-                    engine.publishSqlExecutionQuery(
-                            state.getSqlExecutionOwnerId(),
-                            state.getQuery(),
-                            false,
-                            sqlExecutionContext
-                    );
+                    state.publishSqlExecutionOwner(false);
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP);
                     executeCachedSelect(state, factory);
                 } catch (TableReferenceOutOfDateException e) {
@@ -522,22 +513,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 state.setQueryType(cc.getType());
                 if (!state.isSqlExecutionOwnerStarted()) {
                     try {
-                        state.setSqlExecutionOwnerId(engine.beginSqlExecution(
-                                state.getQuery(),
-                                sqlExecutionContext,
-                                cc.getType()
-                        ));
+                        state.beginSqlExecutionOwner(state.getQuery(), sqlExecutionContext, cc.getType());
                     } catch (RuntimeException | Error e) {
-                        freeCompiledQueryAfterOwnerStartFailure(cc, e);
+                        cc.freeAfterOwnerStartFailure(e);
                         throw e;
                     }
                 }
-                engine.publishSqlExecutionQuery(
-                        state.getSqlExecutionOwnerId(),
-                        state.getQuery(),
-                        sqlExecutionContext.containsSecret(),
-                        sqlExecutionContext
-                );
+                state.publishSqlExecutionOwner(sqlExecutionContext.containsSecret());
                 sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP);
                 state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
                 // Read-only boundary gate: engine.isReadOnlyMode() flips to true as the FIRST step of
@@ -582,25 +564,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             }
         } finally {
             state.setContainsSecret(sqlExecutionContext.containsSecret());
-        }
-    }
-
-    private static void freeCompiledQueryAfterOwnerStartFailure(CompiledQuery cc, Throwable ownerStartFailure) {
-        Throwable cleanupFailure = null;
-        try {
-            cc.closeAllButSelect();
-        } catch (Throwable th) {
-            cleanupFailure = th;
-        }
-        if (cc.getType() == CompiledQuery.SELECT
-                || cc.getType() == CompiledQuery.EXPLAIN
-                || cc.getType() == CompiledQuery.PSEUDO_SELECT) {
-            cleanupFailure = Misc.freeBestEffort(cleanupFailure, cc.getRecordCursorFactory());
-        } else {
-            cleanupFailure = Misc.freeBestEffort(cleanupFailure, cc.getOperation());
-        }
-        if (cleanupFailure != null && cleanupFailure != ownerStartFailure) {
-            ownerStartFailure.addSuppressed(cleanupFailure);
         }
     }
 

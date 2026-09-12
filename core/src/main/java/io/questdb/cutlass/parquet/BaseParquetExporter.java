@@ -31,59 +31,29 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class BaseParquetExporter {
     private static final Log LOG = LogFactory.getLog(BaseParquetExporter.class);
     protected final CopyExportContext copyExportContext;
+    private final CairoEngine engine;
     protected final ExportProgressReporter insertSelectReporter = new ExportProgressReporter();
-    protected final SqlExecutionContextImpl sqlExecutionContext;
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected CopyExportRequestTask task;
 
     protected BaseParquetExporter(CairoEngine engine) {
-        this(engine, false);
-    }
-
-    protected BaseParquetExporter(CairoEngine engine, boolean isPartitionFormatChangeTolerated) {
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1) {
-            @Override
-            public boolean isPartitionFormatChangeTolerated() {
-                return isPartitionFormatChangeTolerated;
-            }
-
-            @Override
-            public synchronized void setCancelledFlag(AtomicBoolean cancelled, long generation) {
-                super.setCancelledFlag(cancelled, generation);
-                final CopyExportRequestTask currentTask = BaseParquetExporter.this.task;
-                if (currentTask != null && currentTask.getEntry().isCancellationRequested()) {
-                    getCircuitBreaker().cancel();
-                }
-            }
-        };
         this.copyExportContext = engine.getCopyExportContext();
+        this.engine = engine;
     }
 
     public void of(CopyExportRequestTask task) {
         this.task = task;
         this.circuitBreaker = task.getCircuitBreaker();
-        sqlExecutionContext.with(task.getSecurityContext(), task.getBindVariableService(), null, -1, circuitBreaker);
-        sqlExecutionContext.setMemoryTracker(task.getMemoryTracker());
-    }
-
-    public void clearMemoryTracker() {
-        sqlExecutionContext.setMemoryTracker(null);
-    }
-
-    SqlExecutionContextImpl getSqlExecutionContext() {
-        return sqlExecutionContext;
     }
 
     protected long drainHybridFrames(
@@ -138,7 +108,7 @@ public abstract class BaseParquetExporter {
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE;
         entry.setPhase(phase);
         copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-        CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
+        final CairoEngine cairoEngine = engine;
         try {
             if (tableToken == null) {
                 tableToken = cairoEngine.getTableTokenIfExists(task.getTableName());
