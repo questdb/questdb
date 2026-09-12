@@ -4835,6 +4835,59 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test(timeout = 120_000)
+    public void testADroppedViewStopsReportingTheApplyLagWaitItWasIn() throws Exception {
+        // The drop twin of the invalidation case above, and the one wait-clear that cannot be
+        // read where every other one is read. A dropped view leaves live_views() carrying the
+        // wait it was in, so the catalogue has nothing left to report the clear through; the
+        // clear is read off the instance the drop closes instead. It still has to happen:
+        // close() does not clear, tryCloseIfDropped is the only thing on the drop path that
+        // does, and a cursor or a checkpoint that pinned the instance before the drop can
+        // still read those fields afterwards.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-06-01T00:00:00.000010Z', 1), " +
+                        "('2026-06-01T00:00:00.000020Z', 2)");
+                drainWalQueue();
+                instance.setLastFlushTimeUs(currentMicros);
+                drainJob(job);
+
+                // An O3 commit the base does not apply leaves the view waiting on it.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:00.000005Z', 3)");
+                drainJob(job);
+                final long waitSeqTxn = instance.getApplyLagDeferTargetSeqTxn();
+                Assert.assertTrue("the cycle must have deferred on base apply lag", waitSeqTxn > 0);
+                Assert.assertTrue("the back-off floor must be armed with the episode", instance.getApplyLagDeferUntilUs() > 0);
+                assertWaitReported(waitSeqTxn, 0L);
+            }
+
+            // The operator drops the view rather than waiting the base's apply out. The drop
+            // fences the refresh worker and closes the instance on the SQL thread it runs on, so
+            // by the time DROP returns the clear has either happened or will never happen.
+            execute("DROP LIVE VIEW lv");
+            Assert.assertTrue(instance.isDropped());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferSinceUs());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferTargetSeqTxn());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferUntilUs());
+            // And the catalogue no longer carries the view at all, which is why the clear had to
+            // be read off the instance.
+            assertQuery("SELECT view_name, base_apply_wait_seqtxn FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_name\tbase_apply_wait_seqtxn
+                            """);
+        });
+    }
+
+    @Test(timeout = 120_000)
     public void testAnInvalidatedViewStopsReportingTheApplyLagWaitItWasIn() throws Exception {
         // A view that stops refreshing waits for nothing, and must stop saying it does. An
         // invalidated view is declined at the top of every later refresh turn, so the wait it was

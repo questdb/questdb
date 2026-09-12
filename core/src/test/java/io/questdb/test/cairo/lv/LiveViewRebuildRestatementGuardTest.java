@@ -735,6 +735,51 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     @Test
+    public void testADroppedViewStopsWaitingForTheRebuildItWasDeferring() throws Exception {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            fault.of(engine.verifyTableName("tx").getDirName());
+            final TableToken baseToken = engine.verifyTableName("tx");
+            final LiveViewInstance instance = instance("lv");
+            final long baseApplied = instance.getLastProcessedSeqTxn();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                flushAheadOfTheBaseApply(job);
+                writeRepairMarker(instance);
+                failMidDrainAheadOfTheBaseApply(job, fault, 1);
+                assertRebuildDeferred(job, instance, baseApplied);
+            }
+
+            // The operator drops the view rather than waiting the base's apply out - the exit the
+            // suspended-base case shows an operator needs, taken. DROP LIVE VIEW fences the
+            // refresh worker and closes the instance on the SQL thread, and tryCloseIfDropped's
+            // two clears run there under the refresh latch. Nothing else on that path clears
+            // either one: close() clears neither, and no refresh turn runs again.
+            //
+            // Unlike the invalidation the two clears mirror, this one cannot be read through
+            // live_views() - the row is gone before the clear could be reported - so the drop's
+            // disposition is read off the instance, which the caller still holds.
+            execute("DROP LIVE VIEW lv");
+            Assert.assertTrue(instance.isDropped());
+            Assert.assertEquals(LiveViewCheckpointRecoveryPhase.NONE, instance.getCheckpointRecoveryPhase());
+            Assert.assertNull(instance.getCheckpointRecoveryReason());
+            Assert.assertFalse(instance.isCheckpointRebuildDeferred());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            // A deferred rebuild is an apply-lag wait as well, so the drop ends both halves.
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferTargetSeqTxn());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferSinceUs());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferUntilUs());
+
+            // The base is left holding the commits the view never consumed, and is a table like
+            // any other once the view that lagged it is gone: its apply lands them, and nothing
+            // is waiting on it.
+            drainWalQueue();
+            Assert.assertEquals(baseApplied + 4, engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn());
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+        });
+    }
+
+    @Test
     public void testABaseSchemaChangeAheadOfTheBaseApplyDefersTheRebuildUntilTheApplyInvalidatesTheView() throws Exception {
         assertMemoryLeak(() -> {
             seedSixRows("");
