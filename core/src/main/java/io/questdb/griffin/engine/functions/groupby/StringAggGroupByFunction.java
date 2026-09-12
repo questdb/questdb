@@ -77,6 +77,8 @@ import io.questdb.std.str.DirectUtf16Sink;
  * work was distributed across threads.
  */
 class StringAggGroupByFunction extends StrFunction implements UnaryFunction, GroupByFunction {
+    private static final int DELIMITER_BYTES = 2;
+    private static final int RUN_OVERHEAD_BYTES = 16;
     private final Function arg;
     private final char delimiter;
     private final int functionPosition;
@@ -201,6 +203,9 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         }
         final long destListPtr = destValue.getLong(valueIndex + 1);
         if (destListPtr == 0) {
+            listB.of(srcListPtr);
+            totalMemoryUsed += sizeOf(listB);
+            assertSizeCompliance();
             destValue.putLong(valueIndex, srcValue.getLong(valueIndex));
             destValue.putLong(valueIndex + 1, srcListPtr);
             return;
@@ -253,6 +258,15 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         return ((long) offset << 32) | (len & 0xffffffffL);
     }
 
+    private static int sizeOf(GroupByLongList list) {
+        final int size = list.size();
+        int total = 0;
+        for (int i = 0; i < size; i += 2) {
+            total += unpackLen(list.get(i + 1)) * 2 + RUN_OVERHEAD_BYTES + (i > 0 ? DELIMITER_BYTES : 0);
+        }
+        return total;
+    }
+
     private static int unpackLen(long sinkLocation) {
         return (int) sinkLocation;
     }
@@ -264,8 +278,8 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     private void append(long rowId, CharSequence str) {
         final int len = str.length();
         final int size = listA.size();
-        final boolean sameRun = size > 0 && Rows.toPartitionIndex(rowId) == Rows.toPartitionIndex(listA.get(size - 2));
-        if (sameRun) {
+        final boolean isSameRun = size > 0 && Rows.toPartitionIndex(rowId) == Rows.toPartitionIndex(listA.get(size - 2));
+        if (isSameRun) {
             final int startOffset = unpackOffset(listA.get(size - 1));
             sinkA.putAscii(delimiter);
             sinkA.put(str);
@@ -275,8 +289,9 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
             sinkA.put(str);
             listA.add(rowId);
             listA.add(pack(offset, len));
+            totalMemoryUsed += RUN_OVERHEAD_BYTES;
         }
-        totalMemoryUsed += len * 2 + (size > 0 ? 2 : 0);
+        totalMemoryUsed += len * 2 + (size > 0 ? DELIMITER_BYTES : 0);
         assertSizeCompliance();
     }
 
@@ -326,7 +341,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
             final int len = unpackLen(sinkLocation);
             listA.add(srcRowId);
             listA.add(pack(off + destCharOffset, len));
-            totalMemoryUsed += len * 2 + 2;
+            totalMemoryUsed += len * 2 + DELIMITER_BYTES + RUN_OVERHEAD_BYTES;
         }
     }
 
