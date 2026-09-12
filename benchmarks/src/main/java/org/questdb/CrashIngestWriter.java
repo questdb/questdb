@@ -112,6 +112,114 @@ import java.nio.file.StandardOpenOption;
 public class CrashIngestWriter {
 
     static final String TABLE_NAME = "t";
+
+    /**
+     * -Dsibling.table=true adds a SECOND adaptive WAL table, written in the same
+     * loop and committed in the same cadence as the primary.
+     * <p>
+     * The point is RecoveryCoordinator's PER-TABLE loop: with one table the loop
+     * body runs once and its cross-table behaviour is never exercised. Both
+     * tables are mid-flight when the cut lands, so both must be recovered in a
+     * single recover() pass -- the dimension AdaptiveMultiTableLazyGapCrashSweepTest
+     * (W3) covers and no single-table crash test can reach.
+     */
+    /**
+     * -Dper.table.mode=true runs the INSTANCE on NOSYNC while creating the table
+     * with {@code WITH commit_mode='adaptive'}.
+     * <p>
+     * This is the discriminating form of the per-table override: under a nosync
+     * instance the table's WAL and sequencer are made durable ONLY if the
+     * per-table mode is genuinely honoured at every decision point. If the
+     * override is ignored anywhere, the table falls back to nosync and the
+     * post-crash recovery loses data the oracle demands -- so the test fails
+     * rather than passing for the wrong reason.
+     * <p>
+     * Mirrors PerTableAdaptiveIsolationCrashTest#testAdaptiveTableRecoversAfterCrashUnderGlobalNosync.
+     */
+    static final boolean PER_TABLE_MODE = Boolean.getBoolean("per.table.mode");
+
+    /**
+     * -Dflip.at.rows=N fires {@code ALTER TABLE t SET PARAM commit_mode='nosync'}
+     * once N rows have been committed, mid-ingest, with the WalWriter still open.
+     * <p>
+     * The point is what recovery DECIDES FROM. Rows before the flip were written
+     * under adaptive and may be lazily ahead of their epoch; rows after it were
+     * not. At restart the table's effective mode says only how it will be written
+     * NEXT -- it says nothing about how the existing state was LEFT. Recovery must
+     * therefore roll forward from the DURABLE ENROLMENT RECORD, not from the
+     * current mode, or it serves the torn pre-flip state.
+     * <p>
+     * Mirrors AdaptiveCommitModeFlipCrashTest#testCrashedAdaptiveTableRollsForwardAfterGlobalFlipToNosync.
+     * <p>
+     * The oracle needs no change: Wm freezes at the flip (nosync never advances the
+     * durable-ack frontier), so F >= Wm still expresses exactly the right bar --
+     * everything acked while adaptive was in force must survive.
+     */
+    static final long FLIP_AT_ROWS = Long.getLong("flip.at.rows", -1L);
+
+    /**
+     * -Dddl.every.rows=N issues a structural change (ADD COLUMN) every N committed
+     * rows, mid-ingest, through the WalWriter's own API.
+     * <p>
+     * Structural changes are the one thing adaptive CANNOT apply lazily: a column
+     * add is a one-shot metadata write with no epoch behind it, so it takes the
+     * SYNC grade and its ordering against the data is load-bearing. A crash
+     * between the column file appearing and the segment metadata naming it leaves
+     * a segment that can never be applied, and the table is suspended with
+     * "WAL segment column too short for committed row range [... actual=-1]".
+     * That is the dimension RandomizedAdaptiveCrashFuzzTest covers via its
+     * change-column-type / rename-column cases.
+     * <p>
+     * NEW COLUMNS ARE APPENDED, never inserted, so columns 0..3 keep their
+     * positions and the identity oracle is untouched. Rows after the add simply
+     * leave the new column null.
+     * <p>
+     * Uses WalWriter.addColumn rather than `alter table ... add column` SQL on
+     * purpose: a sequenced ALTER published while this process holds the WalWriter
+     * open deadlocks against itself -- the apply job waits on metadata the writer
+     * holds, times out at 5s and SUSPENDS the table. The writer's own API is the
+     * path the engine uses internally and takes no such lock.
+     */
+    static final long DDL_EVERY_ROWS = Long.getLong("ddl.every.rows", -1L);
+
+    /**
+     * -Dmat.view=true creates a materialized view over the ingest table.
+     * <p>
+     * The view and its base are refreshed by a DIFFERENT mechanism than the base
+     * is written by, so a crash can leave them at different points. The bar is
+     * NOT that they agree -- the view legitimately LAGS, since refresh is async --
+     * it is that the view never shows MORE than the base supports. A view row
+     * whose count exceeds what the recovered base actually contains is a phantom:
+     * the view recorded work the base no longer has.
+     * <p>
+     * Mirrors AdaptiveMatViewLazyGapCrashSweepTest (W4), the one recovery path the
+     * adaptive design docs left explicitly open.
+     */
+    /**
+     * ALTER TABLE ... REBASE WAL, fired ONCE after this many rows, then the writer goes
+     * IDLE rather than resuming ingestion. Idling is deliberate: the flush sweep crashes at
+     * the LAST boundaries of the recording, so making the rebase the final recorded activity
+     * puts those boundaries inside the rename/publish window -- which is the whole point of
+     * the "Rename != publish" invariant. Continuing to ingest would bury the publish under
+     * thousands of later flushes and the sweep would never land on it.
+     */
+    static final long REBASE_AT_ROWS = Long.getLong("rebase.at.rows", -1L);
+    static final boolean MAT_VIEW = Boolean.getBoolean("mat.view");
+    static final String MV_NAME = "mv";
+    /** {view name, REFRESH clause}. MV_NAME stays first so existing single-view checks keep working. */
+    static final String[][] MV_VARIANTS = {
+            {MV_NAME, "immediate"},
+            {"mv_timer", "every 1m"},
+            {"mv_manual", "manual"},
+            {"mv_period", "immediate period (length 1h)"},
+            {"mv_deferred", "manual deferred"},
+            // The deferred flag is ORTHOGONAL to the refresh type, so the combination needs its
+            // own entry -- testing each separately does not cover them together.
+            {"mv_period_deferred", "manual deferred period (length 1h)"},
+    };
+
+    static final boolean SIBLING_TABLE = Boolean.getBoolean("sibling.table");
+    static final String SIBLING_NAME = "t2";
     // Small fixed symbol set to exercise symbol dictionary + .k/.v index file writes on each commit
     static final String[] SYMBOLS = {"alpha", "beta", "gamma", "delta"};
     // Commit every K rows
@@ -134,7 +242,18 @@ public class CrashIngestWriter {
 
         // Commit mode is configured via -DcommitMode=SYNC|NOSYNC|adaptive (default: SYNC).
         final String commitModeProp = System.getProperty("commitMode", "SYNC");
-        final int commitModeInt = parseCommitMode(commitModeProp);
+        int commitModeInt = parseCommitMode(commitModeProp);
+        // The PATH is chosen by the REQUESTED mode and never changes underneath us.
+        final int requestedMode = commitModeInt;
+        if (PER_TABLE_MODE) {
+            // The INSTANCE is nosync; the TABLE asks for adaptive via WITH.
+            // Everything downstream (WAL durability, sequencer push, epoch)
+            // must come from the per-table override alone.
+            commitModeInt = CommitMode.NOSYNC;
+            System.out.println("per.table.mode=true: instance commitMode=NOSYNC,"
+                    + " table created WITH commit_mode='adaptive'");
+        }
+        final int commitModeFinal = commitModeInt;
         System.out.println("commitMode=" + commitModeProp + " (" + commitModeInt + ")");
 
         // -Dbatched=false forces the per-file msync(MS_SYNC) path (the proven baseline);
@@ -149,7 +268,7 @@ public class CrashIngestWriter {
         final long epochIntervalMs = Long.getLong("epoch.interval.ms", 1000L);
         // -Dmax.rows caps the run so the smoke can exit cleanly without a kill.
         final long maxRows = Long.getLong("max.rows", MAX_ROWS);
-        if (commitModeInt == CommitMode.ADAPTIVE) {
+        if (requestedMode == CommitMode.ADAPTIVE) {
             System.out.println("group.window.us=" + groupWindowUs + " epoch.interval.ms=" + epochIntervalMs);
         }
         System.out.println("max.rows=" + maxRows);
@@ -157,7 +276,13 @@ public class CrashIngestWriter {
         final CairoConfiguration cfg = new DefaultCairoConfiguration(dbRoot) {
             @Override
             public int getCommitMode() {
-                return commitModeInt;
+                return commitModeFinal;
+            }
+
+            // REBASE WAL refuses unless suspension actually blocks writes.
+            @Override
+            public boolean isWalApplySuspendedWriteDenied() {
+                return REBASE_AT_ROWS > 0 || super.isWalApplySuspendedWriteDenied();
             }
 
             @Override
@@ -178,7 +303,12 @@ public class CrashIngestWriter {
             }
         };
 
-        if (commitModeInt == CommitMode.ADAPTIVE) {
+        // requestedMode, NOT commitModeInt: under per.table.mode the INSTANCE is
+        // nosync but the workload must still run the WAL/adaptive path, because
+        // the whole point is that the TABLE's override carries durability on a
+        // nosync instance. Dispatching on the lowered instance mode created a
+        // bypass-WAL table with no sequencer at all.
+        if (requestedMode == CommitMode.ADAPTIVE) {
             runAdaptiveWal(cfg, dbRoot, maxRows);
         } else {
             runBypassWal(cfg, dbRoot, maxRows);
@@ -217,12 +347,13 @@ public class CrashIngestWriter {
             // Step 3: ingest rows; never exit cleanly (unless -Dmax.rows reached) — wait for kill -9
             for (long id = 0; id < maxRows; id++) {
                 // ts increases monotonically by 1 second per row, crossing day boundaries
-                final long ts = BASE_TS + id * 1_000_000L;
+                final long ts = tsFor(id);
                 final TableWriter.Row row = writer.newRow(ts);
                 row.putLong(0, id);                           // col 0: id
                 row.putLong(1, id * 2_654_435_761L);          // col 1: v = Knuth hash
-                row.putSym(2, SYMBOLS[(int) (id % SYMBOLS.length)]); // col 2: s (indexed)
-                // col 3: ts is the designated timestamp, set by newRow(ts) — no putLong needed
+                row.putSym(2, SYMBOLS[(int) (id % SYMBOLS.length)]); // col 2: s
+                // col 3: ts is the designated timestamp, set by newRow(ts)
+                putExtras(row, id);
                 row.append();
 
                 if ((id + 1) % K == 0) {
@@ -266,30 +397,107 @@ public class CrashIngestWriter {
         final Path progressTmp = Path.of(dbRoot, "_progress.tmp");
 
         try (CairoEngine engine = new CairoEngine(cfg)) {
+            // load() swaps the default NO-OP mat view / live view stores for the
+            // real ones. Without it matViewStateStore stays NoOpMatViewStateStore,
+            // every notifyMatViewBaseTableCommit is silently discarded, and a
+            // materialized view is created but NEVER refreshed -- which is exactly
+            // how the base/view oracle ended up reading an empty view.
+            engine.load();
+            // hydrate too: load() creates the real store but leaves it EMPTY. The
+            // view was registered by createTable's own short-lived engine, so this
+            // engine must rebuild that registry from the on-disk _mv state or
+            // enqueueIncrementalRefresh targets a view it does not know about and
+            // silently does nothing -- which is why the view stayed empty.
+            engine.hydrateMatViewStateStore();
             final TableToken token = engine.verifyTableName(TABLE_NAME);
+            boolean rebaseRequested = false;
             final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
 
             // Hold the WalWriter open across the run (server-like); drive the apply + group-commit
             // flush jobs synchronously after each commit so the durable frontier actually advances.
+            final TableToken token2 = SIBLING_TABLE ? engine.verifyTableName(SIBLING_NAME) : null;
+            // The mat view is refreshed by its OWN job, not by ApplyWal2TableJob.
+            // Without driving it the view stays EMPTY, sum(cnt) returns NULL, and
+            // the base/view oracle compares Long.MIN_VALUE against the row count
+            // and passes unconditionally -- a check that fires but can never fail.
+            final io.questdb.cairo.mv.MatViewRefreshJob mvJob =
+                    MAT_VIEW ? new io.questdb.cairo.mv.MatViewRefreshJob(0, engine, 1) : null;
+            final TableToken mvToken = MAT_VIEW ? engine.verifyTableName(MV_NAME) : null;
+            final TableToken[] mvTokens;
+            if (MAT_VIEW) {
+                mvTokens = new TableToken[MV_VARIANTS.length];
+                for (int mvi = 0; mvi < MV_VARIANTS.length; mvi++) {
+                    mvTokens[mvi] = engine.verifyTableName(MV_VARIANTS[mvi][0]);
+                }
+            } else {
+                mvTokens = new TableToken[0];
+            }
             try (WalWriter w = engine.getWalWriter(token);
+                 WalWriter w2 = SIBLING_TABLE ? engine.getWalWriter(token2) : null;
                  ApplyWal2TableJob applyJob = new ApplyWal2TableJob(engine, 0);
                  ExposedFlusher purgeJob = new ExposedFlusher(engine)) {
                 final CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
 
                 long committedRows = 0L;
+                boolean flipped = false;
+                int ddlSeq = 0;
                 for (long id = 0; id < maxRows; id++) {
-                    final long ts = BASE_TS + id * 1_000_000L;
+                    final long ts = tsFor(id);
                     final TableWriter.Row row = w.newRow(ts);
                     row.putLong(0, id);                           // col 0: id
                     row.putLong(1, id * 2_654_435_761L);          // col 1: v = Knuth hash
-                    row.putSym(2, SYMBOLS[(int) (id % SYMBOLS.length)]); // col 2: s (indexed)
+                    row.putSym(2, SYMBOLS[(int) (id % SYMBOLS.length)]); // col 2: s
                     // col 3: ts is the designated timestamp, set by newRow(ts)
+                    putExtras(row, id);
                     row.append();
+
+                    // Same row into the sibling: identical formulas, so ONE oracle
+                    // validates both and any divergence between them is a finding.
+                    if (w2 != null) {
+                        final TableWriter.Row r2 = w2.newRow(ts);
+                        r2.putLong(0, id);
+                        r2.putLong(1, id * 2_654_435_761L);
+                        r2.putSym(2, SYMBOLS[(int) (id % SYMBOLS.length)]);
+                        putExtras(r2, id);
+                        r2.append();
+                    }
 
                     if ((id + 1) % K == 0) {
                         // WAL commit → one sequencer txn. Under W=0 this fdatasyncs before returning
                         // (Wm advances now); under W>0 the device flush is deferred to the purge sweep.
                         w.commit();
+                        if (w2 != null) {
+                            w2.commit();
+                        }
+
+                        // Structural DDL under load: append a column, never insert.
+                        if (DDL_EVERY_ROWS > 0 && (id + 1) % DDL_EVERY_ROWS == 0) {
+                            final String col = "dyn_" + ddlSeq++;
+                            // Root security context, NOT null: AlterOperation.authorize
+                            // rejects an empty context with "alter security context is
+                            // empty". Same context createTable uses for its DDL.
+                            w.addColumn(col, io.questdb.cairo.ColumnType.INT,
+                                    cfg.getFactoryProvider().getSecurityContextFactory().getRootContext());
+                            System.out.println("ddl.every.rows: added column " + col
+                                    + " after " + (id + 1) + " rows");
+                        }
+
+                        // Mid-run commit-mode flip, fired exactly once.
+                        if (FLIP_AT_ROWS > 0 && !flipped && (id + 1) >= FLIP_AT_ROWS) {
+                            flipped = true;
+                            try (SqlCompilerImpl flipCompiler = new SqlCompilerImpl(engine)) {
+                                final SqlExecutionContextImpl flipCtx = new SqlExecutionContextImpl(engine, 1)
+                                        .with(cfg.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                                null, null, -1, null);
+                                CairoEngine.execute(flipCompiler,
+                                        "alter table " + TABLE_NAME + " set param commit_mode='nosync'",
+                                        flipCtx, null);
+                                System.out.println("flip.at.rows: switched " + TABLE_NAME
+                                        + " to commit_mode='nosync' after " + (id + 1) + " rows");
+                            } catch (SqlException e) {
+                                throw new RuntimeException("mid-run commit-mode flip failed", e);
+                            }
+                        }
 
                         // Materialize the committed WAL into the table + fire the durable epoch. Mirrors
                         // TestUtils.drainWalQueue: apply, then CheckWalTransactionsJob to pick up any txn
@@ -297,6 +505,29 @@ public class CrashIngestWriter {
                         applyJob.drain(0);
                         checkJob.runSerially();
                         applyJob.drain(0);
+                        if (mvJob != null) {
+                            // The refresh job DRAINS a queue; it does not scan for
+                            // stale views. Nothing enqueues work here because the
+                            // enqueue normally comes from the SQL/commit path, so
+                            // polling run() alone left the view permanently EMPTY.
+                            // Refresh EVERY variant, not just the immediate one. A view can only be
+                            // left AHEAD by a crash if it refreshed from base txns that were then
+                            // lost, so a MANUAL/DEFERRED/TIMER view that never refreshes can never
+                            // exercise the repair path -- it would look "covered" while testing
+                            // nothing. Driving them here stands in for the explicit
+                            // REFRESH MATERIALIZED VIEW a user issues against a manual view.
+                            for (int mvi = 0; mvi < mvTokens.length; mvi++) {
+                                engine.getMatViewStateStore().enqueueIncrementalRefresh(mvTokens[mvi]);
+                            }
+                            // TO EXHAUSTION, then apply again. This is the pattern
+                            // AdaptiveMatViewLazyGapCrashSweepTest uses:
+                            //   drainWalQueue -> while(refreshJob.run()) -> drainWalQueue
+                            // A single run() leaves the view EMPTY, which makes the
+                            // base/view oracle vacuous (sum over no rows is NULL).
+                            //noinspection StatementWithEmptyBody
+                            while (mvJob.run()) ;
+                            applyJob.drain(0);
+                        }
 
                         // Group-commit device flush: advances localDurableSeqTxn for commits older than W
                         // (a no-op set under W=0, where commit already fdatasync'd). Age-gated, so calling
@@ -318,9 +549,44 @@ public class CrashIngestWriter {
                         System.out.println("committed rows=" + committedRows
                                 + " C=" + committedSeqTxn + " Wm=" + localDurableSeqTxn);
                         System.out.flush();
+
+                        if (REBASE_AT_ROWS > 0 && (id + 1) >= REBASE_AT_ROWS) {
+                            rebaseRequested = true;
+                            break;
+                        }
                     }
                 }
-                System.out.println("reached maxRows=" + maxRows + " without kill; exiting normally");
+                if (!rebaseRequested) {
+                    System.out.println("reached maxRows=" + maxRows + " without kill; exiting normally");
+                }
+            }
+
+            // REBASE WAL runs with the WalWriters CLOSED (the try-with-resources above has
+            // exited): it hard-suspends the table and rebuilds it into a fresh directory,
+            // which a live writer on the old token would block. See CairoEngine.rebaseWalTable0
+            // -- it refuses unless isHardSuspended() AND writes are denied under suspension.
+            if (rebaseRequested) {
+                engine.getTableSequencerAPI().setHardSuspended(token, true);
+                System.out.println("rebase.at.rows: hard-suspended " + TABLE_NAME);
+                try (SqlCompilerImpl rbCompiler = new SqlCompilerImpl(engine)) {
+                    final SqlExecutionContextImpl rbCtx = new SqlExecutionContextImpl(engine, 1)
+                            .with(cfg.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    CairoEngine.execute(rbCompiler,
+                            "alter table " + TABLE_NAME + " rebase wal", rbCtx, null);
+                }
+                final TableToken rebased = engine.verifyTableName(TABLE_NAME);
+                System.out.println("rebase.at.rows: REBASED " + TABLE_NAME
+                        + " dir " + token.getDirName() + " -> " + rebased.getDirName());
+                System.out.flush();
+                // Go IDLE, alive. The sweep crashes at the LAST recorded boundaries, so
+                // stopping here is what puts them in the publish window. Staying alive is
+                // also what the sweep's liveness assertion checks -- exiting here would be
+                // read as "the workload was not running", which is how a vacuous iteration
+                // was caught before.
+                for (;;) {
+                    Thread.sleep(1000);
+                }
             }
         }
     }
@@ -364,6 +630,127 @@ public class CrashIngestWriter {
         };
     }
 
+
+    // ---------------------------------------------------------------------
+    // WORKLOAD PROFILES (-Dschema.profile)
+    //
+    // Columns 0..3 (id, v, s, ts) are FIXED in every profile so the identity
+    // oracle in CrashVerifier is untouched. Profiles vary (a) which index the
+    // s column carries, (b) extra columns appended at index 4+, and (c) the
+    // timestamp pattern. Each closes a dimension the Java crash suite covers:
+    //
+    //   bitmap   .k/.v bitmap index        AdaptiveIndexedSymbolLazyGap, MapLengthGuard
+    //   posting  posting index chain       PostingIndex* suite
+    //   covering posting + include(v)      covering suite
+    //   none     no index                  plain (ts, v long) tests
+    //   varchar  + vc varchar              AdaptiveEpochCrashTest, VarcharPowerLoss*
+    //   array    + arr double[]            ArrayCrashConsistencyTest
+    //   wide     + 12 mixed-type columns   BatchedFlushDurabilityCrashTest
+    //   o3       out-of-order timestamps   AdaptiveO3CrashSweep, AdaptiveO3LazyGap
+    // ---------------------------------------------------------------------
+    static final String PROFILE = System.getProperty("schema.profile", "bitmap");
+
+    /** Extra column DDL appended after the fixed 0..3 columns. */
+    private static String extraColumnsDdl() {
+        switch (PROFILE) {
+            case "varchar": return ", vc varchar";
+            case "array":   return ", arr double[]";
+            case "wide": {
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < 4; i++) {
+                    sb.append(", w").append(i).append("i int");
+                    sb.append(", w").append(i).append("d double");
+                    sb.append(", w").append(i).append("s varchar");
+                }
+                return sb.toString();
+            }
+            default: return "";
+        }
+    }
+
+    /** Index clause on the s column. */
+    private static String indexClause() {
+        switch (PROFILE) {
+            case "bitmap":   return " index";
+            case "posting":  return " index type posting";
+            case "covering": return " index type posting include (v)";
+            case "none": case "varchar": case "array": case "wide": case "o3": return "";
+            default:
+                throw new IllegalArgumentException("unknown schema.profile: " + PROFILE);
+        }
+    }
+
+    /**
+     * Designated timestamp for a row.
+     * <p>
+     * The o3 profile decouples commit order from timestamp order: every 4th row
+     * lands BELOW the running maximum, so each commit from then on has
+     * minTimestamp &lt; the table's max and engages the O3 merge path rather than
+     * a pure tail append. Mirrors AdaptiveO3CrashSweepTest's zig-zag.
+     */
+    private static long tsFor(long id) {
+        if ("o3".equals(PROFILE) && (id % 4) == 3) {
+            return BASE_TS + (id - 2) * 1_000_000L + 250_000L;
+        }
+        return BASE_TS + id * 1_000_000L;
+    }
+
+    /** Write the profile's extra columns, starting at index 4. */
+    private static void putExtras(TableWriter.Row row, long id) {
+        switch (PROFILE) {
+            case "varchar":
+                // Length varies per row so the aux vector holds genuinely
+                // variable offsets -- the torn-aux-tail shape.
+                row.putVarchar(4, VARCHARS[(int) (id % VARCHARS.length)]);
+                break;
+            case "array": {
+                // Length VARIES per row (0..9), so the array aux vector carries
+                // genuinely variable offsets. A fixed length would make every
+                // entry the same width and never exercise the torn-tail shape
+                // ArrayCrashConsistencyTest is about.
+                final io.questdb.cairo.arr.DirectArray a = ARRAY.get();
+                a.setType(io.questdb.cairo.ColumnType.encodeArrayType(io.questdb.cairo.ColumnType.DOUBLE, 1));
+                final int len = (int) (id % 10);
+                a.setDimLen(0, len);
+                a.applyShape();
+                for (int j = 0; j < len; j++) {
+                    a.putDouble(j, id + j);
+                }
+                row.putArray(4, a);
+                break;
+            }
+            case "wide":
+                for (int i = 0; i < 4; i++) {
+                    row.putInt(4 + i * 3, (int) (id + i));
+                    row.putDouble(5 + i * 3, id * 1.5 + i);
+                    row.putVarchar(6 + i * 3, VARCHARS[(int) ((id + i) % VARCHARS.length)]);
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    // Utf8String, not String: Row.putVarchar takes a Utf8Sequence. Lengths
+    // vary per row so the aux vector carries genuinely variable offsets --
+    // the torn-aux-tail shape VarcharPowerLossCorruptionTest is about.
+    // One DirectArray per thread, reused across rows: allocating one per row
+    // would dominate the workload and starve the commit cadence the crash
+    // timing depends on.
+    private static final ThreadLocal<io.questdb.cairo.arr.DirectArray> ARRAY =
+            ThreadLocal.withInitial(io.questdb.cairo.arr.DirectArray::new);
+
+    private static final io.questdb.std.str.Utf8String[] VARCHARS = {
+            new io.questdb.std.str.Utf8String("a"),
+            new io.questdb.std.str.Utf8String("bb"),
+            new io.questdb.std.str.Utf8String("ccc"),
+            new io.questdb.std.str.Utf8String("dddddddd"),
+            new io.questdb.std.str.Utf8String("eeeeeeeeeeeeeeee"),
+            new io.questdb.std.str.Utf8String("ffffffffffffffffffffffffffffffff"),
+            new io.questdb.std.str.Utf8String("g"),
+            new io.questdb.std.str.Utf8String("hh")
+    };
+
     /**
      * Create the table with an indexed symbol column, partitioned by DAY.
      * Indexing s exercises the .k/.v symbol index files on every commit.
@@ -372,6 +759,18 @@ public class CrashIngestWriter {
      */
     private static void createTable(CairoConfiguration cfg, boolean walMode) {
         try (CairoEngine engine = new CairoEngine(cfg)) {
+            // load() swaps the default NO-OP mat view / live view stores for the
+            // real ones. Without it matViewStateStore stays NoOpMatViewStateStore,
+            // every notifyMatViewBaseTableCommit is silently discarded, and a
+            // materialized view is created but NEVER refreshed -- which is exactly
+            // how the base/view oracle ended up reading an empty view.
+            engine.load();
+            // hydrate too: load() creates the real store but leaves it EMPTY. The
+            // view was registered by createTable's own short-lived engine, so this
+            // engine must rebuild that registry from the on-disk _mv state or
+            // enqueueIncrementalRefresh targets a view it does not know about and
+            // silently does nothing -- which is why the view stayed empty.
+            engine.hydrateMatViewStateStore();
             final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
                     .with(
                             cfg.getFactoryProvider().getSecurityContextFactory().getRootContext(),
@@ -382,11 +781,50 @@ public class CrashIngestWriter {
                 // s: symbol with index (exercises symbol char file, offset file, .k/.v index)
                 // ts: designated timestamp (triggers _txn / _cv / partition metadata on commit)
                 // partition by DAY: multiple partitions (exercises cross-partition commit paths)
-                CairoEngine.execute(compiler,
-                        "create table " + TABLE_NAME
-                                + " (id long, v long, s symbol index, ts timestamp)"
-                                + " timestamp(ts) partition by DAY " + (walMode ? "wal" : "bypass wal"),
-                        ctx, null);
+                // -Dschema.profile selects WHICH INDEX the s column carries. Every
+                // profile keeps the same COLUMN POSITIONS (0=id, 1=v, 2=s, 3=ts) so
+                // the row-writing path and the identity oracle are untouched -- only
+                // the index implementation under test changes.
+                //
+                //   bitmap   .k/.v bitmap index      (the default; BitmapIndexWriter)
+                //   posting  posting index chain     (PostingIndexWriter)
+                //   covering posting + include(v)    (covering index read path)
+                //   none     no index                (baseline: isolates index faults)
+                // Per-table override: the INSTANCE runs nosync (see PER_TABLE_MODE)
+                // while the TABLE asks for adaptive, so every durability decision
+                // downstream must come from the override alone.
+                final String withClause = PER_TABLE_MODE ? " WITH commit_mode='adaptive'" : "";
+                final String ddl = "create table " + TABLE_NAME
+                        + " (id long, v long, s symbol" + indexClause() + ", ts timestamp"
+                        + extraColumnsDdl() + ")"
+                        + " timestamp(ts) partition by DAY " + (walMode ? "wal" : "bypass wal")
+                        + withClause;
+                System.out.println("schema.profile=" + PROFILE + " ddl=" + ddl);
+                CairoEngine.execute(compiler, ddl, ctx, null);
+                if (MAT_VIEW && walMode) {
+                    // EVERY refresh type over the SAME base, so one crash exercises all of them.
+                    // The surgical repair runs from the load path and is type-agnostic by design;
+                    // that claim is only worth anything if each type is actually crashed and checked.
+                    // IMMEDIATE  -- refreshed by the base-commit notification (the original case)
+                    // TIMER      -- driven by MatViewTimerJob on an interval
+                    // MANUAL     -- only ever refreshed on explicit request
+                    // PERIOD     -- refreshed a whole period at a time (own hi-watermark)
+                    // DEFERRED   -- orthogonal flag; no initial refresh until asked
+                    for (String[] mv : MV_VARIANTS) {
+                        CairoEngine.execute(compiler,
+                                "create materialized view " + mv[0] + " refresh " + mv[1] + " as ("
+                                        + "select ts, count() cnt from " + TABLE_NAME + " sample by 1h"
+                                        + ") partition by DAY",
+                                ctx, null);
+                        System.out.println("mat.view=true: created " + mv[0] + " (refresh " + mv[1] + ") over " + TABLE_NAME);
+                    }
+                }
+                if (SIBLING_TABLE && walMode) {
+                    CairoEngine.execute(compiler,
+                            ddl.replaceFirst("create table " + TABLE_NAME, "create table " + SIBLING_NAME),
+                            ctx, null);
+                    System.out.println("sibling.table=true: also created " + SIBLING_NAME);
+                }
             } catch (SqlException e) {
                 throw new RuntimeException("DDL failed", e);
             }

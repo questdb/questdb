@@ -11,6 +11,7 @@ crash-consistency tests live in `core/src/test/java/io/questdb/test/cairo/crash/
 | `power-cut-dmflakey.sh` | **power-loss durability** — un-fsync'd writes in the page cache are lost | `dm-flakey drop_writes` over a loop device, `umount` (writeback dropped), remount, assert survival per commit mode |
 | `power-cut-manual.md` | — | step-by-step runbook for the dm-flakey harness, for running interactively / debugging a timing or kernel issue |
 | `syncfs-microtest.sh` | does `syncfs(2)` **durably journal** ext4's unwritten→written extent conversion across a power cut? (what the batched-flush optimisation relies on) | QuestDB-independent `xfs_io` + the same dm-flakey power cut |
+| [`vm/`](vm/README.md) | **power-loss durability, repeatably** — the same guarantee as `power-cut-dmflakey.sh`, but automated, matrixed over commit modes, and safe to run on a shared machine | one QEMU guest: `dm-flakey drop_writes` armed *inside* it, then `kill -9` on the VMM. Needs **no host root** and touches nothing on the host |
 
 **The core distinction:** `crash-consistency-pkill.sh` leaves the page cache intact (a
 process crash), so it proves *consistency* but not *durability*; `power-cut-dmflakey.sh`
