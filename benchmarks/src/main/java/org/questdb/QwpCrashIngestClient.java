@@ -83,7 +83,13 @@ public class QwpCrashIngestClient {
         final String sfDurability = System.getProperty("qwp.sf.durability", "memory");
         final String sfSyncMs = System.getProperty("qwp.sf.sync.ms", "20");
         final boolean replayOnly = Boolean.getBoolean("qwp.replay.only");
+        // ENTERPRISE has ACL on by default (acl.enabled=true, admin/quest), so BOTH the WebSocket
+        // upgrade and the HTTP queries below need credentials. OSS needs none, so these stay empty
+        // unless supplied -- the arm must work against either edition unchanged.
+        final String user = System.getProperty("qwp.user", "");
+        final String pass = System.getProperty("qwp.password", "");
         final String conf = "ws::addr=" + addr + ";"
+                + (user.isEmpty() ? "" : "username=" + user + ";password=" + pass + ";")
                 + ("off".equals(ackTier) ? "" : "request_durable_ack=" + ackTier + ";")
                 + (sfDir.isEmpty() ? "" : "sf_dir=" + sfDir + ";sf_durability=" + sfDurability
                         + ";sf_sync_interval_millis=" + sfSyncMs + ";")
@@ -214,6 +220,11 @@ public class QwpCrashIngestClient {
             final java.net.HttpURLConnection c = (java.net.HttpURLConnection) java.net.URI.create(
                     "http://" + addr + "/exec?query="
                             + java.net.URLEncoder.encode(sql, StandardCharsets.UTF_8)).toURL().openConnection();
+            final String u = System.getProperty("qwp.user", "");
+            if (!u.isEmpty()) {
+                c.setRequestProperty("Authorization", "Basic " + java.util.Base64.getEncoder().encodeToString(
+                        (u + ":" + System.getProperty("qwp.password", "")).getBytes(StandardCharsets.UTF_8)));
+            }
             c.setConnectTimeout(15_000);
             c.setReadTimeout(15_000);
             if (c.getResponseCode() != 200) {
@@ -235,6 +246,11 @@ public class QwpCrashIngestClient {
                     "http://" + addr + "/exec?query="
                             + java.net.URLEncoder.encode("select count() from " + TABLE_NAME,
                             StandardCharsets.UTF_8)).toURL().openConnection();
+            final String u = System.getProperty("qwp.user", "");
+            if (!u.isEmpty()) {
+                c.setRequestProperty("Authorization", "Basic " + java.util.Base64.getEncoder().encodeToString(
+                        (u + ":" + System.getProperty("qwp.password", "")).getBytes(StandardCharsets.UTF_8)));
+            }
             c.setConnectTimeout(15_000);
             c.setReadTimeout(15_000);
             if (c.getResponseCode() != 200) {
@@ -254,6 +270,11 @@ public class QwpCrashIngestClient {
         final java.net.HttpURLConnection c = (java.net.HttpURLConnection) java.net.URI.create(
                 "http://" + addr + "/exec?query="
                         + java.net.URLEncoder.encode(sql, StandardCharsets.UTF_8)).toURL().openConnection();
+        final String u = System.getProperty("qwp.user", "");
+        if (!u.isEmpty()) {
+            c.setRequestProperty("Authorization", "Basic " + java.util.Base64.getEncoder().encodeToString(
+                    (u + ":" + System.getProperty("qwp.password", "")).getBytes(StandardCharsets.UTF_8)));
+        }
         c.setRequestMethod("GET");
         c.setConnectTimeout(30_000);
         c.setReadTimeout(30_000);

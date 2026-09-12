@@ -45,6 +45,18 @@ EPOCH="${QDB_EPOCH_MS:-1000}"
 # cut lands on the wire protocol's write path. Everything downstream -- replay, verify, oracle --
 # is arm-agnostic because both arms write the same deterministic payload.
 ARM="${QDB_ARM:-reference}"
+# SF REPLAY IS OFF HERE BY DESIGN (opt in with QDB_SF_REPLAY=true). This sweep asserts that the
+# SERVER's recovered state is internally consistent -- identity, contiguity, NO DUPLICATES. A
+# store-and-forward replay is at-least-once: it resends rows the server already committed, which
+# is correct behaviour for no-loss but violates the no-duplicates bar, and the sweep rightly
+# reported SILENT_CORRUPTION when the two were combined. The end-to-end no-loss claim has its own
+# driver, run-sf-replay.sh, which measures distinct ids and quantifies the duplicates.
+# QDB_EDITION=ent runs the ENTERPRISE server (qwp arm only -- the reference arm embeds the OSS
+# engine in-process). The edition is ASSERTED at runtime via build(), never assumed.
+EDITION="${QDB_EDITION:-oss}"
+ENT_ROOT="${QDB_ENT_ROOT:-/home/nick/claude/wt/ent/adaptive}"
+ENT_JAR="${QDB_ENT_JAR:-$ENT_ROOT/questdb-ent/target/questdb-enterprise-4.0.2-SNAPSHOT.jar}"
+ENT_DEPS="${QDB_ENT_DEPS:-$ENT_ROOT/questdb-ent/target/deps}"
 
 STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"
 BASE="$STATE_DIR/base"
@@ -60,7 +72,7 @@ truncate -s 40G "$RUN/data.raw"
 truncate -s 60G "$RUN/log.raw"
 
 echo "flush-boundary crash sweep — $STAMP"
-echo "  arm=$ARM mode=$MODE W=$WINDOW profile=$PROFILE epoch=${EPOCH}ms sibling=${QDB_SIBLING_TABLE:-false} recoverAs=${QDB_RECOVER_AS:-same} ddlEvery=${QDB_DDL_EVERY_ROWS:--1} matView=${QDB_MAT_VIEW:-false} rebaseAt=${QDB_REBASE_AT_ROWS:--1}"
+echo "  arm=$ARM edition=$EDITION mode=$MODE W=$WINDOW profile=$PROFILE epoch=${EPOCH}ms sibling=${QDB_SIBLING_TABLE:-false} recoverAs=${QDB_RECOVER_AS:-same} ddlEvery=${QDB_DDL_EVERY_ROWS:--1} matView=${QDB_MAT_VIEW:-false} rebaseAt=${QDB_REBASE_AT_ROWS:--1}"
 
 keep() { echo "run state kept at $RUN" >&2; }
 
@@ -75,11 +87,19 @@ vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P" "" "$RUN/log.raw"
 vm_wait_ssh "$P" "$KEY" 240 || { keep; echo "LOUD_FAILURE: guest never answered SSH"; exit 1; }
 vm_scp "$P" "$KEY" "$HERE/../../../benchmarks/target/benchmarks.jar" /opt/vmcrash/benchmarks.jar
 vm_scp_dir "$P" "$KEY" "$HERE/guest" /opt/vmcrash/
+# ENT ships as a jar PLUS its runtime deps: it is not a fat jar, and without entlib/ the server
+# dies with io/questdb/jar/jni/LoadException.
+if [ "${QDB_EDITION:-oss}" = "ent" ]; then
+    [ -f "$ENT_JAR" ] || { keep; echo "LOUD_FAILURE: QDB_EDITION=ent but $ENT_JAR is missing (build questdb-ent first)"; exit 1; }
+    vm_scp "$P" "$KEY" "$ENT_JAR" /opt/vmcrash/questdb-enterprise.jar
+    vm_ssh "$P" "$KEY" "mkdir -p /opt/vmcrash/entlib"
+    for j in "$ENT_DEPS"/*.jar; do vm_scp "$P" "$KEY" "$j" "/opt/vmcrash/entlib/$(basename "$j")"; done
+fi
 vm_ssh "$P" "$KEY" "sudo sync"
 vm_ssh "$P" "$KEY" "bash /opt/vmcrash/guest/prepare-device.sh --mode=log-writes" >/dev/null \
     || { keep; echo "LOUD_FAILURE: could not build the log-writes stack"; exit 1; }
 
-vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false} QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1} QDB_MAT_VIEW=${QDB_MAT_VIEW:-false} QDB_REBASE_AT_ROWS=${QDB_REBASE_AT_ROWS:--1} QDB_QWP_DURABLE_ACK=${QDB_QWP_DURABLE_ACK:-off} QDB_QWP_BATCH=${QDB_QWP_BATCH:-1000} bash /opt/vmcrash/guest/run-workload.sh --arm=$ARM --mode=$MODE \
+vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false} QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1} QDB_MAT_VIEW=${QDB_MAT_VIEW:-false} QDB_REBASE_AT_ROWS=${QDB_REBASE_AT_ROWS:--1} QDB_QWP_DURABLE_ACK=${QDB_QWP_DURABLE_ACK:-off} QDB_QWP_BATCH=${QDB_QWP_BATCH:-1000} QDB_EDITION=$EDITION bash /opt/vmcrash/guest/run-workload.sh --arm=$ARM --mode=$MODE \
     --window-us=$WINDOW --epoch-ms=$EPOCH </dev/null >/mnt/qdb/workload.out 2>&1 &" || true
 
 # Let it build a real history: many commits means many flushes means many
@@ -136,7 +156,7 @@ for n in $(seq "$first" "$nflush"); do
         sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
         sudo mkdir -p /mnt/qdb; \
         if sudo mount /dev/vdb /mnt/qdb 2>/dev/null; then \
-            bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --qwp=$([ "$ARM" = qwp ] && echo true || echo false) --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --sf-replay=$([ "$ARM" = qwp ] && echo "${QDB_SF_REPLAY:-true}" || echo false) --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
+            bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --qwp=$([ "$ARM" = qwp ] && echo true || echo false) --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --sf-replay=${QDB_SF_REPLAY:-false} --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
         else echo 'MOUNT_FAILED'; fi")
     # Archive the FULL per-boundary output. The one-line verdict in $LOG is a summary,
     # not evidence: every time a result needed explaining, the explanation was in the

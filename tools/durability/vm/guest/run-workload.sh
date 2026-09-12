@@ -120,24 +120,57 @@ case "$ARM" in
         # documented NOSYNC behaviour after a power cut -- looked exactly like a durability defect.
         # Control clean, reproduced twice, coherent mechanism, and still wrong, because the PREMISE
         # was never checked. The assertion below exists so that can never be assumed again.
+        # EDITION. `ent` runs the enterprise server instead of OSS. Two differences the harness
+        # must handle, neither of which the OSS arm can ever exercise:
+        #   * ENT is NOT a fat jar -- it needs entlib/ (jar-jni + the OSS engine jar), or it dies
+        #     with io/questdb/jar/jni/LoadException.
+        #   * ACL is ON by default (acl.enabled=true, admin/quest), so every request needs
+        #     credentials where OSS needs none.
+        if [ "${QDB_EDITION:-oss}" = "ent" ]; then
+            SERVER_CP="/opt/vmcrash/questdb-enterprise.jar:/opt/vmcrash/entlib/*:$JAR"
+            SERVER_MAIN="com.questdb.EntServerMain"
+        else
+            SERVER_CP="$JAR"
+            SERVER_MAIN="io.questdb.ServerMain"
+        fi
         env QDB_CAIRO_COMMIT_MODE="$MODE" \
             QDB_CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW="${WINDOW}us" \
             QDB_CAIRO_ADAPTIVE_EPOCH_INTERVAL="${EPOCH}ms" \
-            java $QDB_JVM -cp "$JAR" \
-            io.questdb.ServerMain -d "$(dirname "$DB")" > /mnt/qdb/server.log 2>&1 &
+            java $QDB_JVM -cp "$SERVER_CP" \
+            $SERVER_MAIN -d "$(dirname "$DB")" > /mnt/qdb/server.log 2>&1 &
         echo "qwp: server started pid=$!" >> /mnt/qdb/writer.log
         # Wait for HTTP before ingesting: connecting to a half-started server fails the upgrade
         # and the arm would report a connection error as if it were a durability finding.
+        CURL_AUTH=""
+        [ "${QDB_EDITION:-oss}" = "ent" ] && CURL_AUTH="-u ${QDB_ENT_USER:-admin}:${QDB_ENT_PASSWORD:-quest}"
+        # Require a DATASET, not merely an HTTP response: under ENT an unauthenticated request
+        # answers 401 and `curl >/dev/null && ...` would report the server as up.
         for _ in $(seq 1 120); do
-            curl -s "http://localhost:9000/exec?query=select%201" >/dev/null 2>&1 && break
+            curl -s $CURL_AUTH "http://localhost:9000/exec?query=select%201" 2>/dev/null | grep -q dataset && break
             sleep 0.5
         done
+        # ASSERT THE EDITION. A silent fallback to OSS would report enterprise coverage that was
+        # never exercised -- the same failure shape as a run labelled sync while serving nosync.
+        if [ "${QDB_EDITION:-oss}" = "ent" ]; then
+            edition=$(curl -s $CURL_AUTH -G http://localhost:9000/exec --data-urlencode "query=select build()" 2>/dev/null || true)
+            case "$edition" in
+                *Enterprise*) echo "qwp: server is $(echo "$edition" | grep -oE 'QuestDB Enterprise [A-Za-z]+')" >> /mnt/qdb/writer.log ;;
+                *) echo "run-workload: QDB_EDITION=ent but the server is not enterprise -- refusing." >&2
+                   echo "run-workload: build() said: $edition" >> /mnt/qdb/writer.log
+                   exit 64 ;;
+            esac
+        fi
         # ASSERT THE PREMISE. The no-loss oracle is sound only if the server really is in the
         # requested mode; a label is not evidence. Refuse to ingest otherwise -- a run that tests
         # a different mode than it reports is worse than no run.
-        actual_mode=$(curl -s -G http://localhost:9000/exec \
+        # $CURL_AUTH: under ENT this query is authenticated like every other. Without it the 401
+        # yields no grep match, the pipeline returns non-zero, and under `set -e` the ASSIGNMENT
+        # kills the script silently -- the client never launched and the run failed with no output
+        # at all. `|| true` so a probe that cannot answer degrades to "unknown" rather than
+        # aborting the run; the comparison below already tolerates an empty value.
+        actual_mode=$(curl -s $CURL_AUTH -G http://localhost:9000/exec \
             --data-urlencode "query=select value from (show parameters) where property_path = 'cairo.commit.mode'" \
-            2>/dev/null | grep -oE '\[\["[a-zA-Z]+"\]\]' | grep -oE '[a-zA-Z]+' | head -1)
+            2>/dev/null | grep -oE '\[\["[a-zA-Z]+"\]\]' | grep -oE '[a-zA-Z]+' | head -1 || true)
         echo "qwp: server reports cairo.commit.mode=$actual_mode (requested $MODE)" >> /mnt/qdb/writer.log
         if [ -n "$actual_mode" ] && [ "$(echo "$actual_mode" | tr A-Z a-z)" != "$(echo "$MODE" | tr A-Z a-z)" ]; then
             echo "run-workload: server is in '$actual_mode' but the run claims '$MODE' -- refusing." >&2
@@ -147,6 +180,8 @@ case "$ARM" in
         exec java $QDB_JVM -cp "$JAR" \
             -Dqwp.addr=localhost:9000 \
             -Dqwp.durable.ack="${QDB_QWP_DURABLE_ACK:-local}" \
+            -Dqwp.user="$([ "${QDB_EDITION:-oss}" = ent ] && echo "${QDB_ENT_USER:-admin}" || echo "")" \
+            -Dqwp.password="$([ "${QDB_EDITION:-oss}" = ent ] && echo "${QDB_ENT_PASSWORD:-quest}" || echo "")" \
             -Dqwp.sf.dir="${QDB_QWP_SF_DIR:-/mnt/qdb/sf}" \
             -Dqwp.sf.durability="${QDB_QWP_SF_DURABILITY:-periodic}" \
             -Dqwp.batch="${QDB_QWP_BATCH:-1000}" \
