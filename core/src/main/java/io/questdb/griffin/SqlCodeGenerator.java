@@ -1099,6 +1099,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return mapping;
     }
 
+    /**
+     * Examines an optimized GROUP BY before generateSubQuery constructs the ordinary join.
+     * RFC 130 phase 0 exposes the contract for tests and the comparison harness; automatic
+     * selection is deliberately deferred until the fused operator is implemented and qualified.
+     */
+    @Nullable
+    public static HashJoinGroupByCandidate getHashJoinGroupByCandidate(
+            IQueryModel groupByModel,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        return HashJoinGroupByCandidate.analyse(groupByModel, functionParser, executionContext);
+    }
+
     private static void buildHorizonColumnMappings(
             RecordMetadata innerMetadata,
             CharSequence masterAlias,
