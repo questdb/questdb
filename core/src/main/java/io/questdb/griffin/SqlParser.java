@@ -5529,13 +5529,15 @@ public class SqlParser {
                         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                         CharSequence aliasTok = GenericLexer.immutableOf(tok);
                         validateIdentifier(lexer, aliasTok);
-                        boolean unquoting = Chars.indexOf(aliasTok, '.') == -1;
-                        alias = unquoting ? unquote(aliasTok) : aliasTok;
+                        // Always unquote a quoted alias. A dot inside the alias is content
+                        // (e.g. AS '10.0.0 QuestDB'), not a table.column separator, so it must
+                        // not suppress the unquoting the way unquoteIfNoDots() would.
+                        alias = unquote(aliasTok);
                     } else {
                         validateIdentifier(lexer, tok);
                         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-                        boolean unquoting = Chars.indexOf(tok, '.') == -1;
-                        alias = GenericLexer.immutableOf(unquoting ? unquote(tok) : tok);
+                        // Same as above: strip quotes from a quoted alias even when it holds dots.
+                        alias = GenericLexer.immutableOf(unquote(tok));
                     }
                     aliasPosition = lexer.lastTokenPosition();
 
