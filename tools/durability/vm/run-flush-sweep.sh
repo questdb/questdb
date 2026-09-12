@@ -86,8 +86,18 @@ for _ in $(seq 1 120); do
     sleep 0.2
 done
 sleep 8
-vm_ssh "$P" "$KEY" "pgrep -f '[C]rashIngestWriter' >/dev/null" \
-    || { keep; echo "LOUD_FAILURE: workload was not running when the recording stopped"; exit 1; }
+vm_ssh "$P" "$KEY" "pgrep -f '[C]rashIngestWriter' >/dev/null" || {
+    # CAPTURE THE GUEST LOGS. This assertion fires when the workload died, and the
+    # reason is always in writer.log -- which used to require booting the VM again to
+    # read. A failure path that discards its own evidence costs three VM boots to
+    # diagnose (measured: an empty main class from a mangled line continuation).
+    mkdir -p "$OUTDIR"
+    vm_ssh "$P" "$KEY" "tail -40 /mnt/qdb/writer.log 2>/dev/null; echo '--- workload.out ---'; tail -20 /mnt/qdb/workload.out 2>/dev/null" \
+        > "$OUTDIR/liveness-failure.out" 2>&1 || true
+    echo "  guest logs: $OUTDIR/liveness-failure.out"
+    sed -n '1,12p' "$OUTDIR/liveness-failure.out" | sed 's/^/      /'
+    keep; echo "LOUD_FAILURE: workload was not running when the recording stopped"; exit 1
+}
 vm_ssh "$P" "$KEY" "sleep 2" || true     # let the log kthread drain its queue
 vm_kill "$RUN"
 
@@ -116,7 +126,7 @@ for n in $(seq "$first" "$nflush"); do
         sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
         sudo mkdir -p /mnt/qdb; \
         if sudo mount /dev/vdb /mnt/qdb 2>/dev/null; then \
-            bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
+            bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
         else echo 'MOUNT_FAILED'; fi")
     # Archive the FULL per-boundary output. The one-line verdict in $LOG is a summary,
     # not evidence: every time a result needed explaining, the explanation was in the
