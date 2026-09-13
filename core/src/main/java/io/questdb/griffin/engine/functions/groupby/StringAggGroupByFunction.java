@@ -40,7 +40,7 @@ import io.questdb.griffin.engine.groupby.GroupByLongList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Rows;
+import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf16Sink;
 
@@ -56,12 +56,13 @@ import io.questdb.std.str.DirectUtf16Sink;
  * </pre>
  * The char sink ({@link GroupByCharSink}) holds the raw characters of every accepted value,
  * concatenated without gaps. The run list ({@link GroupByLongList}) is a flat sequence of
- * (rowId, sinkLocation) pairs, one pair per run of values that arrived from the same page frame:
+ * (rowId, sinkLocation) pairs, one pair per run of values whose row ids are strictly
+ * contiguous (each row id is exactly one greater than the previous):
  * <pre>
- * | rowId (run start) | sinkLocation | rowId (run start) | sinkLocation | ...
- * +---------------------+----------------+---------------------+----------------+
- * |       8 bytes       |    8 bytes     |       8 bytes       |    8 bytes     |
- * +---------------------+----------------+---------------------+----------------+
+ * | rowId (run last) | sinkLocation | rowId (run last) | sinkLocation | ...
+ * +--------------------+----------------+--------------------+----------------+
+ * |       8 bytes      |    8 bytes     |       8 bytes      |    8 bytes     |
+ * +--------------------+----------------+--------------------+----------------+
  * </pre>
  * {@code sinkLocation} locates a run inside the char sink:
  * <pre>
@@ -71,10 +72,9 @@ import io.questdb.std.str.DirectUtf16Sink;
  * +-------------------------+----------------------+
  * </pre>
  * Worker threads append runs in an arbitrary order relative to each other, though values within
- * a single run are always in scan order (one page frame is always scanned by one thread).
- * Determinism is restored at read time: {@link #materialize} sorts runs by their starting rowId
- * and concatenates them, reproducing the same output as a single-threaded scan regardless of how
- * work was distributed across threads.
+ * a single run are always in scan order. Determinism is restored at read time:
+ * {@link #materialize} sorts runs by their row id and concatenates them, reproducing the same
+ * output as a single-threaded scan regardless of how work was distributed across threads.
  */
 class StringAggGroupByFunction extends StrFunction implements UnaryFunction, GroupByFunction {
     private static final int DELIMITER_BYTES = 2;
@@ -255,7 +255,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     }
 
     private static long pack(int offset, int len) {
-        return ((long) offset << 32) | (len & 0xffffffffL);
+        return Numbers.encodeLowHighInts(len, offset);
     }
 
     private static int sizeOf(GroupByLongList list) {
@@ -268,21 +268,22 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     }
 
     private static int unpackLen(long sinkLocation) {
-        return (int) sinkLocation;
+        return Numbers.decodeLowInt(sinkLocation);
     }
 
     private static int unpackOffset(long sinkLocation) {
-        return (int) (sinkLocation >>> 32);
+        return Numbers.decodeHighInt(sinkLocation);
     }
 
     private void append(long rowId, CharSequence str) {
         final int len = str.length();
         final int size = listA.size();
-        final boolean isSameRun = size > 0 && Rows.toPartitionIndex(rowId) == Rows.toPartitionIndex(listA.get(size - 2));
+        final boolean isSameRun = size > 0 && rowId == listA.get(size - 2) + 1;
         if (isSameRun) {
             final int startOffset = unpackOffset(listA.get(size - 1));
             sinkA.putAscii(delimiter);
             sinkA.put(str);
+            listA.set(size - 2, rowId);
             listA.set(size - 1, pack(startOffset, sinkA.length() - startOffset));
         } else {
             final int offset = sinkA.length();
