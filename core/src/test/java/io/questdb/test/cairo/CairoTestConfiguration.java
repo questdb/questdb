@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
@@ -40,12 +41,15 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Map;
 
 public class CairoTestConfiguration extends CairoConfigurationWrapper {
+    // Set only when a developer asked for a RAM-disk test root (ram-disk-test-root profile).
+    private static final boolean RAM_DISK_TEST_ROOT = System.getenv("QDB_TEST_TMPDIR") != null;
     private final String dbRoot;
     private final String installRoot;
     private final Overrides overrides;
@@ -183,6 +187,41 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     @Override
     public boolean isMultiKeyDedupEnabled() {
         return true;
+    }
+
+    /**
+     * Keeps the on-disk answer for a test root deliberately placed on a RAM disk.
+     * <p>
+     * A developer can move the whole suite off their SSD with the {@code ram-disk-test-root} profile (see
+     * core/pom.xml). tmpfs is not on QuestDB's supported-filesystem list, so
+     * {@link io.questdb.std.FilesFacadeImpl#allowMixedIO} answers false for it, and that answer reaches
+     * every writer through {@code writerMixedIOEnabled}: {@code O3CopyJob}, {@code O3OpenColumnJob} and
+     * {@code ContiguousFileVarFrameColumn} would all silently take their non-mixed-IO variants, so the run
+     * would exercise the opposite write path to an on-disk one. Answering true is not a fiction: tmpfs is
+     * page-cache backed, so mmap and write are coherent on it, which is the property mixed I/O needs; it is
+     * excluded from the supported list for being volatile.
+     * <p>
+     * Two guards, both learned the hard way — an unguarded version of this turned every WalWriterFuzzTest
+     * red on all three CI platforms:
+     * <ul>
+     *   <li><b>Opt-in only.</b> Applies solely when {@code QDB_TEST_TMPDIR} is exported, i.e. when someone
+     *   asked for a RAM-disk root. Never assume where a test root lives: an agent whose {@code /tmp} is
+     *   itself tmpfs would otherwise have every test silently flipped onto the other write path.</li>
+     *   <li><b>Never outvote an explicit choice.</b> {@code WalWriterFuzzTest} pins
+     *   {@code DEBUG_CAIRO_ALLOW_MIXED_IO} to the real probe and asserts the configuration agrees; a test
+     *   that states its own answer owns it.</li>
+     * </ul>
+     */
+    @Override
+    public boolean isWriterMixedIOEnabled() {
+        if (RAM_DISK_TEST_ROOT && !overrides.isPropertySet(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO)) {
+            try (Path path = new Path()) {
+                if (Files.getFileSystemStatus(path.of(dbRoot).$()) == Files.TMPFS_MAGIC) {
+                    return true;
+                }
+            }
+        }
+        return super.isWriterMixedIOEnabled();
     }
 
     @Override

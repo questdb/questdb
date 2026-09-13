@@ -198,6 +198,26 @@ public class FailureFileFacade implements FilesFacade {
         return ff.findType(findPtr);
     }
 
+    /**
+     * Forwarded like every other syscall. Without this the default implementation runs against the WRAPPED
+     * facade's fd but bypasses this wrapper, so on Darwin -- where barrierFsync is a distinct syscall rather
+     * than a routed fdatasync -- the fault injection this class exists for never sees a WAL commit barrier.
+     */
+    @Override
+    public void barrierFsync(long fd) {
+        ff.barrierFsync(fd);
+    }
+
+    @Override
+    public void fdatasync(long fd) {
+        ff.fdatasync(fd);
+    }
+
+    @Override
+    public void syncfs(long fd) {
+        ff.syncfs(fd);
+    }
+
     @Override
     public void fsync(long fd) {
         ff.fsync(fd);

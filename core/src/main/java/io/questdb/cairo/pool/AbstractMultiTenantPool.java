@@ -37,6 +37,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 import java.util.Map;
@@ -96,6 +97,50 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     public int getMaxEntries() {
         return maxEntries;
+    }
+
+    /**
+     * Force-reclaim every allocation slot still checked out by the CALLING thread, closing its tenant and
+     * resetting ownership — the WAL-writer analogue of {@link WriterPool#releaseCrashOrphanedWriters()}.
+     * <p>
+     * This exists for fault-injection crash tests. A swept power-loss crash can fire on a CLOSE-TIME
+     * durability op: under adaptive group commit ({@code W > 0}) the deferred device flush runs inside
+     * {@code WalWriter.cleanupBeforeClose} ({@code flushPendingDurable}'s fdatasync), which on a fault marks
+     * the writer distressed and RETHROWS, so {@code WalWriterTenant.close()} unwinds before {@code
+     * returnToPool}/{@code expelFromPool} and the pool slot is left OWNED with its tenant still assigned.
+     * {@link #releaseAll} cannot reclaim such a slot (its CAS from {@code UNALLOCATED} fails on an owned
+     * slot; at a full close that is the "left behind on pool shutdown" throw). A real power loss's process
+     * death reclaims the orphan; this models that on the live JVM. Scoped to the caller's own orphans
+     * (owner == current thread) so it is safe on a live engine between iterations, and a no-op on a healthy
+     * engine — production never leaks an owned WAL writer (every acquire is try-with/finally guarded).
+     *
+     * @return the number of orphaned tenants reclaimed
+     */
+    @TestOnly
+    public int releaseCrashOrphanedTenants() {
+        final long thread = Thread.currentThread().threadId();
+        int reclaimed = 0;
+        for (Entry<T> e : entries.values()) {
+            Entry<T> entry = e;
+            do {
+                for (int i = 0; i < segmentSize; i++) {
+                    if (Unsafe.arrayGetVolatile(entry.allocations, i) == thread && entry.getTenant(i) != null) {
+                        closeTenant(thread, entry, i, PoolListener.EV_EXPIRE, PoolConstants.CR_POOL_CLOSE);
+                        Unsafe.arrayPutOrdered(entry.allocations, i, UNALLOCATED);
+                        reclaimed++;
+                    }
+                }
+                entry = entry.next;
+            } while (entry != null);
+        }
+        // Drop the now-empty per-dir-name entries so a later reuse of the same dir name cannot inherit a
+        // stale (possibly dropped-flagged) entry -- mirrors releaseAll's full-close entry sweep.
+        for (Map.Entry<CharSequence, Entry<T>> me : entries.entrySet()) {
+            if (isEntryEmpty(me.getValue())) {
+                entries.remove(me.getKey(), me.getValue());
+            }
+        }
+        return reclaimed;
     }
 
     public int getSegmentSize() {

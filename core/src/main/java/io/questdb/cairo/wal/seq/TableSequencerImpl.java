@@ -351,6 +351,16 @@ public class TableSequencerImpl implements TableSequencer {
         return closed;
     }
 
+    /**
+     * Adaptive group-commit (Deferred 2) deferred device flush of the sequencer txn log
+     * (part-before-header). Must be called holding the sequencer WRITE lock (the same lock {@code nextTxn}
+     * takes), so it cannot race a concurrent sequencer append/rotation of the txn-log mmaps.
+     */
+    public void fdatasyncTxnLog() {
+        assert !closed;
+        tableTransactionLog.fdatasyncTxnLog();
+    }
+
     public boolean isDistressed() {
         return distressed;
     }
@@ -558,7 +568,8 @@ public class TableSequencerImpl implements TableSequencer {
             long txnMaxTimestamp,
             long txnRowCount
     ) {
-        return tableTransactionLog.addEntry(
+        final int effectiveMode = engine.getConfiguration().getCommitMode();
+        final long txn = tableTransactionLog.addEntry(
                 getStructureVersion(),
                 walId,
                 segmentId,
@@ -568,6 +579,20 @@ public class TableSequencerImpl implements TableSequencer {
                 txnMaxTimestamp,
                 txnRowCount
         );
+        // Task 1b (CRITICAL-2 residual): for an ADAPTIVE group-commit (W>0) deferral, register this writer's
+        // durable-ack contiguous-prefix pin ATOMICALLY with the seqTxn assignment — under the sequencer WRITE
+        // lock and BEFORE the caller's notifyTxnCommitted publishes this txn to tracker.seqTxn. This closes the
+        // mid-flight window in which a peer writer's markWriterDurable, seeing the advanced seqTxn while this
+        // txn is sequenced-but-not-yet-pinned, would empty the pin map and over-claim this still-non-durable
+        // txn into the frontier. registerWriterPending is putIfAbsent, so a writer's later commits in the same
+        // un-flushed batch do NOT lower its pin; the pin is dropped only by the writer's own post-fdatasync
+        // markWriterDurable (WalWriter.flushPendingDurable) or reset on reboot (resetDurableFrontier). Gated to
+        // ADAPTIVE+W>0 so W=0 and legacy SYNC/ASYNC/NOSYNC are byte-identical (they never pin/markWriterDurable).
+        if (effectiveMode == io.questdb.cairo.CommitMode.ADAPTIVE
+                && engine.getConfiguration().getAdaptiveCommitGroupWindowUs() > 0) {
+            seqTxnTracker.registerWriterPending(walId, txn);
+        }
+        return txn;
     }
 
     private void notifyTxnCommitted(long txn) {

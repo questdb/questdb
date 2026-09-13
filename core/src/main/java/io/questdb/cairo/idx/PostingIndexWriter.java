@@ -281,6 +281,9 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean isPoisoned;
     private int keyCapacity;
     private int keyCount;
+    // The commit mode this indexer flushes under. Seeded from the instance-global cairo.commit.mode and
+    // overridden via setCommitMode() while the owning table is not yet enrolled in adaptive.
+    private int indexCommitMode;
     // In-memory mirror of the head entry's MAX_VALUE field. setMaxValue
     // updates it directly; flush/seal callsites read it back without going
     // to mmap. Persisted to the head entry on every chain publish (or via
@@ -341,6 +344,7 @@ public class PostingIndexWriter implements IndexWriter {
     public PostingIndexWriter(CairoConfiguration configuration, byte rowIdEncoding) {
         this.alignedBitWidthThreshold = configuration.getPostingIndexAlignedBitWidthThreshold();
         this.configuration = configuration;
+        this.indexCommitMode = configuration.getCommitMode();
         this.ff = configuration.getFilesFacade();
         this.indexerSpillBytesMax = configuration.getPostingIndexerSpillBytesMax();
         this.rowIdEncoding = rowIdEncoding;
@@ -692,10 +696,22 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void commit() {
         checkNotPoisoned();
+        // flushAllPending() is UNCONDITIONAL and must stay so: it publishes buffered native-memory postings
+        // into the memory-mapped .pk/.pv files. Only the DURABILITY flush below is mode-gated -- without the
+        // publish, readers would see keyCount=0 until the writer is closed.
         flushAllPending();
-        if (configuration.getCommitMode() != CommitMode.NOSYNC) {
-            sync(configuration.getCommitMode() == CommitMode.ASYNC);
+        // appliesColumnSync (SYNC/ASYNC only). See IndexWriter.setCommitMode: under ADAPTIVE the posting
+        // index is re-derivable from the durable WAL like the column it indexes, and the durable epoch
+        // forces sync(false) on every indexer before its filesystem-wide syncfs.
+        final int commitMode = indexCommitMode;
+        if (CommitMode.appliesColumnSync(commitMode)) {
+            sync(commitMode == CommitMode.ASYNC);
         }
+    }
+
+    @Override
+    public void setCommitMode(int commitMode) {
+        this.indexCommitMode = commitMode;
     }
 
     // Sync order is .pv and covering sidecars before .pk: a torn write must
@@ -735,8 +751,12 @@ public class PostingIndexWriter implements IndexWriter {
         } else {
             flushAllPendingDense();
         }
-        int commitMode = configuration.getCommitMode();
-        if (commitMode != CommitMode.NOSYNC) {
+        // Same gate as commit(): appliesColumnSync (SYNC/ASYNC only). The seal this method performs is
+        // index DATA, re-derived from the column it indexes, so under ADAPTIVE it stays lazy and is made
+        // durable by the epoch (which calls sync(false) on every indexer explicitly before its
+        // filesystem-wide syncfs).
+        final int commitMode = indexCommitMode;
+        if (CommitMode.appliesColumnSync(commitMode)) {
             boolean async = commitMode == CommitMode.ASYNC;
             if (valueMem.isOpen()) {
                 valueMem.sync(async);
@@ -1393,6 +1413,15 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
 
+            if (!isInit && valueMemSize > 0) {
+                LPSZ pvName = PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn);
+                long pvActual = ff.length(pvName);
+                if (valueMemSize > pvActual) {
+                    throw CairoException.critical(0)
+                            .put("posting index value file too short [expected=").put(valueMemSize)
+                            .put(", actual=").put(pvActual).put(", path=").put(pvName).put(']');
+                }
+            }
             valueMem.of(
                     ff,
                     PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn),

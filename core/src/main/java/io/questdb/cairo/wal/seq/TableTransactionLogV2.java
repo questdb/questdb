@@ -75,6 +75,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public static final long ROW_COUNT_OFFSET = MAX_TIMESTAMP_OFFSET + Long.BYTES;
     public static final long RESERVED_OFFSET = ROW_COUNT_OFFSET + Long.BYTES;
     public static final long RECORD_SIZE = RESERVED_OFFSET + Long.BYTES;
+    private static final long CHECKSUM_CAPABILITY_MAGIC = 0x54584E434B533031L; // TXNCKS01
+    private static final long HEADER_CHECKSUM_MAGIC_OFFSET = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES;
+    private static final long HEADER_CHECKSUM_FROM_TXN_OFFSET = HEADER_CHECKSUM_MAGIC_OFFSET + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     private final CairoConfiguration configuration;
@@ -130,6 +133,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
         openTxnPart();
 
+        final long recordStart = txnPartMem.getAppendOffset();
         txnPartMem.putLong(structureVersion);
         txnPartMem.putInt(walId);
         txnPartMem.putInt(segmentId);
@@ -138,7 +142,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnPartMem.putLong(txnMinTimestamp);
         txnPartMem.putLong(txnMaxTimestamp);
         txnPartMem.putLong(txnRowCount);
-        txnPartMem.putLong(0L);
+        // Write CRC over the body [recordStart, recordStart+RESERVED_OFFSET) in the reserved trailing slot.
+        txnPartMem.putLong(TableUtils.calculateCvAreaChecksum(txnPartMem.addressOf(recordStart), RESERVED_OFFSET));
 
         Unsafe.storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
@@ -152,6 +157,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
         openTxnPart();
 
+        final long recordStart = txnPartMem.getAppendOffset();
         txnPartMem.putLong(newStructureVersion);
         txnPartMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
         txnPartMem.putInt(-1);
@@ -160,7 +166,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnPartMem.putLong(serializer.getCommandType(instance));
         txnPartMem.putLong(0L);
         txnPartMem.putLong(0L);
-        txnPartMem.putLong(0L);
+        // Write CRC over the body [recordStart, recordStart+RESERVED_OFFSET) in the reserved trailing slot.
+        txnPartMem.putLong(TableUtils.calculateCvAreaChecksum(txnPartMem.addressOf(recordStart), RESERVED_OFFSET));
     }
 
     @Override
@@ -192,6 +199,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     @Override
     public void fullSync() {
+        // Part file must be durable before the header: same ordering invariant as sync0().
+        if (txnPartMem.isOpen()) {
+            txnPartMem.sync(false);
+        }
         txnMem.sync(false);
     }
 
@@ -296,6 +307,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnMem.putLong(0L);
         txnMem.putLong(tableCreateTimestamp);
         txnMem.putInt(partTransactionCount);
+        txnMem.putLong(HEADER_CHECKSUM_MAGIC_OFFSET, CHECKSUM_CAPABILITY_MAGIC);
+        txnMem.putLong(HEADER_CHECKSUM_FROM_TXN_OFFSET, 0L);
         sync0();
     }
 
@@ -340,8 +353,56 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     private void sync0() {
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
-            txnMem.sync(commitMode == CommitMode.ASYNC);
+            // Part file must be durable before the header that points to it.
+            // A crash after the header sync but before the part file is written back
+            // would leave maxTxn=N pointing at a zeroed/partial record.
+            //
+            // Deferred 2 (group commit, W>0): push the sequencer files to the page cache with msync(MS_ASYNC)
+            // — writeback-only, NO device flush — and DEFER the fdatasync (the device flush) to the batched
+            // flushPendingDurable (via fdatasyncTxnLog), which performs it as the final seq step of
+            // data→events→seq. Doing MS_SYNC here would device-flush the sequencer on every commit and defeat
+            // the window; the record is still in the page cache + ordered, so the batched fdatasync captures
+            // it. localDurableSeqTxn advances only after that batch flush, so a durable-ack'd txn is always
+            // device-durable. Other modes (and ADAPTIVE W=0) keep their exact existing sync grade.
+            final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE && deferDeviceFlush();
+            final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
+            if (txnPartMem.isOpen()) {
+                txnPartMem.sync(async);
+            }
+            txnMem.sync(async);
+            // ADAPTIVE: make the sequencer durable. fdatasync part file first, then the header
+            // that points to it — same ordering invariant as the msync above. The header's
+            // maxTxn=N must not be device-visible before the record at txn N in the part file.
+            if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
+                if (txnPartMem.isOpen()) {
+                    ff.fdatasync(txnPartMem.getFd());
+                }
+                ff.fdatasync(txnMem.getFd());
+            }
         }
+    }
+
+    @Override
+    public void fdatasyncTxnLog() {
+        // The deferred (batched) device flush for adaptive group commit: part file before the header, the
+        // same ordering invariant sync0() preserves. The msync in sync0() already pushed the bytes to the
+        // page cache; this carries the device flush + journal commit.
+        if (txnPartMem.isOpen()) {
+            ff.fdatasync(txnPartMem.getFd());
+        }
+        if (txnMem.isOpen()) {
+            ff.fdatasync(txnMem.getFd());
+        }
+    }
+
+    /**
+     * Adaptive group-commit (Deferred 2): true when this table is ADAPTIVE AND a group window {@code W > 0}
+     * is configured, so the per-commit sequencer fdatasync is DEFERRED to the batched flush. A pure function
+     * of the table's effective mode + config (no per-commit racing state), so concurrent WAL writers of the
+     * same table all agree.
+     */
+    private boolean deferDeviceFlush() {
+        return configuration.getAdaptiveCommitGroupWindowUs() > 0;
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
@@ -472,8 +533,42 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             }
 
             openPart(txn);
+            verifyRecordChecksum();
             txn++;
             return true;
+        }
+
+        // Verify the per-record CRC in the reserved trailing slot, if present.
+        // calculateCvAreaChecksum never returns 0, so stored==0 means "no CRC written" — but that has TWO
+        // possible causes the CRC alone cannot tell apart:
+        //   (1) a genuine LEGACY/V1-compat record written before the per-record CRC existed. Its body is fully
+        //       populated (walId, structureVersion, ...), so it is read unverified for backward compatibility.
+        //   (2) an ABSENT record: a slot never written back to the device (all-zero) that the cursor reached
+        //       because the header MAX_TXN was made device-durable AHEAD of this record's body. Under adaptive
+        //       W>0 the ordered flush (data->events->sequencer, then the header) normally prevents this, so it
+        //       is only reachable on a device that reorders those flushes across the crash — narrow, but not
+        //       provably impossible. Returning here would silently inject a garbage all-zero txn.
+        // Cheap, clearly-safe disambiguation: NO legitimate record — legacy or current — ever carries
+        // walId == 0 (real writers use walId >= 1; STRUCTURAL_CHANGE_WAL_ID = -1; DROP_TABLE_WAL_ID = -2;
+        // MIN_WAL_ID = -2), and the cursor only ever reads txns below the committed MAX_TXN, all of which have
+        // a real walId. So stored==0 AND walId==0 is definitionally an absent/torn record: route it into the
+        // SAME loud torn-record error the recovery/apply path already handles (it stops at the last good
+        // record) rather than reading garbage. A legitimate legacy record keeps its historical unverified read.
+        // A non-zero stored slot that does not match the body checksum means a torn/partially-written record.
+        private void verifyRecordChecksum() {
+            // The rules live in TxnLogRecordVerifier so V1 -- whose CRC sits in the additive
+            // _txnlog.c sidecar rather than a reserved slot -- reaches the same verdict from the
+            // same code. Divergence would make one format fatal and the other blind on the same
+            // torn record.
+            final long recordBase = address + txnOffset;
+            final long storedCrc = Unsafe.getLong(recordBase + RESERVED_OFFSET);
+            if (storedCrc == 0L) {
+                // No checksum for this record. A binary that predates the checksum writes a literal zero
+                // into this slot, so a zero cannot be told from a torn one and must be read unverified --
+                // the alternative suspends a table on records an older QuestDB wrote perfectly well.
+                return;
+            }
+            TxnLogRecordVerifier.verify(txn, recordBase, RESERVED_OFFSET, storedCrc, txnOffset);
         }
 
         @Override

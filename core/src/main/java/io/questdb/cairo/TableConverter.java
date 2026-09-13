@@ -116,6 +116,9 @@ public class TableConverter {
                                     txWriter = new TxWriter(ff, configuration);
                                 }
                                 txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$());
+                                // Structural one-shot conversion, outside any table writer and outside the
+                                // adaptive epoch's coverage: take the SYNC grade under ADAPTIVE.
+                                txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
                                 txWriter.resetLagValuesUnsafe();
 
                                 if (walEnabled) {
@@ -124,8 +127,13 @@ public class TableConverter {
                                         tableSequencerAPI.registerTable(tableId, metadata, token);
                                     }
 
-                                    // Reset structure version in _meta and _txn files
-                                    metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
+                                    // Reset structure version in _meta and _txn files. Through
+                                    // resetMetadataVersion, never a raw putLong: the metadataVersion is
+                                    // checksummed into the meta-format minor-version field, so rewriting it
+                                    // in place otherwise switches off every version-gated tail field and the
+                                    // converted table silently loses its TTL, table format and per-table
+                                    // commit mode.
+                                    TableUtils.resetMetadataVersion(metaMem, 0);
                                     path.trimTo(rootLen).concat(dirNameSink);
                                     txWriter.resetStructureVersionUnsafe();
                                 } else {
@@ -137,6 +145,11 @@ public class TableConverter {
                                     }
                                 }
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
+                                // Last in-place mutation of _meta on this path, and it lands inside the
+                                // checksummed range -- so the checksum resetMetadataVersion recomputed
+                                // above now describes the PREVIOUS contents. Refresh after the final
+                                // write, not before it.
+                                TableUtils.refreshMetaBodyChecksum(metaMem);
                                 convertedTables.add(token);
 
                                 try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {

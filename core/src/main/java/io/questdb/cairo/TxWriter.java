@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -42,6 +43,22 @@ import static io.questdb.cairo.TableUtils.*;
 
 public final class TxWriter extends TxReader implements Closeable, Mutable, SymbolValueCountCollector {
     private final CairoConfiguration configuration;
+    // Partition timestamps whose on-disk representation this writer has changed since the set was last
+    // drained. The adaptive durable epoch drains it to flush ONLY what changed, instead of walking every
+    // attached partition (see TableWriter.fsyncAttachedPartitionFiles) -- the epoch's cost must scale with
+    // the un-epoched write set, not with the table's history.
+    //
+    // COMPLETENESS is the whole contract: a partition whose bytes changed but which is missing here would
+    // be left non-durable behind an epoch that references its rows -> silent row loss on power cut. Every
+    // mutator of the attached-partition table therefore marks, including the ones that change only a FLAG
+    // or the name txn. The flag setters are not optional extras: markPartitionParquetReady() flips
+    // parquetGenerated after an async job wrote <partition>/data.parquet into the EXISTING partition
+    // directory, with no size update and no column-version upsert, so before they marked, the epoch skipped
+    // that partition entirely and never flushed the new parquet file while _txn.epoch already recorded
+    // parquetGenerated=true. Column-file changes that leave this table untouched -- an UPDATE rewriting a
+    // column under a new column name txn -- are caught by the sibling set in ColumnVersionWriter, which
+    // TableWriter unions with this one.
+    private final LongHashSet dirtyPartitions = new LongHashSet();
     private long baseVersion;
     private TableWriter.ExtensionListener extensionListener;
     private int lastRecordBaseOffset = -1;
@@ -57,6 +74,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private int readBaseOffset;
     private long readRecordSize;
     private long recordStructureVersion = 0;
+    // The commit mode this writer flushes _txn under. Seeded from the instance-global cairo.commit.mode
+    // and overridden by TableWriter via setCommitMode() while a table is not yet enrolled in adaptive.
+    private int commitMode;
     private MemoryCMARW txMemBase;
     private int txPartitionCount;
     private int writeAreaSize;
@@ -65,6 +85,30 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public TxWriter(FilesFacade ff, CairoConfiguration configuration) {
         super(ff);
         this.configuration = configuration;
+        this.commitMode = configuration.getCommitMode();
+    }
+
+    /**
+     * Overrides the mode this writer flushes {@code _txn} under. TableWriter uses it to hold a table at
+     * SYNC grade until its adaptive enrolment baseline exists, then to hand it ADAPTIVE.
+     */
+    public void setCommitMode(int commitMode) {
+        this.commitMode = commitMode;
+    }
+
+    /**
+     * The commit-mode gate for the per-commit {@code _txn} flush.
+     * <p>
+     * <b>ADAPTIVE is lazy, like the columns.</b> {@link CommitMode#appliesColumnSync} is true only for
+     * SYNC/ASYNC. Under ADAPTIVE the materialized table — {@code _txn} and {@code _cv} included — is a
+     * rebuildable cache of the durable WAL: {@link RecoveryCoordinator} restores both files from the
+     * epoch's immutable {@code .epoch} copies and replays {@code (epoch.seqTxn, frontier]} on top.
+     * Flushing {@code _txn} on every apply is exactly the per-commit cost the lazy-apply gate exists to
+     * avoid, and it is not what makes ADAPTIVE crash-safe. The epoch's own {@link #fsync()} forces the
+     * flush regardless of mode.
+     */
+    private int resolveCommitMode() {
+        return commitMode;
     }
 
     public void append() {
@@ -148,6 +192,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     @Override
     public void clear() {
+        // Only advanceDurableEpoch() drains this, and only ADAPTIVE WAL tables ever reach it -- so without
+        // clearing here a NOSYNC/SYNC/ASYNC or non-WAL writer accumulates one entry per distinct partition
+        // touched for its entire life, and a pooled writer carries stale timestamps into its next tenancy.
+        dirtyPartitions.clear();
         clearData();
         if (txMemBase != null) {
             // Never trim _txn file to size. Size of the file can only grow up.
@@ -191,6 +239,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // Store symbol counts. Unfortunately we cannot skip it in here
             storeSymbolCounts(symbolCountProviders);
 
+            // Body checksum over the commit-immutable fields. The fast path reuses the previous record's
+            // structure (same symbol count + partition-table layout), so its committed size equals
+            // readRecordSize and the partition table starts at getPartitionTableSizeOffset(symbolColumnCount)
+            // - the exact range the reader re-derives. Must be written after the body and before the
+            // fence/version bump.
+            storeBodyChecksum(writeBaseOffset, readRecordSize, getPartitionTableSizeOffset(symbolColumnCount));
+
             Unsafe.storeFence();
             txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
 
@@ -204,14 +259,37 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             prevRecordBaseOffset = lastRecordBaseOffset;
             lastRecordBaseOffset = writeBaseOffset;
             prevPartitionTableVersion = partitionTableVersion;
-            int commitMode = configuration.getCommitMode();
-            if (commitMode != CommitMode.NOSYNC) {
+            final int commitMode = resolveCommitMode();
+            if (CommitMode.appliesColumnSync(commitMode)) {
                 txMemBase.sync(commitMode == CommitMode.ASYNC);
             }
         } else {
             // Slow path, record structure changed
-            commitFullRecord(configuration.getCommitMode(), symbolCountProviders);
+            commitFullRecord(resolveCommitMode(), symbolCountProviders);
         }
+    }
+
+    /**
+     * Make the backing {@code _txn} file hard-durable INDEPENDENT of commit mode: msync(MS_SYNC) the
+     * mapping then fsync the fd. Used by the adaptive durable-epoch cut
+     * ({@link TableWriter#fsyncMaterializedState()}) to make the visibility pointer survive a crash,
+     * strictly AFTER the column data and {@code _cv} are durable (data-before-pointer ordering).
+     * Under NOSYNC/ADAPTIVE the last {@link #commit(io.questdb.std.ObjList)} did not sync, so both calls are required.
+     */
+    public void fsync() {
+        txMemBase.sync(false);
+        ff.fsync(txMemBase.getFd());
+    }
+
+    /**
+     * The fd of the backing {@code _txn} file, or {@code -1} if not currently mapped. The {@code _txn} file
+     * lives in the table directory and is mapped for the whole writer lifetime, so this is a STABLE
+     * filesystem fd for the table — valid even when no partition column is open. Used by the adaptive
+     * durable-epoch cut ({@code TableWriter.fsyncMaterializedState()}) to source the epoch's fs-wide
+     * {@code syncfs}, which must never no-op just because every column fd is closed (CRIT-1).
+     */
+    public long getFd() {
+        return txMemBase != null ? txMemBase.getFd() : -1;
     }
 
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
@@ -364,6 +442,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, Long.MAX_VALUE);
         txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, Long.MIN_VALUE);
         txMemBase.putLong(readBaseOffset + TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0));
+        // No body-checksum refresh here: every field written above lives in [80,116) (seqTxn + lag fields +
+        // the offset-88 lag checksum), which is DELIBERATELY EXCLUDED from the body checksum. The checksum
+        // stays valid across this in-place mutation, which is exactly why it is race-free with readers.
     }
 
     public void resetLagValuesUnsafe() {
@@ -374,6 +455,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void resetStructureVersionUnsafe() {
         txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
+        // struct_version lives in [0,80), which IS covered by the body checksum, and this is an in-place
+        // edit WITHOUT a version bump - so the stored checksum would otherwise go stale and the very next
+        // open would falsely fall back / fail. Refresh it. This path runs only offline (TableConverter at
+        // engine startup, single-threaded, no concurrent readers), so recomputing here is race-free.
+        storeBodyChecksum(readBaseOffset, readRecordSize, getPartitionTableSizeOffset(symbolColumnCount));
     }
 
     public void resetTimestamp() {
@@ -391,6 +477,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             recordStructureVersion++;
             columnVersion = newVersion;
         }
+    }
+
+    /**
+     * Partition timestamps mutated since {@link #clearDirtyPartitions()}. See the {@code dirtyPartitions}
+     * field for the completeness contract this set carries.
+     */
+    public LongHashSet getDirtyPartitions() {
+        return dirtyPartitions;
+    }
+
+    /**
+     * Drop the accumulated write set. Called by the adaptive epoch ONLY after the flush it drove has
+     * succeeded, so a failed epoch retries against the same set rather than losing it.
+     */
+    public void clearDirtyPartitions() {
+        dirtyPartitions.clear();
     }
 
     public void setExtensionListener(TableWriter.ExtensionListener extensionListener) {
@@ -442,6 +544,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionParquetFileSizeByRawIndex(int indexRaw, long size) {
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -459,6 +562,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionParquetGeneratedByRawIndex(int indexRaw, boolean parquetGenerated) {
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -472,6 +576,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionReadOnlyByRawIndex(int indexRaw, boolean isReadOnly) {
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -489,6 +594,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionRemoteByRawIndex(int indexRaw, boolean isRemote) {
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -516,6 +622,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
      * reads back as the -1 "no version" sentinel.
      */
     public void setPartitionSeqTxnByRawIndex(int indexRaw, long seqTxn) {
+        markPartitionDirtyByRawIndex(indexRaw);
         setPartitionParquetGeneratedByRawIndex(indexRaw, false);
         long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT);
         final long valid = seqTxn > 0 ? PARTITION_SEQ_TXN_VALID_BIT : 0L;
@@ -607,6 +714,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void updatePartitionSizeAndTxnByRawIndex(int index, long partitionSize) {
         recordStructureVersion++;
+        markPartitionDirtyByRawIndex(index);
         updatePartitionSizeByRawIndex(index, partitionSize);
         // New partition version is written, reset the squash counter.
         setPartitionSquashCounterByRawIndex(index, (short) 0);
@@ -721,16 +829,28 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putInt(symbolSizeOffset, bytesSymbols);
         txMemBase.putInt(partitionsSizeOffset, bytesPartitions);
 
+        // Body checksum over the commit-immutable fields. Derive the size from the SAME helper the reader
+        // uses (calculateTxRecordSize) and the partition-table start the SAME way the reader does
+        // (TX_RECORD_HEADER_SIZE + symbolBytes == getPartitionTableSizeOffset(symbolCount)) so the covered
+        // range is identical. Must be written before the fence and version bump so a torn body never hides
+        // behind a valid version word.
+        long recordSize = calculateTxRecordSize(bytesSymbols, bytesPartitions);
+        storeBodyChecksum(areaOffset, recordSize, TX_RECORD_HEADER_SIZE + bytesSymbols);
+
         Unsafe.storeFence();
         txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
 
-        readRecordSize = calculateTxRecordSize(bytesSymbols, bytesPartitions);
+        readRecordSize = recordSize;
         readBaseOffset = areaOffset;
 
         assert readBaseOffset + readRecordSize <= txMemBase.size();
         super.switchRecord(readBaseOffset, readRecordSize);
 
-        if (commitMode != CommitMode.NOSYNC) {
+        // appliesColumnSync (SYNC/ASYNC only), NOT `!= NOSYNC`: under ADAPTIVE the _txn pointer is lazily
+        // durable like the columns it exposes, and is made crash-safe by the durable epoch (fsync()) plus
+        // recovery roll-forward. See resolveCommitMode(). The bootstrap caller that passes NOSYNC explicitly
+        // is unaffected (both forms are false for NOSYNC).
+        if (CommitMode.appliesColumnSync(commitMode)) {
             txMemBase.sync(commitMode == CommitMode.ASYNC);
         }
     }
@@ -751,6 +871,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             extensionListener.onTableExtended(partitionTimestamp);
         }
         recordStructureVersion++;
+        dirtyPartitions.add(partitionTimestamp);
         initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn);
     }
 
@@ -798,6 +919,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     private void setPartitionFormat(long timestamp, boolean isParquetFormat, long version) {
         int indexRaw = findAttachedPartitionRawIndex(timestamp);
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -816,6 +938,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void setPartitionSquashCounterByRawIndex(int partitionRawIndex, short partitionSquashCounter) {
+        markPartitionDirtyByRawIndex(partitionRawIndex);
         int rawIndex = partitionRawIndex + PARTITION_MASKED_SIZE_OFFSET;
         long partitionSizeMasked = attachedPartitions.getQuick(rawIndex);
         // Clear the existing squash counter bits
@@ -823,6 +946,24 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         // Set the new squash counter value
         partitionSizeMasked |= ((long) (partitionSquashCounter & PARTITION_SQUASH_COUNTER_MAX) << PARTITION_SQUASH_COUNTER_BIT_OFFSET);
         attachedPartitions.setQuick(rawIndex, partitionSizeMasked);
+    }
+
+    // Computes and stores the commit-immutable body checksum at [baseOffset + TX_OFFSET_BODY_CHECKSUM_64].
+    // MUST be called after the covered fields ([0,80) scalars + the partition table) have been written and
+    // BEFORE the storeFence()/version bump, so that a torn body under a valid version word is detectable by
+    // the reader. recordSize MUST equal what was actually committed (calculateTxRecordSize(...)) and
+    // partitionTableStart MUST equal getPartitionTableSizeOffset(symbolCount) - both identical to what the
+    // reader derives, or every verify mismatches. The excluded middle (lag, symbol counts, the checksum/gap)
+    // is NOT covered, so the in-place mutations to those regions never invalidate this checksum.
+    private void storeBodyChecksum(int baseOffset, long recordSize, long partitionTableStart) {
+        long checksum = calculateTxnBodyChecksum(txMemBase.addressOf(baseOffset), recordSize, partitionTableStart);
+        txMemBase.putLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64, checksum);
+        // Stamp the checksum with the record it belongs to. Read from the record rather than the `txn` field
+        // so the two cannot disagree: this is the value a reader compares against.
+        txMemBase.putInt(
+                baseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32,
+                (int) txMemBase.getLong(baseOffset + TX_OFFSET_TXN_64)
+        );
     }
 
     private void storeSymbolCounts(ObjList<? extends SymbolCountProvider> symbolCountProviders) {
@@ -840,7 +981,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         updateAttachedPartitionSizeByRawIndex(findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize, partitionNameTxn);
     }
 
+    // Record a partition whose on-disk bytes this writer has changed. Marks unconditionally rather than
+    // only when a value actually differs: an over-broad set costs one extra fsync, an under-broad one
+    // leaves data non-durable behind an epoch that references it.
+    private void markPartitionDirtyByRawIndex(int indexRaw) {
+        if (indexRaw > -1) {
+            dirtyPartitions.add(attachedPartitions.getQuick(indexRaw + PARTITION_TS_OFFSET));
+        }
+    }
+
     private void updatePartitionSizeByRawIndex(int index, long partitionSize) {
+        markPartitionDirtyByRawIndex(index);
         int offset = index + PARTITION_MASKED_SIZE_OFFSET;
         long maskedSize = attachedPartitions.getQuick(offset);
         if ((maskedSize & PARTITION_SIZE_MASK) != partitionSize) {

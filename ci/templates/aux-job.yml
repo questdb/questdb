@@ -97,7 +97,11 @@ jobs:
           # gcc is already present (the core and Rust builds need it); add cmake and nasm (the
           # x86-64 asmlib) only when missing, as the client native build does.
           if ! command -v cmake >/dev/null 2>&1 || ! command -v nasm >/dev/null 2>&1; then
-            sudo apt-get update
+            # TEMPORARY: see the same guard in templates/build-client-native.yml.
+            # A stale HashiCorp apt source on the agent image makes apt-get update
+            # exit 100, which set -e turns into a dead step. The install below
+            # still runs under set -e, so a broken Ubuntu mirror still fails here.
+            sudo apt-get update || echo "apt-get update reported errors; continuing"
             sudo apt-get install -y cmake nasm build-essential
           fi
           # The library embeds jni.h from JAVA_HOME.

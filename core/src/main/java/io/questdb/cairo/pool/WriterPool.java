@@ -130,6 +130,40 @@ public class WriterPool extends AbstractPool {
     }
 
     /**
+     * Force-reclaim every entry still checked out or locked by the CALLING thread, closing its writer,
+     * releasing any held {@code .lock} fd, resetting ownership and evicting the entry. Returns the count
+     * reclaimed.
+     * <p>
+     * This exists for fault-injection crash tests: a test that simulates power loss by throwing inside a
+     * {@link TableWriter#close()}/commit unwinds with the pool entry still owned, and {@link #releaseAll}
+     * cannot reclaim it (that path only frees {@code UNALLOCATED} entries — an owned slot can be returned
+     * only by its owner or a full pool close). A real power loss's process death reclaims such an orphan;
+     * this models that on the live JVM. Scoped to the caller's own orphans (owner == current thread) so it
+     * is safe to call on a live engine between iterations. On a healthy engine it is a no-op: production
+     * never leaks an owned writer (every acquire is {@code finally}/try-with guarded).
+     */
+    @TestOnly
+    public int releaseCrashOrphanedWriters() {
+        final long thread = Thread.currentThread().threadId();
+        int reclaimed = 0;
+        final Iterator<Entry> iterator = entries.values().iterator();
+        while (iterator.hasNext()) {
+            final Entry e = iterator.next();
+            if (e.owner != thread) {
+                continue;
+            }
+            closeWriter(thread, e, PoolListener.EV_EXPIRE, PoolConstants.CR_POOL_CLOSE); // frees writer mem (no-op if locked)
+            if (e.lockFd != -1 && ff.close(e.lockFd)) {
+                e.lockFd = -1; // release the .lock fd a lock()'d orphan still holds
+            }
+            e.owner = UNALLOCATED;
+            iterator.remove();
+            reclaimed++;
+        }
+        return reclaimed;
+    }
+
+    /**
      * <p>
      * Creates or retrieves existing TableWriter from pool. Because of TableWriter compliance with <b>single
      * writer model</b> pool ensures there is single TableWriter instance for given table name. Table name is unique in

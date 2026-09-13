@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
@@ -42,6 +43,7 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -55,6 +57,7 @@ public class WalEventCursor {
     private static final int REPLACE_RANGE_LO_OFFSET = REPLACE_RANGE_HI_OFFSET + Long.BYTES;
     private static final int REPLACE_RANGE_EXTRA_OFFSET = REPLACE_RANGE_LO_OFFSET + Long.BYTES;
     private static final int DEDUP_FOOTER_SIZE = REPLACE_RANGE_EXTRA_OFFSET;
+    private final MemoryCMR checksumMem;
     private final DataInfo dataInfo = new DataInfo();
     private final MemoryCMR eventMem;
     private final LiveViewDataInfo lvDataInfo = new LiveViewDataInfo();
@@ -68,9 +71,11 @@ public class WalEventCursor {
     private long offset = Integer.BYTES; // skip wal meta version
     private long txn = END_OF_EVENTS;
     private byte type = NONE;
+    private boolean checksumRequired;
 
-    public WalEventCursor(MemoryCMR eventMem) {
+    public WalEventCursor(MemoryCMR eventMem, MemoryCMR checksumMem) {
         this.eventMem = eventMem;
+        this.checksumMem = checksumMem;
     }
 
     public void drain() {
@@ -162,6 +167,7 @@ public class WalEventCursor {
 
     public boolean hasNext() {
         offset = nextOffset;
+        final long recordStart = offset;
         int length = readInt();
         if (length < 1) {
             // EOF
@@ -173,12 +179,54 @@ public class WalEventCursor {
             eventMem.extend(nextOffset + Integer.BYTES);
             memSize = eventMem.size();
         }
+        verifyRecordChecksum(recordStart, length);
         txn = readLong();
         if (txn == END_OF_EVENTS) {
             return false;
         }
         readRecord();
         return true;
+    }
+
+    private void verifyRecordChecksum(long recordStart, int length) {
+        if (!checksumRequired) {
+            return;
+        }
+        if (length <= Integer.BYTES || memSize < recordStart + length) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("invalid checksummed WAL event record [offset=").put(recordStart).put(", len=").put(length).put(']');
+        }
+        final long recordTxn = eventMem.getLong(recordStart + Integer.BYTES);
+        if (recordTxn < 0 || recordTxn > Integer.MAX_VALUE) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("invalid checksummed WAL event txn [txn=").put(recordTxn).put(']');
+        }
+        final long entryOffset = WALE_CHECKSUM_HEADER_SIZE + recordTxn * WALE_CHECKSUM_ENTRY_SIZE;
+        if (entryOffset + WALE_CHECKSUM_ENTRY_SIZE > checksumMem.size()) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("WAL event checksum sidecar is truncated [txn=").put(recordTxn).put(']');
+        }
+        final long storedOffset = checksumMem.getLong(entryOffset + WALE_CHECKSUM_ENTRY_OFFSET_OFFSET);
+        final int storedLength = checksumMem.getInt(entryOffset + WALE_CHECKSUM_ENTRY_LENGTH_OFFSET);
+        final long stored = checksumMem.getLong(entryOffset + WALE_CHECKSUM_ENTRY_VALUE_OFFSET);
+        // Acquire, pairing with the writer's release in WalEventWriter.finishRecord(): the length this
+        // cursor already read is the publishing store, so the sidecar entry that describes the record
+        // must not be loaded from before it.
+        Unsafe.loadFence();
+        // Body only -- the 4-byte length header is verified by the storedLength comparison below, because
+        // the writer cannot hash a length it has not written yet without publishing the record first.
+        final long actual = TableUtils.calculateCvAreaChecksum(eventMem.addressOf(recordStart) + Integer.BYTES, length - Integer.BYTES);
+        if (storedOffset != recordStart || storedLength != length || stored == 0 || actual != stored) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("torn WAL event record [txn=").put(recordTxn)
+                    .put(", offset=").put(recordStart).put(", len=").put(length)
+                    .put(", storedOffset=").put(storedOffset).put(", storedLen=").put(storedLength)
+                    .put(", expected=").put(stored).put(", actual=").put(actual).put(']');
+        }
+    }
+
+    void setChecksumRequired(boolean checksumRequired) {
+        this.checksumRequired = checksumRequired;
     }
 
     public void reset() {
@@ -437,10 +485,12 @@ public class WalEventCursor {
         reset();
         if (offset > 0) {
             this.offset = offset;
+            // Must precede verifyRecordChecksum(): it reads memSize to bound the record before hashing.
+            this.memSize = eventMem.size();
             int size = readInt();
             this.nextOffset = offset + size;
+            verifyRecordChecksum(offset, size);
             this.txn = readLong();
-            this.memSize = eventMem.size();
 
             readRecord();
         }

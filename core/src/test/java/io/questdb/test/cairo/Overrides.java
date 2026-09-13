@@ -33,6 +33,7 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerConfigurationException;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.std.Chars;
@@ -50,6 +51,20 @@ import java.util.Properties;
 import static io.questdb.cairo.DebugUtils.LOG;
 
 public class Overrides {
+
+    /**
+     * Commit mode every test runs under, unless it sets one itself.
+     * <p>
+     * The suite deliberately runs ADAPTIVE while the shipped default ({@link CommitMode#DEFAULT}) is
+     * NOSYNC, so the durable path is exercised everywhere rather than only by the tests that ask for it.
+     * Sweeping the suite the other way is a configuration change, not a code change:
+     * <pre>mvn test -Dquestdb.test.commit.mode=nosync</pre>
+     * <p>
+     * Every path that builds a test configuration reads this, so flipping it moves the whole suite at
+     * once: here, {@code DefaultTestCairoConfiguration}, and {@code AbstractBootstrapTest}'s generated
+     * server.conf. {@code TestCommitModeSwitchTest} fails if a fourth path is ever added without it.
+     */
+    public static final String TEST_COMMIT_MODE = System.getProperty("questdb.test.commit.mode", "adaptive");
     private static final BuildInformationHolder buildInformationHolder = new BuildInformationHolder();
     private final Properties defaultProperties = new Properties();
     private final Properties properties = new Properties();
@@ -131,6 +146,14 @@ public class Overrides {
 
     public boolean isHidingTelemetryTable() {
         return isHiddenTelemetryTable;
+    }
+
+    /**
+     * Whether a test has explicitly pinned {@code key}, as opposed to leaving it at its default. Lets a
+     * configuration override step aside for a deliberate choice instead of silently outvoting it.
+     */
+    public boolean isPropertySet(ConfigPropertyKey key) {
+        return properties.getProperty(key.getPropertyPath()) != null;
     }
 
     public boolean mangleTableDirNames() {
@@ -227,6 +250,13 @@ public class Overrides {
 
     private static void resetToDefaultTestProperties(Properties properties) {
         properties.clear();
+        // Without this the two config paths disagree: a test that sets no property at all gets
+        // DefaultTestCairoConfiguration, but the moment it sets ANY property it switches to
+        // PropServerConfiguration and silently inherits the shipped default. That is how flipping the
+        // product default knocked out the partition-checksum suites -- coverage is maintained only under
+        // adaptive, so those tables stopped getting sidecars for a reason that had nothing to do with the
+        // code under test.
+        properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath(), TEST_COMMIT_MODE);
         properties.setProperty(PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CIRCUIT_BREAKER_THROTTLE.getPropertyPath(), "5");
         properties.setProperty(PropertyKey.QUERY_TIMEOUT.getPropertyPath(), "0");

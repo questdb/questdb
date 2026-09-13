@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.FastCommitCheck;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
@@ -188,6 +189,16 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double cairoAutoScaleSymbolCapacityThreshold;
     private final long cairoCommitLatency;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
+    // Effective (property AND not-fast_commit) batched-SYNC enable, computed lazily ONCE and cached:
+    // -1 = not yet computed, 0 = disabled, 1 = enabled. fast_commit status is static per mount, so
+    // detection runs at most once. Written under adaptiveEpochColumnSyncLock.
+    // volatile: the fast path reads this OUTSIDE the lock (classic double-checked locking). Without it the
+    // JMM does not require a thread that never enters the synchronized block to observe the cached write,
+    // so "at most once" would not hold and FastCommitCheck.classifyDbRoot -- a /proc/mounts plus
+    // /proc/fs/ext4/*/options open+read -- could re-run indefinitely. int access is already atomic, so
+    // this is a visibility fix only; there was never a torn value.
+    private final Object adaptiveEpochColumnSyncLock = new Object();
+    private volatile int adaptiveEpochColumnSyncEffective = -1;
     private final int cairoGroupByBatchSize;
     private final int cairoGroupByMergeShardQueueCapacity;
     private final boolean cairoGroupByPresizeEnabled;
@@ -231,7 +242,30 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double columnPurgeRetryDelayMultiplier;
     private final int columnPurgeTaskPoolCapacity;
     private final int commitMode;
+    // Min interval between adaptive durable epochs per table (ms); default 60000. See
+    // CairoConfiguration.getAdaptiveEpochIntervalMs / ApplyWal2TableJob.
+    private final long adaptiveEpochIntervalMs;
+    // Max rows applied to a table since its last durable epoch before an epoch is FORCED, independent
+    // of the interval. Bounds WAL retention + recovery replay. Default 5_000_000; <= 0 disables the cap.
+    private final long adaptiveEpochMaxRows;
+    // Adaptive group-commit window (us); default 50_000 (50ms). 0 = synchronous zero-loss; >0 batches
+    // the WAL fdatasync across an adaptive table's commits within the window (RPO <= W). See
+    // CairoConfiguration.getAdaptiveCommitGroupWindowUs / WalWriter group-commit / WalPurgeJob flusher.
+    private final long adaptiveCommitGroupWindowUs;
+    // Whether the adaptive durable-epoch recovery roll-forward runs at startup; default true.
+    // See CairoConfiguration.isAdaptiveRecoveryRollForwardEnabled / RecoveryCoordinator.
+    private final boolean adaptiveRecoveryRollForwardEnabled;
+    // Whether a clean writer close flushes a final durable epoch over the tail; default true.
+    // See CairoConfiguration.isAdaptiveEpochFlushOnClose / TableWriter.doClose.
+    private final boolean adaptiveEpochFlushOnClose;
+    // Raw value of cairo.adaptive.epoch.column.sync.batched (operator override / safety valve), default true.
+    private final boolean adaptiveEpochColumnSyncBatchedProp;
+    private final boolean walCommitWritebackDrain;
     private final String confRoot;
+    // Whether to run the live ext4 fast_commit detection (production only). Mirrors
+    // loadAdditionalConfigurations: true for the real server, false for the test harness, so unit
+    // tests are deterministic and just see the raw adaptiveEpochColumnSyncBatchedProp value (no detection).
+    private final boolean detectFastCommit;
     private final boolean configReloadEnabled;
     private final boolean copierChunkedEnabled;
     private final int copierType;
@@ -1396,6 +1430,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.publicDirectory = new File(installRoot, publicDirectory).getAbsolutePath();
             }
 
+            // Left at 0 (V1). Flipping this to 5000 was attempted and REVERTED: the adaptive crash
+            // sweeps showed that V2 splits the sequencer across a header file and part files, so a
+            // crash can leave the header advertising txns whose part never landed, and the apply path
+            // suspends the table. V1 is a single file and structurally cannot do that. Making V2 the
+            // default needs that cross-file ordering closed first -- see the crash-sweep finding.
             this.defaultSeqPartTxnCount = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
             this.httpNetConnectionHint = getBoolean(properties, env, PropertyKey.HTTP_NET_CONNECTION_HINT, false);
             // deprecated
@@ -1623,7 +1662,42 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.exportWorkerSleepTimeout = getMillis(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_TIMEOUT, 10);
             this.exportWorkerYieldThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_YIELD_THRESHOLD, 1000);
 
-            this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
+            // The shipped default is CommitMode.DEFAULT, which is NOSYNC. Adaptive buys crash-safe
+            // recovery that no other layer provides on a single node, but it costs real throughput
+            // (~15-17% lower ingest and ~1.6x the bytes written, measured on a full-day 489M-row load,
+            // and far worse on small commits -- see docs/adaptive-commit-mode.md §3), so it stays
+            // opt-in until an ingest benchmark justifies imposing that trade on every user.
+            //
+            // Flipping the default is a one-line change to CommitMode.DEFAULT, which both this class and
+            // DefaultCairoConfiguration defer to so a server and an embedded process cannot disagree.
+            // Change the shipped conf template alongside it (site/conf/server.conf documents the default
+            // in prose) or the two drift apart.
+            //
+            // The TEST SUITE does not follow this default: it runs adaptive via questdb.test.commit.mode
+            // (see Overrides.TEST_COMMIT_MODE), so CI exercises the durable path everywhere.
+            //
+            // Enterprise overrides this to nosync WHEN REPLICATION IS CONFIGURED
+            // (EntPropServerConfiguration): a replicated deployment already survives the loss of a
+            // node, and with store-and-forward clients the replay makes that RPO 0, so paying for
+            // local durability as well is redundant. That override is conditioned on replication
+            // actually being set up, not on the edition -- an enterprise node without an object store
+            // has no more redundancy than an OSS one and keeps this default.
+            // While the OSS default is itself nosync that override resolves to the same value it would
+            // have anyway; it is the guard for the day this default flips, not a behaviour difference today.
+            //
+            // An explicit cairo.commit.mode always wins over both.
+            this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE, CommitMode.toString(CommitMode.DEFAULT));
+            this.adaptiveEpochIntervalMs = getMillis(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 60000);
+            this.adaptiveEpochMaxRows = getLong(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 5_000_000);
+            // Default 50_000 (50ms) batches the device flush within a small window (RPO <= 50ms) under
+            // ADAPTIVE. Set to 0 for today's synchronous fsync-before-return (zero loss). A negative
+            // value is clamped to 0 (synchronous) so a misconfiguration never silently weakens durability.
+            this.adaptiveCommitGroupWindowUs = Math.max(0, getMicros(properties, env, PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 50_000));
+            this.adaptiveRecoveryRollForwardEnabled = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, true);
+            this.adaptiveEpochFlushOnClose = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, true);
+            this.adaptiveEpochColumnSyncBatchedProp = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, true);
+            this.walCommitWritebackDrain = getBoolean(properties, env, PropertyKey.CAIRO_WAL_COMMIT_WRITEBACK_DRAIN, true);
+            this.detectFastCommit = loadAdditionalConfigurations;
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
             this.defaultSymbolCacheFlag = getBoolean(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, true);
             this.defaultSymbolCapacity = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 256);
@@ -2004,7 +2078,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineUdpOwnThreadAffinity = getInt(properties, env, PropertyKey.LINE_UDP_OWN_THREAD_AFFINITY, -1);
             this.lineUdpOwnThread = getBoolean(properties, env, PropertyKey.LINE_UDP_OWN_THREAD, false);
             this.lineUdpUnicast = getBoolean(properties, env, PropertyKey.LINE_UDP_UNICAST, false);
-            this.lineUdpCommitMode = getCommitMode(properties, env, PropertyKey.LINE_UDP_COMMIT_MODE);
+            // Legacy UDP ingestion keeps its pre-adaptive default (nosync); the adaptive durable-epoch
+            // machinery is WAL-apply-only and does not apply to the line-UDP commit path.
+            this.lineUdpCommitMode = getCommitMode(properties, env, PropertyKey.LINE_UDP_COMMIT_MODE, "nosync");
             this.lineUdpTimestampUnit = getLineTimestampUnit(properties, env, PropertyKey.LINE_UDP_TIMESTAMP);
             String defaultUdpPartitionByProperty = getString(properties, env, PropertyKey.LINE_DEFAULT_PARTITION_BY, "DAY");
             this.lineUdpDefaultPartitionBy = PartitionBy.fromString(defaultUdpPartitionByProperty);
@@ -2842,24 +2918,25 @@ public class PropServerConfiguration implements ServerConfiguration {
         return Long.MAX_VALUE;
     }
 
-    private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
-        final String commitMode = getString(properties, env, key, "nosync");
+    private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultMode) throws ServerConfigurationException {
+        final String commitMode = getString(properties, env, key, defaultMode);
 
         // must not be null because we provided non-null default value
         assert commitMode != null;
 
-        if (Chars.equalsLowerCaseAscii(commitMode, "nosync")) {
-            return CommitMode.NOSYNC;
+        final int mode = CommitMode.fromString(commitMode);
+        if (mode != CommitMode.UNKNOWN) {
+            return mode;
         }
 
-        if (Chars.equalsLowerCaseAscii(commitMode, "async")) {
-            return CommitMode.ASYNC;
+        if (key == PropertyKey.CAIRO_COMMIT_MODE) {
+            // The database-wide default is a durability contract. A typo must not silently select NOSYNC,
+            // especially now that ADAPTIVE is the shipped default.
+            throw new ServerConfigurationException("invalid configuration value [key="
+                    + key.getPropertyPath() + ", value=" + commitMode
+                    + ", expected=nosync|async|sync|adaptive]");
         }
-
-        if (Chars.equalsLowerCaseAscii(commitMode, "sync")) {
-            return CommitMode.SYNC;
-        }
-
+        // Preserve the historical line-UDP fallback for its separate commit-mode setting.
         return CommitMode.NOSYNC;
     }
 
@@ -4196,6 +4273,31 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getCommitMode() {
             return commitMode;
+        }
+
+        @Override
+        public long getAdaptiveEpochIntervalMs() {
+            return adaptiveEpochIntervalMs;
+        }
+
+        @Override
+        public long getAdaptiveEpochMaxRows() {
+            return adaptiveEpochMaxRows;
+        }
+
+        @Override
+        public long getAdaptiveCommitGroupWindowUs() {
+            return adaptiveCommitGroupWindowUs;
+        }
+
+        @Override
+        public boolean isAdaptiveRecoveryRollForwardEnabled() {
+            return adaptiveRecoveryRollForwardEnabled;
+        }
+
+        @Override
+        public boolean isAdaptiveEpochFlushOnClose() {
+            return adaptiveEpochFlushOnClose;
         }
 
         @Override
@@ -5644,6 +5746,39 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWriterTickRowsCountMod() {
             return writerTickRowsCountMod;
+        }
+
+        @Override
+        public boolean isAdaptiveEpochColumnSyncBatched() {
+            // Effective = property AND (DB-root ext4 fast_commit is NOT enabled). The property is the
+            // operator override (also the reliable control when detection is UNKNOWN). fast_commit is
+            // static per mount, so detect once and cache. In the test harness detectFastCommit is
+            // false, so this returns the raw property without touching the real filesystem.
+            if (!adaptiveEpochColumnSyncBatchedProp) {
+                return false;
+            }
+            if (!detectFastCommit) {
+                return true;
+            }
+            int cached = adaptiveEpochColumnSyncEffective;
+            if (cached >= 0) {
+                return cached == 1;
+            }
+            synchronized (adaptiveEpochColumnSyncLock) {
+                cached = adaptiveEpochColumnSyncEffective;
+                if (cached < 0) {
+                    // Only FAST_COMMIT_ENABLED disables the optimization; UNKNOWN / NOT_DETECTED keep it on.
+                    final boolean enabled = FastCommitCheck.classifyDbRoot(getFilesFacade(), dbRoot) != FastCommitCheck.FAST_COMMIT_ENABLED;
+                    cached = enabled ? 1 : 0;
+                    adaptiveEpochColumnSyncEffective = cached;
+                }
+                return cached == 1;
+            }
+        }
+
+        @Override
+        public boolean isWalCommitWritebackDrainEnabled() {
+            return walCommitWritebackDrain;
         }
 
         @Override

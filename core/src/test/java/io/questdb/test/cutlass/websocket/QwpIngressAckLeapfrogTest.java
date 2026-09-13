@@ -109,7 +109,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             try (CairoEngine demotableEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
                 private final DurableAckRegistry laggingRegistry = new DurableAckRegistry() {
                     @Override
-                    public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+                    public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
                         // uploads never catch up: the deferral stays armed for
                         // the whole grace window
                         return -1L;

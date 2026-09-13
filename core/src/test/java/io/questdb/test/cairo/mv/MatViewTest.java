@@ -991,6 +991,14 @@ public class MatViewTest extends AbstractCairoTest {
         // it the view never caches its refresh intervals, so WalPurgeJob keeps every base table WAL
         // segment from the view's last refreshed txn onwards -- unbounded disk growth on the base
         // table, not on the view.
+        //
+        // The suite runs the ADAPTIVE commit mode, under which WalPurgeJob keeps a second, unrelated
+        // floor: WAL segments above the last durable epoch are retained so adaptive crash-recovery can
+        // re-apply from it. This test freezes the clock (currentMicros below), so after the first apply
+        // the default 60s epoch cadence can never fire again and that floor -- not the refresh gate
+        // under test -- would pin wal1 at the final purge assertion. Epoch on every apply so the purge
+        // behaves as it does under the per-commit-durability modes.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -2606,6 +2614,11 @@ public class MatViewTest extends AbstractCairoTest {
                             gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
                             """));
 
+            // Adaptive holds the base WAL purge floor at the last durable epoch; a full refresh reads
+            // base_price but does not write it, so its epoch never advances past the tail. Close the
+            // writer to flush a durable epoch (as prod eviction does) before asserting the now-consumed
+            // base WAL is reclaimed.
+            engine.releaseInactive();
             engine.releaseInactiveTableSequencers();
             drainPurgeJob();
 
@@ -2688,6 +2701,11 @@ public class MatViewTest extends AbstractCairoTest {
                             gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
                             """));
 
+            // Adaptive holds the base WAL purge floor at the last durable epoch; a full refresh reads
+            // base_price but does not write it, so its epoch never advances past the tail. Close the
+            // writer to flush a durable epoch (as prod eviction does) before asserting the now-consumed
+            // base WAL is reclaimed.
+            engine.releaseInactive();
             engine.releaseInactiveTableSequencers();
             drainPurgeJob();
 
@@ -2747,6 +2765,12 @@ public class MatViewTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
+                // Under the default ADAPTIVE commit mode the base-table WAL purge floor is held back to
+                // the last durable epoch (crash recovery re-applies from there). With the test clock
+                // frozen no cadence epoch fires, so close the writer to flush a final durable epoch over
+                // the applied tail -- exactly as an idle writer's eviction does in production -- before
+                // asserting the now-superseded base WAL is reclaimed.
+                engine.releaseInactive();
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -6695,6 +6719,12 @@ public class MatViewTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
+                // Under the default ADAPTIVE commit mode the base-table WAL purge floor is held back to
+                // the last durable epoch (crash recovery re-applies from there). With the test clock
+                // frozen no cadence epoch fires, so close the writer to flush a final durable epoch over
+                // the applied tail -- exactly as an idle writer's eviction does in production -- before
+                // asserting the now-superseded base WAL is reclaimed.
+                engine.releaseInactive();
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -6814,6 +6844,12 @@ public class MatViewTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
+                // Under the default ADAPTIVE commit mode the base-table WAL purge floor is held back to
+                // the last durable epoch (crash recovery re-applies from there). With the test clock
+                // frozen no cadence epoch fires, so close the writer to flush a final durable epoch over
+                // the applied tail -- exactly as an idle writer's eviction does in production -- before
+                // asserting the now-superseded base WAL is reclaimed.
+                engine.releaseInactive();
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -7934,9 +7970,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            base_price\tfalse\t2\t0\t2\t\t\t0
-                            price_1h\ttrue\t1\t0\t3\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t2\t0\t2\t\t\t0\t1\t0\t2\t2024-01-01T01:01:01.842000Z
+                            price_1h\ttrue\t1\t0\t3\t\t\t0\t1\t0\t3\t2024-01-01T01:01:01.842000Z
                             """);
 
             // resume mat view
@@ -7959,9 +7995,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            base_price\tfalse\t2\t0\t2\t\t\t0
-                            price_1h\tfalse\t3\t0\t3\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t2\t0\t2\t\t\t0\t1\t0\t2\t2024-01-01T01:01:01.842000Z
+                            price_1h\tfalse\t3\t0\t3\t\t\t0\t1\t0\t3\t2024-01-01T01:01:01.842000Z
                             """);
 
             // suspend mat view again
@@ -7986,9 +8022,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            base_price\tfalse\t3\t0\t3\t\t\t0
-                            price_1h\ttrue\t3\t0\t5\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t3\t0\t3\t\t\t0\t1\t0\t3\t2024-01-01T01:01:01.842000Z
+                            price_1h\ttrue\t3\t0\t5\t\t\t0\t1\t0\t5\t2024-01-01T01:01:01.842000Z
                             """);
 
             // resume mat view from txn
@@ -8011,9 +8047,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            base_price\tfalse\t3\t0\t3\t\t\t0
-                            price_1h\tfalse\t5\t0\t5\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t3\t0\t3\t\t\t0\t1\t0\t3\t2024-01-01T01:01:01.842000Z
+                            price_1h\tfalse\t5\t0\t5\t\t\t0\t1\t0\t5\t2024-01-01T01:01:01.842000Z
                             """);
         });
     }

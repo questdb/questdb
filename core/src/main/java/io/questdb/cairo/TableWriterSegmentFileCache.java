@@ -45,6 +45,8 @@ import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
+import static io.questdb.cairo.CairoException.METADATA_VALIDATION;
+
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 import static io.questdb.std.Files.SEPARATOR;
@@ -217,6 +219,7 @@ public class TableWriterSegmentFileCache {
                 if (columnType > 0) {
                     int sizeBitsPow2 = ColumnType.getWalDataColumnShl(columnType, columnIndex == timestampIndex);
 
+                    final FilesFacade ff = configuration.getFilesFacade();
                     if (ColumnType.isVarSize(columnType)) {
                         MemoryCMOR auxMem = walColumnMemoryPool.pop();
                         MemoryCMOR dataMem = walColumnMemoryPool.pop();
@@ -236,8 +239,15 @@ public class TableWriterSegmentFileCache {
                                     .$(", walSegment=").$(walSegmentId)
                                     .I$();
                         }
+
+                        // Guard: aux file must cover all rowHi entries before mapping.
+                        if (rowHi > 0) {
+                            validateSegmentFileLength(auxFd, ifile, metadata.getColumnName(columnIndex),
+                                    columnTypeDriver.getAuxVectorSize(rowHi));
+                        }
+
                         columnTypeDriver.configureAuxMemOM(
-                                configuration.getFilesFacade(),
+                                ff,
                                 auxMem,
                                 auxFd,
                                 ifile,
@@ -255,8 +265,17 @@ public class TableWriterSegmentFileCache {
                                     .$(", walSegment=").$(walSegmentId)
                                     .I$();
                         }
+
+                        // Guard: data file must cover the byte range required by the last aux entry.
+                        // Uses the aux fd (now open inside auxMem) to read the data-end offset from disk
+                        // without requiring the aux to be mmap-ed yet (lazy mapping defers the mmap call).
+                        if (rowHi > 0) {
+                            validateSegmentFileLength(dataFd, dfile, metadata.getColumnName(columnIndex),
+                                    columnTypeDriver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), rowHi - 1));
+                        }
+
                         columnTypeDriver.configureDataMemOM(
-                                configuration.getFilesFacade(),
+                                ff,
                                 auxMem,
                                 dataMem,
                                 dataFd,
@@ -279,8 +298,15 @@ public class TableWriterSegmentFileCache {
                                     .$(", walSegment=").$(walSegmentId)
                                     .I$();
                         }
+
+                        // Guard: fixed-width column file must cover all rowHi rows before mapping.
+                        if (rowHi > 0 && sizeBitsPow2 >= 0) {
+                            validateSegmentFileLength(fd, dfile, metadata.getColumnName(columnIndex),
+                                    rowHi << sizeBitsPow2);
+                        }
+
                         primary.ofOffset(
-                                configuration.getFilesFacade(),
+                                ff,
                                 fd,
                                 false,
                                 dfile,
@@ -349,6 +375,20 @@ public class TableWriterSegmentFileCache {
             }
         } finally {
             path.trimTo(pathSize1);
+        }
+    }
+
+    private void validateSegmentFileLength(long fd, LPSZ file, CharSequence columnName, long required) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long actual = fd != -1 ? ff.length(fd) : ff.length(file);
+        if (actual < required) {
+            throw CairoException.critical(METADATA_VALIDATION)
+                    .put("WAL segment column too short for committed row range")
+                    .put(" [col=").put(columnName)
+                    .put(", file=").put(file)
+                    .put(", required=").put(required)
+                    .put(", actual=").put(actual)
+                    .put(']');
         }
     }
 

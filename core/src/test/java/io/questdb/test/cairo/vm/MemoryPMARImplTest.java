@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.vm;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.vm.MemoryPARWImpl;
 import io.questdb.cairo.vm.MemoryPMARImpl;
 import io.questdb.cairo.vm.api.MemoryM;
@@ -49,6 +50,77 @@ public class MemoryPMARImplTest {
 
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
+
+    /**
+     * {@link MemoryPMARImpl#release(long)} must msync completed/flipped pages according to the commit mode
+     * threaded in via {@code setCommitMode()}, NOT the instance-global mode. TableWriter threads its own
+     * grade because a table that is not yet enrolled in adaptive runs at SYNC while the instance runs
+     * ADAPTIVE, and its completed pages must still be msync'd on release. {@code release()} consults the
+     * global configuration only as the {@link CommitMode#UNSET} ("never threaded") fallback, so a
+     * {@code null} configuration (equivalent to a NOSYNC global) lets the threaded mode be proven in
+     * isolation: with SYNC threaded in, the completed pages must be msync'd even though the "global"
+     * resolves to NOSYNC.
+     *
+     * <p>Negative controls pin: UNSET/explicit-NOSYNC skip, ASYNC uses {@code msync(async=true)}, and an
+     * adaptive {@code applyLazy} column still skips even with SYNC threaded in (its durability is the
+     * epoch + WAL roll-forward, not the release msync).
+     */
+    @Test
+    public void testReleaseHonorsThreadedCommitModeOverGlobalNosync() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long pageSize = Files.PAGE_SIZE;
+            // (a) SYNC threaded in, "global" == NOSYNC (null config): completed pages MUST msync.
+            assertReleaseMsync(pageSize, CommitMode.SYNC, false, true, false);
+            // (b) negative control — never threaded (UNSET) defers to the (null==NOSYNC) global => NO msync.
+            assertReleaseMsync(pageSize, CommitMode.UNSET, false, false, false);
+            // (c) NOSYNC threaded in => NO msync.
+            assertReleaseMsync(pageSize, CommitMode.NOSYNC, false, false, false);
+            // (d) ASYNC threaded in => msync(async=true).
+            assertReleaseMsync(pageSize, CommitMode.ASYNC, false, true, true);
+            // (e) adaptive lazy-apply column still skips even with SYNC threaded in.
+            assertReleaseMsync(pageSize, CommitMode.SYNC, true, false, false);
+        });
+    }
+
+    private void assertReleaseMsync(
+            long pageSize,
+            int commitMode,
+            boolean applyLazy,
+            boolean expectMsync,
+            boolean expectAsync
+    ) throws Exception {
+        final int[] msyncCount = {0};
+        final boolean[] lastAsync = {false};
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                msyncCount[0]++;
+                lastAsync[0] = async;
+                super.msync(addr, len, async);
+            }
+        };
+        try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
+            // null configuration => release()'s global fallback resolves to NOSYNC (a nosync instance).
+            try (MemoryPMARImpl mem = new MemoryPMARImpl((CairoConfiguration) null)) {
+                mem.of(ff, path.$(), pageSize, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+                mem.setApplyLazy(applyLazy);
+                mem.setCommitMode(commitMode);
+                // Cross >1 page boundary so completed pages are released (msync'd) during append; close()
+                // then releases the final active page too.
+                for (long i = 0, n = pageSize * 2 + 64; i < n; i += Long.BYTES) {
+                    mem.putLong(i);
+                }
+                mem.close();
+            }
+        }
+        final String ctx = " [commitMode=" + commitMode + ", applyLazy=" + applyLazy + ']';
+        if (expectMsync) {
+            Assert.assertTrue("expected >=1 release msync but got 0" + ctx, msyncCount[0] > 0);
+            Assert.assertEquals("release msync async flag mismatch" + ctx, expectAsync, lastAsync[0]);
+        } else {
+            Assert.assertEquals("expected ZERO release msync" + ctx, 0, msyncCount[0]);
+        }
+    }
 
     @Test
     public void testJumpChangesActivePage() throws Exception {
