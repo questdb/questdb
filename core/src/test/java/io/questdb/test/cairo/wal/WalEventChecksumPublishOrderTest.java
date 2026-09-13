@@ -220,12 +220,23 @@ public class WalEventChecksumPublishOrderTest extends AbstractCairoTest {
                         + ", storedLen=" + storedLength + ']');
                 return;
             }
+            if (storedLength == 0) {
+                // The entry's offset is filled but its length is not, so the entry itself is only partly
+                // written while the record is already readable. A torn read of the _event header cannot
+                // produce this -- storedLength comes from the sidecar, and the writer's fence orders the
+                // whole entry ahead of the publishing store -- so it is an ordering violation of its own:
+                // the length was published before the entry that describes it was complete.
+                violation.compareAndSet(null, "record txn=" + txn + " at offset=" + offset + ", len=" + length
+                        + " is readable but its sidecar entry is only partly written [storedOffset=" + storedOffset
+                        + ", storedLen=0]");
+                return;
+            }
             if (storedLength != length) {
-                // storedOffset matches, so the entry IS present and the ordering invariant holds: the
-                // writer completed the entry before it began the publishing store. A disagreeing length
-                // is that store caught in flight -- an unaligned, non-atomic 4-byte putInt over the -1
-                // marker, read as a byte-mix such as 0x0000FFFF -- not a publish-ordering violation. Stop
-                // this pass; a later snapshot sees the completed store.
+                // storedOffset matches and storedLength is filled, so the entry IS present and complete and
+                // the ordering invariant holds: the writer finished the entry before it began the publishing
+                // store. A disagreeing length is that store caught in flight -- an unaligned, non-atomic
+                // 4-byte putInt over the -1 marker, read as a byte-mix such as 0x0000FFFF -- not a
+                // publish-ordering violation. Stop this pass; a later snapshot sees the completed store.
                 return;
             }
             offset += length;
