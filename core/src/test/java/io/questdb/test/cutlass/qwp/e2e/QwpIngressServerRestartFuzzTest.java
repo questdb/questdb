@@ -447,16 +447,35 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                     // carries the dictionary from id 0 -- so it re-registers the symbols by
                     // itself and masks a broken catch-up completely. Trimmed, nothing replays,
                     // and phase 2's bare ids have nowhere else to come from.
-                    TestUtils.assertEventually(() -> {
-                        drainWalQueue();
-                        engine.awaitTable(TABLE_NAME, 30, TimeUnit.SECONDS);
-                        assertRowCount(rowsPerPhase);
-                    });
+                    //
                     // Deterministic: drain() returns once the client has the acks, which is
                     // what lets the cursor trim phase 1 -- the property the comment above
                     // documents as load-bearing for this test.
+                    //
+                    // The ack barrier has to come BEFORE the WAL drain below, not after it.
+                    // The server acks a frame only once its rows are committed, so drain()
+                    // returning is precisely what makes the sequencer txn PUBLISHED and hence
+                    // drainable. flush() alone promises nothing about the server.
                     Assert.assertTrue("phase-1 acks must reach the client before the bounce",
                             sender.drain(30_000));
+
+                    // Apply the committed txn, and retry the DRAIN, not just the assertion:
+                    // drainWalQueue() makes a SINGLE pass, and nothing applies the WAL in the
+                    // background here -- RestartableQwpServer's pool gets
+                    // WorkerPoolUtils.setupWriterJobs, which assigns no ApplyWal2TableJob. A
+                    // drain that misses the commit therefore leaves the writer frontier behind
+                    // the sequencer until the NEXT drain, so the drain must live inside the
+                    // retried body.
+                    //
+                    // engine.awaitTable() must NOT be that body's failure mode: it waits on a
+                    // frontier only a drain can move, and it reports the timeout as a
+                    // CairoException, which assertEventually does not catch (AssertionError
+                    // only). One lost race then aborts the loop on its first pass with
+                    // "txn timed out [expectedTxn=1, writerTxn=0]" after burning the full 30s.
+                    TestUtils.assertEventually(() -> {
+                        drainWalQueue();
+                        assertRowCount(rowsPerPhase);
+                    });
 
                     // Bounce the server. Same port. The sender keeps the same
                     // sfDir and CursorSendEngine; the wire path needs to reconnect.
