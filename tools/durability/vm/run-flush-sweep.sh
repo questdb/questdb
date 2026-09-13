@@ -32,7 +32,12 @@ bash "$HERE/check-host.sh" >/dev/null || { bash "$HERE/check-host.sh"; exit 1; }
 
 MODE="${1:-adaptive}"
 WINDOW="${2:-0}"
-MAX_POINTS="${3:-12}"
+# Points per run. The replay+verify loop reuses ONE booted VM, so each extra point costs a replay
+# plus a verifier JVM -- not a boot. That makes a much larger default affordable: the expensive
+# part (record the workload, reboot, rebuild the log-writes stack) is paid once per run, not per
+# point. Raise freely for a thorough run; the per-point cost grows with table size because the
+# oracle scans every recovered row.
+MAX_POINTS="${3:-${QDB_SWEEP_POINTS:-40}}"
 PROFILE="${QDB_SCHEMA_PROFILE:-bitmap}"
 # EPOCH=-1 DISABLES the periodic durable epoch, so the table runs with a
 # SUSTAINED LAZY GAP: columns applied lazily with no epoch cut behind them, and
@@ -145,13 +150,40 @@ nflush=$(vm_ssh "$P2" "$KEY" "sudo python3 /opt/vmcrash/guest/replay-log.py --lo
 echo "  recorded $nflush flush boundaries"
 [ "${nflush:-0}" -ge 2 ] || { keep; echo "LOUD_FAILURE: only ${nflush:-0} flushes recorded; nothing to sweep"; exit 1; }
 
-# Sweep the LAST max_points boundaries: the early ones are mkfs and startup,
-# the interesting states are where the workload was live.
-first=$(( nflush - MAX_POINTS + 1 ))
-[ "$first" -lt 1 ] && first=1
+# WHICH boundaries to verify. The recording holds tens of thousands of crash points; verifying
+# the last handful covers ~0.01% of them, and only the part of the workload that ran last. A
+# defect that manifests mid-run -- during an index rebuild, a partition switch, a mat-view refresh
+# -- is invisible to a tail sweep. The bitmap SIGSEGV was found at boundary 13776 of ~14000, near
+# the tail, which was luck rather than method.
+#
+#   stride (default) : MAX_POINTS points spread across the whole live range
+#   tail             : the last MAX_POINTS points (QDB_SWEEP_MODE=tail)
+#
+# The floor skips the first 10%: those boundaries predate the table, so they verify as NO_COMMIT
+# and spend a VM round trip proving nothing.
+SWEEP_MODE="${QDB_SWEEP_MODE:-stride}"
+points=""
+if [ "$SWEEP_MODE" = "tail" ]; then
+    first=$(( nflush - MAX_POINTS + 1 ))
+    [ "$first" -lt 1 ] && first=1
+    points=$(seq "$first" "$nflush")
+else
+    floor=$(( nflush / 10 ))
+    [ "$floor" -lt 1 ] && floor=1
+    span=$(( nflush - floor ))
+    if [ "$span" -lt "$MAX_POINTS" ]; then
+        points=$(seq "$floor" "$nflush")
+    else
+        stride=$(( span / MAX_POINTS ))
+        [ "$stride" -lt 1 ] && stride=1
+        points=$(seq "$floor" "$stride" "$nflush")
+    fi
+fi
+echo "  sweep mode=$SWEEP_MODE over $(echo "$points" | wc -w) boundaries: $(echo $points | cut -c1-100)..."
 
 fails=0; checked=0
-for n in $(seq "$first" "$nflush"); do
+failed_points=""
+for n in $points; do
     out=$(vm_ssh "$P2" "$KEY" "sudo umount /mnt/qdb 2>/dev/null; sudo dmsetup remove qdbdata 2>/dev/null; \
         sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
         sudo mkdir -p /mnt/qdb; \
@@ -176,9 +208,35 @@ for n in $(seq "$first" "$nflush"); do
                # outcome, not a harness error -- report it and keep going.
                echo "      (filesystem unmountable at this boundary)"
            fi
-           fails=$((fails + 1)) ;;
+           fails=$((fails + 1))
+           failed_points="$failed_points $n" ;;
     esac
 done
+
+# BISECT AROUND FAILURES. A strided sweep says "it breaks somewhere in this gap"; the useful
+# question is which boundary FIRST breaks, because that names the operation that did it. Verify
+# the immediate neighbours of each failure so the report gives a bracket rather than a point.
+if [ -n "$failed_points" ] && [ "${QDB_SWEEP_DENSIFY:-true}" = "true" ]; then
+    echo "  densifying around failures:$failed_points"
+    for f in $failed_points; do
+        for n in $(( f - 2 )) $(( f - 1 )) $(( f + 1 )); do
+            [ "$n" -lt 1 ] && continue
+            [ "$n" -gt "$nflush" ] && continue
+            out=$(vm_ssh "$P2" "$KEY" "sudo umount /mnt/qdb 2>/dev/null; sudo dmsetup remove qdbdata 2>/dev/null; \
+                sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
+                sudo mkdir -p /mnt/qdb; \
+                if sudo mount /dev/vdb /mnt/qdb 2>/dev/null; then \
+                    bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --sf-replay=${QDB_SF_REPLAY:-false} --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
+                else echo 'MOUNT_FAILED'; fi")
+            mkdir -p "$OUTDIR"
+            printf '%s\n' "$out" > "$OUTDIR/flush-$n.out"
+            line=$(echo "$out" | grep -vE '^DETAIL' | tail -1)
+            v=$(verdict_classify "$line")
+            echo "$STAMP sweep-densify profile=$PROFILE mode=$MODE W=$WINDOW flush=$n/$nflush verdict=$v line=$line" >> "$LOG"
+            printf '    neighbour %4d -> %s\n' "$n" "$v"
+        done
+    done
+fi
 
 vm_kill "$RUN"
 if [ "$fails" -eq 0 ] && [ "${QDB_KEEP_RUN:-0}" != "1" ]; then

@@ -426,3 +426,30 @@ arithmetic), so each is now checked per row and a mismatch is `SILENT_CORRUPTION
 Proven by negative control: inverting the expected array value makes the oracle fail
 (`SILENT_CORRUPTION payload id=1 profile=array`); restoring it passes on array, varchar and wide.
 A payload check that never executes is indistinguishable from one that always passes.
+
+### Choosing sweep points
+
+The replay/verify loop reuses ONE booted VM, so the expensive parts -- recording the workload,
+rebooting, rebuilding the dm-log-writes stack -- are paid once per RUN, not per point. Measured on
+the bitmap profile:
+
+| points | wall | per point | recording |
+|---|---|---|---|
+| 3 (the old tail default) | ~180s | ~60s | — |
+| 102 | 375s | 3.7s | 5,170 boundaries |
+| 403 | 2,620s | 6.5s | 12,523 boundaries |
+
+Per-point cost grows with table size because the oracle scans every recovered row, but stays
+cheap. A 3-point tail sweep spent ~95% of its wall clock on setup and then threw away the part
+that was nearly free.
+
+`QDB_SWEEP_MODE=stride` (default) spreads the points across the whole recording; `tail` keeps the
+old behaviour. The floor skips the first 10% -- those boundaries predate the table and verify as
+NO_COMMIT, spending a round trip to prove nothing.
+
+On any failure the sweep DENSIFIES: it verifies `n-2, n-1, n+1` so the report gives a bracket
+rather than a point. A strided sweep says "it breaks somewhere in this gap"; the useful question
+is which boundary FIRST breaks, because that names the operation responsible. Disable with
+`QDB_SWEEP_DENSIFY=false`.
+
+Suggested: 40 for a quick check (default), 400 for a thorough run (~45 min).
