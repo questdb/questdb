@@ -136,7 +136,7 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     checks have separate documented boundaries. See the [execution allocation
     audit and reproducible artifacts](docs/parallel-hash-join-group-by-allocation.md).
 
-9d. **Complete circuit-breaker integration** — this update.
+9d. **Complete circuit-breaker integration** — commit `560fe4b59a`.
     Delegated serial/async build filters check rejected rows, including the JIT
     factory's interpreted fallback and column pre-touch. Forward/backward frame
     preparation checks skipped frames, empty partitions, rejected intervals and
@@ -148,42 +148,45 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     independent rebinding, cleanup and ordinary-result reuse. See the
     [loop audit, ownership and validation](docs/parallel-hash-join-group-by-cancellation.md).
 
+9e. **Expand the semantic, storage, SYMBOL and negative matrix** — this update.
+    Eight new semantic tests cross independent SQL LHS/RHS grouping and argument
+    roles with INNER/LEFT/normalized RIGHT, every allowlisted aggregate/type,
+    reordered projections, all nine native/mixed/Parquet input pairs, join-key and
+    payload tops, nulls, duplicates and extreme keys. SYMBOL cases cover multiple
+    dictionaries/columns, repeated key/argument use, cloned views, expressions,
+    rebinding, growth, empty/null dictionaries and factory reuse. A new fixed-seed
+    matrix adds 648 differential SQL cases. Concurrent tests now use both inputs'
+    SYMBOLs with native/mixed/all-Parquet storage. Shared differential assertions
+    compare exact names/types even for empty results. Excluded plans and invalid
+    SQL retain ordinary behavior. See the [coverage map and validation](docs/parallel-hash-join-group-by-semantics.md).
+
 The branch supports experimental automatic selection for eligible keyed and
-unkeyed queries. Tasks 1–9, 6a and 9a–9d are complete. **V1 is not complete:**
-task 9e remains pending, then task 10 must be rerun on that implementation.
-Keep the experimental default false; default enablement remains a separate
-reviewable configuration/planner change.
+unkeyed queries. Tasks 1–9, 6a and 9a–9e are complete. **V1 is not complete:**
+task 10 must now be rerun on this implementation. Keep the experimental default
+false; default enablement remains a separate reviewable configuration/planner
+change.
 
-## Next pending RFC task: 9e (V1)
+## Next pending RFC task: 10 (V1 rerun)
 
-**Expand the semantic, storage, and negative matrix and publish its coverage map.**
+**Rebenchmark completed V1 and make rollout a separate change.**
 
-- Cover SQL LHS/RHS column roles, all allowlisted function/type pairs, reused
-  join keys, repeated/multiple references, expressions, aliases, pruned/reordered
-  projections and normalized RIGHT mappings.
-- Exercise empty/null/extreme keys, duplicates, count/SUM/AVG null behavior,
-  outer null extension and ON/WHERE placement, including rejected real matches.
-- Cover native/Parquet/mixed storage on either/both inputs, column tops inside
-  and across partitions, multiple row groups, logical conversion, interval and
-  filter paths, schema/storage changes and ordinary invalidation/recompilation.
-- Assert ordinary plans/errors for every excluded join/key/aggregate/access
-  shape, unsafe expression and disabled gate. Do not broaden V1 eligibility.
-- Map deterministic and seeded cases to named tests with positive/negative
-  plan checks, resolved results and metadata, owner/sharded/scalar merges,
-  reuse, bind rebinding, dictionary changes and concurrency. Rerun affected suites.
+- Repeat the fixed 100-million-row/four-worker primary acceptance gate after
+  tasks 9a–9e. Use the same workload and at least two rounds of alternating
+  end-to-end measurements, ordinary/fused plans and ordered result checks.
+- Repeat the RFC matrix across eligible join types and physical orientations,
+  build footprints/source costs, match rates, post-filters, fanout/skew, group
+  counts, workers, concurrent load, native/mixed/Parquet, small effective inputs,
+  cold storage and near-limit query memory.
+- Include task 9d's breaker overhead, uncached SYMBOL predicate costs and repeated
+  decoding under the bounded sparse cache. Preserve commands, workload, source
+  revision, environment, all samples, results, phase metrics and memory peaks.
+- Assess total latency, scaling, memory and regressions before any rollout
+  decision. The original swapped-RIGHT and tiny-scan regressions remain inputs
+  to the decision, and the original large Parquet RIGHT pilot was incomplete.
+- Keep the documented disable switch. Any accepted default enablement is a
+  separate configuration/planner change, selected by supported shape/capability.
 
-Explicitly cover **SQL LHS and RHS SYMBOL columns as grouping keys and
-aggregate arguments**, separately and together, including the same column in both
-roles, repeated references, multiple SYMBOL columns, COUNT(SYMBOL), and supported
-SYMBOL-consuming expressions. Test symbol-table initialization/routing for owner,
-workers, merges and output; independent cloned views; RIGHT input swapping;
-empty/null dictionaries and outer null extension; differing text-to-ID mappings;
-native/Parquet/mixed storage; first execution/reuse, dictionary changes, bind
-rebinding and concurrent factories. Compare resolved text and metadata with the
-ordinary path, and map these cases to named tests in the 9e coverage table.
-
-After 9e, repeat task 10's performance/rollout gate. Parallel radix build (11)
-and broader extensions (12) remain post-V1. Keep
+Parallel radix build (11) and broader extensions (12) remain post-V1. Keep
 `cairo.sql.parallel.hash.join.groupby.enabled=false` and the global parallel GROUP
 BY gate. Do not add a build-size threshold, runtime fallback or input replay.
 
@@ -191,7 +194,7 @@ The [original task 10 report](docs/parallel-hash-join-group-by-v1.md) and its
 [raw data](docs/parallel-hash-join-group-by-v1/summary.csv) describe the earlier
 implementation; their timings and sampled memory peaks do not validate 9a–9e.
 Task 9's qualification results are historical; affected-suite reruns are recorded
-in the task 9a–9d guides. The ten-million-row Parquet RIGHT pilot remains incomplete
+in the task 9a–9e guides. The ten-million-row Parquet RIGHT pilot remains incomplete
 as documented in the original report. Repeated decoding under the bounded sparse
 cache and uncached SYMBOL predicate CPU costs need task 10 measurements.
 
@@ -204,6 +207,28 @@ keep ordinary execution. Probe filter takeover uses interpreted logical getters,
 releases unused JIT handles and composes peeled projection mappings. Ordinary
 serial probe filters that cannot be stolen keep the existing plan. Child partition-
 format guards continue to request normal recompilation; they are not bypassed.
+
+## Validation for task 9e
+
+**2,392 Java tests passed across 71 suites**, with 26 existing conditional skips
+and zero failures/errors (2,418 total, counting final suite reruns once).
+The [semantic coverage guide](docs/parallel-hash-join-group-by-semantics.md) maps
+new and rerun tests to SQL column roles, aggregate types, SYMBOL routing/lifetime,
+all nine storage pairs, column tops, predicate semantics and exclusions. The
+[per-suite results](docs/parallel-hash-join-group-by-semantics/regressions.csv)
+include the affected planner, join, aggregate, storage, memory and cancellation
+regressions after tasks 9a–9d.
+
+The new seeded matrix adds **648 differential SQL cases**, each candidate run
+twice, alongside the existing 720-case matrix. Expanded concurrency coverage
+runs **216 executions**, including **18 expected cancellations**, through owner,
+legacy and fiber workers, with both inputs' SYMBOL columns, native/mixed/Parquet,
+owner/sharded/scalar merges, peer isolation, cleanup and successful reuse.
+The benchmark package and all **43 ordered smoke-result checks** passed; the
+[smoke output](docs/parallel-hash-join-group-by-semantics/smoke.log.gz) is retained.
+This is integration evidence, not the repeated task 10 performance gate.
+No production change was required. Earlier task 9c/9d allocation measurements
+retain their original boundaries; task 10's latency/rollout rerun is still pending.
 
 ## Validation for task 9d
 

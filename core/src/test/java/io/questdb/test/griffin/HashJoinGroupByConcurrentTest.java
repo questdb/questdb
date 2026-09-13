@@ -80,18 +80,25 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             TestWorkerPool pool = mode == null ? null : new TestWorkerPool(4, mode);
             TestUtils.execute(pool, (db, compiler, ignored) -> {
-                db.execute("create table r as (select (x%509)::int id, x::int g, x*0.25 d, "
+                db.execute("create table r as (select (x%509)::int id, x::int g, x*0.25 d, ('s'||(6-x%7))::symbol s, ('s'||(x%5))::symbol s2, "
                         + "timestamp_sequence('2020-01-01', 100000000) t from long_sequence(1200)) timestamp(t) partition by day", ignored);
-                db.execute("create table p as (select (x%503)::int id, x*0.5 d, ('s'||(x%7))::symbol s "
-                        + "from long_sequence(1006))", ignored);
+                db.execute("create table p as (select (x%503)::int id, x*0.5 d, ('s'||(x%7))::symbol s, ('s'||(4-x%5))::symbol s2, "
+                        + "timestamp_sequence('2020-01-01', 100000000) t from long_sequence(1006)) timestamp(t) partition by day", ignored);
                 String[] queries = {
-                        "select p.s, count(*) n, sum(r.d) d from r left join p on r.id=p.id group by p.s order by p.s",
-                        "select r.g, count(*) n, avg(p.d) d from p right join r on r.id=p.id group by r.g order by r.g",
-                        "select count(*) n, count(p.d) c, sum(r.d) s, avg(p.d) a from r left join p on r.id=p.id where p.d>8 or p.d is null"
+                        "select r.s, p.s, r.s2, p.s2, count(*) n, count(r.s) rs, count(p.s) ps, sum(r.d) d"
+                                + " from r left join p on r.id=p.id group by r.s,p.s,r.s2,p.s2 order by r.s,p.s,r.s2,p.s2",
+                        "select r.g, p.s, r.s, count(*) n, count(p.s) ps, count(r.s) rs, avg(p.d) d"
+                                + " from p right join r on r.id=p.id group by r.g,p.s,r.s order by r.g,p.s,r.s",
+                        "select count(*) n, count(p.d) c, count(r.s) rs, count(p.s) ps, count(r.s2) rs2, count(p.s2) ps2,"
+                                + " sum(length(r.s)::double) rl, avg(length(p.s)::double) pl, sum(r.d) s, avg(p.d) a"
+                                + " from r left join p on r.id=p.id where p.d>8 or p.d is null"
                 };
-                for (boolean parquet : new boolean[]{false, true}) {
-                    if (parquet) {
-                        db.execute("alter table r convert partition to parquet where t < '2020-01-02'", ignored);
+                for (int format = 0; format < 3; format++) {
+                    if (format > 0) {
+                        for (String table : new String[]{"r", "p"}) {
+                            db.execute("alter table " + table + " convert partition to parquet where "
+                                    + (format == 1 ? "t < '2020-01-02'" : "t >= '2020-01-02'"), ignored);
+                        }
                     }
                     for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
                         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
@@ -151,7 +158,7 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
                         }
                         TestUtils.joinThreads(owners);
                         if (failure.get() != null) {
-                            throw new AssertionError("mode=" + mode + ", parquet=" + parquet + ", threshold=" + threshold, failure.get());
+                            throw new AssertionError("mode=" + mode + ", format=" + format + ", threshold=" + threshold, failure.get());
                         }
                     }
                 }

@@ -438,6 +438,11 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
             if (!candidatePlan.contains("Async Hash Join Group By")) {
                 Assert.assertEquals(sql, baselinePlan, candidatePlan);
             }
+            Assert.assertEquals(sql, baseline.getMetadata().getColumnCount(), factory.getMetadata().getColumnCount());
+            for (int column = 0; column < baseline.getMetadata().getColumnCount(); column++) {
+                Assert.assertEquals(sql, baseline.getMetadata().getColumnType(column), factory.getMetadata().getColumnType(column));
+                Assert.assertEquals(sql, baseline.getMetadata().getColumnName(column), factory.getMetadata().getColumnName(column));
+            }
             expected = result(baseline, context);
         } finally {
             context.setParallelHashJoinGroupByEnabled(true);
