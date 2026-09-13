@@ -217,6 +217,15 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public boolean isSymbolPredicateCacheEnabled() {
+        return true;
+    }
+
+    @Override
+    public void setSymbolPredicateCacheEnabled(boolean enabled) {
+    }
+
+    @Override
     public boolean isParallelHashJoinGroupByEnabled() {
         return false;
     }

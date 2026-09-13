@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction
 import io.questdb.griffin.engine.functions.groupby.CountLongGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.CountSymbolGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.JoinContext;
@@ -157,12 +158,25 @@ public final class HashJoinGroupByCandidate {
                 || (type == CountSymbolGroupByFunction.class && argType == ColumnType.SYMBOL);
     }
 
+    /** Covering-index frame descriptors and decode caches are outside the V1 scan path. */
+    public static boolean supportsInputFactory(RecordCursorFactory factory) {
+        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
+            if (current instanceof CoveringIndexRecordCursorFactory) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /**
      * Compile-time frame capability only. Execution must use logical typed frame reads and
      * qualify native/Parquet/conversion paths before selection is enabled; see the RFC contract.
      * This check borrows the filter. Transfer follows all capability checks and worker compilation.
      */
     public static boolean supportsProbeFactory(RecordCursorFactory factory) {
+        if (!supportsInputFactory(factory)) {
+            return false;
+        }
         if (factory.supportsPageFrameCursor()) {
             return true;
         }

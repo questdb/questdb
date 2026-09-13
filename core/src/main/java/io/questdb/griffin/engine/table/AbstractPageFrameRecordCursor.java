@@ -127,7 +127,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
 
     protected void init(@Nullable MemoryTracker memoryTracker) {
         frameAddressCache.setMemoryTracker(memoryTracker);
-        frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
+        frameAddressCache.of(metadata, frameCursor);
         frameMemoryPool.setMemoryTracker(memoryTracker);
         frameMemoryPool.of(frameAddressCache);
         frameCount = 0;

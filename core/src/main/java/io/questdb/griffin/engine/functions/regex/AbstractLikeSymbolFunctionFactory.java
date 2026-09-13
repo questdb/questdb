@@ -75,7 +75,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         final SymbolFunction value = (SymbolFunction) args.getQuick(0);
         final Function pattern = args.getQuick(1);
 
-        if (value.isSymbolTableStatic()) {
+        if (value.isSymbolTableStatic() && sqlExecutionContext.isSymbolPredicateCacheEnabled()) {
             if (pattern.isConstant()) {
                 final CharSequence likeSeq = pattern.getStrA(null);
                 int len;

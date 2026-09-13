@@ -28,6 +28,9 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -53,6 +56,88 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     };
     private static final String AGGREGATES = "count(*) n, count(r.id) ri, count(p.id) pi, "
             + "count(r.s) rs, count(p.s) ps, sum(r.d) rd, sum(p.d) pd, avg(r.d) ra, avg(p.d) pa";
+
+    @Test
+    public void testBuildAndOwnerProbePredicatesDoNotPopulateSourceSymbolCaches() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"r", "p"}) {
+                execute("create table " + table + " as (select x::int id, ('s'||x)::symbol s, 1.0 d from long_sequence(8192))");
+            }
+            try (SqlExecutionContextImpl context = context(engine, 1)) {
+                context.changePageFrameSizes(32, 32);
+                context.setParallelHashJoinGroupByEnabled(true);
+                int[] returned = {0};
+                context.setReaderPoolSupervisor(new ResourcePoolSupervisor<>() {
+                    @Override
+                    public void onResourceBorrowed(TableReader reader) {
+                    }
+
+                    @Override
+                    public void onResourceReturned(TableReader reader) {
+                        returned[0]++;
+                        for (int i = 0; i < reader.getMetadata().getColumnCount(); i++) {
+                            if (ColumnType.isSymbol(reader.getMetadata().getColumnType(i))) {
+                                Assert.assertEquals("source cache: " + reader.getTableToken(), 0,
+                                        ((SymbolMapReaderImpl) reader.getSymbolMapReader(i)).getCacheSize());
+                            }
+                        }
+                    }
+                });
+                try {
+                    for (boolean keyed : new boolean[]{true, false}) {
+                        String sql = "select " + (keyed ? "r.s, p.s, " : "")
+                                + "count(*) from r left join p on r.id=p.id and p.s like 's%' where r.s ilike 'S%'";
+                        try (RecordCursorFactory factory = engine.select(sql, context)) {
+                            Assert.assertTrue(plan(factory, context).contains("Async Hash Join Group By"));
+                            for (int execution = 0; execution < 2; execution++) {
+                                int groups = 0;
+                                try (RecordCursor cursor = factory.getCursor(context)) {
+                                    while (cursor.hasNext()) {
+                                        if (keyed) {
+                                            Assert.assertNotNull(cursor.getRecord().getSymA(0));
+                                            Assert.assertNotNull(cursor.getRecord().getSymA(1));
+                                        }
+                                        groups++;
+                                    }
+                                }
+                                Assert.assertEquals(keyed ? 8192 : 1, groups);
+                            }
+                        }
+                    }
+                    Assert.assertTrue(returned[0] >= 8);
+                } finally {
+                    context.setReaderPoolSupervisor(null);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHighCardinalitySymbolPredicatesAndCompilerSettingReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"r", "p"}) {
+                execute("create table " + table + " as (select x::int id, ('s'||x)::symbol s, ('s'||x)::symbol s2, "
+                        + "('2020-01-01T00:00:'||lpad((x%60)::string,2,'0'))::symbol dt, 1.0 d from long_sequence(8192))");
+            }
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(32, 32);
+                for (int threshold : new int[]{1, Integer.MAX_VALUE}) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
+                    for (String predicate : new String[]{
+                            "r.s like 's%'", "r.s ilike '%S%'", "r.s like 's____'", "r.s ~ '^s[1-8]+'",
+                            "r.s = r.s2", "r.dt = '2020-01-01T00:00:01'::timestamp", "r.s = p.s",
+                            "p.s like 's%'", "p.s ~ '^s[1-8]+'"}) {
+                        String from = " from r left join p on r.id=p.id and p.s like 's%' and p.s=p.s2 where " + predicate;
+                        assertDifferential("select r.s, count(*), sum(p.d)" + from + " order by r.s", context, !predicate.equals("r.s = p.s"));
+                        assertDifferential("select count(*), sum(p.d)" + from, context, !predicate.equals("r.s = p.s"));
+                        Assert.assertTrue(context.isSymbolPredicateCacheEnabled());
+                    }
+                }
+                assertDifferential("select min(r.d) from r join p on r.id=p.id where r.s like 's%'", context, false);
+                Assert.assertTrue(context.isSymbolPredicateCacheEnabled());
+            }
+        });
+    }
 
     @Test
     public void testRandomizedDifferentialMatrix() throws Exception {
@@ -204,6 +289,32 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                                 assertAgainstBaseline(sql, factory, context);
                             }
                         }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringIndexInputsKeepOrdinaryPlans() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"r", "p"}) {
+                execute("create table " + table + " (id int, s symbol index type posting include (id,d), d double, ts timestamp) timestamp(ts) partition by day bypass wal");
+                execute("insert into " + table + " select x::int, 'a', 1.0, x::timestamp from long_sequence(128)");
+            }
+            engine.releaseAllWriters();
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 1);
+                for (String source : new String[]{"r", "p"}) {
+                    for (boolean isKeyed : new boolean[]{false, true}) {
+                        String sql = "select " + (isKeyed ? "r.id, " : "")
+                                + "sum(r.d), count(*) from r join p on r.id=p.id where " + source + ".s='a'";
+                        context.setParallelHashJoinGroupByEnabled(false);
+                        try (RecordCursorFactory baseline = engine.select(sql, context)) {
+                            Assert.assertTrue(plan(baseline, context), plan(baseline, context).contains("CoveringIndex"));
+                        }
+                        assertDifferential(sql, context, false);
+                        Assert.assertTrue(context.isSymbolPredicateCacheEnabled());
                     }
                 }
             }

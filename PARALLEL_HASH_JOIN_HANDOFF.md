@@ -106,7 +106,7 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     during warmups; a repeated one-million-row native/Parquet pair is published.
     See [completed-V1 results, limitations and rollout](docs/parallel-hash-join-group-by-v1.md).
 
-9a. **Complete allocation-time native memory tracking** — this update.
+9a. **Complete allocation-time native memory tracking** — commit `c09746fd94`.
     The allocation-site audit covers build/SYMBOL/duplicate storage, keyed/scalar
     state, both merges, frame caches, filtered-source row buffers and Java/Rust
     decoder scratch. Frame-cache and filter/decoder helper allocations now bind
@@ -116,40 +116,55 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     high-cardinality, combined-state, unlimited-limit and reuse tests supplement
     the existing failure/concurrency coverage. See the [allocation audit and validation](docs/parallel-hash-join-group-by-memory.md).
 
+9b. **Keep large and data-dependent execution structures off heap** — this update.
+    Frame descriptors and sparse decoder indices now use tracked native vectors;
+    duplicate frame-count lists and per-frame decoder references are removed from
+    qualified scans. Source SYMBOL views and fused predicate implementations avoid
+    dictionary-sized Java caches. Decoder shell counts are bounded even for sparse
+    declarations; covering-index inputs explicitly keep ordinary plans. Increasing
+    cardinality measurements cover native/mixed/Parquet, owner/sharded/scalar,
+    fresh execution and reuse, with result and native-balance checks. See the
+    [retained-heap audit, measurements and validation](docs/parallel-hash-join-group-by-heap.md).
+
 The branch supports experimental automatic selection for eligible keyed and
-unkeyed queries. Tasks 1–9, 6a and 9a are complete. **V1 is not complete:** the RFC
-added 9a–9d after the original task 10 benchmark. Tasks 9b–9d remain pending, then
-task 10 must be rerun on that implementation. Keep the experimental default false;
-default enablement remains a separate reviewable configuration/planner change.
+unkeyed queries. Tasks 1–9, 6a, 9a and 9b are complete. **V1 is not complete:** the
+current RFC requires 9a–9e after the original task 10 benchmark. Tasks 9c–9e
+remain pending, then task 10 must be rerun on that implementation. Keep the
+experimental default false; default enablement remains a separate reviewable
+configuration/planner change.
 
-## Next pending RFC task: 9b (V1)
+## Next pending RFC task: 9c (V1)
 
-**Keep large and data-dependent execution structures off heap.**
+**Make the new execution pipeline zero-GC and prove it with allocation measurements.**
 
-- Audit factories, atoms, cursors, build/probe views and shared helpers, including
-  per-frame lists/caches and source SYMBOL lookup state listed in the 9a audit.
-- Move data-dependent tables, dictionaries, lists and buffers to suitable native
-  structures using 9a's tracked allocation APIs. Java arrays and pooled
-  collections remain on heap and do not satisfy this requirement.
-- Keep only small bounded control objects, flyweights, schema metadata and
-  worker-slot references on heap; document their bounds and lifecycle.
-- Preserve duplicate enumeration, typed access, SYMBOL validity, null extension,
-  slot independence and cleanup/reuse. Measure retained heap as row/key/SYMBOL/
-  group cardinalities increase at a fixed shape and worker count, paired with
-  native allocation/limit and affected storage/concurrency/failure tests.
+- Audit successful execution after bounded setup: cursor acquisition, fresh
+  build, native growth/rehashing, symbols, function/frame initialization, probing,
+  aggregate updates, every merge mode, output, close and repeated execution.
+- Eliminate attributable per-row/match/frame/group/symbol/growth garbage. Reuse
+  bounded control objects and flyweights; retain task 9b's tracked native state.
+  Do not warm a data-sized Java pool to conceal allocation.
+- Measure the owner and every participating worker with allocation counters and
+  allocation stack profiles. Separate compilation, bounded cold setup, shared
+  framework, harness and deliberate exception-reporting allocations.
+- Exercise unseen symbols, forced growth, high-cardinality merging, native and
+  Parquet decoding, concurrency and factory reuse. Publish commands, counts,
+  stacks and measurement boundaries, with result/lifecycle/resource regressions.
 
-Next are 9c (zero-GC execution measurements), 9d (complete circuit-breaker
-integration), and the repeated task 10 performance/rollout gate. Parallel radix
-build (11) and broader extensions (12) remain post-V1. Keep
+The 9b reachable-heap profiler is reusable retention evidence, but does not
+measure allocation rate or satisfy 9c. Next are 9d (complete circuit-breaker
+integration), 9e (expanded semantic, storage and negative tests with a coverage
+table), and the repeated task 10 performance/rollout gate. Parallel radix build
+(11) and broader extensions (12) remain post-V1. Keep
 `cairo.sql.parallel.hash.join.groupby.enabled=false` and the global parallel GROUP
 BY gate. Do not add a build-size threshold, runtime fallback or input replay.
 
 The [original task 10 report](docs/parallel-hash-join-group-by-v1.md) and its
 [raw data](docs/parallel-hash-join-group-by-v1/summary.csv) describe the earlier
-implementation; their timings and sampled memory peaks do not validate 9a–9d.
-Task 9's qualification results are historical; 9a's affected-suite rerun is
-recorded in the allocation guide. The ten-million-row Parquet RIGHT pilot remains
-incomplete as documented in the original report.
+implementation; their timings and sampled memory peaks do not validate 9a–9e.
+Task 9's qualification results are historical; affected-suite reruns are recorded
+in the task 9a/9b guides. The ten-million-row Parquet RIGHT pilot remains incomplete
+as documented in the original report. Repeated decoding under the bounded sparse
+cache and uncached SYMBOL predicate CPU costs need task 10 measurements.
 
 Integration notes: children compile under **one enclosing query registration**.
 The factory consumes children/functions/interpreted filter context on constructor
@@ -160,6 +175,21 @@ keep ordinary execution. Probe filter takeover uses interpreted logical getters,
 releases unused JIT handles and composes peeled projection mappings. Ordinary
 serial probe filters that cannot be stolen keep the existing plan. Child partition-
 format guards continue to request normal recompilation; they are not bypassed.
+
+## Validation for task 9b
+
+1,933 Java tests passed across 52 suites, with two existing conditional skips
+and zero failures/errors (1,935 total). The benchmark package passed. All 864
+retained-heap snapshots, 288 candidate executions against 144 ordinary references,
+and 43 ordered smoke-result checks passed. Every candidate cursor close left
+zero query-native bytes; the largest fixed-case heap increase was 2,936 bytes,
+and the largest individual array was 16,400 bytes.
+
+The [heap guide](docs/parallel-hash-join-group-by-heap.md) records storage/control
+bounds, measurement exclusions, exact commands and retained per-class/sample
+artifacts. The current change modifies Java only; task 9a's native library still
+requires the `build-rust-library,qdbr-release` profiles. The smoke benchmark is
+integration evidence; task 10 remains pending after 9c–9e.
 
 ## Validation for task 9a
 

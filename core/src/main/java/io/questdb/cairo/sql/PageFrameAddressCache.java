@@ -27,10 +27,8 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
-import io.questdb.std.ByteList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
@@ -48,27 +46,23 @@ import java.util.Arrays;
  * to aux/data vectors for each column. For parquet page frames we store
  * addresses of mmapped files, as well as the list of row groups.
  * <p>
- * Once initialized, this cache is thread-safe.
+ * Once initialized, this cache is thread-safe. Borrowed sources must remain
+ * open and their partition mappings stable until every consumer has finished.
  * <p>
  * Meant to be used along with {@link PageFrameMemoryPool}.
  */
 public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private static final int ADDRESS_LIST_INITIAL_CAPACITY = 64;
+    private static final int FRAME_METADATA_LONGS = 9;
     // Flat arrays storing per-frame, per-column data. Indexed as: frameIndex * columnCount + columnIndex.
     // These are off-heap to reduce GC pressure for large and wide tables.
     private final DirectLongList auxPageAddresses;
     private final DirectLongList auxPageSizes;
     private final ColumnMapping columnMapping = new ColumnMapping();
     private final IntList columnTypes = new IntList();
-    // Per-frame covered (posting-index sidecar) decode metadata. Populated
-    // additively for frames that report at least one DataSource.COVERED column
-    // (see PageFrame#getColumnSource); parallel to frameSizes/frameFormats so
-    // every accessor indexes by frameIndex. Frames with no covered columns
-    // store sentinels: key = SymbolTable.VALUE_NOT_FOUND (-2), rowLo/rowHi = -1L
-    // (a row-index sentinel, NOT VALUE_NOT_FOUND — the two are deliberately different
-    // to prevent conflating a missing key with a missing row range), null reader/desc.
-    // Mirrors the parquet stash (parquetDecoders/parquetRowGroup*).
-    // null entry => frame has no covered columns.
+    // Covered-index callers retain their existing per-frame descriptors. These
+    // lists stay empty for plain native/Parquet scans, including fused joins.
+    // Missing frames use getQuiet() instead of appending a null for every frame.
     private final ObjList<boolean[]> coveredColumns = new ObjList<>();
     // Per covered frame, the deduplicated sidecar include indices its covered
     // columns decode from (the required-cover-columns argument for opening a
@@ -80,20 +74,20 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     // non-covered frames. Mirrors PageFrame#getCoveredIncludeIndex.
     private final ObjList<int[]> coveredColumnIncludes = new ObjList<>();
     private final ObjList<IndexReader> coveredIndexReaders = new ObjList<>();
-    private final IntList coveredKeys = new IntList();
-    private final LongList coveredRowHis = new LongList();
-    private final LongList coveredRowLos = new LongList();
-    private final ByteList frameFormats = new ByteList();
-    private final LongList frameSizes = new LongList();
+    // Size, format, row group and bounds, row ID, covered key and bounds.
+    // Frame cardinality never determines the size of a Java array on the scan path.
+    private final DirectLongList frameMetadata = new DirectLongList(
+            ADDRESS_LIST_INITIAL_CAPACITY * FRAME_METADATA_LONGS, MemoryTag.NATIVE_DEFAULT, true
+    );
     private final DirectLongList pageAddresses;
     private final DirectLongList pageSizes;
+    // Compatibility for cache users without a partition resolver. The fused
+    // pipeline supplies decoderSource, so this list stays empty there.
     private final ObjList<ParquetDecoder> parquetDecoders = new ObjList<>();
-    private final IntList parquetRowGroupHis = new IntList();
-    private final IntList parquetRowGroupLos = new IntList();
-    private final IntList parquetRowGroups = new IntList();
-    // Makes it possible to determine real row id, not the one relative to the page.
-    private final LongList rowIdOffsets = new LongList();
     private int columnCount;
+    // Borrowed, read-only after frame publication. Table readers already own their
+    // partition decoders; do not duplicate those references once per frame.
+    private PageFrameCursor decoderSource;
     // True in case of external parquet files, false in case of table partition files.
     private boolean external;
     private boolean hasCoveredFrames;
@@ -107,7 +101,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     }
 
     public void add(int frameIndex, @Transient PageFrame frame) {
-        if (frameSizes.size() >= frameIndex + 1) {
+        if (getFrameCount() >= frameIndex + 1) {
             // The page frame is already cached; covered stash was populated on the
             // first call for this frame, so no patching is needed here.
             return;
@@ -162,38 +156,38 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         // all tests + CI, so this turns that silent corruption into a loud failure.
         assert coveredMetadataConsistent(frame, covered, format);
 
-        frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
-        frameFormats.add(format);
+        frameMetadata.add(frame.getPartitionHi() - frame.getPartitionLo());
+        frameMetadata.add(format);
         ParquetDecoder decoder = frame.getParquetDecoder();
-        parquetDecoders.add(decoder);
+        if (decoderSource == null && decoder != null) {
+            parquetDecoders.extendAndSet(frameIndex, decoder);
+        }
         assert (decoder != null && decoder.getFileSize() > 0) || format != PartitionFormat.PARQUET;
-        parquetRowGroups.add(frame.getParquetRowGroup());
-        parquetRowGroupLos.add(frame.getParquetRowGroupLo());
-        parquetRowGroupHis.add(frame.getParquetRowGroupHi());
-        rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
+        frameMetadata.add(frame.getParquetRowGroup());
+        frameMetadata.add(frame.getParquetRowGroupLo());
+        frameMetadata.add(frame.getParquetRowGroupHi());
+        frameMetadata.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
 
         // Covered-frame stash populated in the native pass above. Single-key covered frames are
         // metadata-only at production (CoveringPageFrameCursor#finalizeFrame emits PLACEHOLDER
         // zero addresses), so those flat entries are 0 and the worker covered arm
         // (PageFrameMemoryPool#patchCoveredFrameMemory) re-decodes and rebinds; multi-key
         // (VALUE_NOT_FOUND) covered frames carry real eager addresses the worker arm leaves alone.
-        coveredColumns.add(covered);
-        coveredColumnIncludes.add(columnInclude);
         if (covered != null) {
-            coveredKeys.add(frame.getCoveredKey());
-            coveredRowLos.add(frame.getCoveredRowLo());
-            coveredRowHis.add(frame.getCoveredRowHi());
-            coveredIncludeIndices.add(frame.getCoveredIncludeIndices());
+            coveredColumns.extendAndSet(frameIndex, covered);
+            coveredColumnIncludes.extendAndSet(frameIndex, columnInclude);
+            frameMetadata.add(frame.getCoveredKey());
+            frameMetadata.add(frame.getCoveredRowLo());
+            frameMetadata.add(frame.getCoveredRowHi());
+            coveredIncludeIndices.extendAndSet(frameIndex, frame.getCoveredIncludeIndices());
             // The covered frame carries a single per-partition posting reader;
             // column/direction are advisory (see CoveringPageFrame#getIndexReader).
-            coveredIndexReaders.add(frame.getIndexReader(0, IndexReader.DIR_FORWARD));
+            coveredIndexReaders.extendAndSet(frameIndex, frame.getIndexReader(0, IndexReader.DIR_FORWARD));
             hasCoveredFrames = true;
         } else {
-            coveredKeys.add(SymbolTable.VALUE_NOT_FOUND);
-            coveredRowLos.add(-1);
-            coveredRowHis.add(-1);
-            coveredIncludeIndices.add(null);
-            coveredIndexReaders.add(null);
+            frameMetadata.add(SymbolTable.VALUE_NOT_FOUND);
+            frameMetadata.add(-1);
+            frameMetadata.add(-1);
         }
     }
 
@@ -233,24 +227,17 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     @Override
     public void clear() {
-        frameSizes.clear();
-        frameFormats.clear();
+        frameMetadata.clear();
+        decoderSource = null;
         parquetDecoders.clear();
-        parquetRowGroups.clear();
-        parquetRowGroupLos.clear();
-        parquetRowGroupHis.clear();
         coveredColumns.clear();
         coveredColumnIncludes.clear();
         coveredIncludeIndices.clear();
         coveredIndexReaders.clear();
-        coveredKeys.clear();
-        coveredRowLos.clear();
-        coveredRowHis.clear();
         pageAddresses.clear();
         auxPageAddresses.clear();
         pageSizes.clear();
         auxPageSizes.clear();
-        rowIdOffsets.clear();
         external = false;
         hasCoveredFrames = false;
         hasParquetFrames = false;
@@ -262,6 +249,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         pageSizes.close();
         auxPageAddresses.close();
         auxPageSizes.close();
+        frameMetadata.close();
+        clear();
     }
 
     /**
@@ -297,7 +286,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
      * decode from, or {@code null} when the frame has no covered columns.
      */
     public IndexReader getCoveredIndexReader(int frameIndex) {
-        return coveredIndexReaders.getQuick(frameIndex);
+        return coveredIndexReaders.getQuiet(frameIndex);
     }
 
     /**
@@ -308,7 +297,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
      * {@code PageFrame#getCoveredIncludeIndex(col)} for the frame that was added.
      */
     public int getCoveredIncludeIndex(int frameIndex, int col) {
-        final int[] columnInclude = coveredColumnIncludes.getQuick(frameIndex);
+        final int[] columnInclude = coveredColumnIncludes.getQuiet(frameIndex);
         return columnInclude != null ? columnInclude[col] : -1;
     }
 
@@ -319,7 +308,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
      * covered columns.
      */
     public int[] getCoveredIncludeIndices(int frameIndex) {
-        return coveredIncludeIndices.getQuick(frameIndex);
+        return coveredIncludeIndices.getQuiet(frameIndex);
     }
 
     /**
@@ -327,7 +316,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
      * {@link SymbolTable#VALUE_NOT_FOUND} for a frame with no covered columns.
      */
     public int getCoveredKey(int frameIndex) {
-        return coveredKeys.getQuick(frameIndex);
+        return (int) frameMetadata.get((long) frameIndex * FRAME_METADATA_LONGS + 6);
     }
 
     /**
@@ -335,7 +324,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
      * range, or {@code -1} for a frame with no covered columns.
      */
     public long getCoveredRowHi(int frameIndex) {
-        return coveredRowHis.getQuick(frameIndex);
+        return frameMetadata.get((long) frameIndex * FRAME_METADATA_LONGS + 8);
     }
 
     /**
@@ -343,19 +332,19 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
      * range, or {@code -1} for a frame with no covered columns.
      */
     public long getCoveredRowLo(int frameIndex) {
-        return coveredRowLos.getQuick(frameIndex);
+        return frameMetadata.get((long) frameIndex * FRAME_METADATA_LONGS + 7);
     }
 
     public int getFrameCount() {
-        return frameSizes.size();
+        return (int) (frameMetadata.size() / FRAME_METADATA_LONGS);
     }
 
     public byte getFrameFormat(int frameIndex) {
-        return frameFormats.getQuick(frameIndex);
+        return (byte) frameMetadata.get((long) frameIndex * FRAME_METADATA_LONGS + 1);
     }
 
     public long getFrameSize(int frameIndex) {
-        return frameSizes.getQuick(frameIndex);
+        return frameMetadata.get((long) frameIndex * FRAME_METADATA_LONGS);
     }
 
     /**
@@ -375,23 +364,25 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     }
 
     public ParquetDecoder getParquetDecoder(int frameIndex) {
-        return parquetDecoders.getQuick(frameIndex);
+        return decoderSource != null
+                ? decoderSource.getParquetDecoder(Rows.toPartitionIndex(getRowIdOffset(frameIndex)))
+                : parquetDecoders.getQuiet(frameIndex);
     }
 
     public int getParquetRowGroup(int frameIndex) {
-        return parquetRowGroups.getQuick(frameIndex);
+        return (int) frameMetadata.get((long) frameIndex * FRAME_METADATA_LONGS + 2);
     }
 
     public int getParquetRowGroupHi(int frameIndex) {
-        return parquetRowGroupHis.getQuick(frameIndex);
+        return (int) frameMetadata.get((long) frameIndex * FRAME_METADATA_LONGS + 4);
     }
 
     public int getParquetRowGroupLo(int frameIndex) {
-        return parquetRowGroupLos.getQuick(frameIndex);
+        return (int) frameMetadata.get((long) frameIndex * FRAME_METADATA_LONGS + 3);
     }
 
     public long getRowIdOffset(int frameIndex) {
-        return rowIdOffsets.getQuick(frameIndex);
+        return frameMetadata.get((long) frameIndex * FRAME_METADATA_LONGS + 5);
     }
 
     /**
@@ -401,7 +392,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
      * the cache-level flag.
      */
     public boolean isFrameCovered(int frameIndex) {
-        return coveredColumns.getQuick(frameIndex) != null;
+        return coveredColumns.getQuiet(frameIndex) != null;
     }
 
     /**
@@ -466,7 +457,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
      * of a non-covered frame.
      */
     public boolean isColumnCovered(int frameIndex, int col) {
-        final boolean[] covered = coveredColumns.getQuick(frameIndex);
+        final boolean[] covered = coveredColumns.getQuiet(frameIndex);
         return covered != null && covered[col];
     }
 
@@ -491,6 +482,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             pageSizes.reopen();
             auxPageAddresses.reopen();
             auxPageSizes.reopen();
+            frameMetadata.reopen();
         } catch (Throwable th) {
             close();
             throw th;
@@ -507,12 +499,20 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         this.external = external;
     }
 
+    public void of(@Transient RecordMetadata metadata, PageFrameCursor cursor) {
+        of(metadata, cursor.getColumnMapping(), cursor.isExternal());
+        if (cursor.supportsParquetDecoderLookup()) {
+            decoderSource = cursor;
+        }
+    }
+
     /** Bind before of(), after closing the previous execution's backing. */
     public void setMemoryTracker(MemoryTracker tracker) {
         pageAddresses.setMemoryTracker(tracker);
         pageSizes.setMemoryTracker(tracker);
         auxPageAddresses.setMemoryTracker(tracker);
         auxPageSizes.setMemoryTracker(tracker);
+        frameMetadata.setMemoryTracker(tracker);
     }
 
     /**
@@ -541,7 +541,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 }
             }
         } else {
-            parquetDecoders.setQuick(frameIndex, frame.getParquetDecoder());
+            if (decoderSource == null) {
+                parquetDecoders.extendAndSet(frameIndex, frame.getParquetDecoder());
+            }
         }
     }
 }

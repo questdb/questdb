@@ -281,6 +281,7 @@ import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.orderby.SortKeyMaterializingRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
@@ -293,7 +294,6 @@ import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
-import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
@@ -797,8 +797,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int workerCount,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        return new HashJoinGroupByFunctions(this, configuration, asm, functionParser,
-                model, metadata, workerCount, executionContext);
+        final boolean wasSymbolPredicateCacheEnabled = executionContext.isSymbolPredicateCacheEnabled();
+        executionContext.setSymbolPredicateCacheEnabled(false);
+        try {
+            return new HashJoinGroupByFunctions(this, configuration, asm, functionParser,
+                    model, metadata, workerCount, executionContext);
+        } finally {
+            executionContext.setSymbolPredicateCacheEnabled(wasSymbolPredicateCacheEnabled);
+        }
     }
 
     /**
@@ -5016,6 +5022,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // Child compilation can overwrite the models' usual backup fields. Preserve
         // separate snapshots so a rejected candidate leaves the ordinary plan intact.
         snapshotHashJoinFilters(model, inputModels, whereClauses, backups);
+        // Select existing uncached predicate implementations throughout both children
+        // and the joined functions. Restore this compiler setting even on fallback.
+        final boolean wasSymbolPredicateCacheEnabled = executionContext.isSymbolPredicateCacheEnabled();
+        executionContext.setSymbolPredicateCacheEnabled(false);
         executionContext.pushTimestampRequiredFlag(false);
         try {
             // These children stay under the enclosing query registration and memory tracker.
@@ -5040,6 +5050,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return null;
             }
             build = generateQuery(candidate.getBuildModel(), executionContext, false);
+            if (!HashJoinGroupByCandidate.supportsInputFactory(build)) {
+                return null;
+            }
             final int workerCount = executionContext.getSharedQueryWorkerCount();
             try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, candidate,
                     probeInput.getMetadata(), probeColumns,
@@ -5085,6 +5098,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         candidate.getLogicalJoinType(), candidate.isInputSwapped());
             }
         } finally {
+            executionContext.setSymbolPredicateCacheEnabled(wasSymbolPredicateCacheEnabled);
             executionContext.popTimestampRequiredFlag();
             for (int i = 0; i < inputModels.size(); i++) {
                 inputModels.getQuick(i).setWhereClause(whereClauses.getQuick(i));

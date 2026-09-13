@@ -35,6 +35,8 @@ import io.questdb.std.Hash;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
@@ -71,6 +73,7 @@ public final class IntHashJoinBuild implements Closeable {
     private final Buffer rows = new Buffer();
     private final int rowSize;
     private final int[] sourceColumns;
+    private final ObjList<SymbolTable> sourceSymbols = new ObjList<>();
     private final Buffer symbolChars = new Buffer();
     private final Buffer symbolEntries = new Buffer();
     private final Buffer symbolSlots = new Buffer();
@@ -100,6 +103,7 @@ public final class IntHashJoinBuild implements Closeable {
         int columnCount = payloadTypes.getColumnCount();
         this.offsets = new int[columnCount];
         this.sourceColumns = new int[columnCount];
+        this.sourceSymbols.setAll(columnCount, null);
         this.types = new int[columnCount];
         long offset = Long.BYTES;
         for (int i = 0; i < columnCount; i++) {
@@ -150,7 +154,9 @@ public final class IntHashJoinBuild implements Closeable {
                     case ColumnType.TIMESTAMP -> Unsafe.putLong(dest, record.getTimestamp(column));
                     case ColumnType.FLOAT -> Unsafe.putFloat(dest, record.getFloat(column));
                     case ColumnType.DOUBLE -> Unsafe.putDouble(dest, record.getDouble(column));
-                    case ColumnType.SYMBOL -> Unsafe.putInt(dest, intern(record.getSymA(column)));
+                    case ColumnType.SYMBOL -> Unsafe.putInt(dest, intern(sourceSymbols.getQuick(i) != null
+                            ? sourceSymbols.getQuick(i).valueOf(record.getInt(column))
+                            : record.getSymA(column)));
                     default -> throw new AssertionError();
                 }
             }
@@ -173,6 +179,13 @@ public final class IntHashJoinBuild implements Closeable {
     public FrozenHashJoinBuild build(RecordCursor cursor, int keyColumn) {
         requireBuilding();
         try {
+            // Independent views read the source's native dictionary. Calling getSymA
+            // on a cached table record would retain one Java String per symbol.
+            for (int i = 0; i < types.length; i++) {
+                if (types[i] == ColumnType.SYMBOL) {
+                    sourceSymbols.setQuick(i, cursor.newSymbolTable(sourceColumns[i]));
+                }
+            }
             Record record = cursor.getRecord();
             while (cursor.hasNext()) {
                 append(record.getInt(keyColumn), record);
@@ -181,6 +194,10 @@ public final class IntHashJoinBuild implements Closeable {
         } catch (Throwable th) {
             close();
             throw th;
+        } finally {
+            for (int i = 0; i < sourceSymbols.size(); i++) {
+                sourceSymbols.setQuick(i, Misc.freeIfCloseable(sourceSymbols.getQuick(i)));
+            }
         }
     }
 

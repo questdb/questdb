@@ -151,8 +151,12 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         try {
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
             long start = System.nanoTime();
+            final boolean wasCloneSymbolTables = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
             try (RecordCursor buildCursor = buildFactory.getCursor(executionContext)) {
                 frameSequence.getAtom().build(buildCursor, executionContext, metrics);
+            } finally {
+                executionContext.setCloneSymbolTables(wasCloneSymbolTables);
             }
             metrics.buildNanos = System.nanoTime() - start;
             start = System.nanoTime();

@@ -199,7 +199,15 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 slot.joinedRecord.of(slot.probeRecord, slot.probeRecord, slot.probe);
             }
             filtersInitialized = true;
-            filterContext.initFilters(symbolTableSource, executionContext);
+            // The owner predicate also needs an uncached view: its source is the
+            // table frame cursor, unlike joined functions' slot-local symbol source.
+            final boolean wasCloneSymbolTables = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                filterContext.initFilters(symbolTableSource, executionContext);
+            } finally {
+                executionContext.setCloneSymbolTables(wasCloneSymbolTables);
+            }
             functionsInitialized = true;
             functions.init(records, executionContext);
         } catch (Throwable th) {

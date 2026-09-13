@@ -49,7 +49,6 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.SuspensionScope;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -65,7 +64,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
     private final MillisecondClock clock;
-    private final LongList frameRowCounts = new LongList();
     private final PageFrameReduceTaskFactory localTaskFactory;
     private final MessageBus messageBus;
     private final AtomicInteger reduceFinishedCounter = new AtomicInteger(0);
@@ -282,7 +280,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     }
 
     public long getFrameRowCount(int frameIndex) {
-        return frameRowCounts.getQuick(frameIndex);
+        return frameAddressCache.getFrameSize(frameIndex);
     }
 
     public long getId() {
@@ -459,7 +457,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
             frameAddressCache.setMemoryTracker(memoryTracker);
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
+            frameAddressCache.of(base.getMetadata(), frameCursor);
 
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();
@@ -508,7 +506,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         readyToDispatch = false;
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
-        frameRowCounts.clear();
 
         Throwable cleanupFailure = null;
         try {
@@ -608,7 +605,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private void buildAddressCache() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);
         }
 

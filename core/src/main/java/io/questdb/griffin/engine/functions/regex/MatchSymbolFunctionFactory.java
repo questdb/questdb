@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.functions.regex;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -79,7 +79,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         final SymbolFunction func = (SymbolFunction) args.getQuick(0);
         final Function pattern = args.getQuick(1);
         final int patternPosition = argPositions.getQuick(1);
-        if (func.isSymbolTableStatic()) {
+        if (func.isSymbolTableStatic() && sqlExecutionContext.isSymbolPredicateCacheEnabled()) {
             if (pattern.isConstant()) {
                 final Matcher matcher = RegexUtils.createMatcher(pattern, patternPosition);
                 if (matcher == null) {

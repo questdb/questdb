@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.Nullable;
@@ -67,6 +68,11 @@ public interface TablePageFrameCursor extends PageFrameCursor {
         return null;
     }
 
+    @Override
+    default ParquetDecoder getParquetDecoder(int partitionIndex) {
+        return getTableReader().getParquetPartitionDecoder(partitionIndex);
+    }
+
     default boolean hasIntervalFilter() {
         return false;
     }
@@ -92,6 +98,11 @@ public interface TablePageFrameCursor extends PageFrameCursor {
     }
 
     TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) throws SqlException;
+
+    @Override
+    default boolean supportsParquetDecoderLookup() {
+        return true;
+    }
 
     /**
      * Positions the cursor at the lead frames, the way {@link #toPartition(int)} positions it

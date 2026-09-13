@@ -1242,6 +1242,16 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 }
 
                 @Override
+                public SymbolTable getSymbolTable(int columnIndex) {
+                    return cursor.getSymbolTable(columnIndex);
+                }
+
+                @Override
+                public SymbolTable newSymbolTable(int columnIndex) {
+                    return cursor.newSymbolTable(columnIndex);
+                }
+
+                @Override
                 public boolean hasNext() {
                     if (++hook.buildReads == hook.buildFailAt) {
                         throw CairoException.nonCritical().put("injected build source failure");

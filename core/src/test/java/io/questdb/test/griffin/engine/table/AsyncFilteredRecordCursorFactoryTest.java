@@ -1603,6 +1603,16 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isSymbolPredicateCacheEnabled() {
+            return sqlExecutionContext.isSymbolPredicateCacheEnabled();
+        }
+
+        @Override
+        public void setSymbolPredicateCacheEnabled(boolean enabled) {
+            sqlExecutionContext.setSymbolPredicateCacheEnabled(enabled);
+        }
+
+        @Override
         public boolean isParallelHashJoinGroupByEnabled() {
             return sqlExecutionContext.isParallelHashJoinGroupByEnabled();
         }

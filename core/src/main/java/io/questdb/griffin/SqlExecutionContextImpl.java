@@ -118,6 +118,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
+    private boolean isSymbolPredicateCacheEnabled = true;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
     private SecurityContext validationSecurityContext;
@@ -477,6 +478,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isSymbolPredicateCacheEnabled() {
+        return isSymbolPredicateCacheEnabled;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
     }
@@ -702,6 +708,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
         this.readerPoolSupervisor = supervisor;
+    }
+
+    @Override
+    public void setSymbolPredicateCacheEnabled(boolean enabled) {
+        isSymbolPredicateCacheEnabled = enabled;
     }
 
     @Override

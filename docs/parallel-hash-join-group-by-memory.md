@@ -1,10 +1,10 @@
 # Fused hash join: allocation-time memory tracking (RFC task 9a)
 
-[RFC 130](https://github.com/questdb/rfc/discussions/130) added tasks 9a–9d after
+[RFC 130](https://github.com/questdb/rfc/discussions/130) added tasks 9a–9e after
 the original task 10 measurements. This audit covers the experimental keyed and
 scalar shared-build pipelines, including filtered build cursors and native/mixed/
 Parquet probe frames. The experimental default remains false. Task 10 must run
-again after 9b–9d; the previous benchmark is historical evidence.
+again after 9b–9e; the previous benchmark is historical evidence.
 
 ## Allocation-site audit
 
@@ -37,7 +37,7 @@ part of this V1 payload path. Codec-library control/workspace and table-reader
 metadata retain their existing framework ownership; the data-page and dictionary
 buffers owned by the execution decoder are covered above.
 
-## Cleanup and the remaining heap work
+## Cleanup and the subsequent heap work
 
 Cancellation/failure still drains probe tasks and shard merges before closing
 slot state, decode pools, frame cursors and the frozen lookup. A collected shared
@@ -47,14 +47,14 @@ interleave. Buffer shells can be reused, but their native backing cannot remain
 charged to a registration that has ended. This changes allocation frequency and
 must be included in the repeated task 10 measurements.
 
-The query tracker measures native memory. Java heap retention is the separate
-**task 9b**, and no zero-GC claim is made here. In particular, the shared frame
-cache's per-frame primitive lists and decoder/covered-reader references,
+The query tracker measures native memory. At the task 9a boundary, the shared
+frame cache's per-frame primitive lists and decoder/covered-reader references,
 `UnorderedPageFrameSequence.frameRowCounts`, decoder bookkeeping maps, and source
-SYMBOL view caches still need the 9b audit and migration where data-dependent.
-Factory/schema/function/worker/shard control lists must be bounded and measured.
-Any storage moved off heap in 9b must follow the same allocation-time contract;
-9c then measures successful-execution Java allocations and 9d audits breakers.
+SYMBOL caches still awaited the separate task 9b audit and migration. The
+subsequent [task 9b audit](parallel-hash-join-group-by-heap.md) records the completed
+migration, bounded control state and retained-heap measurements under the same
+allocation-time contract. Task 9c measures successful-execution Java allocations,
+9d audits breakers, and 9e expands semantic/storage/negative coverage.
 
 ## Regression evidence
 
