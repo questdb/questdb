@@ -148,8 +148,10 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
         ff.write(metaFd, addr, 4, TableUtils.META_OFFSET_TABLE_ID);
 
         // Both writes land inside the checksummed _meta body, so the stored checksum now describes the
-        // previous contents. Re-stamp before closing, exactly as the production in-place writers do
-        // (see DurableEpochManifest.recordEnrolledCommitMode), or the next reload rejects the file.
+        // previous contents. Re-stamp before closing, as the engine migration's in-place _meta edit does
+        // (see EngineMigration), or the next reload rejects the file. Nothing reads this _meta
+        // concurrently here; a writer under live readers must not take this two-store path at all -- see
+        // DurableEpochManifest.recordEnrollment.
         TableUtils.refreshMetaBodyChecksumOnFd(ff, metaFd, addr, path);
 
         Unsafe.free(addr, 8, MemoryTag.NATIVE_DEFAULT);

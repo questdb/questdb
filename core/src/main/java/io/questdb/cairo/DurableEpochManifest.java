@@ -162,6 +162,13 @@ public final class DurableEpochManifest {
      * records. A torn value is correct as whichever of those two it reads as. Recording BEFORE the anchor
      * would have no such property: it would claim durable state that is not on disk yet.
      *
+     * <p>The argument holds only because the record is a SINGLE store. It sits outside the {@code _meta}
+     * body checksum ({@code TableUtils.calculateMetaBodyChecksum}) for exactly that reason: covered, the
+     * write would be value-then-checksum, and a reader mapping the file between the two -- a query opening
+     * a {@code TableReader} while the first writer enrols the table -- would compute the new bytes against
+     * the old checksum and reject a healthy file. That is not hypothetical; it failed
+     * {@code AclPermissionsCompactionTest} on CI.
+     *
      * <p>The generation-zero payload copy of {@code _meta} predates this write and so still reads UNSET.
      * That is deliberate and harmless: a recovery that restores the payload reverts the record to "not
      * enrolled", and the next writer re-records it against the same, still-valid anchor.
@@ -230,10 +237,10 @@ public final class DurableEpochManifest {
                     tempMem,
                     tablePath
             );
-            // The enrolment int lands inside the checksummed range, so the stored _meta body checksum
-            // now describes the previous contents. Refresh BEFORE the fsync, so the checksum and the
-            // bytes it covers are made durable together.
-            TableUtils.refreshMetaBodyChecksumOnFd(ff, fd, tempMem, tablePath);
+            // No checksum refresh: the record is excluded from the _meta body checksum precisely so that
+            // this stays ONE store. A refresh would be a second store, and a reader mapping _meta between
+            // the two would see the new int against the old checksum and reject the file. See
+            // recordEnrollment() and TableUtils.calculateMetaBodyChecksum().
             ff.fsync(fd);
         } finally {
             if (tempMem != 0) {

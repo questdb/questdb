@@ -26,6 +26,8 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.FilesFacade;
@@ -36,6 +38,10 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The live {@code _meta} carried no body checksum -- only the epoch manifest's snapshot COPY was
@@ -112,6 +118,114 @@ public class MetaChecksumTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The enrolment record is the one {@code _meta} field written IN PLACE under live readers
+     * ({@code DurableEpochManifest.writeEnrollmentRecord}). Covered by the checksum it would need a second
+     * store to keep the checksum in step, and a reader mapping the file between the two would reject a
+     * healthy table -- which is how {@code AclPermissionsCompactionTest} failed on CI. So the 4 bytes are
+     * excluded, and exactly those 4: the padding right after them is still covered.
+     */
+    @Test
+    public void testEnrolmentRecordIsOutsideTheChecksum() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table meta_enrol (ts timestamp, v long) timestamp(ts) partition by day wal");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("meta_enrol");
+            Assert.assertTrue(hasChecksum(token));
+
+            // A raw in-place write of the record, with NO checksum refresh, must still verify.
+            final int recorded = readIntInMeta(token, TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE);
+            final int flipped = recorded == CommitMode.NOSYNC ? CommitMode.ADAPTIVE : CommitMode.NOSYNC;
+            writeIntInMeta(token, TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE, flipped);
+            forceMetadataReload(token);
+
+            // Boundary control: the first byte past the record is covered, so the exclusion is exactly
+            // the record and not a wider hole.
+            flipByteInMetaBody(token, TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE + Integer.BYTES);
+            try {
+                forceMetadataReload(token);
+                Assert.fail("the byte after the enrolment record must still be covered");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_meta checksum mismatch");
+            }
+        });
+    }
+
+    /**
+     * Pins the mechanism the exclusion exists for: recording the enrolled commit mode must leave the
+     * stored checksum byte-identical -- one store, nothing to keep in step -- and the file must verify.
+     */
+    @Test
+    public void testEnrolmentRecordWriteIsASingleStore() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table meta_enrol_store (ts timestamp, v long) timestamp(ts) partition by day wal");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("meta_enrol_store");
+            Assert.assertTrue(hasChecksum(token));
+            final long before = readLongInMeta(token, TableUtils.META_OFFSET_BODY_CHECKSUM_64);
+
+            DurableEpochManifest.recordEnrolledCommitMode(engine.getConfiguration(), token, CommitMode.ADAPTIVE);
+            Assert.assertEquals(CommitMode.ADAPTIVE, readIntInMeta(token, TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE));
+            Assert.assertEquals("recording the enrolment must not touch the checksum", before,
+                    readLongInMeta(token, TableUtils.META_OFFSET_BODY_CHECKSUM_64));
+            forceMetadataReload(token);
+
+            DurableEpochManifest.recordEnrolledCommitMode(engine.getConfiguration(), token, CommitMode.UNSET);
+            Assert.assertEquals(CommitMode.UNSET, readIntInMeta(token, TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE));
+            Assert.assertEquals(before, readLongInMeta(token, TableUtils.META_OFFSET_BODY_CHECKSUM_64));
+            forceMetadataReload(token);
+        });
+    }
+
+    /**
+     * The CI shape: a reader opens {@code _meta} while the enrolment record is being written. With a single
+     * store there is no window; this is the canary for anyone who re-introduces a second one.
+     */
+    @Test
+    public void testEnrolmentRecordWriteRacesReaderOpen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table meta_enrol_race (ts timestamp, v long) timestamp(ts) partition by day wal");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("meta_enrol_race");
+            Assert.assertTrue(hasChecksum(token));
+
+            final int writes = 300;
+            final AtomicReference<Throwable> writerError = new AtomicReference<>();
+            final AtomicBoolean done = new AtomicBoolean();
+            final CyclicBarrier start = new CyclicBarrier(2);
+            final Thread writer = new Thread(() -> {
+                try {
+                    start.await();
+                    for (int i = 0; i < writes; i++) {
+                        DurableEpochManifest.recordEnrolledCommitMode(
+                                engine.getConfiguration(), token, (i & 1) == 0 ? CommitMode.ADAPTIVE : CommitMode.UNSET
+                        );
+                    }
+                } catch (Throwable t) {
+                    writerError.compareAndSet(null, t);
+                } finally {
+                    done.set(true);
+                }
+            });
+            writer.start();
+            start.await();
+            int reloads = 0;
+            try {
+                while (!done.get()) {
+                    forceMetadataReload(token); // throws "_meta checksum mismatch" if a window exists
+                    reloads++;
+                }
+            } finally {
+                writer.join();
+            }
+            if (writerError.get() != null) {
+                throw new AssertionError("enrolment writer failed", writerError.get());
+            }
+            Assert.assertTrue("the reader must have raced at least one write", reloads > 0);
+            forceMetadataReload(token);
+        });
+    }
+
     @Test
     public void testLegacyMetaWithoutChecksumLoads() throws Exception {
         // The false-positive control: a _meta written before the field existed fails the version gate
@@ -163,9 +277,12 @@ public class MetaChecksumTest extends AbstractCairoTest {
     }
 
     private void flipByteInMetaBody(TableToken token) {
+        // Inside the covered range and away from both excluded windows ([53,57) and [64,80)).
+        flipByteInMetaBody(token, TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
+    }
+
+    private void flipByteInMetaBody(TableToken token, long offset) {
         withMetaFd(token, true, (ff, fd) -> {
-            // Inside the covered range and away from the excluded [64,80) window.
-            final long offset = TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS;
             final long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
             try {
                 Assert.assertEquals(1, ff.read(fd, buf, 1, offset));
@@ -183,6 +300,7 @@ public class MetaChecksumTest extends AbstractCairoTest {
         engine.releaseInactive();
         engine.getTableMetadata(token).close();
     }
+
 
     private boolean hasChecksum(TableToken token) {
         final boolean[] present = {false};
@@ -206,6 +324,34 @@ public class MetaChecksumTest extends AbstractCairoTest {
         return present[0];
     }
 
+    private int readIntInMeta(TableToken token, long offset) {
+        final int[] value = new int[1];
+        withMetaFd(token, false, (ff, fd) -> {
+            final long buf = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Assert.assertEquals(Integer.BYTES, ff.read(fd, buf, Integer.BYTES, offset));
+                value[0] = Unsafe.getUnsafe().getInt(buf);
+            } finally {
+                Unsafe.free(buf, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+        return value[0];
+    }
+
+    private long readLongInMeta(TableToken token, long offset) {
+        final long[] value = new long[1];
+        withMetaFd(token, false, (ff, fd) -> {
+            final long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Assert.assertEquals(Long.BYTES, ff.read(fd, buf, Long.BYTES, offset));
+                value[0] = Unsafe.getUnsafe().getLong(buf);
+            } finally {
+                Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+        return value[0];
+    }
+
     private void withMetaFd(TableToken token, boolean rw, MetaFdAction action) {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
         try (Path path = new Path()) {
@@ -218,6 +364,18 @@ public class MetaChecksumTest extends AbstractCairoTest {
                 ff.close(fd);
             }
         }
+    }
+
+    private void writeIntInMeta(TableToken token, long offset, int value) {
+        withMetaFd(token, true, (ff, fd) -> {
+            final long buf = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putInt(buf, value);
+                Assert.assertEquals(Integer.BYTES, ff.write(fd, buf, Integer.BYTES, offset));
+            } finally {
+                Unsafe.free(buf, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @FunctionalInterface

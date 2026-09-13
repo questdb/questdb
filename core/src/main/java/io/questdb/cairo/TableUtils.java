@@ -119,9 +119,13 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 4;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 5;
     public static final short META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE = 3;
-    public static final short META_FORMAT_MINOR_VERSION_BODY_CHECKSUM = 4;
+    // 5, not 4: minor version 4 stamped a body checksum that also covered the in-place enrolment record
+    // at META_OFFSET_ENROLLED_COMMIT_MODE, which made that 4-byte write a two-store update (value, then
+    // checksum) that a concurrent reader could catch half-done. Version 4 never shipped; a file carrying
+    // it fails this gate and reads unverified, which is the "absent coverage, never wrong coverage" rule.
+    public static final short META_FORMAT_MINOR_VERSION_BODY_CHECKSUM = 5;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
@@ -164,9 +168,17 @@ public final class TableUtils {
     //
     // The pair occupies previously unused padding between META_OFFSET_ENROLLED_COMMIT_MODE (ends at 57)
     // and META_OFFSET_COLUMN_TYPES (128), so no file grows. [64,80) is EXCLUDED from the checksum it
-    // stores -- see calculateMetaBodyChecksum -- for the same reason _txn excludes its own slot.
+    // stores -- see calculateMetaBodyChecksum -- for the same reason _txn excludes its own slot. So is the
+    // enrolment record at [53,57): it is the one field written IN PLACE while readers may be mapping the
+    // file (DurableEpochManifest.writeEnrollmentRecord), and covering it would turn that single atomic
+    // int store into value-then-checksum, a window in which a reader computes the new bytes against the
+    // old checksum and rejects a healthy file. Excluded, the record's own "every torn read is a valid
+    // value" argument stands, and enrolment stays durability bookkeeping rather than a checksummed schema
+    // change.
     public static final long META_OFFSET_BODY_LEN_64 = 64; // LONG
     public static final long META_OFFSET_BODY_CHECKSUM_64 = 72; // LONG
+    private static final long META_BODY_CHECKSUM_SKIP_ENROLMENT_LO = META_OFFSET_ENROLLED_COMMIT_MODE;
+    private static final long META_BODY_CHECKSUM_SKIP_ENROLMENT_HI = META_OFFSET_ENROLLED_COMMIT_MODE + Integer.BYTES;
     private static final long META_BODY_CHECKSUM_SKIP_HI = META_OFFSET_BODY_CHECKSUM_64 + 8;
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
@@ -452,14 +464,18 @@ public final class TableUtils {
     }
 
     /**
-     * Checksum over the live {@code _meta} body {@code [0, bodyLen)}, EXCLUDING the 16 bytes at
-     * {@code [META_OFFSET_BODY_LEN_64, META_OFFSET_BODY_CHECKSUM_64 + 8)} that carry the length and the
-     * checksum itself -- a field cannot cover its own value.
+     * Checksum over the live {@code _meta} body {@code [0, bodyLen)}, EXCLUDING two windows: the 16 bytes
+     * at {@code [META_OFFSET_BODY_LEN_64, META_OFFSET_BODY_CHECKSUM_64 + 8)} that carry the length and the
+     * checksum itself -- a field cannot cover its own value -- and the 4 bytes at
+     * {@code META_OFFSET_ENROLLED_COMMIT_MODE}, the adaptive enrolment record, which is written in place
+     * under live readers and must therefore stay a single atomic store with no checksum to keep in step
+     * (see the field's declaration).
      *
      * @return a non-zero 64-bit checksum
      */
     public static long calculateMetaBodyChecksum(long metaBaseAddr, long bodyLen) {
-        long h = hashTxnBodyRange(metaBaseAddr, 0, META_OFFSET_BODY_LEN_64, 0);
+        long h = hashTxnBodyRange(metaBaseAddr, 0, META_BODY_CHECKSUM_SKIP_ENROLMENT_LO, 0);
+        h = hashTxnBodyRange(metaBaseAddr, META_BODY_CHECKSUM_SKIP_ENROLMENT_HI, META_OFFSET_BODY_LEN_64, h);
         if (META_BODY_CHECKSUM_SKIP_HI < bodyLen) {
             h = hashTxnBodyRange(metaBaseAddr, META_BODY_CHECKSUM_SKIP_HI, bodyLen, h);
         }
@@ -728,21 +744,18 @@ public final class TableUtils {
     }
 
     /**
-     * Recomputes the stored body checksum after an in-place mutation of {@code _meta}. No-op on a file
-     * that carries no checksum, and on one whose recorded body length is unusable.
-     */
-    /**
-     * Recomputes the stored body checksum after an in-place mutation made through a raw file
-     * descriptor rather than a mapped memory -- the adaptive enrolment record is written that way on
-     * purpose, so that durability bookkeeping does not present itself as a schema change.
+     * Recomputes and stores the {@code _meta} body checksum after an IN-PLACE edit made through a raw file
+     * descriptor rather than a mapped memory -- the engine migration path edits {@code _meta} that way.
+     * Every such writer must call this before its fsync, or the stored checksum describes the previous
+     * contents and the next load rejects a healthy file.
      * <p>
-     * No-op on a {@code _meta} that carries no checksum. Never throws for a file it cannot interpret:
-     * losing the checksum costs detection, whereas failing here would fail the enrolment itself.
-     */
-    /**
-     * Recomputes and stores the {@code _meta} body checksum after an IN-PLACE edit, through a raw fd.
-     * Every in-place {@code _meta} writer must call this before its fsync, or the stored checksum
-     * describes the previous contents and the next load rejects a healthy file.
+     * NOT for a mutation made under live readers: the refresh is a second store, and a reader that maps
+     * the file between the two sees the new bytes against the old checksum. The adaptive enrolment record
+     * used to take this path and hit exactly that; it is now outside the checksummed range instead.
+     * <p>
+     * No-op on a {@code _meta} that carries no checksum, or whose recorded body length is unusable. Never
+     * throws for a file it cannot interpret: losing the checksum costs detection, whereas failing here
+     * would fail the caller's operation.
      *
      * @param tempMem scratch buffer of at least {@link Long#BYTES} bytes -- the new checksum is written
      *                through it, so a shorter allocation overruns the heap
