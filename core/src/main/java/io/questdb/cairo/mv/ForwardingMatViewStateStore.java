@@ -132,6 +132,11 @@ public class ForwardingMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public boolean isRefreshQueueEmpty() {
+        return delegate.isRefreshQueueEmpty();
+    }
+
+    @Override
     public void notifyBaseInvalidated(TableToken baseTableToken) {
         delegate.notifyBaseInvalidated(baseTableToken);
     }

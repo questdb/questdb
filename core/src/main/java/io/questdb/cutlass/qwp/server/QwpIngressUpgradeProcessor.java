@@ -161,7 +161,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             WebSocketFrameWriter.headerSize(BROWSER_SERVER_INFO_PAYLOAD_BYTES, false)
                     + BROWSER_SERVER_INFO_PAYLOAD_BYTES;
     private static final String ERROR_DURABLE_ACK_POLL_NOT_NEGOTIATED = "durable ACK poll was not negotiated";
-    private static final Log LOG = LogFactory.getLog(QwpIngressUpgradeProcessor.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(QwpIngressUpgradeProcessor.class);
     private static final LocalValue<QwpIngressProcessorState> LV = new LocalValue<>();
     // Worst-case WebSocket frame header size (2-byte base + 8-byte 64-bit
     // extended length + 4-byte mask for client->server frames). Subtracted

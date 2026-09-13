@@ -2334,8 +2334,9 @@ public:
         cc.xor_(unused_ptr, unused_ptr);
         cc.xor_(input_index, input_index);
         ColumnAddressCache cache;
+        ValueCacheYmm value_cache;
         auto value = questdb::avx2::read_mem(
-                cc, data_type_t::i32, 0, data_ptr, unused_ptr, input_index, true, cache
+                cc, data_type_t::i32, 0, data_ptr, unused_ptr, input_index, true, cache, value_cache
         );
         cc.vmovdqu(x86::xmmword_ptr(output_ptr), value.vec().xmm());
         cc.end_func();

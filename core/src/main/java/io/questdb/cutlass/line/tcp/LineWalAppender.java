@@ -51,6 +51,7 @@ import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.line.LineUtils.from;
+import static io.questdb.cutlass.line.LineUtils.fromDesignatedTimestamp;
 import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.DUPLICATED_COLUMN;
@@ -122,13 +123,12 @@ public class LineWalAppender implements QuietCloseable {
 
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
-            if (timestamp < 0) {
-                throw LineProtocolException.designatedTimestampMustBePositive(tud.getTableNameUtf16(), timestamp);
-            }
-            timestamp = from(tud.getTimestampDriver(), timestamp, getOverloadTimestampUnit(parser.getTimestampUnit()));
-            if (timestamp > CommonUtils.MAX_TIMESTAMP) {
-                throw LineProtocolException.designatedTimestampValueOverflow(tud.getTableNameUtf16(), timestamp);
-            }
+            timestamp = fromDesignatedTimestamp(
+                    tud.getTimestampDriver(),
+                    timestamp,
+                    getOverloadTimestampUnit(parser.getTimestampUnit()),
+                    tud.getTableNameUtf16()
+            );
         } else {
             timestamp = tud.getTimestampDriver().getTicks();
         }
@@ -143,7 +143,13 @@ public class LineWalAppender implements QuietCloseable {
                     final int columnType = metadata.getColumnType(columnWriterIndex);
                     if (columnType > -1) {
                         if (columnWriterIndex == tud.getTimestampIndex()) {
-                            timestamp = from(tud.getTimestampDriver(), ent.getLongValue(), ent.getUnit());
+                            // the designated timestamp arrives as a named field, overriding the line timestamp
+                            timestamp = fromDesignatedTimestamp(
+                                    tud.getTimestampDriver(),
+                                    ent.getLongValue(),
+                                    ent.getUnit(),
+                                    tud.getTableNameUtf16()
+                            );
                             ld.addColumnType(DUPLICATED_COLUMN, ColumnType.UNDEFINED);
                         } else {
                             ld.addColumnType(columnWriterIndex, metadata.getColumnType(columnWriterIndex));
