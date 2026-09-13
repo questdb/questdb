@@ -134,7 +134,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             isSorted = true;
         }
         if (currentAddr < endAddr) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             long chainOffset = Unsafe.getLong(currentAddr);
             currentAddr += entrySize;
             recordChain.recordAt(recordChain.getRecord(), chainOffset);
@@ -204,7 +204,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
 
     private void buildAndSort() {
         // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
-        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         final boolean isVariable = keyType.isVariable();
         long estimatedSize = baseCursor.size();
         long maxEntries = maxEntryMemBytes / entrySize;
@@ -221,7 +221,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         if (isVariable) {
             keyHeap.close();
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 long chainOffset = recordChain.put(record, -1L);
                 entryMem.ensureCapacity(longsPerEntry);
                 long addr = entryMem.getAppendAddress();
@@ -234,7 +234,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             }
         } else if (estimatedSize > 0) {
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 long chainOffset = recordChain.put(record, -1L);
                 long addr = entryMem.getAppendAddress();
                 encoder.encode(record, addr, chainOffset);
@@ -243,7 +243,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             }
         } else {
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (count >= maxEntries) {
                     throwLimitOverflow();
                 }
@@ -266,7 +266,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             } else {
                 Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
             }
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
         }
         if (isVariable) {
             // emit reads only chain offsets; the key heap is not needed past the sort

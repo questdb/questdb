@@ -97,7 +97,7 @@ class WaitWalFunction extends BooleanFunction implements Function {
         // Legacy polling fallback.
         for (int i = 0; seqTxnTracker.getWriterTxn() < seqTxn; i++) {
             Os.sleep(1);
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             if (i % 1000 == 0) {
                 throwIfTerminated();
             }
@@ -162,7 +162,7 @@ class WaitWalFunction extends BooleanFunction implements Function {
             @Nullable FiberCancellationSignal supplementalCancellationSignal,
             long supplementalCancellationSignalGeneration
     ) {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottleOrYield();
         if ((cancellationSignal != null && cancellationSignal.isCancelled(cancellationSignalGeneration))
                 || (supplementalCancellationSignal != null
                 && supplementalCancellationSignal.isCancelled(supplementalCancellationSignalGeneration))) {
@@ -250,7 +250,7 @@ class WaitWalFunction extends BooleanFunction implements Function {
                     throw abortedException();
                 }
                 if (reason == FiberWaitCoordinator.REASON_CANCEL) {
-                    executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                    executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottleOrYield();
                     throw CairoException.queryCancelled();
                 }
             } finally {

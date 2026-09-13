@@ -1,0 +1,68 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.mp.continuation;
+
+/**
+ * Single-use authorization for one Fiber mount segment. The runtime calls {@link #onMount} before
+ * changing the Fiber to MOUNTED and always follows it with one {@link #onUnmount} call. The latter
+ * receives false when mounting or the pre-mount callback failed, allowing reservations to be
+ * refunded exactly once.
+ */
+public interface FiberDispatchTicket {
+    /**
+     * Whether {@link #onCooperativePoll()} ends the mounted segment on the ticket's own time
+     * slice. Batching loops then leave slice fairness to the ticket.
+     */
+    default boolean isTimeSliced() {
+        return false;
+    }
+
+    /**
+     * Invoked from an explicitly cooperative execution boundary while this ticket owns the
+     * currently mounted Fiber segment. Implementations must keep the ordinary path allocation-free.
+     */
+    default void onCooperativePoll() {
+    }
+
+    void onMount(FiberDispatchRequest request);
+
+    /**
+     * Replaces the re-submission promised by {@link #onUnmountBeforeRedispatch} when a driver
+     * failure retires the Fiber before the runtime re-submits its request.
+     */
+    default void onRedispatchAbandoned(FiberDispatchRequest request) {
+    }
+
+    void onUnmount(FiberDispatchRequest request, boolean wasMounted);
+
+    /**
+     * Replaces {@link #onUnmount} when the mounted Fiber yielded for dispatch and the runtime
+     * re-submits its request to the same session right after. A session may settle this unmount
+     * inside that request instead of separately.
+     */
+    default void onUnmountBeforeRedispatch(FiberDispatchRequest request) {
+        onUnmount(request, true);
+    }
+}

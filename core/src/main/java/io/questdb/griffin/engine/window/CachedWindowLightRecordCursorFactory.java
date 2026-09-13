@@ -481,7 +481,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             final int forwardStateCount = forwardStates != null ? forwardStates.size() : 0;
             if (hasOrdered || forwardFnCount > 0) {
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     narrowChain.beginRecord();
                     baseRowIds.add(baseRecord.getRowId());
                     if (hasOrdered) {
@@ -505,13 +505,13 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
                 if (hasOrdered) {
                     for (int i = 0; i < orderedGroupCount; i++) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         sortBuffers.getQuick(i).finishPut(circuitBreaker);
                     }
                 }
             } else {
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     narrowChain.beginRecord();
                     baseRowIds.add(baseRecord.getRowId());
                     rowIndex++;
@@ -531,7 +531,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     final int stateCount = states != null ? states.size() : 0;
                     group.toTop();
                     while (group.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         long rIdx = group.next();
                         positionRecordABaseOnly(rIdx);
                         for (int g = 0; g < stateCount; g++) {
@@ -553,7 +553,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                         windowMapGroups != null ? windowMapGroups.getBackwardUnorderedStates() : null;
                 final int backwardStateCount = backwardStates != null ? backwardStates.size() : 0;
                 for (long rIdx = size - 1; rIdx >= 0; rIdx--) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     positionRecordABaseOnly(rIdx);
                     for (int g = 0; g < backwardStateCount; g++) {
                         backwardStates.getQuick(g).computeNext(recordA);
@@ -598,7 +598,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     final int stateCount = states != null ? states.size() : 0;
                     group.toTop();
                     while (group.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         long rIdx = group.next();
                         // pass2 reads only base columns through recordA and reads/writes its own
                         // output via spi.getAddress (position-independent), so narrow positioning
@@ -621,7 +621,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                         windowMapGroups != null ? windowMapGroups.getUnorderedPass2States() : null;
                 final int pass2StateCount = pass2States != null ? pass2States.size() : 0;
                 for (long rIdx = 0; rIdx < size; rIdx++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     // see the ordered pass2 loop: base-only positioning suffices here too.
                     positionRecordABaseOnly(rIdx);
                     for (int g = 0; g < pass2StateCount; g++) {

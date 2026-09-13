@@ -24,6 +24,9 @@
 
 package io.questdb.mp.continuation;
 
+import io.questdb.std.FiberLocal;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -37,7 +40,7 @@ import java.util.concurrent.locks.Lock;
 
 public final class Fiber implements FiberWaitCoordinator.Target {
     public static final long TOKEN_REFUSED = 0;
-    public static final int YIELD_COOPERATIVE = 2;
+    public static final int YIELD_DISPATCH = 2;
     public static final int YIELD_FREE = 0;
     public static final int YIELD_WAIT = 1;
     static final int EXECUTION_DONE = 6;
@@ -67,7 +70,9 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private static final long WAIT_ADMISSION_OFFSET = Unsafe.getFieldOffset(Fiber.class, "waitAdmission");
     private final CancellationBinding cancellationBindingScratch = new CancellationBinding();
     private final PinnableContinuation continuation;
+    private final @Nullable FiberDispatchRequest dispatchRequest;
     private final Rnd fiberAsyncRandom;
+    private final ObjList<Object> fiberLocalSlots = new ObjList<>();
     private final Rnd fiberRandom;
     private final Outcome outcomeScratch = new Outcome();
     private final FiberPool pool;
@@ -80,17 +85,21 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private long assignedSupplementalCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
     private FiberTask assignedTask;
     private TimerShards assignedTimerShards;
+    private @Nullable FiberDispatchContext dispatchContext;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long executionState = packExecutionState(0, EXECUTION_FREE);
     private boolean isAsyncRandomInitialized;
     private boolean isRandomInitialized;
     private volatile boolean isShutdown;
     private int lastMountWorkerId = FiberRuntime.NO_WORKER;
+    private long mountVersion;
+    private @Nullable FiberDispatchTicket mountedDispatchTicket;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile int notificationState = NOTIFICATION_IDLE;
     private Throwable outcomeError;
     private FiberTask outcomeTask;
     private int outcomeType;
+    private @Nullable FiberDispatchTicket pendingRedispatchTicket;
     private int registryIndex = -1;
     private volatile long reservationEpoch;
     @SuppressWarnings("unused")
@@ -101,10 +110,36 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     Fiber(FiberPool pool, @Nullable Runnable beforeWaitFireForTesting) {
         this.continuation = new PinnableContinuation(this::taskRunnerLoop);
+        this.dispatchRequest = pool.getRuntime().newDispatchRequest(this);
         this.fiberAsyncRandom = new Rnd();
         this.fiberRandom = new Rnd();
         this.pool = pool;
         this.waitCoordinator = new FiberWaitCoordinator(this, beforeWaitFireForTesting);
+    }
+
+    /**
+     * Captures the opaque dispatch context of the currently mounted controlled Fiber. This is
+     * intended for query-owned child work published for a later Fiber launch. Ordinary jobs,
+     * unmounted carriers, and runtimes without a dispatch controller return null.
+     */
+    public static @Nullable FiberDispatchContext captureDispatchContext() {
+        final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        final Fiber fiber = scope.fiber;
+        return fiber != null
+                && scope.mode == SuspensionScope.Mode.FIBER
+                && fiber.dispatchRequest != null
+                && isMounted()
+                ? fiber.dispatchContext
+                : null;
+    }
+
+    /**
+     * Captures the dispatch context intended for query-parallel child work. The context decides
+     * whether child work keeps the current policy identity or moves to a controller-specific lane.
+     */
+    public static @Nullable FiberDispatchContext captureParallelDispatchContext() {
+        final FiberDispatchContext context = captureDispatchContext();
+        return context != null ? context.getParallelDispatchContext() : null;
     }
 
     @Nullable
@@ -112,52 +147,120 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return SuspensionScope.scope().fiber;
     }
 
+    public static @Nullable FiberDispatchContext getDispatchContext() {
+        return requireControlledMountedFiber().dispatchContext;
+    }
+
+    /**
+     * Whether the runtime that owns the current mounted Fiber has another Fiber queued for a
+     * carrier. False outside a mounted Fiber.
+     */
+    public static boolean hasQueuedRuntimeWork() {
+        final Fiber fiber = mountedOrNull();
+        return fiber != null && fiber.pool.getRuntime().hasQueuedWork();
+    }
+
     public static boolean isMounted() {
         return Continuation.getCurrentContinuation(SCOPE) != null;
     }
 
-    /**
-     * Cooperatively unmounts the current Fiber and reschedules it through its runtime. A false
-     * return means the continuation was pinned and the method restored the mounted state before
-     * returning.
-     */
-    public static boolean yieldCooperatively() {
-        final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
-        final Fiber fiber = scope.fiber;
-        if (fiber == null || scope.mode != SuspensionScope.Mode.FIBER) {
-            throw new IllegalStateException("cooperative yield requires a mounted Fiber scope");
+    public static boolean isMountedDispatchTimeSliced() {
+        final Fiber fiber = mountedOrNull();
+        if (fiber != null) {
+            final FiberDispatchTicket ticket = fiber.mountedDispatchTicket;
+            return ticket != null && ticket.isTimeSliced();
         }
-        if (!Unsafe.cas(
-                fiber,
-                EXECUTION_STATE_OFFSET,
-                packExecutionState(0, EXECUTION_MOUNTED),
-                packExecutionState(0, EXECUTION_PARKING)
-        )) {
-            throw new IllegalStateException("cooperative yield requires mounted execution");
-        }
-        final int previousYieldReason = fiber.yieldReason;
-        fiber.yieldReason = YIELD_COOPERATIVE;
-        boolean isSuspended = false;
-        try {
-            isSuspended = suspend();
-            if (!isSuspended) {
-                fiber.rollbackCooperativeYield();
-            } else if (fiber.executionState != packExecutionState(0, EXECUTION_MOUNTED)) {
-                throw new IllegalStateException("cooperative yield resumed without a mount");
-            }
-            return isSuspended;
-        } catch (Throwable th) {
-            if (!isSuspended) {
-                fiber.rollbackCooperativeYield();
-            }
-            throw th;
-        } finally {
-            fiber.yieldReason = previousYieldReason;
-        }
+        return false;
     }
 
-    static void verifyRuntimeAccess() {
-        Continuation.getCurrentContinuation(SCOPE);
+    /**
+     * Polls the reusable dispatch ticket that owns the current mounted segment. Uncontrolled
+     * Fibers and ordinary non-Fiber execution have no ticket and therefore make this a no-op.
+     */
+    public static void pollMountedDispatchTicket() {
+        pollMountedDispatchTicketAndCheckYield();
+    }
+
+    /**
+     * Polls the mounted dispatch ticket, when present, and reports whether the poll unmounted and
+     * remounted the current Fiber. An installed ticket may represent unmanaged work, so ticket
+     * presence alone does not imply that the poll enforced a scheduling boundary.
+     */
+    public static boolean pollMountedDispatchTicketAndCheckYield() {
+        final Fiber fiber = mountedOrNull();
+        if (fiber != null) {
+            final FiberDispatchTicket ticket = fiber.mountedDispatchTicket;
+            if (ticket != null) {
+                final FiberDispatchRequest request = fiber.dispatchRequest;
+                assert request != null;
+                final long dispatchEpoch = request.getDispatchEpoch();
+                ticket.onCooperativePoll();
+                return request.getDispatchEpoch() != dispatchEpoch;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Like {@link #yieldForDispatch(FiberDispatchContext)}, but settles the mounted ticket on the
+     * carrier and only suspends when the controller refuses a direct grant for the new context.
+     */
+    public static boolean switchDispatchContext(@Nullable FiberDispatchContext nextDispatchContext) {
+        final Fiber fiber = requireControlledMountedFiber();
+        final FiberRuntime runtime = fiber.pool.getRuntime();
+        final FiberDispatchContext previousDispatchContext = fiber.dispatchContext;
+        fiber.dispatchContext = nextDispatchContext;
+        final long pendingEpoch;
+        try {
+            pendingEpoch = runtime.trySwitchMountedDispatch(fiber);
+        } catch (Throwable th) {
+            fiber.dispatchContext = previousDispatchContext;
+            throw th;
+        }
+        if (pendingEpoch == 0) {
+            return true;
+        }
+        if (pendingEpoch < 0) {
+            fiber.dispatchContext = previousDispatchContext;
+            return yieldForDispatch(fiber, nextDispatchContext);
+        }
+        if (yieldForDispatch(fiber, nextDispatchContext)) {
+            return true;
+        }
+        runtime.abandonPendingSwitch(fiber, pendingEpoch);
+        fiber.dispatchContext = previousDispatchContext;
+        return false;
+    }
+
+    /**
+     * Cooperatively unmounts the current Fiber while preserving its dispatch context. Controlled
+     * runtimes settle and reacquire their dispatch ticket; uncontrolled runtimes reschedule the
+     * Fiber through the ordinary owner-local run queue. A false return means the continuation was
+     * pinned and could not suspend.
+     */
+    public static boolean yieldCooperatively() {
+        final Fiber fiber = requireMountedFiber();
+        return yieldForDispatch(fiber, fiber.dispatchContext);
+    }
+
+    /**
+     * Cooperatively unmounts the current continuation so its dispatch authority can be settled
+     * and reacquired. A successful call returns only after the Fiber is mounted again. A false
+     * return means the continuation was pinned and could not suspend.
+     */
+    public static boolean yieldForDispatch() {
+        final Fiber fiber = requireControlledMountedFiber();
+        return yieldForDispatch(fiber, fiber.dispatchContext);
+    }
+
+    /**
+     * Changes the opaque dispatch context at the same unmount boundary used for CPU-grant
+     * renewal. A successful call returns only after the controller has authorized the new
+     * context. When suspension is refused, both the mounted state and the prior context are
+     * restored before false is returned.
+     */
+    public static boolean yieldForDispatch(@Nullable FiberDispatchContext nextDispatchContext) {
+        return yieldForDispatch(requireControlledMountedFiber(), nextDispatchContext);
     }
 
     @Override
@@ -239,6 +342,19 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return fiberAsyncRandom;
     }
 
+    @TestOnly
+    public int getLastMountWorkerIdForTesting() {
+        return lastMountWorkerId;
+    }
+
+    /**
+     * Counts real mounts of this Fiber's continuation. In-place dispatch switches keep the
+     * continuation mounted and do not change it.
+     */
+    public long getMountVersion() {
+        return mountVersion;
+    }
+
     public Rnd getRandom(NanosecondClock nanosecondClock, MicrosecondClock microsecondClock) {
         if (!isRandomInitialized) {
             fiberRandom.reset(
@@ -260,11 +376,6 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     public FiberWaitCoordinator getWaitCoordinator() {
         return waitCoordinator;
-    }
-
-    @TestOnly
-    public int getLastMountWorkerIdForTesting() {
-        return lastMountWorkerId;
     }
 
     @Override
@@ -372,8 +483,30 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return new IllegalStateException("invalid fiber wait state [state=" + state + ']');
     }
 
+    private static @Nullable Fiber mountedOrNull() {
+        final Fiber fiber = current();
+        return fiber != null && isMounted() ? fiber : null;
+    }
+
     private static long packExecutionState(long token, int state) {
         return (token << EXECUTION_STATE_BITS) | state;
+    }
+
+    private static Fiber requireControlledMountedFiber() {
+        final Fiber fiber = requireMountedFiber();
+        if (fiber.dispatchRequest == null) {
+            throw new IllegalStateException("Fiber dispatch operation requires a controlled runtime");
+        }
+        return fiber;
+    }
+
+    private static Fiber requireMountedFiber() {
+        final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        final Fiber fiber = scope.fiber;
+        if (fiber == null || scope.mode != SuspensionScope.Mode.FIBER) {
+            throw new IllegalStateException("Fiber dispatch operation requires a mounted Fiber scope");
+        }
+        return fiber;
     }
 
     private static boolean suspend() {
@@ -393,6 +526,38 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     private static long withExecutionState(long executionState, int state) {
         return (executionState & ~EXECUTION_STATE_MASK) | state;
+    }
+
+    private static boolean yieldForDispatch(Fiber fiber, @Nullable FiberDispatchContext nextDispatchContext) {
+        if (!Unsafe.cas(
+                fiber,
+                EXECUTION_STATE_OFFSET,
+                packExecutionState(0, EXECUTION_MOUNTED),
+                packExecutionState(0, EXECUTION_PARKING)
+        )) {
+            throw new IllegalStateException("Fiber dispatch yield requires mounted execution");
+        }
+        final FiberDispatchContext previousDispatchContext = fiber.dispatchContext;
+        final int previousYieldReason = fiber.yieldReason;
+        fiber.dispatchContext = nextDispatchContext;
+        fiber.yieldReason = YIELD_DISPATCH;
+        boolean isSuspended = false;
+        try {
+            isSuspended = suspend();
+            if (!isSuspended) {
+                fiber.rollbackDispatchYield(previousDispatchContext);
+            } else if (fiber.executionState != packExecutionState(0, EXECUTION_MOUNTED)) {
+                throw new IllegalStateException("Fiber dispatch yield resumed without a mount grant");
+            }
+            return isSuspended;
+        } catch (Throwable th) {
+            if (!isSuspended) {
+                fiber.rollbackDispatchYield(previousDispatchContext);
+            }
+            throw th;
+        } finally {
+            fiber.yieldReason = previousYieldReason;
+        }
     }
 
     private void abandonAssignedTask() {
@@ -422,6 +587,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 ? new IllegalStateException("fiber task leaked role-switch read lock [depth=" + leakedDepth + ']')
                 : null;
         final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        final ObjList<Object> previousSlots = FiberLocal.enter(fiberLocalSlots);
         final Fiber previousFiber = scope.fiber;
         final SuspensionScope.Mode previousMode = scope.mode;
         final SuspensionScope.Mode savedMode = roleSwitchReadLocks.getPreviousMode();
@@ -441,6 +607,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
             roleSwitchReadLocks.clear();
             scope.fiber = previousFiber;
             scope.mode = previousFiber == this ? savedMode : previousMode;
+            FiberLocal.exit(previousSlots);
         }
         return failure;
     }
@@ -451,32 +618,38 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         }
     }
 
-    private void rollbackCooperativeYield() {
+    private void rollbackDispatchYield(@Nullable FiberDispatchContext previousDispatchContext) {
         while (true) {
             final long current = executionState;
             if (executionToken(current) != 0) {
-                throw new IllegalStateException("cooperative yield changed the execution token");
+                throw new IllegalStateException("Fiber dispatch yield changed the execution token");
             }
             final int state = executionState(current);
             if (state == EXECUTION_MOUNTED) {
-                return;
+                break;
             }
             if (state != EXECUTION_PARKING && state != EXECUTION_RESUME_PENDING) {
-                throw new IllegalStateException("cooperative yield cannot restore execution [state=" + state + ']');
+                throw new IllegalStateException("Fiber dispatch yield cannot restore execution [state=" + state + ']');
             }
             if (Unsafe.cas(this, EXECUTION_STATE_OFFSET, current, packExecutionState(0, EXECUTION_MOUNTED))) {
-                return;
+                break;
             }
         }
+        dispatchContext = previousDispatchContext;
     }
 
-    private void rollbackUnpublished(FiberTask task, long reservationEpoch) {
+    private void rollbackUnpublished(
+            FiberTask task,
+            long reservationEpoch,
+            @Nullable FiberDispatchContext previousDispatchContext
+    ) {
         if (assignedTask != task
                 || executionState != packExecutionState(0, EXECUTION_RUNNABLE)
                 || notificationState != NOTIFICATION_IDLE) {
             throw new IllegalStateException("fiber cannot roll back unpublished task");
         }
         clearAssignedTask();
+        dispatchContext = previousDispatchContext;
         executionState = packExecutionState(reservationEpoch, EXECUTION_RESERVED);
     }
 
@@ -528,6 +701,10 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         abandonAssignedTask();
     }
 
+    static void verifyRuntimeAccess() {
+        Continuation.getCurrentContinuation(SCOPE);
+    }
+
     boolean beginMount() {
         while (true) {
             final long current = executionState;
@@ -535,6 +712,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 return false;
             }
             if (Unsafe.cas(this, EXECUTION_STATE_OFFSET, current, withExecutionState(current, EXECUTION_MOUNTED))) {
+                mountVersion++;
                 return true;
             }
         }
@@ -546,6 +724,13 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     void beginRetirement() {
         Unsafe.cas(this, RETIREMENT_STATE_OFFSET, 0, 1);
+    }
+
+    void clearMountedDispatchTicket(FiberDispatchTicket expected) {
+        if (mountedDispatchTicket != expected) {
+            throw new IllegalStateException("mounted Fiber does not own the expected dispatch ticket");
+        }
+        mountedDispatchTicket = null;
     }
 
     boolean completeRetirement() {
@@ -589,8 +774,27 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         }
     }
 
+    void freeFiberLocals() {
+        Misc.freeObjListIfCloseable(fiberLocalSlots);
+        fiberLocalSlots.clear();
+    }
+
+    FiberTask getAssignedTask() {
+        return assignedTask;
+    }
+
     CancellationBinding getCancellationBindingScratch() {
         return cancellationBindingScratch;
+    }
+
+    @Nullable
+    FiberDispatchContext getDispatchContextForDispatch() {
+        return dispatchContext;
+    }
+
+    @Nullable
+    FiberDispatchRequest getDispatchRequest() {
+        return dispatchRequest;
     }
 
     int getExecutionState() {
@@ -599,6 +803,11 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     int getLastMountWorkerId() {
         return lastMountWorkerId;
+    }
+
+    @Nullable
+    FiberDispatchTicket getMountedDispatchTicket() {
+        return mountedDispatchTicket;
     }
 
     int getNotificationState() {
@@ -628,6 +837,13 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     int getYieldReason() {
         return yieldReason;
+    }
+
+    void installMountedDispatchTicket(FiberDispatchTicket ticket) {
+        if (mountedDispatchTicket != null) {
+            throw new IllegalStateException("mounted Fiber already owns a dispatch ticket");
+        }
+        mountedDispatchTicket = ticket;
     }
 
     boolean isDone() {
@@ -661,6 +877,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     void markRetired() {
         clearAssignedTask();
+        dispatchContext = null;
         while (true) {
             final long current = executionState;
             if (Unsafe.cas(this, EXECUTION_STATE_OFFSET, current, packExecutionState(0, EXECUTION_DONE))) {
@@ -741,14 +958,14 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         }
     }
 
-    void publishCooperativeYield() {
+    void publishDispatchYield() {
         if (!Unsafe.cas(
                 this,
                 EXECUTION_STATE_OFFSET,
                 packExecutionState(0, EXECUTION_PARKING),
                 packExecutionState(0, EXECUTION_RUNNABLE)
         )) {
-            throw new IllegalStateException("Fiber cooperative yield is not parking");
+            throw new IllegalStateException("fiber dispatch yield is not parking");
         }
         requestRun();
     }
@@ -834,6 +1051,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         if (scope.roleSwitchReadLocks.hasAny() || scope.roleSwitchWriteLockDepth > 0) {
             throw new IllegalStateException("fiber mount would hide a carrier role-switch lock");
         }
+        final ObjList<Object> previousSlots = FiberLocal.enter(fiberLocalSlots);
         final Fiber previousFiber = scope.fiber;
         final FiberCancellationSignal previousCancellationSignal = scope.cancellationSignal;
         final long previousCancellationSignalGeneration = scope.cancellationSignalGeneration;
@@ -875,6 +1093,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 scope.supplementalCancellationSignal = previousSupplementalCancellationSignal;
                 scope.supplementalCancellationSignalGeneration = previousSupplementalCancellationSignalGeneration;
                 scope.timerShards = previousTimerShards;
+                FiberLocal.exit(previousSlots);
             }
         }
     }
@@ -883,19 +1102,29 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         lastMountWorkerId = workerId;
     }
 
+    void setPendingRedispatchTicket(@Nullable FiberDispatchTicket ticket) {
+        pendingRedispatchTicket = ticket;
+    }
+
     void setRegistryIndex(int registryIndex) {
         this.registryIndex = registryIndex;
     }
 
-    void stage(FiberTask task, long reservationEpoch) {
+    void stage(
+            FiberTask task,
+            long reservationEpoch,
+            @Nullable FiberDispatchContext dispatchContext
+    ) {
         if (assignedTask != null
                 || executionState != packExecutionState(reservationEpoch, EXECUTION_RESERVED)) {
             throw new IllegalStateException("fiber is not reserved");
         }
+        final FiberDispatchContext previousDispatchContext = this.dispatchContext;
         task.captureCancellationBinding();
         assignedCancellationSignal = task.getBoundCancellationSignal();
         assignedCancellationSignalGeneration = task.getBoundCancellationSignalGeneration();
         assignedTask = task;
+        this.dispatchContext = dispatchContext;
         if (!Unsafe.cas(
                 this,
                 EXECUTION_STATE_OFFSET,
@@ -903,21 +1132,35 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 packExecutionState(0, EXECUTION_RUNNABLE)
         )) {
             clearAssignedTask();
+            this.dispatchContext = previousDispatchContext;
             throw new IllegalStateException("fiber is not reserved");
         }
     }
 
     void stageAndRequestRun(FiberTask task, long reservationEpoch) {
-        stage(task, reservationEpoch);
+        stageAndRequestRun(task, reservationEpoch, dispatchContext);
+    }
+
+    void stageAndRequestRun(
+            FiberTask task,
+            long reservationEpoch,
+            @Nullable FiberDispatchContext dispatchContext
+    ) {
+        final FiberDispatchContext previousDispatchContext = this.dispatchContext;
+        stage(task, reservationEpoch, dispatchContext);
         try {
             requestRun();
         } catch (RuntimeException | Error th) {
-            rollbackUnpublished(task, reservationEpoch);
+            rollbackUnpublished(task, reservationEpoch, previousDispatchContext);
             throw th;
         }
     }
 
-    boolean stageForDirectMountOrRequestRun(FiberTask task, long reservationEpoch) {
+    boolean stageForDirectMountOrRequestRun(
+            FiberTask task,
+            long reservationEpoch,
+            @Nullable FiberDispatchContext dispatchContext
+    ) {
         while (true) {
             final int state = notificationState;
             if (state == NOTIFICATION_IDLE) {
@@ -925,7 +1168,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                     continue;
                 }
                 try {
-                    stage(task, reservationEpoch);
+                    stage(task, reservationEpoch, dispatchContext);
                     return true;
                 } catch (Throwable th) {
                     finishTerminatedProcessing();
@@ -933,7 +1176,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 }
             }
             if (state == NOTIFICATION_PROCESSING) {
-                stageAndRequestRun(task, reservationEpoch);
+                stageAndRequestRun(task, reservationEpoch, dispatchContext);
                 return false;
             }
             throw new IllegalStateException("fiber notification is not idle or processing");
@@ -947,6 +1190,13 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         outcomeError = null;
         outcomeTask = null;
         outcomeType = OUTCOME_NONE;
+    }
+
+    @Nullable
+    FiberDispatchTicket takePendingRedispatchTicket() {
+        final FiberDispatchTicket ticket = pendingRedispatchTicket;
+        pendingRedispatchTicket = null;
+        return ticket;
     }
 
     boolean transitionFreeToRunnable() {
@@ -969,6 +1219,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                 return false;
             }
             if (Unsafe.cas(this, EXECUTION_STATE_OFFSET, current, packExecutionState(0, EXECUTION_FREE))) {
+                dispatchContext = null;
                 return true;
             }
         }
@@ -1007,15 +1258,15 @@ public final class Fiber implements FiberWaitCoordinator.Target {
             super(SCOPE, body);
         }
 
-        @Override
-        protected void onPinned(Pinned reason) {
-            pinnedReason = reason;
-        }
-
         private CharSequence takePinnedReason() {
             final Pinned reason = pinnedReason;
             pinnedReason = null;
             return reason != null ? reason.name() : "UNKNOWN";
+        }
+
+        @Override
+        protected void onPinned(Pinned reason) {
+            pinnedReason = reason;
         }
     }
 }

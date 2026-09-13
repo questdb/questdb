@@ -129,6 +129,10 @@ public final class TimerShards {
         }
     }
 
+    public boolean isRunning() {
+        return isRunning;
+    }
+
     /**
      * Inserts an entry into the appropriate shard. An accepted entry receives exactly
      * one expire, shutdown, or successful unregister outcome.

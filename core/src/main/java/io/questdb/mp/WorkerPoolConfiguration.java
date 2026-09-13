@@ -25,8 +25,14 @@
 package io.questdb.mp;
 
 import io.questdb.Metrics;
+import io.questdb.mp.continuation.FiberDispatchController;
+import org.jetbrains.annotations.Nullable;
 
 public interface WorkerPoolConfiguration {
+
+    default @Nullable FiberDispatchController getFiberDispatchController() {
+        return null;
+    }
 
     default int getFiberMaxLiveCount() {
         return Math.max(64, 8 * getWorkerCount());

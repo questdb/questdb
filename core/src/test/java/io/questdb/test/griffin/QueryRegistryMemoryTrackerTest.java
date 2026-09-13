@@ -89,6 +89,42 @@ public class QueryRegistryMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProtocolOwnerMountRestoresItsMemoryTracker() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+
+            final long ownerA = registry.registerOwner("portal A", sqlExecutionContext);
+            final MemoryTracker trackerA = sqlExecutionContext.getMemoryTracker();
+            Assert.assertNotNull(trackerA);
+            Assert.assertEquals(ownerA, trackerA.getQueryId());
+            registry.unmountOwner(ownerA, sqlExecutionContext);
+            Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+
+            final long ownerB = registry.registerOwner("portal B", sqlExecutionContext);
+            final MemoryTracker trackerB = sqlExecutionContext.getMemoryTracker();
+            Assert.assertNotNull(trackerB);
+            Assert.assertNotSame(trackerA, trackerB);
+            Assert.assertEquals(ownerB, trackerB.getQueryId());
+            registry.unmountOwner(ownerB, sqlExecutionContext);
+            Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+
+            registry.mountOwner(ownerA, sqlExecutionContext);
+            Assert.assertSame(trackerA, sqlExecutionContext.getMemoryTracker());
+            registry.unmountOwner(ownerA, sqlExecutionContext);
+            Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+
+            registry.mountOwner(ownerB, sqlExecutionContext);
+            Assert.assertSame(trackerB, sqlExecutionContext.getMemoryTracker());
+            registry.unmountOwner(ownerB, sqlExecutionContext);
+            Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+
+            registry.unregister(ownerA, sqlExecutionContext);
+            registry.unregister(ownerB, sqlExecutionContext);
+        });
+    }
+
+    @Test
     public void testSiblingQueryRegistersAcquireDistinctTrackers() throws Exception {
         // Concurrent PG named portals share one SqlExecutionContext and are
         // siblings, not nested. A second QUERY register() that finds a sibling's

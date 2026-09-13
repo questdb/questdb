@@ -124,7 +124,7 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
             } else {
                 Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
             }
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
         }
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();

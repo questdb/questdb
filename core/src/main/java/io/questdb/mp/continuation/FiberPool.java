@@ -195,6 +195,7 @@ public final class FiberPool {
         if (!fiber.completeRetirement()) {
             throw new IllegalStateException("fiber retirement is not scheduled");
         }
+        fiber.freeFiberLocals();
         unregisterFiber(fiber);
         retiredCount.incrementAndGet();
         runtime.signalCapacity();

@@ -164,6 +164,7 @@ public class WorkerPool implements Closeable {
                 fiberMaxLiveCount,
                 fiberMountBudget,
                 workerCount,
+                configuration.getFiberDispatchController(),
                 workerWakeController != null ? workerWakeController : FiberWakeSink.NO_OP
         )
                 : null;

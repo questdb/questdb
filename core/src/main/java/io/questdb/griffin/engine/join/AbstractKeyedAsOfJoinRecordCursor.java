@@ -57,7 +57,7 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
     @Override
     public boolean hasNext() {
         // Consult the breaker at the top, so an empty master still observes cancellation.
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (!masterCursor.hasNext()) {
             return false;
         }

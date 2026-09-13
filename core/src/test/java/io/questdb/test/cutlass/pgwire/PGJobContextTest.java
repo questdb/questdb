@@ -4255,7 +4255,7 @@ if __name__ == "__main__":
                 pstmt.setString(1, "SELECT symbol,approx_percentile(price, 50, 2) from trades");
                 ResultSet rs = pstmt.executeQuery();
                 sink.clear();
-                assertResultSet("query_id[BIGINT],worker_id[BIGINT],worker_pool[VARCHAR],username[VARCHAR],query_start[TIMESTAMP],state_change[TIMESTAMP],state[VARCHAR],is_wal[BIT],query[VARCHAR],memory_used[BIGINT],memory_limit[BIGINT]\n",
+                assertResultSet("query_id[BIGINT],worker_id[BIGINT],worker_pool[VARCHAR],username[VARCHAR],query_start[TIMESTAMP],state_change[TIMESTAMP],state[VARCHAR],is_wal[BIT],query[VARCHAR],memory_used[BIGINT],memory_limit[BIGINT],resource_group[VARCHAR]\n",
                         sink, rs
                 );
             }
@@ -9481,6 +9481,25 @@ nodejs code:
                     Assert.fail();
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryTimeoutRestartsWithEachExecute() throws Exception {
+        maxQueryTime = 200;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            connection.setAutoCommit(false);
+            try (PreparedStatement statement = connection.prepareStatement("select x from long_sequence(3)")) {
+                statement.setFetchSize(1);
+                try (ResultSet rs = statement.executeQuery()) {
+                    for (int i = 1; i <= 3; i++) {
+                        Assert.assertTrue(rs.next());
+                        Assert.assertEquals(i, rs.getLong(1));
+                        Os.sleep(2 * maxQueryTime);
+                    }
+                    Assert.assertFalse(rs.next());
                 }
             }
         });

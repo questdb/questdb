@@ -370,7 +370,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
          */
         private void buildValue() {
             // Consult the breaker before iterating, so an empty master still observes cancellation.
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             for (int s = 0; s < slaveCount; s++) {
                 timeFrameHelpers.getQuick(s).toTop();
                 if (slaveStates.getQuick(s).isKeyed() && asOfJoinMaps.getQuick(s) != null) {
@@ -379,7 +379,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             }
 
             while (horizonIterator.next()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 final long horizonTs = horizonIterator.getHorizonTimestamp();
                 final long masterRowId = horizonIterator.getMasterRowId();

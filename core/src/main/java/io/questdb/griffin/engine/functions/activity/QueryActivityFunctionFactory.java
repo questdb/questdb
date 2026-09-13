@@ -99,7 +99,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         @Override
         public boolean hasNext() {
             // Consult the breaker at the top, so even an empty/fully-filtered registry scan stays cancellable.
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             while (++entryIndex < entryIds.size()) {
                 final long queryId = entryIds.get(entryIndex);
                 final QueryRegistry.Entry entry = queryRegistry.getEntry(queryId);
@@ -145,6 +145,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
             private final StringSink poolName = new StringSink();
             private final StringSink principal = new StringSink();
             private final StringSink query = new StringSink();
+            private final StringSink resourceGroup = new StringSink();
             private long changedAtNs;
             private boolean isWAL;
             private long memoryLimit;
@@ -153,6 +154,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
             private boolean principalIsNull;
             private long queryId;
             private long registeredAtNs;
+            private boolean resourceGroupIsNull;
             private byte state;
             private long workerId;
 
@@ -194,6 +196,8 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                     return QueryRegistry.Entry.State.getText(state);
                 } else if (col == 8) {
                     return query;
+                } else if (col == 11) {
+                    return resourceGroupIsNull ? null : resourceGroup;
                 }
 
                 return Record.super.getStrA(col);
@@ -241,8 +245,10 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                 poolName.clear();
                 principal.clear();
                 query.clear();
+                resourceGroup.clear();
                 poolNameIsNull = true;
                 principalIsNull = true;
+                resourceGroupIsNull = true;
                 queryId = -1;
                 workerId = -1;
                 registeredAtNs = 0;
@@ -297,6 +303,12 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                 // the memoryTracker field note in QueryRegistry.Entry.
                 this.memoryUsed = entry.getMemoryUsed();
                 this.memoryLimit = entry.getMemoryLimit();
+
+                final CharSequence entryResourceGroup = entry.getResourceGroupName();
+                if (!copy(entryResourceGroup, resourceGroup)) {
+                    return false;
+                }
+                resourceGroupIsNull = entryResourceGroup == null;
 
                 final CharSequence entryPoolName = entry.getPoolName();
                 if (!copy(entryPoolName, poolName)) {
@@ -353,6 +365,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("query", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("memory_used", ColumnType.LONG));
         metadata.add(new TableColumnMetadata("memory_limit", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("resource_group", ColumnType.STRING));
         METADATA = metadata;
     }
 }

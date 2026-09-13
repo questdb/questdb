@@ -31,6 +31,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.std.Mutable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -40,6 +41,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final MillisecondClock clock;
     private final SqlExecutionCircuitBreakerConfiguration configuration;
     private final long connectionCheckThrottle;
+    private final @Nullable CooperativePoller cooperativePoller;
     private final long defaultMaxTime;
     private final CairoEngine engine;
     private final NetworkFacade nf;
@@ -63,6 +65,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         this.throttle = configuration.getCircuitBreakerThrottle();
         this.connectionCheckThrottle = configuration.getCircuitBreakerConnectionCheckThrottle();
         this.clock = configuration.getClock();
+        this.cooperativePoller = CooperativePoller.newInstance(engine);
         long timeout = configuration.getQueryTimeout();
         if (timeout > 0) {
             this.timeout = timeout;
@@ -126,6 +129,24 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return testConnection(fd);
     }
 
+    @Override
+    public boolean checkIfTrippedOrYield() {
+        final boolean isTripped = checkIfTripped();
+        if (!isTripped) {
+            cooperativePoll();
+        }
+        return isTripped;
+    }
+
+    @Override
+    public boolean checkIfTrippedOrYield(long millis, long fd) {
+        final boolean isTripped = checkIfTripped(millis, fd);
+        if (!isTripped) {
+            cooperativePoll();
+        }
+        return isTripped;
+    }
+
     public void clear() {
         secret = -1;
         powerUpTime = Long.MAX_VALUE;
@@ -133,6 +154,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         lastConnectionCheckTime = 0;
         fd = -1;
         timeout = defaultMaxTime;
+        resetCooperativePoll();
     }
 
     public void clearCancelSentinel() {
@@ -168,6 +190,18 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return fd;
     }
 
+    @Override
+    public long getRemainingTimeoutMillis() {
+        if (!isTimerSet() || timeout == Long.MAX_VALUE) {
+            return Long.MAX_VALUE;
+        }
+        if (isCancelled()) {
+            return 0;
+        }
+        final long elapsed = Math.max(0, clock.getTicks() - powerUpTime);
+        return Math.max(0, timeout - elapsed);
+    }
+
     public int getSecret() {
         return secret;
     }
@@ -199,8 +233,30 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
+    public int getStateOrYield() {
+        final int state = getState();
+        if (state == STATE_OK) {
+            cooperativePoll();
+        }
+        return state;
+    }
+
+    @Override
+    public int getStateOrYield(long millis, long fd) {
+        final int state = getState(millis, fd);
+        if (state == STATE_OK) {
+            cooperativePoll();
+        }
+        return state;
+    }
+
+    @Override
     public long getTimeout() {
         return timeout;
+    }
+
+    public boolean isCancelled() {
+        return powerUpTime == Long.MIN_VALUE;
     }
 
     @Override
@@ -245,6 +301,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         // Force a prompt connection probe at the start of the new query (lastConnectionCheckTime=0 makes
         // the first time-throttled check fall outside any window for a real wall-clock).
         lastConnectionCheckTime = 0;
+        resetCooperativePoll();
     }
 
     @Override
@@ -288,6 +345,21 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
+    public void statefulThrowExceptionIfTrippedNoThrottleOrYield() {
+        statefulThrowExceptionIfTrippedNoThrottle();
+        cooperativePoll();
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTrippedOrYield() {
+        final int count = testCount;
+        statefulThrowExceptionIfTripped();
+        if (cooperativePoller != null) {
+            cooperativePoller.pollStateful(count, throttle);
+        }
+    }
+
+    @Override
     public void statefulThrowExceptionIfTrippedNoThrottle() {
         final long now = clock.getTicks();
         testCount = 0;
@@ -316,12 +388,26 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
+    public void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
+        statefulThrowExceptionIfTrippedTimeThrottled();
+        cooperativePoll();
+    }
+
+    @Override
     public void unsetTimer() {
         powerUpTime = Long.MAX_VALUE;
     }
 
-    private boolean isCancelled() {
-        return powerUpTime == Long.MIN_VALUE;
+    private void cooperativePoll() {
+        if (cooperativePoller != null) {
+            cooperativePoller.poll();
+        }
+    }
+
+    private void resetCooperativePoll() {
+        if (cooperativePoller != null) {
+            cooperativePoller.reset();
+        }
     }
 
     private void testCancelled() {

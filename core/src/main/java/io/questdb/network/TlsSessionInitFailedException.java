@@ -24,8 +24,8 @@
 
 package io.questdb.network;
 
+import io.questdb.std.FiberLocal;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -33,7 +33,7 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 public class TlsSessionInitFailedException extends Exception implements Sinkable, FlyweightMessageContainer {
-    private static final CarrierLocal<TlsSessionInitFailedException> tlException = new CarrierLocal<>(TlsSessionInitFailedException::new);
+    private static final FiberLocal<TlsSessionInitFailedException> tlException = new FiberLocal<>(TlsSessionInitFailedException::new);
     private final StringSink message = new StringSink();
 
     public static TlsSessionInitFailedException instance(CharSequence message) {

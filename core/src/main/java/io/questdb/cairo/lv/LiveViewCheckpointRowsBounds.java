@@ -548,7 +548,7 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             final RecordCursor source = openSource(plan, pageCursor, filter, executionContext);
             final Record record = source.getRecord();
             while (source.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (isOverScanRowBudget(filter, ++pulled)) {
                     // Q is a fragment of the interval at this point, so neither bound may
                     // be read off it: the caller keeps H at end-of-frame and L at S.
@@ -696,7 +696,7 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             final RecordCursor source = openSource(plan, pageCursor, filter, executionContext);
             final Record record = source.getRecord();
             while (source.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 backwardScanRows++;
                 if (isOverScanRowBudget(filter, backwardScanRows)) {
                     // L stays at S, the floor a walk that ran out of history also lands on.
@@ -753,7 +753,7 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         final int timestampIndex = plan.getTimestampIndex();
         long floor = Long.MAX_VALUE;
         for (int i = 0, n = outputKeys.size(); i < n; i++) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             indexedKeyLookups++;
             long preceding = 0;
             long keyLowTs = Numbers.LONG_NULL;

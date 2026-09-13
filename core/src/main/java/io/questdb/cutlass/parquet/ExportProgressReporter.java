@@ -49,7 +49,7 @@ public class ExportProgressReporter implements CopyDataProgressReporter {
 
     @Override
     public void onProgress(Stage stage, long rows) {
-        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
         switch (stage) {
             case Start:
                 entry.setTotalRowCount(rows);

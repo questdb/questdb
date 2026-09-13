@@ -234,7 +234,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (++fixedRelPos < fixedClassLen) {
                 return true;
             }

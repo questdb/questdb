@@ -251,6 +251,10 @@ public final class SuspensionScope {
         long cancellationSignalGeneration = CancellationBinding.NO_GENERATION;
         CancellationBinding.Source cancellationSource;
         Fiber fiber;
+        FiberLocalRunQueue fiberDrainLocalQueue;
+        int fiberDrainMountCount;
+        int fiberDrainMountLimit;
+        FiberRuntime fiberDrainRuntime;
         Mode mode;
         final RoleSwitchReadLockState roleSwitchReadLocks = new RoleSwitchReadLockState();
         int roleSwitchWriteLockDepth;

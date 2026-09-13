@@ -28,8 +28,14 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
+import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeState;
+import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -37,6 +43,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class CopyExportRequestJobTest extends AbstractCairoTest {
 
@@ -61,6 +70,57 @@ public class CopyExportRequestJobTest extends AbstractCairoTest {
                 ff.rmdir(path);
             }
         }
+    }
+
+    @Test
+    public void testCancelledBeforeFiberDrainReleasesRequest() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger callbackCount = new AtomicInteger();
+            final CopyExportContext copyContext = engine.getCopyExportContext();
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final CopyExportRequestJob job = new CopyExportRequestJob(
+                    engine,
+                    () -> {
+                        callbackCount.incrementAndGet();
+                        return null;
+                    },
+                    null,
+                    runtime
+            );
+            try {
+                publishCopy("COPY (SELECT 1 AS x) TO 'cancelled_before_drain' WITH FORMAT parquet");
+                final long copyId = copyContext.getActiveExportId();
+                Assert.assertNotEquals(CopyExportContext.INACTIVE_COPY_ID, copyId);
+                Assert.assertNotNull(copyContext.getEntry(copyId));
+
+                final PerQueryMemoryTrackerProvider trackerProvider =
+                        (PerQueryMemoryTrackerProvider) engine.getMemoryTrackerProvider();
+                final int pooledTrackerCount = trackerProvider.getPooledCount();
+
+                Assert.assertTrue(job.run());
+                Assert.assertEquals(1, runtime.getLaunchCount(LaunchResult.LAUNCHED));
+                Assert.assertTrue(copyContext.cancel(copyId, null));
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertEquals(0, callbackCount.get());
+                Assert.assertNull(copyContext.getEntry(copyId));
+                Assert.assertEquals(pooledTrackerCount, trackerProvider.getPooledCount());
+                assertExportDoesNotExist("cancelled_before_drain.parquet");
+                assertQuery("""
+                        SELECT status
+                        FROM "sys.copy_export_log"
+                        WHERE status = 'cancelled'
+                        """)
+                        .noLeakCheck()
+                        .returns("""
+                                status
+                                cancelled
+                                """);
+            } finally {
+                close(runtime);
+                job.close();
+            }
+        });
     }
 
     @Test
@@ -114,6 +174,109 @@ public class CopyExportRequestJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testContainsSecretSurvivesFiberHandoffAndResetsOnReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            final CopyExportContext copyContext = engine.getCopyExportContext();
+            final AtomicReference<CopyExportContext.ExportTaskEntry> queuedEntry = new AtomicReference<>();
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final CopyExportRequestJob job = new CopyExportRequestJob(
+                    engine,
+                    () -> {
+                        final CopyExportContext.ExportTaskEntry entry = queuedEntry.get();
+                        Assert.assertSame(entry, copyContext.getEntry(entry.getId()));
+                        Assert.assertTrue(entry.containsSecret());
+                        return null;
+                    },
+                    null,
+                    runtime
+            );
+            CopyExportContext.ExportTaskEntry reusedEntry = null;
+            try {
+                final boolean previousContainsSecret = sqlExecutionContext.containsSecret();
+                sqlExecutionContext.containsSecret(true);
+                try {
+                    publishCopy("COPY (SELECT 1 AS x) TO 'contains_secret' WITH FORMAT parquet");
+                } finally {
+                    sqlExecutionContext.containsSecret(previousContainsSecret);
+                }
+
+                final long copyId = copyContext.getActiveExportId();
+                final CopyExportContext.ExportTaskEntry entry = copyContext.getEntry(copyId);
+                Assert.assertNotNull(entry);
+                Assert.assertTrue(entry.containsSecret());
+                queuedEntry.set(entry);
+
+                Assert.assertTrue(job.run());
+                Assert.assertSame(entry, copyContext.getEntry(copyId));
+                Assert.assertTrue(entry.containsSecret());
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertNull(copyContext.getEntry(copyId));
+                assertExportRowCount("contains_secret.parquet", 1);
+
+                reusedEntry = copyContext.assignExportEntry(
+                        sqlExecutionContext.getSecurityContext(),
+                        "next export",
+                        "",
+                        null,
+                        CopyExportContext.CopyTrigger.HTTP
+                );
+                Assert.assertSame(entry, reusedEntry);
+                Assert.assertFalse(reusedEntry.containsSecret());
+            } finally {
+                if (reusedEntry != null) {
+                    copyContext.releaseEntry(reusedEntry);
+                }
+                close(runtime);
+                job.close();
+            }
+        });
+    }
+
+    @Test
+    public void testFiberLaunchSaturationRetainsRequestForRetry() throws Exception {
+        assertMemoryLeak(() -> {
+            final CopyExportContext copyContext = engine.getCopyExportContext();
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final CopyExportRequestJob job = new CopyExportRequestJob(engine, runtime);
+            Fiber reservedFiber = null;
+            try {
+                reservedFiber = runtime.tryReserveFiber();
+                Assert.assertNotNull(reservedFiber);
+                final long reservationEpoch = reservedFiber.getReservationEpoch();
+
+                publishCopy("COPY (SELECT 1 AS x) TO 'saturated_retry' WITH FORMAT parquet");
+                final long copyId = copyContext.getActiveExportId();
+                final CopyExportContext.ExportTaskEntry entry = copyContext.getEntry(copyId);
+                Assert.assertNotNull(entry);
+
+                Assert.assertTrue(job.run());
+                Assert.assertEquals(1, runtime.getLaunchCount(LaunchResult.SATURATED));
+                Assert.assertSame(entry, copyContext.getEntry(copyId));
+                assertExportDoesNotExist("saturated_retry.parquet");
+
+                runtime.releaseReservedFiber(reservedFiber, reservationEpoch);
+                reservedFiber = null;
+
+                Assert.assertFalse(job.run());
+                Assert.assertEquals(1, runtime.getLaunchCount(LaunchResult.LAUNCHED));
+                Assert.assertSame(entry, copyContext.getEntry(copyId));
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertNull(copyContext.getEntry(copyId));
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                assertExportRowCount("saturated_retry.parquet", 1);
+            } finally {
+                if (reservedFiber != null) {
+                    runtime.releaseReservedFiber(reservedFiber, reservedFiber.getReservationEpoch());
+                }
+                close(runtime);
+                job.close();
+            }
+        });
+    }
+
+    @Test
     public void testRequestFailureLeavesSuspensionModeUntouched() throws Exception {
         assertMemoryLeak(() -> {
             publishCopy("COPY (SELECT 1 AS x) TO 'failed' WITH FORMAT parquet");
@@ -150,11 +313,59 @@ public class CopyExportRequestJobTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRunsExportsOnConfiguredFiberRuntime() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger callbackCount = new AtomicInteger();
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final CopyExportRequestJob job = new CopyExportRequestJob(
+                    engine,
+                    () -> {
+                        Assert.assertTrue(Fiber.isMounted());
+                        callbackCount.incrementAndGet();
+                        return null;
+                    },
+                    null,
+                    runtime
+            );
+            try {
+                publishCopy("COPY (SELECT 1 AS x) TO 'fiber_1' WITH FORMAT parquet");
+                Assert.assertTrue(job.run());
+                Assert.assertEquals(0, callbackCount.get());
+                assertExportDoesNotExist("fiber_1.parquet");
+
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertEquals(1, callbackCount.get());
+                assertExportRowCount("fiber_1.parquet", 1);
+
+                publishCopy("COPY (SELECT 2 AS x) TO 'fiber_2' WITH FORMAT parquet");
+                Assert.assertTrue(job.run());
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertEquals(2, callbackCount.get());
+                assertExportRowCount("fiber_2.parquet", 1);
+            } finally {
+                close(runtime);
+                job.close();
+            }
+        });
+    }
+
     private void assertExportDoesNotExist(CharSequence fileName) {
         try (Path path = new Path()) {
             path.of(exportRoot).concat(fileName).$();
             Assert.assertFalse(configuration.getFilesFacade().exists(path.$()));
         }
+    }
+
+    private static void close(FiberRuntime runtime) {
+        runtime.beginQuiesce();
+        final long deadline = System.nanoTime() + 5_000_000_000L;
+        while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
+            runtime.drain(64);
+        }
+        Assert.assertTrue(runtime.awaitClosed(deadline));
+        Assert.assertEquals(0, runtime.getInlineSuspendViolationCount());
+        runtime.closeAfterDrained();
     }
 
     private void assertExportRowCount(CharSequence fileName, long expected) throws Exception {

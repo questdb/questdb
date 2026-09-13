@@ -68,6 +68,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public class UnorderedPageFrameSequence<T extends StatefulAtom> extends AbstractPageFrameSequence implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
+    private static final long MAX_TAIL_SPIN_NANOS = 16_000L;
+    private static final int TAIL_SPIN_OUTSTANDING_FRAMES = 2;
     private final MillisecondClock clock;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AsyncQueryErrorState errorState = new AsyncQueryErrorState("unexpected reduce error");
@@ -78,11 +80,13 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private final AtomicInteger reduceStartedCounter = new AtomicInteger(0);
     private final MCSequence reduceSubSeq;
     private final UnorderedPageFrameReducer reducer;
+    private final long tailSpinTimeoutNanos;
     private final WorkStealingStrategy workStealingStrategy;
     private T atom;
     private PageFrameAddressCache frameAddressCache;
     private int frameCount;
     private PageFrameCursor frameCursor;
+    private boolean hasTailSpun;
     private long id;
     private boolean isClosing;
     private boolean isReadyToDispatch;
@@ -112,6 +116,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             this.messageBus = messageBus;
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
+            this.tailSpinTimeoutNanos = Math.max(
+                    0,
+                    Math.min(configuration.getSqlParallelWorkStealingSpinTimeout(), MAX_TAIL_SPIN_NANOS)
+            );
             this.workStealingStrategy = configuration.getFactoryProvider()
                     .getWorkStealingStrategy(configuration, sharedQueryWorkerCount, atom);
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
@@ -185,6 +193,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
      * @throws CairoException if a worker encountered an error
      */
     public void dispatchAndAwait() {
+        hasTailSpun = false;
         if (frameCount == 0) {
             return;
         }
@@ -517,6 +526,26 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         }
     }
 
+    boolean isDoneAfterTailSpin() {
+        if (hasTailSpun
+                || tailSpinTimeoutNanos == 0
+                || !isActive()
+                || isUninterruptible
+                || queuedCount < 1
+                || !doneLatch.done(Math.max(0, queuedCount - TAIL_SPIN_OUTSTANDING_FRAMES))) {
+            return false;
+        }
+        hasTailSpun = true;
+        final long startNanos = System.nanoTime();
+        do {
+            if (doneLatch.done(queuedCount)) {
+                return true;
+            }
+            Thread.onSpinWait();
+        } while (isActive() && System.nanoTime() - startNanos < tailSpinTimeoutNanos);
+        return doneLatch.done(queuedCount);
+    }
+
     private void buildAddressCache() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
@@ -540,9 +569,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     ) {
         try {
             if (isTimeThrottled) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             } else {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
             return false;
         } catch (CairoException e) {

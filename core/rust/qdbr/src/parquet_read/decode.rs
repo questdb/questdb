@@ -26,7 +26,7 @@ use crate::parquet_read::slicer::{
     DataPageFixedSlicer, DataPageSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer,
     PlainVarSlicer,
 };
-use crate::parquet_read::ColumnChunkBuffers;
+use crate::parquet_read::{ColumnChunkBuffers, PageBufferPool};
 use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
 
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
@@ -56,15 +56,16 @@ impl ColumnChunkBuffers {
             page_buffers_size: 0,
             page_buffers: Vec::new(),
             column_top: 0,
+            page_buffers_capacity: 0,
             page_buffers_charged: 0,
             page_buffers_counted: 0,
         }
     }
 
     // Unconditional re-read so a hypothetical second call between resets cannot keep
-    // a stale ptr after a Vec reallocation. Returns an error when charging the
-    // retained VarcharSlice page bytes against the per-query memory tracker
-    // crosses the configured limit.
+    // a stale ptr after a Vec reallocation. Production VarcharSlice decode paths
+    // reserve retained page bytes before allocating them; reconciliation remains a
+    // safety net for buffers installed by other callers.
     pub fn refresh_ptrs(&mut self) -> ParquetResult<()> {
         // Always recompute the exposed pointer/size from the backing vectors.
         // Appending additional column chunks into the same buffer (see
@@ -84,28 +85,61 @@ impl ColumnChunkBuffers {
         // the buffers appended since the last refresh instead of re-summing the whole vector
         // -- otherwise a run of N row groups costs O(N^2). A shrink (truncate/partial drain)
         // falls back to a full recompute; reset() zeroes both fields.
-        if self.page_buffers.len() < self.page_buffers_counted {
-            self.page_buffers_size = self.page_buffers.iter().map(Vec::len).sum();
-        } else {
-            for buf in &self.page_buffers[self.page_buffers_counted..] {
-                self.page_buffers_size += buf.len();
-            }
+        let (mut page_buffers_size, mut page_buffers_capacity, first_uncounted) =
+            if self.page_buffers.len() < self.page_buffers_counted {
+                (0usize, 0usize, 0usize)
+            } else {
+                (
+                    self.page_buffers_size,
+                    self.page_buffers_capacity,
+                    self.page_buffers_counted,
+                )
+            };
+        for buf in &self.page_buffers[first_uncounted..] {
+            page_buffers_size = page_buffers_size.checked_add(buf.len()).ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "retained VarcharSlice page-buffer size overflow"
+                )
+            })?;
+            page_buffers_capacity = page_buffers_capacity
+                .checked_add(buf.capacity())
+                .ok_or_else(|| {
+                    fmt_err!(
+                        InvalidLayout,
+                        "retained VarcharSlice page-buffer capacity overflow"
+                    )
+                })?;
         }
+        self.page_buffers_size = page_buffers_size;
+        self.page_buffers_capacity = page_buffers_capacity;
         self.page_buffers_counted = self.page_buffers.len();
 
-        // Reconcile the per-query tracker charge to the retained payload. A net
-        // growth is checked against the limit and may breach; a net shrink is
-        // always credited. See `page_buffers_charged`.
+        // Reconcile the per-query tracker charge to the retained payload. Normal
+        // decode has already reserved growth before allocation, so this is usually
+        // just an equality check. A net growth from a non-decode caller is still
+        // checked, and a net shrink is always credited.
         self.reconcile_page_buffers_charge()
     }
 
-    // Charges or credits the per-query tracker so that exactly
-    // `page_buffers_size` bytes stay reserved for this chunk's retained payload.
+    // Cancels bytes synchronously reserved for a retained VarcharSlice page when
+    // sizing or decompression fails before the page can be published. The caller
+    // must first drop the corresponding system-allocated Vec so the tracker never
+    // understates live native memory after the credit.
+    pub(crate) fn cancel_page_buffer_reservation(&mut self, bytes: usize) {
+        debug_assert!(self.page_buffers_charged >= bytes);
+        let released = bytes.min(self.page_buffers_charged);
+        self.data_vec.allocator().credit_tracked(released);
+        self.page_buffers_charged -= released;
+    }
+
+    // Charges or credits the per-query tracker so that exactly the allocated
+    // capacity of this chunk's retained payload stays reserved.
     // The growth path can breach the limit and return an error; the shrink path
     // never fails. On a breach `page_buffers_charged` is left at the prior value
     // so `reset`/`Drop` later credit only what was actually charged.
     fn reconcile_page_buffers_charge(&mut self) -> ParquetResult<()> {
-        let target = self.page_buffers_size;
+        let target = self.page_buffers_capacity;
         if target > self.page_buffers_charged {
             let delta = target - self.page_buffers_charged;
             self.data_vec.allocator().charge_tracked(delta)?;
@@ -130,10 +164,42 @@ impl ColumnChunkBuffers {
         }
     }
 
-    // Callers drain `page_buffers` (into a reuse pool) before invoking; this only clears
-    // the outer Vec and the inner data/aux vectors. The inner Vecs keep their capacity
-    // so the next decode can grow into them via realloc only when the new chunk exceeds
-    // the buffer's historical peak.
+    // Reserves a retained VarcharSlice page against the query -> group -> process
+    // hierarchy before its system Vec is allowed to grow. This closes the gap that
+    // a post-allocation refresh cannot close: a rejected page never materializes
+    // outside the hard ceiling. The counter update is committed only after the
+    // hierarchy accepts the reservation.
+    pub(crate) fn reserve_page_buffer(&mut self, bytes: usize) -> ParquetResult<()> {
+        let new_charge = self
+            .page_buffers_charged
+            .checked_add(bytes)
+            .ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "retained VarcharSlice page-buffer charge overflow: {} + {}",
+                    self.page_buffers_charged,
+                    bytes
+                )
+            })?;
+        self.data_vec.allocator().charge_tracked(bytes)?;
+        self.page_buffers_charged = new_charge;
+        Ok(())
+    }
+
+    // Fully charged page buffers move to the pool with their charge; buffers a failed decode
+    // left partially charged are dropped and credited by `reset`.
+    pub(crate) fn reset_for_decode(&mut self, page_buffer_pool: &mut PageBufferPool) {
+        if self.page_buffers_counted == self.page_buffers.len()
+            && self.page_buffers_charged == self.page_buffers_capacity
+        {
+            page_buffer_pool.park_all(self.data_vec.allocator(), &mut self.page_buffers);
+            self.page_buffers_charged = 0;
+        }
+        self.reset();
+    }
+
+    // The inner tracker-aware data/aux vectors keep their capacity so the next decode grows
+    // them via realloc only when the new chunk exceeds the historical peak.
     pub fn reset(&mut self) {
         self.data_vec.clear();
         self.data_size = 0;
@@ -145,6 +211,7 @@ impl ColumnChunkBuffers {
 
         self.release_page_buffers_charge();
         self.page_buffers_size = 0;
+        self.page_buffers_capacity = 0;
         self.page_buffers.clear();
         self.page_buffers_counted = 0;
         self.column_top = 0;
@@ -3067,9 +3134,19 @@ fn decode_null_bitmap<'a>(
 /// fill) thus keeps stale bytes from an earlier page of the same file in its tail;
 /// a caller needing a zeroed tail must `clear()` first (see
 /// `decompress_varchar_slice_dict`).
-pub(super) fn resize_decompress_buffer(buffer: &mut Vec<u8>, size: usize) -> ParquetResult<()> {
+pub(super) fn resize_decompress_buffer(
+    buffer: &mut Vec<u8>,
+    size: usize,
+    exact: bool,
+) -> ParquetResult<()> {
     if size > buffer.len() {
-        buffer.try_reserve(size - buffer.len()).map_err(|_| {
+        let additional = size - buffer.len();
+        let reserved = if exact {
+            buffer.try_reserve_exact(additional)
+        } else {
+            buffer.try_reserve(additional)
+        };
+        reserved.map_err(|_| {
             fmt_err!(
                 OutOfMemory(None),
                 "cannot allocate {} bytes for a decompressed page",
@@ -3086,7 +3163,7 @@ pub(super) fn decompress_sliced_dict<'a>(
     buffer: &'a mut Vec<u8>,
 ) -> ParquetResult<DictPage<'a>> {
     let buf = if page.compression != parquet2::compression::Compression::Uncompressed {
-        resize_decompress_buffer(buffer, page.uncompressed_size)?;
+        resize_decompress_buffer(buffer, page.uncompressed_size, false)?;
         parquet2::compression::decompress(page.compression, page.buffer, buffer)?;
         buffer
     } else {
@@ -3103,53 +3180,26 @@ pub(super) fn decompress_sliced_data<'a>(
     page: &'a SlicedDataPage<'a>,
     decompress_buffer: &'a mut Vec<u8>,
 ) -> ParquetResult<DataPage<'a>> {
-    let buffer = if page.compression != parquet2::compression::Compression::Uncompressed {
-        match &page.header {
-            DataPageHeader::V1(_) => {
-                resize_decompress_buffer(decompress_buffer, page.uncompressed_size)?;
-                parquet2::compression::decompress(
-                    page.compression,
-                    page.buffer,
-                    decompress_buffer,
-                )?;
-                decompress_buffer
-            }
-            DataPageHeader::V2(header) => {
-                let offset = (header.definition_levels_byte_length
-                    + header.repetition_levels_byte_length) as usize;
-                let can_decompress = header.is_compressed.unwrap_or(true);
-                if can_decompress {
-                    resize_decompress_buffer(decompress_buffer, page.uncompressed_size)?;
-                    if offset > decompress_buffer.len() || offset > page.buffer.len() {
-                        return Err(fmt_err!(
-                            Layout,
-                            "V2 Page Header reported incorrect offset to compressed data"
-                        ));
-                    }
-                    decompress_buffer[..offset].copy_from_slice(&page.buffer[..offset]);
-                    parquet2::compression::decompress(
-                        page.compression,
-                        &page.buffer[offset..],
-                        &mut decompress_buffer[offset..],
-                    )?;
-                    decompress_buffer
-                } else {
-                    // is_compressed=false: the page body is already uncompressed and
-                    // returned as-is, so the decompress buffer is never read. Compare
-                    // the header's uncompressed_size against the actual body directly
-                    // -- sizing (and zeroing) an i32::MAX-capable buffer only to read
-                    // back its length is pure waste with no decompression to amortize.
-                    if page.uncompressed_size != page.buffer.len() {
-                        return Err(fmt_err!(
-                            Layout,
-                            "V2 Page Header reported incorrect decompressed size"
-                        ));
-                    }
-                    page.buffer
-                }
-            }
-        }
+    let buffer = if sliced_data_requires_decompression(page) {
+        decompress_sliced_data_into(page, decompress_buffer, false)?;
+        decompress_buffer
     } else {
+        // A V2 page with is_compressed=false is already uncompressed even when
+        // the column codec is not `Uncompressed`. Validate the header without
+        // sizing a throwaway buffer. An `Uncompressed` column follows the prior
+        // fast path and trusts the slice reader's size validation.
+        if page.compression != parquet2::compression::Compression::Uncompressed
+            && matches!(
+                &page.header,
+                DataPageHeader::V2(header) if !header.is_compressed.unwrap_or(true)
+            )
+            && page.uncompressed_size != page.buffer.len()
+        {
+            return Err(fmt_err!(
+                Layout,
+                "V2 Page Header reported incorrect decompressed size"
+            ));
+        }
         page.buffer
     };
     Ok(DataPage {
@@ -3157,6 +3207,47 @@ pub(super) fn decompress_sliced_data<'a>(
         header: &page.header,
         descriptor: &page.descriptor,
     })
+}
+
+pub(super) fn decompress_sliced_data_into(
+    page: &SlicedDataPage<'_>,
+    decompress_buffer: &mut Vec<u8>,
+    exact: bool,
+) -> ParquetResult<()> {
+    debug_assert!(sliced_data_requires_decompression(page));
+    resize_decompress_buffer(decompress_buffer, page.uncompressed_size, exact)?;
+    match &page.header {
+        DataPageHeader::V1(_) => {
+            parquet2::compression::decompress(page.compression, page.buffer, decompress_buffer)?;
+        }
+        DataPageHeader::V2(header) => {
+            let offset = (header.definition_levels_byte_length
+                + header.repetition_levels_byte_length) as usize;
+            if offset > decompress_buffer.len() || offset > page.buffer.len() {
+                return Err(fmt_err!(
+                    Layout,
+                    "V2 Page Header reported incorrect offset to compressed data"
+                ));
+            }
+            decompress_buffer[..offset].copy_from_slice(&page.buffer[..offset]);
+            parquet2::compression::decompress(
+                page.compression,
+                &page.buffer[offset..],
+                &mut decompress_buffer[offset..],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn sliced_data_requires_decompression(page: &SlicedDataPage<'_>) -> bool {
+    if page.compression == parquet2::compression::Compression::Uncompressed {
+        return false;
+    }
+    match &page.header {
+        DataPageHeader::V1(_) => true,
+        DataPageHeader::V2(header) => header.is_compressed.unwrap_or(true),
+    }
 }
 
 pub(super) fn sliced_page_row_count(
@@ -3232,7 +3323,9 @@ mod tests {
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
     use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::page::{DataPage, DictPage};
-    use crate::parquet_read::{ColumnChunkBuffers, DecodeContext, ParquetDecoder, RowGroupBuffers};
+    use crate::parquet_read::{
+        ColumnChunkBuffers, DecodeContext, PageBufferPool, ParquetDecoder, RowGroupBuffers,
+    };
     use crate::parquet_write::array::{append_array_null, append_raw_array};
     use crate::parquet_write::decimal::{
         DECIMAL16_NULL, DECIMAL32_NULL, DECIMAL64_NULL, DECIMAL8_NULL,
@@ -3294,20 +3387,28 @@ mod tests {
         // The system-allocated page_buffers are otherwise invisible to the
         // per-query tracker; refresh_ptrs charges their retained bytes so a wide
         // VarcharSlice payload still counts against the limit.
-        bufs.page_buffers.push(vec![0u8; 1000]);
+        let mut first = Vec::with_capacity(1200);
+        first.resize(1000, 0);
+        bufs.page_buffers.push(first);
         bufs.page_buffers.push(vec![0u8; 24]);
         bufs.refresh_ptrs().unwrap();
         assert_eq!(bufs.page_buffers_size, 1024);
-        assert_eq!(tas.tracker_used(), 1024);
+        assert_eq!(bufs.page_buffers_capacity, 1224);
+        assert_eq!(tas.tracker_used(), 1224);
 
         // A subsequent decode that retains fewer bytes credits the difference.
         bufs.page_buffers.truncate(1);
         bufs.refresh_ptrs().unwrap();
         assert_eq!(bufs.page_buffers_size, 1000);
-        assert_eq!(tas.tracker_used(), 1000);
+        assert_eq!(bufs.page_buffers_capacity, 1200);
+        assert_eq!(tas.tracker_used(), 1200);
 
-        // reset() releases the whole charge back to the tracker.
-        bufs.reset();
+        // A reset parks the buffer with its charge; the pool credits it on release.
+        let mut pool = PageBufferPool::default();
+        bufs.reset_for_decode(&mut pool);
+        assert_eq!(pool.len(), 1);
+        assert_eq!(tas.tracker_used(), 1200);
+        pool.release();
         assert_eq!(tas.tracker_used(), 0);
 
         // A retained charge still outstanding at drop is credited too.
@@ -3379,8 +3480,8 @@ mod tests {
         let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
 
         // Simulate spare page buffers retained from a prior column-chunk decode.
-        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
-        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_buf_pool.park(vec![0u8; 4096]);
+        ctx.varchar_slice_buf_pool.park(vec![0u8; 4096]);
 
         let column_type = decoder.columns[0].column_type.unwrap();
         decoder
@@ -5821,7 +5922,7 @@ mod tests {
         // allocation. Proves the sizing surfaces a clean error rather than the
         // process-aborting Vec::resize.
         let mut buf = Vec::new();
-        let err = resize_decompress_buffer(&mut buf, usize::MAX)
+        let err = resize_decompress_buffer(&mut buf, usize::MAX, false)
             .expect_err("an unsatisfiable decompressed size must error, not abort");
         assert!(
             err.to_string().contains("cannot allocate"),
@@ -5847,12 +5948,12 @@ mod tests {
         // tail), and shrinking truncates. A clear()-first implementation would
         // zero byte 0 here and fail this assertion.
         let mut buf = vec![0xAB_u8; 4];
-        resize_decompress_buffer(&mut buf, 8).unwrap();
+        resize_decompress_buffer(&mut buf, 8, false).unwrap();
         assert_eq!(buf.len(), 8);
         assert_eq!(&buf[..4], &[0xAB; 4], "grow must not memset existing bytes");
         assert_eq!(&buf[4..], &[0; 4], "grown tail must be zeroed");
 
-        resize_decompress_buffer(&mut buf, 2).unwrap();
+        resize_decompress_buffer(&mut buf, 2, false).unwrap();
         assert_eq!(buf.as_slice(), &[0xAB; 2], "shrink must truncate in place");
     }
 

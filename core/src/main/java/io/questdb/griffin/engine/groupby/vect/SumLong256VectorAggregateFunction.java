@@ -29,12 +29,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.mp.SimpleSpinLock;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Long256Util;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 
@@ -44,7 +44,7 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class SumLong256VectorAggregateFunction extends Long256Function implements VectorAggregateFunction {
-    private static final CarrierLocal<Long256Impl> partialSums = new CarrierLocal<>(Long256Impl::new);
+    private static final FiberLocal<Long256Impl> partialSums = new FiberLocal<>(Long256Impl::new);
     private final int columnIndex;
     private final LongAdder count = new LongAdder();
     private final DistinctFunc distinctFunc;

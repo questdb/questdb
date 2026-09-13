@@ -29,10 +29,12 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.FiberEventWaitQueue;
 import io.questdb.mp.continuation.FiberWaitCoordinator;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Os;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -46,6 +48,7 @@ abstract class AbstractPageFrameSequence {
     private final AtomicLong progressVersion = new AtomicLong();
     private final FiberEventWaitQueue progressWaitQueue =
             new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
+    private FiberDispatchContext dispatchContext;
 
     public CairoException buildInterruptionException() {
         final int reason = getCancelReason();
@@ -62,41 +65,6 @@ abstract class AbstractPageFrameSequence {
         cancelIfChanged(reason);
     }
 
-    boolean cancelIfChanged(int reason) {
-        while (true) {
-            final int current = cancelReason.get();
-            if (!isCancelReasonTransitionAllowed(current, reason)) {
-                return false;
-            }
-            if (cancelReason.compareAndSet(current, reason)) {
-                if (reason != SqlExecutionCircuitBreaker.STATE_OK) {
-                    cancellationSignal.cancel();
-                }
-                return true;
-            }
-        }
-    }
-
-    void enterReducerCancellationScope() {
-        final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
-        getCircuitBreaker().copyCancelledFlagTo(cancellationBinding);
-        final AtomicBoolean cancelledFlag = cancellationBinding.getFlag();
-        final FiberCancellationSignal supplementalCancellationSignal;
-        final long supplementalCancellationSignalGeneration;
-        if (cancelledFlag instanceof FiberCancellationSignal signal && signal != cancellationSignal) {
-            supplementalCancellationSignal = signal;
-            supplementalCancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
-        } else {
-            supplementalCancellationSignal = null;
-            supplementalCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
-        }
-        SuspensionScope.enterCancellationSignal(cancellationSignal);
-        SuspensionScope.enterSupplementalCancellationSignal(
-                supplementalCancellationSignal,
-                supplementalCancellationSignalGeneration
-        );
-    }
-
     public int getCancelReason() {
         final int reason = cancelReason.get();
         return reason == CANCEL_REASON_UNSET || reason == CANCEL_REASON_REDUCER_ERROR
@@ -110,15 +78,12 @@ abstract class AbstractPageFrameSequence {
 
     public abstract SqlExecutionCircuitBreaker getCircuitBreaker();
 
-    public long getProgressVersion() {
-        return progressVersion.get();
+    public @Nullable FiberDispatchContext getDispatchContext() {
+        return dispatchContext;
     }
 
-    final boolean isReducerFailureReportable(Throwable th) {
-        final int reason = cancelReason.get();
-        return reason == CANCEL_REASON_UNSET
-                || reason == SqlExecutionCircuitBreaker.STATE_OK
-                || !(th instanceof CairoException e && e.isInterruption());
+    public long getProgressVersion() {
+        return progressVersion.get();
     }
 
     public boolean isActive() {
@@ -126,6 +91,19 @@ abstract class AbstractPageFrameSequence {
     }
 
     public abstract boolean isUninterruptible();
+
+    private static boolean isCancelReasonTransitionAllowed(int current, int next) {
+        return current == CANCEL_REASON_UNSET
+                || current == SqlExecutionCircuitBreaker.STATE_OK
+                && next != SqlExecutionCircuitBreaker.STATE_OK
+                && next != CANCEL_REASON_REDUCER_ERROR;
+    }
+
+    private boolean hasNonInterruptionWon(int interruptionReason) {
+        cancel(interruptionReason);
+        final int reason = cancelReason.get();
+        return reason == SqlExecutionCircuitBreaker.STATE_OK || reason == CANCEL_REASON_REDUCER_ERROR;
+    }
 
     // Hoist out of collect/dispatch loops: invariant while the loop runs, and each evaluation
     // costs a carrier-identity lookup.
@@ -200,6 +178,54 @@ abstract class AbstractPageFrameSequence {
         }
     }
 
+    boolean cancelIfChanged(int reason) {
+        while (true) {
+            final int current = cancelReason.get();
+            if (!isCancelReasonTransitionAllowed(current, reason)) {
+                return false;
+            }
+            if (cancelReason.compareAndSet(current, reason)) {
+                if (reason != SqlExecutionCircuitBreaker.STATE_OK) {
+                    cancellationSignal.cancel();
+                }
+                return true;
+            }
+        }
+    }
+
+    final void cancelOnReducerError(Throwable th) {
+        final int interruptionReason = th instanceof CairoException e
+                ? e.getInterruptionReason()
+                : SqlExecutionCircuitBreaker.STATE_OK;
+        cancel(interruptionReason == SqlExecutionCircuitBreaker.STATE_OK
+                ? CANCEL_REASON_REDUCER_ERROR
+                : interruptionReason);
+    }
+
+    void enterReducerCancellationScope() {
+        final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
+        getCircuitBreaker().copyCancelledFlagTo(cancellationBinding);
+        final AtomicBoolean cancelledFlag = cancellationBinding.getFlag();
+        final FiberCancellationSignal supplementalCancellationSignal;
+        final long supplementalCancellationSignalGeneration;
+        if (cancelledFlag instanceof FiberCancellationSignal signal && signal != cancellationSignal) {
+            supplementalCancellationSignal = signal;
+            supplementalCancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
+        } else {
+            supplementalCancellationSignal = null;
+            supplementalCancellationSignalGeneration = CancellationBinding.NO_GENERATION;
+        }
+        SuspensionScope.enterCancellationSignal(cancellationSignal);
+        SuspensionScope.enterSupplementalCancellationSignal(
+                supplementalCancellationSignal,
+                supplementalCancellationSignalGeneration
+        );
+    }
+
+    FiberEventWaitQueue getProgressWaitQueue() {
+        return progressWaitQueue;
+    }
+
     protected final boolean isInterruptionSuperseded(CairoException exception) {
         final int interruptionReason = exception.getInterruptionReason();
         if (interruptionReason == SqlExecutionCircuitBreaker.STATE_OK) {
@@ -214,39 +240,21 @@ abstract class AbstractPageFrameSequence {
         return false;
     }
 
+    final boolean isReducerFailureReportable(Throwable th) {
+        final int reason = cancelReason.get();
+        return reason == CANCEL_REASON_UNSET
+                || reason == SqlExecutionCircuitBreaker.STATE_OK
+                || !(th instanceof CairoException e && e.isInterruption());
+    }
+
     protected final void resetCancellation() {
+        dispatchContext = Fiber.captureParallelDispatchContext();
         cancellationSignal.reopen();
         cancelReason.set(CANCEL_REASON_UNSET);
-    }
-
-    final void cancelOnReducerError(Throwable th) {
-        final int interruptionReason = th instanceof CairoException e
-                ? e.getInterruptionReason()
-                : SqlExecutionCircuitBreaker.STATE_OK;
-        cancel(interruptionReason == SqlExecutionCircuitBreaker.STATE_OK
-                ? CANCEL_REASON_REDUCER_ERROR
-                : interruptionReason);
-    }
-
-    FiberEventWaitQueue getProgressWaitQueue() {
-        return progressWaitQueue;
     }
 
     void signalProgress() {
         progressVersion.incrementAndGet();
         progressWaitQueue.fire();
-    }
-
-    private boolean hasNonInterruptionWon(int interruptionReason) {
-        cancel(interruptionReason);
-        final int reason = cancelReason.get();
-        return reason == SqlExecutionCircuitBreaker.STATE_OK || reason == CANCEL_REASON_REDUCER_ERROR;
-    }
-
-    private static boolean isCancelReasonTransitionAllowed(int current, int next) {
-        return current == CANCEL_REASON_UNSET
-                || current == SqlExecutionCircuitBreaker.STATE_OK
-                && next != SqlExecutionCircuitBreaker.STATE_OK
-                && next != CANCEL_REASON_REDUCER_ERROR;
     }
 }

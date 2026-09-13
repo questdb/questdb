@@ -2347,12 +2347,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.SHARED_QUERY_WORKER_FIBER_ENABLED,
                     true
             );
-            sharedWorkerPoolWriteConfiguration.workerPoolMode = readWorkerPoolMode(
-                    properties,
-                    env,
-                    PropertyKey.SHARED_WRITE_WORKER_FIBER_ENABLED,
-                    false
-            );
             configureFiberPools(properties, env);
             this.queryCacheEventQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY, 4));
             this.queryContinuationWakeIntervalMillis = Math.max(1, getMillis(properties, env, PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL, 1_000));
@@ -2766,14 +2760,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_LIVE,
                 PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_RETAINED,
                 PropertyKey.SHARED_QUERY_WORKER_FIBER_MOUNT_BUDGET
-        );
-        configureFiberPool(
-                properties,
-                env,
-                sharedWorkerPoolWriteConfiguration,
-                PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_LIVE,
-                PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_RETAINED,
-                PropertyKey.SHARED_WRITE_WORKER_FIBER_MOUNT_BUDGET
         );
     }
 

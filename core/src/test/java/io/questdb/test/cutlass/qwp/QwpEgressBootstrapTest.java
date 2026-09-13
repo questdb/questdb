@@ -429,11 +429,11 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
             // Simulate a streaming-active state without actual native resources by
             // calling beginStreaming with null factory/cursor. The defensive endStreaming
             // inside beginStreaming is idempotent for null.
-            state.beginStreaming(1L, null, null, 0, 0L, null);
+            state.beginStreaming(1L, null, null, 0, 0L, null, CompiledQuery.NONE, false);
             Assert.assertTrue(state.isStreamingActive());
             // A second beginStreaming must not double-free (endStreaming handles nulls)
             // and must transition to the new requestId cleanly.
-            state.beginStreaming(2L, null, null, 0, 0L, null);
+            state.beginStreaming(2L, null, null, 0, 0L, null, CompiledQuery.NONE, false);
             Assert.assertTrue(state.isStreamingActive());
             state.endStreaming();
             Assert.assertFalse(state.isStreamingActive());

@@ -39,11 +39,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 // However, the `delegate` circuit breaker instance referenced by the wrapper has to be thread-safe
 // if it is used by multiple threads (i.e. set as a delegate in multiple wrappers at the same time).
 public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBreaker, Closeable {
+    private final @Nullable AtomicBooleanCircuitBreaker atomicBooleanCircuitBreaker;
     private final CancellationBinding cancellationBinding = new CancellationBinding();
     private SqlExecutionCircuitBreaker delegate;
     private NetworkSqlExecutionCircuitBreaker networkSqlExecutionCircuitBreaker;
 
     public SqlExecutionCircuitBreakerWrapper(CairoEngine engine, @NotNull SqlExecutionCircuitBreakerConfiguration configuration) {
+        atomicBooleanCircuitBreaker = engine.isSqlExecutionCooperativePollingEnabled()
+                ? new AtomicBooleanCircuitBreaker(engine, configuration.getCircuitBreakerThrottle())
+                : null;
         networkSqlExecutionCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, configuration);
     }
 
@@ -67,7 +71,20 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         return delegate.checkIfTrippedNoThrottle();
     }
 
+    @Override
+    public boolean checkIfTrippedOrYield() {
+        return delegate.checkIfTrippedOrYield();
+    }
+
+    @Override
+    public boolean checkIfTrippedOrYield(long millis, long fd) {
+        return delegate.checkIfTrippedOrYield(millis, fd);
+    }
+
     public void clear() {
+        if (atomicBooleanCircuitBreaker != null && delegate == atomicBooleanCircuitBreaker) {
+            atomicBooleanCircuitBreaker.setCancelledFlag((AtomicBoolean) null);
+        }
         networkSqlExecutionCircuitBreaker.setCancelledFlag((AtomicBoolean) null);
         delegate = networkSqlExecutionCircuitBreaker;
     }
@@ -114,6 +131,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
+    public long getRemainingTimeoutMillis() {
+        return delegate.getRemainingTimeoutMillis();
+    }
+
+    @Override
     public int getState() {
         return delegate.getState();
     }
@@ -124,8 +146,23 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
+    public int getStateOrYield() {
+        return delegate.getStateOrYield();
+    }
+
+    @Override
+    public int getStateOrYield(long millis, long fd) {
+        return delegate.getStateOrYield(millis, fd);
+    }
+
+    @Override
     public long getTimeout() {
         return delegate.getTimeout();
+    }
+
+    @TestOnly
+    public boolean hasLocalAtomicCircuitBreaker() {
+        return atomicBooleanCircuitBreaker != null;
     }
 
     public void init(SqlExecutionCircuitBreakerWrapper wrapper) {
@@ -133,7 +170,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
-        if (executionContextCircuitBreaker.isThreadSafe()) {
+        if (atomicBooleanCircuitBreaker != null
+                && executionContextCircuitBreaker.getClass() == AtomicBooleanCircuitBreaker.class) {
+            atomicBooleanCircuitBreaker.of((AtomicBooleanCircuitBreaker) executionContextCircuitBreaker);
+            delegate = atomicBooleanCircuitBreaker;
+        } else if (executionContextCircuitBreaker.isThreadSafe()) {
             delegate = executionContextCircuitBreaker;
         } else {
             networkSqlExecutionCircuitBreaker.of(executionContextCircuitBreaker.getFd());
@@ -191,8 +232,23 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
+    public void statefulThrowExceptionIfTrippedNoThrottleOrYield() {
+        delegate.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTrippedOrYield() {
+        delegate.statefulThrowExceptionIfTrippedOrYield();
+    }
+
+    @Override
     public void statefulThrowExceptionIfTrippedTimeThrottled() {
         delegate.statefulThrowExceptionIfTrippedTimeThrottled();
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
+        delegate.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
     }
 
     @Override

@@ -458,7 +458,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
             long rowLo = 0;
             for (long r = 0; r < frameRowCount; r++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
@@ -552,7 +552,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             long overallSlaveLo = Long.MAX_VALUE;
             long overallSlaveHi = Long.MIN_VALUE;
             for (long r = 0; r < frameRowCount; r++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 record.setRowIndex(r);
                 long effectiveLo = computeEffectiveBound(windowLoFunc, windowLo, record, loSign, loTimeUnit, timestampDriver);
                 long effectiveHi = computeEffectiveBound(windowHiFunc, windowHi, record, hiSign, hiTimeUnit, timestampDriver);
@@ -576,7 +576,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 if (slaveRowIndex != Long.MIN_VALUE) {
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                         if (slaveTimestamp > overallSlaveHi) {
@@ -599,7 +599,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
             // Per-row aggregation with dynamic bounds.
             for (long r = 0; r < frameRowCount; r++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
@@ -699,7 +699,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             long overallSlaveLo = Long.MAX_VALUE;
             long overallSlaveHi = Long.MIN_VALUE;
             for (long r = 0; r < frameRowCount; r++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 record.setRowIndex(r);
                 long effectiveLo = computeEffectiveBound(windowLoFunc, windowLo, record, loSign, loTimeUnit, timestampDriver);
                 long effectiveHi = computeEffectiveBound(windowHiFunc, windowHi, record, hiSign, hiTimeUnit, timestampDriver);
@@ -723,7 +723,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 if (slaveRowIndex != Long.MIN_VALUE) {
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                         if (slaveTimestamp > overallSlaveHi) {
@@ -746,7 +746,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
             // Per-row aggregation with dynamic bounds (prevailing binary search).
             for (long r = 0; r < frameRowCount; r++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
@@ -845,7 +845,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             long overallSlaveLo = Long.MAX_VALUE;
             long overallSlaveHi = Long.MIN_VALUE;
             for (long r = 0; r < frameRowCount; r++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 record.setRowIndex(r);
                 long effectiveLo = computeEffectiveBound(windowLoFunc, windowLo, record, loSign, loTimeUnit, timestampDriver);
                 long effectiveHi = computeEffectiveBound(windowHiFunc, windowHi, record, hiSign, hiTimeUnit, timestampDriver);
@@ -875,7 +875,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 if (slaveRowIndex != Long.MIN_VALUE) {
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                         if (slaveTimestamp > overallSlaveHi) {
@@ -898,7 +898,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
             // Per-row aggregation with dynamic bounds + join filter prevailing scan.
             for (long r = 0; r < frameRowCount; r++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
@@ -1112,7 +1112,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             // Now iterate through master rows and perform batch aggregation with time window filtering
             long rowLo = 0;
             for (long r = 0; r < frameRowCount; r++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 record.setRowIndex(r);
 
                 rows.ensureCapacity(valueSizeInLongs);
@@ -1236,7 +1236,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
             long rowLo = 0;
             for (long r = 0; r < frameRowCount; r++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 record.setRowIndex(r);
 
                 rows.ensureCapacity(valueSizeInLongs);
@@ -1350,7 +1350,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
             long rowLo = 0;
             for (long r = 0; r < frameRowCount; r++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
@@ -1465,7 +1465,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
             long rowLo = 0;
             for (long r = 0; r < frameRowCount; r++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
@@ -1700,7 +1700,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 // Now iterate through filtered master rows and perform batch aggregation
                 long rowLo = 0;
                 for (long p = 0; p < filteredRowCount; p++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     long r = rows.get(p);
                     record.setRowIndex(r);
 
@@ -1829,7 +1829,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 long overallSlaveLo = Long.MAX_VALUE;
                 long overallSlaveHi = Long.MIN_VALUE;
                 for (long p = 0; p < filteredRowCount; p++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     record.setRowIndex(rows.get(p));
                     long effectiveLo = computeEffectiveBound(windowLoFunc, windowLo, record, loSign, loTimeUnit, timestampDriver);
                     long effectiveHi = computeEffectiveBound(windowHiFunc, windowHi, record, hiSign, hiTimeUnit, timestampDriver);
@@ -1853,7 +1853,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     if (slaveRowIndex != Long.MIN_VALUE) {
                         long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         for (; ; ) {
-                            circuitBreaker.statefulThrowExceptionIfTripped();
+                            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                             slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                             final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                             if (slaveTimestamp > overallSlaveHi) {
@@ -1876,7 +1876,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 // Per-row aggregation with dynamic bounds.
                 for (long p = 0; p < filteredRowCount; p++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     long r = rows.get(p);
                     record.setRowIndex(r);
 
@@ -2010,7 +2010,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 long overallSlaveLo = Long.MAX_VALUE;
                 long overallSlaveHi = Long.MIN_VALUE;
                 for (long p = 0; p < filteredRowCount; p++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     record.setRowIndex(rows.get(p));
                     long effectiveLo = computeEffectiveBound(windowLoFunc, windowLo, record, loSign, loTimeUnit, timestampDriver);
                     long effectiveHi = computeEffectiveBound(windowHiFunc, windowHi, record, hiSign, hiTimeUnit, timestampDriver);
@@ -2034,7 +2034,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     if (slaveRowIndex != Long.MIN_VALUE) {
                         long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         for (; ; ) {
-                            circuitBreaker.statefulThrowExceptionIfTripped();
+                            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                             slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                             final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                             if (slaveTimestamp > overallSlaveHi) {
@@ -2057,7 +2057,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 // Per-row aggregation with dynamic bounds (prevailing binary search).
                 for (long p = 0; p < filteredRowCount; p++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     long r = rows.get(p);
                     record.setRowIndex(r);
 
@@ -2190,7 +2190,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 long overallSlaveLo = Long.MAX_VALUE;
                 long overallSlaveHi = Long.MIN_VALUE;
                 for (long p = 0; p < filteredRowCount; p++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     record.setRowIndex(rows.get(p));
                     long effectiveLo = computeEffectiveBound(windowLoFunc, windowLo, record, loSign, loTimeUnit, timestampDriver);
                     long effectiveHi = computeEffectiveBound(windowHiFunc, windowHi, record, hiSign, hiTimeUnit, timestampDriver);
@@ -2220,7 +2220,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     if (slaveRowIndex != Long.MIN_VALUE) {
                         long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         for (; ; ) {
-                            circuitBreaker.statefulThrowExceptionIfTripped();
+                            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                             slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                             final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                             if (slaveTimestamp > overallSlaveHi) {
@@ -2243,7 +2243,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 // Per-row aggregation with dynamic bounds + join filter prevailing scan.
                 for (long p = 0; p < filteredRowCount; p++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     long r = rows.get(p);
                     record.setRowIndex(r);
 
@@ -2488,7 +2488,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 // Now iterate through filtered master rows and perform batch aggregation
                 long rowLo = 0;
                 for (long p = 0; p < filteredRowCount; p++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     long r = rows.get(p);
                     record.setRowIndex(r);
 
@@ -2646,7 +2646,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 long rowLo = 0;
                 for (long p = 0; p < filteredRowCount; p++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     long r = rows.get(p);
                     record.setRowIndex(r);
 
@@ -2796,7 +2796,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 // Process filtered master rows
                 long rowLo = 0;
                 for (long p = 0; p < filteredRowCount; p++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     long r = rows.get(p);
                     record.setRowIndex(r);
 
@@ -2947,7 +2947,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 // Process filtered master rows
                 long rowLo = 0;
                 for (long p = 0; p < filteredRowCount; p++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     long r = rows.get(p);
                     record.setRowIndex(r);
 

@@ -52,7 +52,11 @@ public class LatestByAllIndexedJob extends AbstractQueueConsumerJob<LatestByTask
         try {
             return task.run();
         } finally {
-            subSeq.done(cursor);
+            try {
+                task.clear();
+            } finally {
+                subSeq.done(cursor);
+            }
         }
     }
 }

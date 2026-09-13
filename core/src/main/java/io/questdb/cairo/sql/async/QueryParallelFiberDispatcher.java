@@ -36,6 +36,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.FiberEventWaitQueue;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeConfigurationListener;
@@ -47,7 +48,6 @@ import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.tasks.GroupByLongTopKTask;
 import io.questdb.tasks.GroupByMergeShardTask;
@@ -62,19 +62,17 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigurationListener, FiberRuntimeQuiesceListener, QuietCloseable {
     public static final long OWNER_YIELD_UNSET = Long.MIN_VALUE;
-    private static final long OWNER_HELP_YIELD_INTERVAL_NANOS = 1_000_000L;
     private static final long PUBLICATION_OPEN = Long.MIN_VALUE;
     private static final long PUBLICATION_PERMIT_MASK = Long.MAX_VALUE;
     private static final int QUIESCE_DRAINED = 3;
     private static final int QUIESCE_DRAINING = 2;
     private static final int QUIESCE_OPEN = 0;
     private static final int QUIESCE_REQUESTED = 1;
-    private final long batchRowBudget;
+    private final PageFrameReduceDispatcher.BatchPolicy batchPolicy;
     private final FiberTaskPool<LatestByFiberTask> latestByTaskPool;
     private final FiberTaskPool<GroupByLongTopKFiberTask> longTopKTaskPool;
     private final FiberTaskPool<GroupByMergeShardFiberTask> mergeShardTaskPool;
     private final MessageBus messageBus;
-    private final NanosecondClock nanosecondClock;
     private final AtomicLong progressVersion = new AtomicLong();
     private final FiberEventWaitQueue progressWaitQueue = new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
     private final AtomicLong publicationAdmission = new AtomicLong(PUBLICATION_OPEN);
@@ -87,10 +85,8 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     private volatile boolean isClosed;
 
     public QueryParallelFiberDispatcher(CairoEngine engine, MessageBus messageBus, FiberRuntime runtime) {
-        // Stop each batch after it reaches one configured-max-frame's row count.
-        this.batchRowBudget = engine.getConfiguration().getSqlPageFrameMaxRows();
         this.messageBus = messageBus;
-        this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
+        this.batchPolicy = new PageFrameReduceDispatcher.BatchPolicy(runtime, engine.getConfiguration().getNanosecondClock());
         this.runtime = runtime;
         this.timerClock = engine.getConfiguration().getMillisecondClock();
         this.timerIntervalMillis = Math.max(1, engine.getConfiguration().getQueryContinuationWakeIntervalMillis());
@@ -144,7 +140,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
      * a cooperative yield goes through the Fiber runtime and stays valid while the dispatcher
      * quiesces.
      */
-    public static boolean isFiberOwner() {
+    static boolean isFiberOwner() {
         return Fiber.isMounted()
                 && SuspensionScope.isFiberMode()
                 && Fiber.current() != null;
@@ -175,15 +171,11 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                 cancellationSignalGeneration
         );
         return switch (reason) {
-            case FiberWaitCoordinator.REASON_CANCEL -> {
-                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            case FiberWaitCoordinator.REASON_CANCEL, FiberWaitCoordinator.REASON_TIMER -> {
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                 yield true;
             }
             case FiberWaitCoordinator.REASON_PROGRESS -> true;
-            case FiberWaitCoordinator.REASON_TIMER -> {
-                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                yield true;
-            }
             case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> false;
             default -> throw new IllegalStateException(
                     "unexpected query parallel progress wait reason [reason=" + reason + ']'
@@ -191,50 +183,32 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         };
     }
 
-    // Drain loops must run to latch completion before their callers release native state, so this
-    // variant never throws; the loop-top breaker check surfaces the error after the drain.
-    public boolean awaitProgressWhileDraining(
-            AsyncQueryProgressState progressState,
-            long observedVersion,
-            long observedGlobalVersion
-    ) {
-        final int reason = awaitProgress(
-                progressState,
-                observedVersion,
-                observedGlobalVersion,
-                null,
-                CancellationBinding.NO_GENERATION
-        );
-        return switch (reason) {
-            case FiberWaitCoordinator.REASON_PROGRESS, FiberWaitCoordinator.REASON_TIMER -> true;
-            case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> false;
-            default -> throw new IllegalStateException(
-                    "unexpected query parallel drain wait reason [reason=" + reason + ']'
-            );
-        };
-    }
-
     /**
-     * Waits for drain progress while the owner breaker is still healthy. Cancellation only wakes
-     * the Fiber; it never escapes this must-complete drain. The caller must propagate the observed
-     * cancellation to the shared task breaker, then use the non-cancellable overload so an already
+     * Drain loops must run to latch completion before their callers release native state, so this
+     * variant never throws; the loop-top breaker check surfaces the error after the drain. A
+     * non-null breaker lets its cancellation wake the Fiber without escaping the drain. Once the
+     * caller has observed the trip and cancelled its workers it must pass null, so an already
      * cancelled signal cannot make the drain spin.
      */
     public boolean awaitProgressWhileDraining(
             AsyncQueryProgressState progressState,
             long observedVersion,
             long observedGlobalVersion,
-            SqlExecutionCircuitBreaker circuitBreaker
+            @Nullable SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
-        long cancellationSignalGeneration = SuspensionScope.getCancellationSignalGeneration();
-        if (cancellationSignal == null) {
-            final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
-            circuitBreaker.copyCancelledFlagTo(cancellationBinding);
-            final AtomicBoolean cancelledFlag = cancellationBinding.getFlag();
-            if (cancelledFlag instanceof FiberCancellationSignal signal) {
-                cancellationSignal = signal;
-                cancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
+        FiberCancellationSignal cancellationSignal = null;
+        long cancellationSignalGeneration = CancellationBinding.NO_GENERATION;
+        if (circuitBreaker != null) {
+            cancellationSignal = SuspensionScope.getCancellationSignal();
+            cancellationSignalGeneration = SuspensionScope.getCancellationSignalGeneration();
+            if (cancellationSignal == null) {
+                final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
+                circuitBreaker.copyCancelledFlagTo(cancellationBinding);
+                final AtomicBoolean cancelledFlag = cancellationBinding.getFlag();
+                if (cancelledFlag instanceof FiberCancellationSignal signal) {
+                    cancellationSignal = signal;
+                    cancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
+                }
             }
         }
         final int reason = awaitProgress(
@@ -500,24 +474,47 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     }
 
     /**
-     * Throttles the cooperative yield of a Fiber owner that helps with its own unpublished work,
-     * so the owner gives the carrier up at most once per interval. Start with
-     * {@link #OWNER_YIELD_UNSET} and pass the returned value back on every call.
+     * Throttles the cooperative yield of a Fiber owner that helps with its own unpublished work:
+     * the owner gives the carrier up at most once per interval while its own runtime has another
+     * Fiber queued, not for that reason while a time-sliced dispatch ticket governs the mount, and
+     * in any case once the batch budget has elapsed so the host worker's Jobs run. A ticket poll
+     * that remounted the owner restarts the interval. Start with {@link #OWNER_YIELD_UNSET} and
+     * pass the returned value back on every call.
      */
     public long cooperateFiberOwner(long lastOwnerYieldNanos) {
-        final long now = nanosecondClock.getTicks();
-        if (lastOwnerYieldNanos == OWNER_YIELD_UNSET) {
-            return now;
+        final Fiber fiber = Fiber.current();
+        if (fiber == null || !Fiber.isMounted()) {
+            return lastOwnerYieldNanos;
         }
-        final long elapsed = now - lastOwnerYieldNanos;
-        if (elapsed < 0) {
-            return now;
+        final long mountVersion = fiber.getMountVersion();
+        Fiber.pollMountedDispatchTicket();
+        if (lastOwnerYieldNanos == OWNER_YIELD_UNSET || fiber.getMountVersion() != mountVersion) {
+            return batchPolicy.ticks();
         }
-        if (elapsed >= OWNER_HELP_YIELD_INTERVAL_NANOS) {
-            Fiber.yieldCooperatively();
-            return nanosecondClock.getTicks();
+        final long elapsedNanos = batchPolicy.ticks() - lastOwnerYieldNanos;
+        if (elapsedNanos < 0) {
+            return batchPolicy.ticks();
         }
-        return lastOwnerYieldNanos;
+        if (elapsedNanos < batchPolicy.getNanos()
+                && (elapsedNanos < batchPolicy.getSliceNanos()
+                || Fiber.isMountedDispatchTimeSliced()
+                || !Fiber.hasQueuedRuntimeWork())) {
+            return lastOwnerYieldNanos;
+        }
+        Fiber.yieldCooperatively();
+        return batchPolicy.ticks();
+    }
+
+    public long getBatchCheckRows() {
+        return batchPolicy.getCheckRows();
+    }
+
+    public long getBatchSliceYieldCount() {
+        return batchPolicy.getSliceYieldCount();
+    }
+
+    public long getBatchTimeoutCount() {
+        return batchPolicy.getTimeoutCount();
     }
 
     @TestOnly
@@ -607,8 +604,18 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     }
 
     @TestOnly
-    public void setBeforeMergeShardTaskCreationForTesting(Runnable hook) {
-        mergeShardTaskPool.setBeforeNewTaskForTesting(hook);
+    public void setBatchCheckRowsForTesting(long batchCheckRows) {
+        batchPolicy.setCheckRows(batchCheckRows);
+    }
+
+    @TestOnly
+    public void setBatchNanosForTesting(long batchNanos) {
+        batchPolicy.setNanos(batchNanos);
+    }
+
+    @TestOnly
+    public void setBatchSliceNanosForTesting(long batchSliceNanos) {
+        batchPolicy.setSliceNanos(batchSliceNanos);
     }
 
     public void signalOwnerProgress(@Nullable AsyncQueryProgressState progressState) {
@@ -638,14 +645,6 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                 return true;
             }
         }
-    }
-
-    int getBatchLimit() {
-        return PageFrameReduceDispatcher.DEFAULT_BATCH_LIMIT;
-    }
-
-    long getBatchRowBudget() {
-        return batchRowBudget;
     }
 
     private static <T extends AbstractQueryParallelFiberTask> void abortOrRelease(
@@ -681,13 +680,105 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         return new IllegalStateException("query parallel fiber launch failed [result=" + result + ']');
     }
 
-    private long nextCursor(MCSequence subSeq) {
-        while (true) {
-            final long cursor = subSeq.next();
-            if (cursor != -2 || quiesceState.get() != QUIESCE_OPEN) {
-                return cursor;
+    private int awaitProgress(
+            AsyncQueryProgressState progressState,
+            long observedVersion,
+            long observedGlobalVersion,
+            @Nullable FiberCancellationSignal cancellationSignal,
+            long cancellationSignalGeneration
+    ) {
+        if (isClosed || quiesceState.get() != QUIESCE_OPEN) {
+            return FiberWaitCoordinator.REASON_SHUTDOWN;
+        }
+        if (!Fiber.isMounted() || !SuspensionScope.isFiberMode()) {
+            return FiberWaitCoordinator.REASON_NONE;
+        }
+        final Fiber fiber = Fiber.current();
+        if (fiber == null) {
+            return FiberWaitCoordinator.REASON_NONE;
+        }
+        final long token = fiber.tryBeginWaitBuild(cancellationSignal == null ? 3 : 4);
+        if (token == Fiber.TOKEN_REFUSED) {
+            return FiberWaitCoordinator.REASON_SHUTDOWN;
+        }
+        final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
+        try {
+            if (!coordinator.armEvent(token, progressState.getWaitQueue())
+                    || !coordinator.armEvent(token, progressWaitQueue)) {
+                throw new IllegalStateException("query parallel progress wait registration failed");
             }
-            Os.pause();
+            if (cancellationSignal != null
+                    && !coordinator.armCancellation(token, cancellationSignal, cancellationSignalGeneration)) {
+                throw new IllegalStateException("query parallel progress cancellation registration failed");
+            }
+            if (!coordinator.armTimer(token, timerShards, timerClock, timerIntervalMillis)) {
+                return FiberWaitCoordinator.REASON_SHUTDOWN;
+            }
+            if (isClosed || quiesceState.get() != QUIESCE_OPEN) {
+                return FiberWaitCoordinator.REASON_SHUTDOWN;
+            }
+            if (progressState.getVersion() != observedVersion || progressVersion.get() != observedGlobalVersion) {
+                return coordinator.preferPendingCancel(token, FiberWaitCoordinator.REASON_PROGRESS);
+            }
+            return fiber.suspendWait(token, FiberWaitCoordinator.REASON_PROGRESS);
+        } finally {
+            coordinator.teardownWait(token);
+        }
+    }
+
+    private void completeFailedCountedAcquisition(
+            MCSequence subSeq,
+            long cursor,
+            @Nullable PostAggregationCircuitBreaker circuitBreaker,
+            @Nullable AtomicInteger startedCounter,
+            @Nullable CountDownLatchSPI doneLatch,
+            @Nullable AsyncQueryProgressState progressState,
+            Throwable failure
+    ) {
+        try {
+            if (circuitBreaker != null) {
+                circuitBreaker.cancel(failure);
+            }
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
+        }
+        try {
+            if (startedCounter != null) {
+                startedCounter.incrementAndGet();
+            }
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
+        }
+        try {
+            if (doneLatch != null) {
+                doneLatch.countDown();
+            }
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
+        }
+        completeFailedCursorOwnership(subSeq, cursor, progressState, failure);
+    }
+
+    private void completeFailedCursorOwnership(
+            MCSequence subSeq,
+            long cursor,
+            @Nullable AsyncQueryProgressState progressState,
+            Throwable failure
+    ) {
+        try {
+            subSeq.done(cursor);
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
+        }
+        try {
+            signalQueueProgress();
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
+        }
+        try {
+            signalOwnerProgress(progressState);
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
         }
     }
 
@@ -770,7 +861,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     ) {
         final VectorAggregateEntry entry = task.entry;
         final AsyncQueryProgressState progressState = entry != null ? entry.getProgressState() : null;
-        task.entry = null;
+        task.clear();
         try {
             if (entry != null) {
                 entry.abort(false);
@@ -779,62 +870,6 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             addSuppressed(failure, cleanupFailure);
         }
         completeFailedCursorOwnership(subSeq, cursor, progressState, failure);
-    }
-
-    private void completeFailedCountedAcquisition(
-            MCSequence subSeq,
-            long cursor,
-            @Nullable PostAggregationCircuitBreaker circuitBreaker,
-            @Nullable AtomicInteger startedCounter,
-            @Nullable CountDownLatchSPI doneLatch,
-            @Nullable AsyncQueryProgressState progressState,
-            Throwable failure
-    ) {
-        try {
-            if (circuitBreaker != null) {
-                circuitBreaker.cancel(failure);
-            }
-        } catch (Throwable cleanupFailure) {
-            addSuppressed(failure, cleanupFailure);
-        }
-        try {
-            if (startedCounter != null) {
-                startedCounter.incrementAndGet();
-            }
-        } catch (Throwable cleanupFailure) {
-            addSuppressed(failure, cleanupFailure);
-        }
-        try {
-            if (doneLatch != null) {
-                doneLatch.countDown();
-            }
-        } catch (Throwable cleanupFailure) {
-            addSuppressed(failure, cleanupFailure);
-        }
-        completeFailedCursorOwnership(subSeq, cursor, progressState, failure);
-    }
-
-    private void completeFailedCursorOwnership(
-            MCSequence subSeq,
-            long cursor,
-            @Nullable AsyncQueryProgressState progressState,
-            Throwable failure
-    ) {
-        try {
-            subSeq.done(cursor);
-        } catch (Throwable cleanupFailure) {
-            addSuppressed(failure, cleanupFailure);
-        }
-        try {
-            signalQueueProgress();
-        } catch (Throwable cleanupFailure) {
-            addSuppressed(failure, cleanupFailure);
-        }
-        try {
-            signalOwnerProgress(progressState);
-        } catch (Throwable cleanupFailure) {
-            addSuppressed(failure, cleanupFailure);
-        }
     }
 
     private boolean drainLatestBy() {
@@ -956,7 +991,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                 final VectorAggregateTask task = queue.get(cursor);
                 final VectorAggregateEntry entry = task.entry;
                 final AsyncQueryProgressState progressState = entry != null ? entry.getProgressState() : null;
-                task.entry = null;
+                task.clear();
                 try {
                     if (entry != null) {
                         entry.abort(false);
@@ -985,9 +1020,10 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             boolean directMountAllowed
     ) {
         final long taskIncarnation = task.getIncarnation();
+        final FiberDispatchContext dispatchContext = task.getDispatchContext();
         final LaunchResult result = directMountAllowed && !Fiber.isMounted()
-                ? runtime.launchReservedDirect(fiber, reservationEpoch, task, taskIncarnation)
-                : runtime.launchReserved(fiber, reservationEpoch, task, taskIncarnation);
+                ? runtime.launchReservedDirect(fiber, reservationEpoch, task, taskIncarnation, dispatchContext)
+                : runtime.launchReserved(fiber, reservationEpoch, task, taskIncarnation, dispatchContext);
         if (result != LaunchResult.LAUNCHED
                 && task.getIncarnation() == taskIncarnation
                 && task.isBound()) {
@@ -995,6 +1031,16 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         }
         if (result != LaunchResult.LAUNCHED && result != LaunchResult.QUIESCING) {
             throw launchFailed(result);
+        }
+    }
+
+    private long nextCursor(MCSequence subSeq) {
+        while (true) {
+            final long cursor = subSeq.next();
+            if (cursor != -2 || quiesceState.get() != QUIESCE_OPEN) {
+                return cursor;
+            }
+            Os.pause();
         }
     }
 
@@ -1025,49 +1071,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         return isLeased;
     }
 
-    private int awaitProgress(
-            AsyncQueryProgressState progressState,
-            long observedVersion,
-            long observedGlobalVersion,
-            @Nullable FiberCancellationSignal cancellationSignal,
-            long cancellationSignalGeneration
-    ) {
-        if (isClosed || quiesceState.get() != QUIESCE_OPEN) {
-            return FiberWaitCoordinator.REASON_SHUTDOWN;
-        }
-        if (!Fiber.isMounted() || !SuspensionScope.isFiberMode()) {
-            return FiberWaitCoordinator.REASON_NONE;
-        }
-        final Fiber fiber = Fiber.current();
-        if (fiber == null) {
-            return FiberWaitCoordinator.REASON_NONE;
-        }
-        final long token = fiber.tryBeginWaitBuild(cancellationSignal == null ? 3 : 4);
-        if (token == Fiber.TOKEN_REFUSED) {
-            return FiberWaitCoordinator.REASON_SHUTDOWN;
-        }
-        final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
-        try {
-            if (!coordinator.armEvent(token, progressState.getWaitQueue())
-                    || !coordinator.armEvent(token, progressWaitQueue)) {
-                throw new IllegalStateException("query parallel progress wait registration failed");
-            }
-            if (cancellationSignal != null
-                    && !coordinator.armCancellation(token, cancellationSignal, cancellationSignalGeneration)) {
-                throw new IllegalStateException("query parallel progress cancellation registration failed");
-            }
-            if (!coordinator.armTimer(token, timerShards, timerClock, timerIntervalMillis)) {
-                return FiberWaitCoordinator.REASON_SHUTDOWN;
-            }
-            if (isClosed || quiesceState.get() != QUIESCE_OPEN) {
-                return FiberWaitCoordinator.REASON_SHUTDOWN;
-            }
-            if (progressState.getVersion() != observedVersion || progressVersion.get() != observedGlobalVersion) {
-                return coordinator.preferPendingCancel(token, FiberWaitCoordinator.REASON_PROGRESS);
-            }
-            return fiber.suspendWait(token, FiberWaitCoordinator.REASON_PROGRESS);
-        } finally {
-            coordinator.teardownWait(token);
-        }
+    PageFrameReduceDispatcher.BatchPolicy getBatchPolicy() {
+        return batchPolicy;
     }
 }

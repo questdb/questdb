@@ -113,7 +113,7 @@ public class PgExtensionFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 return ++index < EXTENSIONS.length;
             }
 

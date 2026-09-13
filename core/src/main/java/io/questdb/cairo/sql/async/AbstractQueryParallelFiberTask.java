@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.mp.continuation.TimerShards;
@@ -39,12 +40,14 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 abstract class AbstractQueryParallelFiberTask extends FiberTask implements QuietCloseable {
+    private final PageFrameReduceDispatcher.Batch batch;
     private final CancellationBinding cancellationBinding = new CancellationBinding();
     private final QueryParallelFiberDispatcher dispatcher;
     private final FiberTaskPool<?> pool;
     private final TimerShards timerShards;
     private MCSequence batchSubSeq;
     private int batchWorkerId = -1;
+    private FiberDispatchContext dispatchContext;
     private AsyncQueryProgressState progressState;
 
     protected AbstractQueryParallelFiberTask(
@@ -52,6 +55,7 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
             FiberTaskPool<?> pool,
             TimerShards timerShards
     ) {
+        this.batch = new PageFrameReduceDispatcher.Batch(dispatcher.getBatchPolicy());
         this.dispatcher = dispatcher;
         this.pool = pool;
         this.timerShards = timerShards;
@@ -87,8 +91,12 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
         this.batchSubSeq = subSeq;
     }
 
-    final void bindCancellation(SqlExecutionCircuitBreaker circuitBreaker) {
+    final void bindCancellation(
+            SqlExecutionCircuitBreaker circuitBreaker,
+            @Nullable FiberDispatchContext dispatchContext
+    ) {
         circuitBreaker.copyCancelledFlagTo(cancellationBinding);
+        this.dispatchContext = dispatchContext;
     }
 
     final void bindProgress(AsyncQueryProgressState progressState) {
@@ -97,12 +105,12 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
 
     @Override
     public void close() {
-        clearBinding();
-        clearBatchBinding();
-        batchSubSeq = null;
-        batchWorkerId = -1;
-        cancellationBinding.clear();
-        progressState = null;
+        reset();
+    }
+
+    @Nullable
+    final FiberDispatchContext getDispatchContext() {
+        return dispatchContext;
     }
 
     @Override
@@ -144,15 +152,14 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
     @Override
     protected final boolean runStep() {
         SuspensionScope.enterTimerShards(timerShards);
-        long batchWeight = boundEntryWeight();
+        batch.begin();
         if (!runTask()) {
             return false;
         }
+        batch.addRows(batchRowCount());
         final MCSequence subSeq = batchSubSeq;
         if (subSeq != null) {
-            final int batchLimit = dispatcher.getBatchLimit();
-            final long batchWeightBudget = dispatcher.getBatchRowBudget();
-            for (int i = 1; i < batchLimit && batchWeight < batchWeightBudget; i++) {
+            while (batch.shouldContinue()) {
                 final long cursor = claimNext(subSeq);
                 if (cursor < 0) {
                     break;
@@ -163,17 +170,22 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
                 // entries of one batch can belong to different queries; the carrier scope's
                 // signal must track the entry, not the mount
                 enterBoundCancellationScope();
-                batchWeight += boundEntryWeight();
+                batch.switchTo(dispatchContext);
                 if (!runTask()) {
                     return false;
                 }
+                batch.addRows(batchRowCount());
             }
         }
         return true;
     }
 
-    protected long boundEntryWeight() {
-        return 0;
+    /**
+     * Rows processed by the task that just ran; the batch check runs once this many rows accumulate.
+     * Tasks whose size is not measured in rows count as a full check interval.
+     */
+    protected long batchRowCount() {
+        return dispatcher.getBatchCheckRows();
     }
 
     protected abstract void cancelOwner();
@@ -229,16 +241,22 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
     }
 
     private void recycle() {
-        clearBinding();
-        clearBatchBinding();
-        batchSubSeq = null;
-        batchWorkerId = -1;
-        cancellationBinding.clear();
-        progressState = null;
+        reset();
         try {
             tryReopen();
         } finally {
             pool.releaseSelf(this);
         }
+    }
+
+    private void reset() {
+        batch.clear();
+        clearBinding();
+        clearBatchBinding();
+        batchSubSeq = null;
+        batchWorkerId = -1;
+        cancellationBinding.clear();
+        dispatchContext = null;
+        progressState = null;
     }
 }

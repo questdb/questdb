@@ -191,7 +191,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         @Override
         public boolean hasNext() {
             // Consult the breaker at the top, so an empty master still observes cancellation.
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (!masterCursor.hasNext()) {
                 return false;
             }
@@ -285,7 +285,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     frameRowLo = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
                     backwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
                 }
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
             record.hasSlave(false);
             return true;
@@ -356,7 +356,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     frameRowHi = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi());
                     forwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
                 }
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
         }
 
