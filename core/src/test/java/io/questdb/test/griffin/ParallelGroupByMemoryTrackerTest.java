@@ -181,9 +181,7 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testParallelKeyedGroupByOpenFailureReleasesAllocations() throws Exception {
-        // A tiny limit breaches during the reduce on the first drain (the chunk index is off the
-        // per-query tracker, so nothing per-query-tracked allocates at open); the loop verifies reuse.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        // A tiny limit breaches during acquisition or the first drain; verify repeated cleanup.
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -197,14 +195,16 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
                                 "INSERT INTO tab SELECT (x * 1_000_000)::timestamp, (x % 5)::varchar, x FROM long_sequence(1_000)",
                                 sqlExecutionContext
                         );
+                        // Apply the fault budget after worker setup and seed queries.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         try (RecordCursorFactory factory = compiler.compile("SELECT k, count(*) FROM tab GROUP BY k", sqlExecutionContext).getRecordCursorFactory()) {
                             assertInTree(factory, AsyncGroupByRecordCursorFactory.class);
                             for (int i = 0; i < 5; i++) {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     //noinspection StatementWithEmptyBody
                                     while (cursor.hasNext()) {
-                                        // lazy-map path: the chunk index is no longer per-query-tracked, so the
-                                        // breach lands during the reduce on the first drain, not at cursor open.
+                                        // A tracked frame cache can now breach during cursor acquisition;
+                                        // lazy aggregate state can also breach on the first drain.
                                     }
                                     Assert.fail("expected a per-query memory breach at iteration " + i);
                                 } catch (CairoException e) {
@@ -303,7 +303,6 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testParallelNotKeyedArrayAggOpenFailureReleasesAllocations() throws Exception {
         // Non-keyed variant of testParallelKeyedGroupByOpenFailureReleasesAllocations.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -317,14 +316,16 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
                                 "INSERT INTO tab SELECT (x * 1000)::timestamp, x::double FROM long_sequence(1_000)",
                                 sqlExecutionContext
                         );
+                        // Apply the fault budget after worker setup and seed queries.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         try (RecordCursorFactory factory = compiler.compile("SELECT array_agg(v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
                             assertInTree(factory, AsyncGroupByNotKeyedRecordCursorFactory.class);
                             for (int i = 0; i < 5; i++) {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     //noinspection StatementWithEmptyBody
                                     while (cursor.hasNext()) {
-                                        // lazy-map path: the chunk index is no longer per-query-tracked, so the
-                                        // breach lands during the reduce on the first drain, not at cursor open.
+                                        // A tracked frame cache can now breach during cursor acquisition;
+                                        // lazy aggregate state can also breach on the first drain.
                                     }
                                     Assert.fail("expected a per-query memory breach at iteration " + i);
                                 } catch (CairoException e) {

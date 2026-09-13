@@ -92,7 +92,7 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
    lifecycle/resource matrix. No engine change was required. See
    [coverage and reproduction](docs/parallel-hash-join-group-by-qualification.md).
 
-10. **Rebenchmark completed V1 and make rollout a separate change** — this update.
+10. **Original V1 benchmark and rollout decision** — commit `58b1dc04cc`.
     The fixed 100-million-row/four-worker primary gate passes again at
     **7.179× and 7.144×** median speedup. A 44-case matrix covers keyed/scalar
     INNER/LEFT/normalized RIGHT and both physical orientations, build footprints
@@ -106,35 +106,50 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     during warmups; a repeated one-million-row native/Parquet pair is published.
     See [completed-V1 results, limitations and rollout](docs/parallel-hash-join-group-by-v1.md).
 
+9a. **Complete allocation-time native memory tracking** — this update.
+    The allocation-site audit covers build/SYMBOL/duplicate storage, keyed/scalar
+    state, both merges, frame caches, filtered-source row buffers and Java/Rust
+    decoder scratch. Frame-cache and filter/decoder helper allocations now bind
+    the query tracker before growth. Rust dictionary/data-page scratch uses the
+    output buffers' tracked allocator. Shared filter tasks release query-owned
+    backing when collected, before their tracker can be recycled. New growth,
+    high-cardinality, combined-state, unlimited-limit and reuse tests supplement
+    the existing failure/concurrency coverage. See the [allocation audit and validation](docs/parallel-hash-join-group-by-memory.md).
+
 The branch supports experimental automatic selection for eligible keyed and
-unkeyed queries. **V1 tasks 1–10 and 6a are complete.** The completed-V1 report
-supports keeping the experimental default false. Default enablement has not been
-accepted and remains a separate reviewable configuration/planner change.
+unkeyed queries. Tasks 1–9, 6a and 9a are complete. **V1 is not complete:** the RFC
+added 9a–9d after the original task 10 benchmark. Tasks 9b–9d remain pending, then
+task 10 must be rerun on that implementation. Keep the experimental default false;
+default enablement remains a separate reviewable configuration/planner change.
 
-## Next pending RFC task: 11 (post-V1)
+## Next pending RFC task: 9b (V1)
 
-**Implement parallel radix build as a separate strategy.**
+**Keep large and data-dependent execution structures off heap.**
 
-- Define hash-to-shard routing behind the frozen lookup interface.
-- Scan eligible build frames into slot-owned radix buffers and build independent
-  partitions, retaining all duplicates and common SYMBOL encoding.
-- Publish only after every build task finishes; keep probe/aggregation streaming
-  through the existing pipeline.
-- Test skew, empty shards, cancellation, memory overlap and cleanup/reuse.
-- Benchmark end-to-end crossover against owner build before defining strategy
-  selection; do not copy aggregation shard counts/thresholds without evidence.
+- Audit factories, atoms, cursors, build/probe views and shared helpers, including
+  per-frame lists/caches and source SYMBOL lookup state listed in the 9a audit.
+- Move data-dependent tables, dictionaries, lists and buffers to suitable native
+  structures using 9a's tracked allocation APIs. Java arrays and pooled
+  collections remain on heap and do not satisfy this requirement.
+- Keep only small bounded control objects, flyweights, schema metadata and
+  worker-slot references on heap; document their bounds and lifecycle.
+- Preserve duplicate enumeration, typed access, SYMBOL validity, null extension,
+  slot independence and cleanup/reuse. Measure retained heap as row/key/SYMBOL/
+  group cardinalities increase at a fixed shape and worker count, paired with
+  native allocation/limit and affected storage/concurrency/failure tests.
 
-There is no pending numbered V1 implementation task. Task 11 is post-V1 work,
-and task 12 specifies broader extensions separately. Keep the disable switch,
-`cairo.sql.parallel.hash.join.groupby.enabled=false`, and the global parallel
-GROUP BY gate. Do not add a build-size threshold, runtime fallback or replay.
+Next are 9c (zero-GC execution measurements), 9d (complete circuit-breaker
+integration), and the repeated task 10 performance/rollout gate. Parallel radix
+build (11) and broader extensions (12) remain post-V1. Keep
+`cairo.sql.parallel.hash.join.groupby.enabled=false` and the global parallel GROUP
+BY gate. Do not add a build-size threshold, runtime fallback or input replay.
 
-The [completed-V1 report](docs/parallel-hash-join-group-by-v1.md) and its
-[raw data/summary](docs/parallel-hash-join-group-by-v1/summary.csv) are the current
-performance evidence. The [task 7 report](docs/parallel-hash-join-group-by-benchmark.md)
-remains historical. Task 10 changes benchmark tools/docs only; it does not
-supersede task 9's correctness/resource qualification or claim completed scaling
-for the interrupted ten-million-row Parquet RIGHT pilot.
+The [original task 10 report](docs/parallel-hash-join-group-by-v1.md) and its
+[raw data](docs/parallel-hash-join-group-by-v1/summary.csv) describe the earlier
+implementation; their timings and sampled memory peaks do not validate 9a–9d.
+Task 9's qualification results are historical; 9a's affected-suite rerun is
+recorded in the allocation guide. The ten-million-row Parquet RIGHT pilot remains
+incomplete as documented in the original report.
 
 Integration notes: children compile under **one enclosing query registration**.
 The factory consumes children/functions/interpreted filter context on constructor
@@ -145,6 +160,18 @@ keep ordinary execution. Probe filter takeover uses interpreted logical getters,
 releases unused JIT handles and composes peeled projection mappings. Ordinary
 serial probe filters that cannot be stolen keep the existing plan. Child partition-
 format guards continue to request normal recompilation; they are not bypassed.
+
+## Validation for task 9a
+
+**1,645 Java tests passed across 41 suites, with two existing conditional skips
+and zero failures/errors** (1,647 total). **603 Rust tests passed**, with two
+existing ignored decoder cases. The benchmark package passed and the
+100,000-row/four-worker smoke comparison passed all **43 ordered result checks**,
+including all 40 measured executions. This is integration evidence, not a repeat
+of the task 10 performance gate. The [allocation audit](docs/parallel-hash-join-group-by-memory.md)
+records every covered allocation site, lifecycle, new regression and exact
+Java/native reproduction command. Compile the changed Rust library with the
+`build-rust-library,qdbr-release` Maven profiles.
 
 ## Validation for task 10
 

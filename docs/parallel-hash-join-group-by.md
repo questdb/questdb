@@ -1,18 +1,19 @@
 # Parallel hash join / group by: capabilities and comparison harness
 
-[RFC 130](https://github.com/questdb/rfc/discussions/130), implementation tasks 1–9 and 6a.
+[RFC 130](https://github.com/questdb/rfc/discussions/130), implementation tasks 1–9, 6a and 9a.
 
 The branch includes the [immutable build boundary](parallel-hash-join-group-by-build.md),
 [joined metadata and function initialization](parallel-hash-join-group-by-functions.md),
 [keyed execution and merging](parallel-hash-join-group-by-execution.md),
 [scalar execution](parallel-hash-join-group-by-unkeyed.md),
-and [V1 qualification](parallel-hash-join-group-by-qualification.md).
+[V1 qualification](parallel-hash-join-group-by-qualification.md),
+and [allocation-time memory tracking](parallel-hash-join-group-by-memory.md).
 Task 6 connects these components to ordinary SQL compilation behind an experimental
 flag. The [planner and diagnostics guide](parallel-hash-join-group-by-planner.md)
 documents selection, configuration, ownership, EXPLAIN and benchmark counters.
-The [handoff](../PARALLEL_HASH_JOIN_HANDOFF.md) records completed tasks 1–9, the
-passed keyed prototype performance gate, and pending completed-V1 benchmarking
-in task 10. The experimental flag remains disabled by default.
+The [handoff](../PARALLEL_HASH_JOIN_HANDOFF.md) records progress and the next V1
+task, 9b. Tasks 9b–9d and a repeat of the historical task 10 benchmark remain
+pending. The experimental flag remains disabled by default.
 
 ## Capability table
 

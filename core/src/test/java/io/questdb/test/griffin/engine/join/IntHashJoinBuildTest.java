@@ -36,8 +36,10 @@ import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
 import io.questdb.std.Hash;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.LimitedMemoryTracker;
@@ -400,6 +402,53 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
         Assert.assertThrows(IllegalArgumentException.class, () -> newBuild(2, 0, ColumnType.INT));
         Assert.assertThrows(IllegalArgumentException.class, () -> newBuild(2, 16, ColumnType.STRING));
         Assert.assertThrows(IllegalArgumentException.class, () -> new IntHashJoinBuild(new ArrayColumnTypes(), indexes(0), 2, 16));
+    }
+
+    @Test
+    public void testHighSymbolCardinalityAndDuplicateGrowthAccounting() throws Exception {
+        assertMemoryLeak(() -> {
+            StringBuilder symbol = new StringBuilder();
+            Record source = new Record() {
+                @Override
+                public CharSequence getSymA(int col) {
+                    return symbol;
+                }
+            };
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(0);
+                 IntHashJoinBuild build = newBuild(2, 16, ColumnType.SYMBOL)) {
+                long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP);
+                for (long limit : new long[]{4096, 16384, 65536, 0}) {
+                    tracker.setLimit(limit);
+                    try {
+                        build.open(tracker, NOOP);
+                        for (int i = 0; i < 8192; i++) {
+                            symbol.setLength(0);
+                            symbol.append("country-with-a-long-name-").append(i);
+                            build.append(i % 257, source);
+                            Assert.assertEquals(build.getSizeInBytes(), tracker.getUsed());
+                            Assert.assertEquals(Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP) - baseline, tracker.getUsed());
+                        }
+                        Assert.assertEquals(0, limit);
+                        FrozenHashJoinBuild.Probe probe = build.freeze().newProbe(NOOP);
+                        probe.find(0);
+                        int matches = 0;
+                        while (probe.hasNext()) {
+                            probe.next();
+                            TestUtils.assertEquals("country-with-a-long-name-" + (31 - matches) * 257, probe.getRecord().getSymA(0));
+                            matches++;
+                        }
+                        Assert.assertEquals(32, matches);
+                    } catch (CairoException ex) {
+                        Assert.assertTrue(ex.isOutOfMemory());
+                        Assert.assertNotEquals(0, limit);
+                    } finally {
+                        build.close();
+                    }
+                    Assert.assertEquals(0, tracker.getUsed());
+                    Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP));
+                }
+            }
+        });
     }
 
     @Test

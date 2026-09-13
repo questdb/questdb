@@ -24,8 +24,8 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -845,7 +845,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         memoryTracker = null;
         hasFullProjectionMap = false;
         hasTypeCasts = false;
-        parquetColumns.clear();
+        Misc.free(parquetColumns);
+        nullColumnAddresses = Misc.free(nullColumnAddresses);
+        recordAtRows = Misc.free(recordAtRows);
         parquetIdxToDecodeSlot.clear();
         columnIdToParquetIdx.clear();
         queryToSlot.clear();
@@ -890,7 +892,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      * tracker is valid and matches pre-tracker behavior.
      */
     public void setMemoryTracker(MemoryTracker memoryTracker) {
+        // Scratch lists must be freed under their previous tracker before rebinding.
+        // Pools used by shared reduce jobs can survive the owning query.
+        if (this.memoryTracker != memoryTracker) {
+            Misc.free(parquetColumns);
+            nullColumnAddresses = Misc.free(nullColumnAddresses);
+            recordAtRows = Misc.free(recordAtRows);
+        }
         this.memoryTracker = memoryTracker;
+        parquetColumns.setMemoryTracker(memoryTracker);
     }
 
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
@@ -910,7 +920,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             return;
         }
         if (recordAtRows == null) {
-            recordAtRows = new DirectLongList(256, MemoryTag.NATIVE_DEFAULT);
+            recordAtRows = new DirectLongList(256, MemoryTag.NATIVE_DEFAULT, true);
+            recordAtRows.setMemoryTracker(memoryTracker);
+            recordAtRows.reopen();
         }
         source.copyParquetRowIdsTo(recordAtRows, addressCache);
         final long kept = recordAtRows.size();
@@ -1194,7 +1206,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private DirectLongList getNullColumnAddresses() {
         final int columnCount = addressCache.getColumnCount();
         if (nullColumnAddresses == null) {
-            nullColumnAddresses = new DirectLongList(Math.max(columnCount, 16), MemoryTag.NATIVE_DEFAULT);
+            nullColumnAddresses = new DirectLongList(Math.max(columnCount, 16), MemoryTag.NATIVE_DEFAULT, true);
+            nullColumnAddresses.setMemoryTracker(memoryTracker);
+            nullColumnAddresses.reopen();
         }
         if (nullColumnAddresses.size() < columnCount) {
             nullColumnAddresses.setCapacity(columnCount);
@@ -2121,47 +2135,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private byte usageFlags;
 
         public ParquetBuffers() {
-            // Each buffer below allocates native memory eagerly. If any allocation
-            // throws (native OOM or RSS limit exceeded), free the ones already
-            // allocated so the half-built object does not leak: acquireBuffer never
-            // assigns the throwing ctor to a tracked reference, so close() would
-            // never reach it.
-            DirectLongList auxPageAddresses = null;
-            DirectLongList auxPageSizes = null;
-            DirectLongList columnTops = null;
-            DirectLongList pageAddresses = null;
-            DirectLongList decodeResources = null;
-            DirectLongList pageSizes = null;
-            RowGroupBuffers rowGroupBuffers;
-            try {
-                auxPageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-                auxPageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-                columnTops = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-                pageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-                pageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-                // keepClosed: defer the native buffer allocation to the first
-                // reopen(), which binds the pool's per-query tracker (see
-                // acquireBuffer) before RowGroupBuffers.create() captures the
-                // native allocator. The other DirectLongLists above are tiny and
-                // tracker-agnostic, so they stay eager.
-                rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
-                decodeResources = new DirectLongList(2, MemoryTag.NATIVE_DEFAULT);
-            } catch (Throwable th) {
-                Misc.free(auxPageAddresses);
-                Misc.free(auxPageSizes);
-                Misc.free(columnTops);
-                Misc.free(pageAddresses);
-                Misc.free(decodeResources);
-                Misc.free(pageSizes);
-                throw th;
-            }
-            this.auxPageAddresses = auxPageAddresses;
-            this.auxPageSizes = auxPageSizes;
-            this.columnTops = columnTops;
-            this.pageAddresses = pageAddresses;
-            this.pageSizes = pageSizes;
-            this.rowGroupBuffers = rowGroupBuffers;
-            this.decodeResources = decodeResources;
+            // Shells stay closed until reopen() binds the current query's tracker.
+            auxPageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
+            auxPageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
+            columnTops = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
+            pageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
+            pageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
+            rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
+            decodeResources = new DirectLongList(2, MemoryTag.NATIVE_DEFAULT, true);
         }
 
         @Override
@@ -2284,6 +2265,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         public void reopen() {
+            pageAddresses.setMemoryTracker(memoryTracker);
+            pageSizes.setMemoryTracker(memoryTracker);
+            auxPageAddresses.setMemoryTracker(memoryTracker);
+            auxPageSizes.setMemoryTracker(memoryTracker);
+            columnTops.setMemoryTracker(memoryTracker);
+            decodeResources.setMemoryTracker(memoryTracker);
             pageAddresses.reopen();
             pageSizes.reopen();
             auxPageAddresses.reopen();

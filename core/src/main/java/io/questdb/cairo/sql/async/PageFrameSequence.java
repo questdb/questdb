@@ -87,7 +87,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // Local reduce task used when there is no slots in the queue to dispatch tasks.
     private PageFrameReduceTask localTask;
     // Per-query native memory tracker captured from the owning SqlExecutionContext
-    // at workload start. Null when no per-query limit is configured. Workers read
+    // at workload start, including unlimited queries. Null for unregistered work. Workers read
     // this off the task via task.getFrameSequence().getMemoryTracker() to charge
     // their allocations to the active workload.
     private MemoryTracker memoryTracker;
@@ -458,6 +458,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
+            frameAddressCache.setMemoryTracker(memoryTracker);
             frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
 
             this.collectSubSeq = collectSubSeq;

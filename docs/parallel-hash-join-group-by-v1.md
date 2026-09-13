@@ -1,5 +1,11 @@
 # Completed-V1 fused hash join benchmark and rollout decision
 
+**Historical report:** these measurements predate RFC tasks 9a–9d. They do not
+validate the revised memory tracking or establish V1 completion. Run task 10
+again after 9b–9d and affected regressions pass; see the [handoff](../PARALLEL_HASH_JOIN_HANDOFF.md)
+and [allocation audit](parallel-hash-join-group-by-memory.md). The decision to
+keep the experimental default false still applies.
+
 [RFC 130](https://github.com/questdb/rfc/discussions/130), task 10. Captured
 2026-09-12 UTC (handoff updated 2026-09-13 local time) on completed V1. The fixed primary acceptance gate passes in both
 rounds. **Keep experimental selection disabled by default.** The wider matrix

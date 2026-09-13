@@ -32,6 +32,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -504,6 +505,14 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         }
         this.columnMapping.copyFrom(columnMapping);
         this.external = external;
+    }
+
+    /** Bind before of(), after closing the previous execution's backing. */
+    public void setMemoryTracker(MemoryTracker tracker) {
+        pageAddresses.setMemoryTracker(tracker);
+        pageSizes.setMemoryTracker(tracker);
+        auxPageAddresses.setMemoryTracker(tracker);
+        auxPageSizes.setMemoryTracker(tracker);
     }
 
     /**

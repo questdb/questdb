@@ -132,6 +132,10 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         return Unsafe.getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_PAGE_BUFFERS_SIZE_OFFSET);
     }
 
+    public long getNativeAllocator() {
+        return Unsafe.getNativeAllocator(memoryTag, memoryTracker);
+    }
+
     /**
      * @return the native {@code {used, limit}} block of the bound per-query
      * memory tracker, or {@code 0} when no tracker is set. The read-side twin of

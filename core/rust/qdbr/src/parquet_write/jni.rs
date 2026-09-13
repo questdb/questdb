@@ -1778,8 +1778,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 row_group_lo,
                 row_group_hi,
             )?;
-            let mut row_group_bufs = RowGroupBuffers::new(allocator);
-            let mut ctx = DecodeContext::new(source_parquet_addr as *const u8, source_parquet_size);
+            let mut row_group_bufs = RowGroupBuffers::new(allocator.clone());
+            let mut ctx = DecodeContext::new_in(
+                source_parquet_addr as *const u8,
+                source_parquet_size,
+                allocator,
+            );
             let columns: Vec<(i32, qdb_core::col_type::ColumnType)> = encoder
                 .partition
                 .columns

@@ -56,9 +56,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
@@ -270,6 +270,99 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     Assert.fail();
                 } catch (CairoException expected) {
                     Assert.assertTrue(expected.getFlyweightMessage().toString().contains("injected probe failure"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHighCardinalityMemoryLimitsAcrossStorageAndMergeModes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("insert into r select (x%257)::int, timestamp_sequence('2021-02-01', 1000000), 1.0, 2.0 from long_sequence(4096)");
+            execute("insert into p select (x%257)::int, ('country-' || x)::symbol, 3.0 from long_sequence(4096)");
+            frameRows = 64;
+            for (boolean parquet : new boolean[]{false, true}) {
+                if (parquet) {
+                    execute("alter table r convert partition to parquet where reading_ts >= '2021-02-01'");
+                }
+                for (int mode = 0; mode < 3; mode++) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, mode == 1 ? 1 : Integer.MAX_VALUE);
+                    String sql = (mode == 2 ? SCALAR_AGGREGATES
+                            : "select p.country, r.plant_id, month(r.reading_ts) mo, sum(r.energy_kwh) energy") + OUTER;
+                    try (Fixture f = new Fixture(sql); LimitedMemoryTracker tracker = new LimitedMemoryTracker(0)) {
+                        MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
+                        try {
+                            sqlExecutionContext.setMemoryTracker(tracker);
+                            int failures = 0;
+                            for (long limit : new long[]{65536, 262144, 1048576, 0}) {
+                                tracker.setLimit(limit);
+                                try (RecordCursor cursor = f.getRawCursor()) {
+                                    while (cursor.hasNext()) {
+                                        cursor.getRecord();
+                                    }
+                                    Assert.assertEquals(mode == 1, f.factory.getAtom().isSharded());
+                                    Assert.assertTrue(tracker.getUsed() > 0);
+                                } catch (CairoException ex) {
+                                    Assert.assertTrue(ex.isOutOfMemory());
+                                    Assert.assertNotEquals(0, limit);
+                                    failures++;
+                                }
+                                Assert.assertEquals(0, tracker.getUsed());
+                                Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            }
+                            Assert.assertTrue("must exercise a memory breach", failures > 0);
+                        } finally {
+                            sqlExecutionContext.setMemoryTracker(previous);
+                        }
+                        f.assertResults(sql);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFrameCacheGrowthMemoryLimitAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("insert into r select 1, timestamp_sequence('2021-02-01', 1000000), 1.0, 2.0 from long_sequence(1024)");
+            frameRows = 1;
+            for (String projection : new String[]{AGGREGATES, SCALAR_AGGREGATES}) {
+                String sql = projection + OUTER;
+                try (Fixture f = new Fixture(sql);
+                     LimitedMemoryTracker first = new LimitedMemoryTracker(0);
+                     LimitedMemoryTracker second = new LimitedMemoryTracker(0)) {
+                    MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
+                    try {
+                        sqlExecutionContext.setMemoryTracker(first);
+                        try (RecordCursor cursor = f.getRawCursor()) {
+                            // The build and initial slot/cache backing fit together. Only
+                            // the frame address cache grows before any reducer is dispatched.
+                            Assert.assertTrue(first.getUsed() > f.factory.getMetrics().getBuildBytes());
+                            first.setLimit(first.getUsed());
+                            try {
+                                cursor.hasNext();
+                                Assert.fail("expected frame cache growth to breach the query limit");
+                            } catch (CairoException ex) {
+                                Assert.assertTrue(ex.isOutOfMemory());
+                            }
+                            Assert.assertEquals(0, f.factory.getMetrics().getScannedRows());
+                        }
+                        Assert.assertEquals(0, first.getUsed());
+                        Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                        // A fresh unlimited tracker must own every allocation on reuse.
+                        sqlExecutionContext.setMemoryTracker(second);
+                        try (RecordCursor cursor = f.getRawCursor()) {
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertTrue(second.getUsed() > f.factory.getMetrics().getBuildBytes());
+                            Assert.assertEquals(0, first.getUsed());
+                        }
+                        Assert.assertEquals(0, second.getUsed());
+                    } finally {
+                        sqlExecutionContext.setMemoryTracker(previous);
+                    }
+                    f.assertResults(sql);
                 }
             }
         });

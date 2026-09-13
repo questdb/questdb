@@ -89,7 +89,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private boolean isUninterruptible;
     private PageFrameMemoryRecord localRecord;
     // Per-query native memory tracker captured from the owning SqlExecutionContext
-    // at workload start. Null when no per-query limit is configured. Workers read
+    // at workload start, including unlimited queries. Null for unregistered work. Workers read
     // this off the task via task.getFrameSequence().getMemoryTracker() to charge
     // their allocations to the active workload.
     private MemoryTracker memoryTracker;
@@ -431,6 +431,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         try {
             assert frameCursor == null;
             frameCursor = base.getPageFrameCursor(executionContext, order);
+            frameAddressCache.setMemoryTracker(memoryTracker);
             frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
 
             id = ID_SEQ.incrementAndGet();

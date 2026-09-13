@@ -104,11 +104,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 slots.add(slot);
                 records.add(slot.joinedRecord);
             }
-            // This reducer filters one logical row at a time and needs no row-id buffers.
-            // Release the context's eager buffers; only decoder pools allocate on execution.
-            for (int i = -1; i < workerCount; i++) {
-                filterContext.getFilteredRows(i).close();
-            }
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;

@@ -171,9 +171,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedHorizonJoinOpenFailureReleasesAllocations() throws Exception {
-        // A tiny limit breaches during the reduce on the first drain (the chunk index is off the
-        // per-query tracker, so nothing per-query-tracked allocates at open); the loop verifies reuse.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        // A tiny limit breaches during acquisition or the first drain; verify repeated cleanup.
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -181,6 +179,8 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         createTrades(engine, sqlExecutionContext, 100, 8);
                         createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        // Apply the fault budget after worker setup and seed queries.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         final String query = "SELECT t.sym, array_agg(p.price) " +
                                 "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
@@ -190,8 +190,8 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     //noinspection StatementWithEmptyBody
                                     while (cursor.hasNext()) {
-                                        // lazy-map path: the chunk index is no longer per-query-tracked, so the
-                                        // breach lands during the reduce on the first drain, not at cursor open.
+                                        // A tracked frame cache can now breach during cursor acquisition;
+                                        // lazy aggregate state can also breach on the first drain.
                                     }
                                     Assert.fail("expected a per-query memory breach at iteration " + i);
                                 } catch (CairoException e) {
@@ -296,13 +296,14 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // execution must also hand its slot back: PerWorkerLocks has no reset and the atom belongs
         // to the factory, so a slot lost here is lost for as long as the factory stays in the SQL
         // cache, and once all of them have leaked every worker spins for a slot nobody will release.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         createMultiHorizonTables(engine, sqlExecutionContext, 100);
+                        // Apply the fault budget after worker setup and seed queries.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         final String query = "SELECT t.sym, array_agg(p0.px0), count(p1.px1) " +
                                 "FROM trades t " +
                                 "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) " +
@@ -314,8 +315,8 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     //noinspection StatementWithEmptyBody
                                     while (cursor.hasNext()) {
-                                        // lazy-map path: the chunk index is no longer per-query-tracked, so the
-                                        // breach lands during the reduce on the first drain, not at cursor open.
+                                        // A tracked frame cache can now breach during cursor acquisition;
+                                        // lazy aggregate state can also breach on the first drain.
                                     }
                                     Assert.fail("expected a per-query memory breach at iteration " + i);
                                 } catch (CairoException e) {
@@ -443,7 +444,6 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testNotKeyedHorizonJoinOpenFailureReleasesAllocations() throws Exception {
         // Non-keyed variant of testKeyedHorizonJoinOpenFailureReleasesAllocations.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -451,6 +451,8 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         createTrades(engine, sqlExecutionContext, 100, 8);
                         createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        // Apply the fault budget after worker setup and seed queries.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         final String query = "SELECT array_agg(p.price) " +
                                 "FROM trades t HORIZON JOIN prices p " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
@@ -460,8 +462,8 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     //noinspection StatementWithEmptyBody
                                     while (cursor.hasNext()) {
-                                        // lazy-map path: the chunk index is no longer per-query-tracked, so the
-                                        // breach lands during the reduce on the first drain, not at cursor open.
+                                        // A tracked frame cache can now breach during cursor acquisition;
+                                        // lazy aggregate state can also breach on the first drain.
                                     }
                                     Assert.fail("expected a per-query memory breach at iteration " + i);
                                 } catch (CairoException e) {
@@ -565,13 +567,14 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // dropping the GROUP BY key routes to the non-keyed multi-horizon factory. Its reducer
         // acquires a per-worker slot before navigating to the frame, so the breached executions
         // must hand every slot back - see testKeyedMultiHorizonJoinOpenFailureReleasesAllocations.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         createMultiHorizonTables(engine, sqlExecutionContext, 100);
+                        // Apply the fault budget after worker setup and seed queries.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         final String query = "SELECT array_agg(p0.px0), count(p1.px1) " +
                                 "FROM trades t " +
                                 "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) " +
@@ -583,8 +586,8 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     //noinspection StatementWithEmptyBody
                                     while (cursor.hasNext()) {
-                                        // lazy-map path: the chunk index is no longer per-query-tracked, so the
-                                        // breach lands during the reduce on the first drain, not at cursor open.
+                                        // A tracked frame cache can now breach during cursor acquisition;
+                                        // lazy aggregate state can also breach on the first drain.
                                     }
                                     Assert.fail("expected a per-query memory breach at iteration " + i);
                                 } catch (CairoException e) {
