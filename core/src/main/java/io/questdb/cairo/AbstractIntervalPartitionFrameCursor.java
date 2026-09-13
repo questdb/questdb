@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -55,6 +56,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected long partitionLimit;
     protected int partitionLo;
     protected TableReader reader;
+    protected SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     protected long sizeSoFar = 0;
     private long frameCountUpperBound = -1;
     private int initialIntervalsHi;
@@ -136,6 +138,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     public AbstractIntervalPartitionFrameCursor of(TableReader reader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        circuitBreaker = sqlExecutionContext != null ? sqlExecutionContext.getCircuitBreaker() : SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
         parquetTimestampFinder.setMemoryTracker(sqlExecutionContext != null ? sqlExecutionContext.getMemoryTracker() : null);
         this.intervals = intervalModel.calculateIntervals(sqlExecutionContext);
         calculateRanges(reader, intervals);
@@ -209,6 +212,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         final long maxTimestamp = reader.getMaxTimestamp();
         long pairs = 0;
         for (int i = initialIntervalsLo; i < initialIntervalsHi; i++) {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             // Clamp to the reader's data range, mirroring cullPartitions(): an open-ended or
             // over-reaching interval must not walk the partition search off either end.
             final long intervalLo = Math.max(intervals.getQuick(2 * i), minTimestamp);

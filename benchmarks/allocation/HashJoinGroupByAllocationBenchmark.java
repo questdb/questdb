@@ -135,6 +135,7 @@ public final class HashJoinGroupByAllocationBenchmark {
                             // bounded decoder/slot shell. The build remains limited to
                             // 1,022 rows; this never warms a data-sized Java pool.
                             snapshot(0);
+                            warmSymbolViews(engine, concurrent ? 2 : 1);
                             for (int setup = 0; setup < 64; setup++) {
                                 if (peer != null) peer.request++;
                                 execute(factory, context);
@@ -246,6 +247,33 @@ public final class HashJoinGroupByAllocationBenchmark {
             if (!storage.equals("native")) engine.execute("alter table " + table + " convert partition to parquet"
                     + (storage.equals("mixed") ? " where ts < '1970-01-02'" : " where ts < '1970-01-03'"), context);
         }
+    }
+
+    private static void warmSymbolViews(CairoEngine engine, int owners) {
+        // Reader interchange can leave both factories' previous expression views
+        // attached to one dictionary until their next init. Cover that fixed
+        // overlap directly instead of relying on the warmup's scheduling order.
+        // This SQL has at most four source SYMBOL references per owner/worker
+        // slot (predicate, grouping, COUNT and record lookup), plus one borrowed
+        // build-copy view per owner. No dictionary values are read or cached.
+        int viewCount = owners * (4 * (WORKERS + 1) + 1);
+        TableReader[] readers = new TableReader[owners];
+        io.questdb.cairo.sql.SymbolTable[] views = new io.questdb.cairo.sql.SymbolTable[viewCount];
+        for (String table : new String[]{"r", "p"}) {
+            try {
+                for (int owner = 0; owner < owners; owner++) readers[owner] = engine.getReader(table);
+                for (TableReader reader : readers) {
+                    try {
+                        for (int view = 0; view < viewCount; view++) views[view] = reader.newSymbolTable(2);
+                    } finally {
+                        for (int view = 0; view < viewCount; view++) views[view] = io.questdb.std.Misc.freeIfCloseable(views[view]);
+                    }
+                }
+            } finally {
+                for (int owner = 0; owner < owners; owner++) readers[owner] = io.questdb.std.Misc.free(readers[owner]);
+            }
+        }
+        System.out.println("SYMBOL_VIEW_SETUP," + owners + "," + viewCount);
     }
 
     private static void threads(boolean concurrent) {

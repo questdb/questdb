@@ -2866,10 +2866,13 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                          Metrics.DISABLED,
                          WorkerPoolMode.FIBER_HOST
                  )) {
+                final AtomicLong publicationBeforeForeign = new AtomicLong(Long.MAX_VALUE);
                 final AtomicBooleanCircuitBreaker foreignBreaker = new AtomicBooleanCircuitBreaker(engine) {
                     @Override
                     public void statefulThrowExceptionIfTrippedTimeThrottled() {
-                        if (cleanupPath) {
+                        // Cancel after publishing foreign work so cleanup has tasks to drain.
+                        // Frame preparation can also consult the breaker before publication.
+                        if (cleanupPath && engine.getMessageBus().getLatestByPubSeq().current() > publicationBeforeForeign.get()) {
                             cancel();
                         }
                         statefulThrowExceptionIfTrippedNoThrottle();
@@ -2956,6 +2959,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                         victimProgress = messageBus.getLatestByQueue().get(victimCursor).getProgressState();
                         Assert.assertNotNull(victimProgress);
                         final long observedVersion = victimProgress.getVersion();
+                        publicationBeforeForeign.set(pubSeq.current());
 
                         if (cleanupPath) {
                             try {

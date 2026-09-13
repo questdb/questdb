@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.Misc;
@@ -44,6 +45,7 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
     // by toPartition(int) to limit iteration to a single partition.
     protected int partitionScanHi;
     protected TableReader reader;
+    protected SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
 
     @Override
     public void close() {
@@ -76,6 +78,11 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
      * @return this cursor
      */
     public PartitionFrameCursor of(TableReader reader) {
+        return of(reader, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+    }
+
+    public PartitionFrameCursor of(TableReader reader, SqlExecutionCircuitBreaker circuitBreaker) {
+        this.circuitBreaker = circuitBreaker;
         partitionHi = reader.getPartitionCount();
         partitionScanHi = partitionHi;
         toTop();

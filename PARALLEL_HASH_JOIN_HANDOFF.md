@@ -126,7 +126,7 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     fresh execution and reuse, with result and native-balance checks. See the
     [retained-heap audit, measurements and validation](docs/parallel-hash-join-group-by-heap.md).
 
-9c. **Make successful fused execution zero-GC after bounded setup** — this update.
+9c. **Make successful fused execution zero-GC after bounded setup** — commit `0c5d8d78af`.
     Reuse native-growth scratch, frozen/probe/SYMBOL views, scalar shells and
     native-closed decoder buffers. Preserve independent slot generations, expired
     handle checks, query tracking and close/reuse semantics. Paired exact owner/
@@ -136,35 +136,43 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     checks have separate documented boundaries. See the [execution allocation
     audit and reproducible artifacts](docs/parallel-hash-join-group-by-allocation.md).
 
+9d. **Complete circuit-breaker integration** — this update.
+    Delegated serial/async build filters check rejected rows, including the JIT
+    factory's interpreted fallback and column pre-touch. Forward/backward frame
+    preparation checks skipped frames, empty partitions, rejected intervals and
+    Parquet row groups. Sparse grouping cursors bind the query breaker before initialization and check empty-slot
+    scans; fused output checks every cursor advance. Shared atomic delegates
+    now use independently owned wrapper throttle counters. Existing row/pair,
+    build-growth, merge and mandatory drain checks remain. Deterministic tests
+    cover native/mixed/Parquet interruption, bounded loop work, timeout,
+    independent rebinding, cleanup and ordinary-result reuse. See the
+    [loop audit, ownership and validation](docs/parallel-hash-join-group-by-cancellation.md).
+
 The branch supports experimental automatic selection for eligible keyed and
-unkeyed queries. Tasks 1–9, 6a and 9a–9c are complete. **V1 is not complete:** the
-current RFC requires 9a–9e after the original task 10 benchmark. Tasks 9d–9e
-remain pending, then task 10 must be rerun on that implementation. Keep the
-experimental default false; default enablement remains a separate reviewable
-configuration/planner change.
+unkeyed queries. Tasks 1–9, 6a and 9a–9d are complete. **V1 is not complete:**
+task 9e remains pending, then task 10 must be rerun on that implementation.
+Keep the experimental default false; default enablement remains a separate
+reviewable configuration/planner change.
 
-## Next pending RFC task: 9d (V1)
+## Next pending RFC task: 9e (V1)
 
-**Complete circuit-breaker integration for every potentially large execution loop.**
+**Expand the semantic, storage, and negative matrix and publish its coverage map.**
 
-- Audit build-source consumption, filtered scans, keyed/scalar probing and
-  aggregation, cursor-based merging and output, including delegated `hasNext()`
-  implementations that consume many rows internally.
-- Use existing throttled breaker calls on rejected rows, misses, null extensions,
-  and successful matches. Check inside long duplicate/nested loops, preserving
-  current growth, rehash, copy/decode, redistribution and native merge checks.
-- Bind the active query breaker before work and propagate it to independently
-  owned worker slots. Preserve throttling, zero-GC successful checks and correct
-  rebinding; concurrent workers must not share mutable throttle state unsafely.
-- Add deterministic cancellation/timeout tests for large builds, all-miss/all-
-  rejected scans, duplicate chains and merge/output traversal, for keyed/scalar
-  and enabled storage paths. Bound loop work between checks. Verify drain,
-  cleanup, query-memory release, same-factory reuse and unaffected peer queries.
-- Publish the loop audit and named tests; rerun affected regressions and include
-  breaker overhead in task 10's end-to-end measurements.
+- Cover SQL LHS/RHS column roles, all allowlisted function/type pairs, reused
+  join keys, repeated/multiple references, expressions, aliases, pruned/reordered
+  projections and normalized RIGHT mappings.
+- Exercise empty/null/extreme keys, duplicates, count/SUM/AVG null behavior,
+  outer null extension and ON/WHERE placement, including rejected real matches.
+- Cover native/Parquet/mixed storage on either/both inputs, column tops inside
+  and across partitions, multiple row groups, logical conversion, interval and
+  filter paths, schema/storage changes and ordinary invalidation/recompilation.
+- Assert ordinary plans/errors for every excluded join/key/aggregate/access
+  shape, unsafe expression and disabled gate. Do not broaden V1 eligibility.
+- Map deterministic and seeded cases to named tests with positive/negative
+  plan checks, resolved results and metadata, owner/sharded/scalar merges,
+  reuse, bind rebinding, dictionary changes and concurrency. Rerun affected suites.
 
-Task **9e** remains the expanded semantic/storage/negative matrix and coverage
-mapping. Explicitly cover **SQL LHS and RHS SYMBOL columns as grouping keys and
+Explicitly cover **SQL LHS and RHS SYMBOL columns as grouping keys and
 aggregate arguments**, separately and together, including the same column in both
 roles, repeated references, multiple SYMBOL columns, COUNT(SYMBOL), and supported
 SYMBOL-consuming expressions. Test symbol-table initialization/routing for owner,
@@ -174,7 +182,7 @@ native/Parquet/mixed storage; first execution/reuse, dictionary changes, bind
 rebinding and concurrent factories. Compare resolved text and metadata with the
 ordinary path, and map these cases to named tests in the 9e coverage table.
 
-After 9d–9e, repeat task 10's performance/rollout gate. Parallel radix build (11)
+After 9e, repeat task 10's performance/rollout gate. Parallel radix build (11)
 and broader extensions (12) remain post-V1. Keep
 `cairo.sql.parallel.hash.join.groupby.enabled=false` and the global parallel GROUP
 BY gate. Do not add a build-size threshold, runtime fallback or input replay.
@@ -183,7 +191,7 @@ The [original task 10 report](docs/parallel-hash-join-group-by-v1.md) and its
 [raw data](docs/parallel-hash-join-group-by-v1/summary.csv) describe the earlier
 implementation; their timings and sampled memory peaks do not validate 9a–9e.
 Task 9's qualification results are historical; affected-suite reruns are recorded
-in the task 9a–9c guides. The ten-million-row Parquet RIGHT pilot remains incomplete
+in the task 9a–9d guides. The ten-million-row Parquet RIGHT pilot remains incomplete
 as documented in the original report. Repeated decoding under the bounded sparse
 cache and uncached SYMBOL predicate CPU costs need task 10 measurements.
 
@@ -196,6 +204,40 @@ keep ordinary execution. Probe filter takeover uses interpreted logical getters,
 releases unused JIT handles and composes peeled projection mappings. Ordinary
 serial probe filters that cannot be stolen keep the existing plan. Child partition-
 format guards continue to request normal recompilation; they are not bypassed.
+
+## Validation for task 9d
+
+**2,384 Java tests passed across 70 suites**, with 26 existing conditional skips
+and zero failures/errors (2,410 total, counting final suite reruns once).
+The benchmark package and all **43 ordered smoke-result checks** passed.
+The [cancellation guide](docs/parallel-hash-join-group-by-cancellation.md) records
+loop coverage, normal interruption reasons, query/worker ownership, throttling
+bounds and named tests. Its [per-suite results](docs/parallel-hash-join-group-by-cancellation/regressions.csv)
+include planner/storage/resource regressions and the repaired scheduler fixtures.
+
+An expanded dispatcher run exposed synthetic tasks reading unopened native
+frame caches; test-only sequence subclasses now supply their zero row budgets.
+A cleanup-steal fixture now cancels after publication so frame-preparation checks
+do not bypass its intended drain phase. The repaired suites pass all 53 and 40
+tests, respectively. These are test-fixture changes, with normal scan and explicit
+row-budget behavior retained.
+
+The final allocation rerun passes **24 cases, 234 measured candidate executions
+and 405 owner/worker windows**, with zero unexplained successful-execution bytes
+and all four workers participating in each census case. Native/mixed/Parquet,
+owner/sharded/scalar, join normalization, logical conversion, unseen symbols,
+forced native growth, close, cancellation and reuse all pass. The [per-thread
+summary](docs/parallel-hash-join-group-by-cancellation/allocation/summary.csv) and
+paired logs retain the controlled C1 measurement boundary from task 9c.
+
+One initial run exposed a 160-byte SYMBOL-view allocation when two owners
+interchanged readers after scheduling-dependent warmup. The harness now seeds
+21/42 empty views per source dictionary during reported bounded setup, without
+reading symbol text; the count depends only on query expressions and owner/worker
+slots. Production pooling and measured-execution assertions are unchanged. The
+[cancellation guide](docs/parallel-hash-join-group-by-cancellation.md) retains the
+original failure and explains the deterministic setup. Task 10 must still measure
+end-to-end latency, including these breaker checks, after task 9e.
 
 ## Validation for task 9c
 

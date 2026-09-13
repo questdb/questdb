@@ -179,7 +179,7 @@ public class GroupByMapFragment implements QuietCloseable {
         reopenShards(circuitBreaker);
 
         if (map.size() > 0) {
-            RecordCursor cursor = map.getCursor();
+            RecordCursor cursor = map.getCursor(circuitBreaker);
             MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
                 if (circuitBreaker != null) {

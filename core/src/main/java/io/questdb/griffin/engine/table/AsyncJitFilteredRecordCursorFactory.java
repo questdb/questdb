@@ -412,6 +412,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 if (task.isCountOnly()) {
                     long count = 0;
                     for (long r = 0; r < frameRowCount; r++) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
                         record.setRowIndex(r);
                         if (filter.getBool(record)) {
                             count++;
@@ -420,6 +421,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                     task.setFilteredRowCount(count);
                 } else { // normal filter task
                     for (long r = 0; r < frameRowCount; r++) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
                         record.setRowIndex(r);
                         if (filter.getBool(record)) {
                             rows.add(r);
@@ -437,6 +439,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 return;
             }
 
+            // Native filtering processes one native frame or selected Parquet row-group range.
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             // Use JIT-compiled filter.
             task.populateJitData();
             final DirectLongList dataAddresses = task.getDataAddresses();
@@ -475,7 +479,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
                 // Pre-touch native columns, if asked.
                 if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
-                    atom.preTouchColumns(record, rows, frameRowCount);
+                    atom.preTouchColumns(record, rows, frameRowCount, circuitBreaker);
                 }
             }
         } finally {

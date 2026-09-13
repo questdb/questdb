@@ -91,6 +91,11 @@ public interface Map extends Mutable, Closeable, Reopenable {
 
     MapRecordCursor getCursor();
 
+    /** Supplies a breaker for cursors whose initialization or advance can scan empty hash slots. */
+    default MapRecordCursor getCursor(@Nullable SqlExecutionCircuitBreaker circuitBreaker) {
+        return getCursor();
+    }
+
     @TestOnly
     default long getHeapSize() {
         return -1;

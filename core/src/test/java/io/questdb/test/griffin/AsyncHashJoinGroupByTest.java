@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.HashJoinGroupByCandidate;
@@ -64,16 +65,23 @@ import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
+import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.jit.CompiledCountOnlyFilter;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.Job;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -577,6 +585,147 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectedProbeCancellationAcrossStorageAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("truncate table r");
+            execute("insert into r select 999999, timestamp_sequence('2020-01-01', 60000000), 1.0, 2.0 from long_sequence(100000)");
+            SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+            AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine, 0);
+            try {
+                for (int storage = 0; storage < 3; storage++) {
+                    if (storage == 1) {
+                        execute("alter table r convert partition to parquet where reading_ts < '2020-02-01'");
+                    } else if (storage == 2) {
+                        execute("alter table r convert partition to parquet where reading_ts >= '2020-02-01'");
+                    }
+                    for (boolean keyed : new boolean[]{false, true}) {
+                        for (boolean reject : new boolean[]{false, true}) {
+                            Hook hook = new Hook();
+                            // The accepted probe predicate counts rows even when every hash lookup misses.
+                            String predicate = reject ? "energy_kwh < 0" : "energy_kwh > 0";
+                            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + INNER + " where r." + predicate;
+                            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), predicate, hook)) {
+                                ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                                breaker.reset();
+                                hook.cancel = breaker;
+                                try (RecordCursor cursor = f.getCursor()) {
+                                    cursor.hasNext();
+                                    Assert.fail("expected cancellation during all-miss/all-rejected probe");
+                                } catch (CairoException ex) {
+                                    Assert.assertTrue(ex.isCancellation());
+                                }
+                                Assert.assertEquals(32, hook.calls.get());
+                                Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+                                hook.cancel = null;
+                                breaker.reset();
+                                f.assertResults(sql);
+                            }
+                        }
+                    }
+                }
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+            }
+        });
+    }
+
+    @Test
+    public void testOutputCancellationAndReuseAllMapTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            createMergeTables();
+            SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+            AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine, 0);
+            try {
+                for (int threshold : new int[]{1, Integer.MAX_VALUE}) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
+                    for (String key : new String[]{"r.plant_id", "r.reading_ts", "r.plant_id, r.reading_ts"}) {
+                        String sql = "select " + key + ", sum(r.energy_kwh)" + INNER;
+                        try (Fixture f = new Fixture(sql)) {
+                            ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                            breaker.reset();
+                            try (RecordCursor cursor = f.getCursor()) {
+                                Assert.assertTrue(cursor.hasNext());
+                                breaker.cancel();
+                                try {
+                                    while (cursor.hasNext()) {
+                                        Assert.fail("output must consult the breaker before returning another group");
+                                    }
+                                    Assert.fail("expected output cancellation");
+                                } catch (CairoException ex) {
+                                    Assert.assertTrue(ex.isCancellation());
+                                }
+                            }
+                            Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+                            breaker.reset();
+                            f.assertResults(sql);
+                        }
+                    }
+                }
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+            }
+        });
+    }
+
+    @Test
+    public void testRejectedCountOnlyFilterCancellationAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table p as (select x::int id, x d, x v, x w from long_sequence(100000))");
+            execute("alter table p add column top_col int");
+            SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+            AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine, 0);
+            try {
+                for (int mode : new int[]{1, 2}) {
+                    Hook hook = new Hook();
+                    hook.buildFilterMode = mode;
+                    try (RecordCursorFactory factory = new QueryProgress(engine.getQueryRegistry(), "count-only filter test",
+                            filterBuild(childFactory("p"), hook))) {
+                        ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                        hook.cancel = breaker;
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            cursor.calculateSize(breaker, new RecordCursor.Counter());
+                            Assert.fail("expected cancellation inside count-only filter");
+                        } catch (CairoException ex) {
+                            Assert.assertTrue(ex.isCancellation());
+                        }
+                        Assert.assertTrue(hook.calls.get() >= 32 && hook.calls.get()
+                                <= 32 + configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
+                        Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+                        breaker.reset();
+                        hook.cancel = null;
+                        hook.isBuildAccepted = true;
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            RecordCursor.Counter counter = new RecordCursor.Counter();
+                            cursor.calculateSize(breaker, counter);
+                            Assert.assertEquals(100_000, counter.get());
+                        }
+                    }
+                }
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+            }
+        });
+    }
+
+    @Test
+    public void testRejectedSerialBuildCancellationAndReuse() throws Exception {
+        assertRejectedBuildCancellationAndReuse(0);
+    }
+
+    @Test
+    public void testRejectedAsyncBuildCancellationAndReuse() throws Exception {
+        assertRejectedBuildCancellationAndReuse(1);
+    }
+
+    @Test
+    public void testRejectedJitBuildCancellationAndReuse() throws Exception {
+        assertRejectedBuildCancellationAndReuse(2);
+    }
+
+    @Test
     public void testConstructionFailureClosesOwnedResources() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -938,6 +1087,75 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         assertScalarMergeFailureAndReuse(true);
     }
 
+    private void assertRejectedBuildCancellationAndReuse(int filterMode) throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("drop table p");
+            execute("create table p (plant_id int, country symbol, installed_kwp double, ts timestamp) timestamp(ts) partition by DAY");
+            execute("insert into p select x::int, 'ES', 1.0, timestamp_sequence('2020-01-01', 1000000) from long_sequence(100000)");
+            // Force the JIT factory's interpreted fallback without an extra production hook.
+            execute("alter table p add column top_col int");
+            SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+            AtomicBoolean isTimeout = new AtomicBoolean();
+            AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine, 0) {
+                @Override
+                public int getState() {
+                    int state = super.getState();
+                    return isTimeout.get() && state == STATE_CANCELLED ? STATE_TIMEOUT : state;
+                }
+
+                @Override
+                public void statefulThrowExceptionIfTrippedNoThrottle() {
+                    if (getState() == STATE_TIMEOUT) {
+                        throw CairoException.queryTimedOut();
+                    }
+                    super.statefulThrowExceptionIfTrippedNoThrottle();
+                }
+            };
+            try {
+                for (int storage = 0; storage < 3; storage++) {
+                    if (storage == 1) {
+                        execute("alter table p convert partition to parquet where ts < '2020-01-02'");
+                    } else if (storage == 2) {
+                        execute("alter table p convert partition to parquet where ts >= '2020-01-02'");
+                    }
+                    for (boolean keyed : new boolean[]{false, true}) {
+                        for (boolean timeout : new boolean[]{false, true}) {
+                            Hook hook = new Hook();
+                            hook.isBuildFiltered = true;
+                            hook.buildFilterMode = filterMode;
+                            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + INNER;
+                            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2, 3, 4), null, hook)) {
+                                ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                                breaker.reset();
+                                isTimeout.set(timeout);
+                                hook.cancel = breaker;
+                                try (RecordCursor cursor = f.getCursor()) {
+                                    cursor.hasNext();
+                                    Assert.fail("expected interruption inside rejecting build filter");
+                                } catch (CairoException ex) {
+                                    Assert.assertEquals(timeout ? SqlExecutionCircuitBreaker.STATE_TIMEOUT
+                                            : SqlExecutionCircuitBreaker.STATE_CANCELLED, ex.getInterruptionReason());
+                                }
+                                int throttle = filterMode == 0 ? 0 : configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle();
+                                Assert.assertTrue("rejected rows must stop within the slot throttle: " + hook.calls.get(),
+                                        hook.calls.get() >= 32 && hook.calls.get() <= 32 + throttle);
+                                Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+                                hook.cancel = null;
+                                hook.isBuildAccepted = true;
+                                isTimeout.set(false);
+                                breaker.reset();
+                                f.assertResults(sql);
+                            }
+                        }
+                    }
+                }
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+            }
+        });
+    }
+
     private void assertMixedParquetNativeReuseAndDecoderFailure(boolean keyed) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -1066,26 +1284,33 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             execute("truncate table p");
             execute("insert into r values (1, '2020-01-01', 10, 100)");
             execute("insert into p select 1, 'ES', null::double from long_sequence(100000)");
-            Hook hook = new Hook();
-            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + " where p.installed_kwp is null";
-            SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
-            AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
-            ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
-            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
-                hook.cancel = breaker;
-                try (RecordCursor cursor = f.getCursor()) {
-                    cursor.hasNext();
-                    Assert.fail();
-                } catch (CairoException expected) {
-                    Assert.assertTrue(expected.isInterruption());
+            for (boolean isParquet : new boolean[]{false, true}) {
+                if (isParquet) {
+                    execute("alter table r convert partition to parquet where reading_ts >= '2020-01-01'");
                 }
-                Assert.assertEquals("cancellation must stop within one duplicate loop", 32, hook.calls.get());
-                Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                hook.cancel = null;
-                breaker.reset();
-                f.assertResults(sql);
-            } finally {
-                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+                for (boolean isRejected : new boolean[]{false, true}) {
+                    Hook hook = new Hook();
+                    String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + (isRejected ? " where p.installed_kwp is not null" : " where p.installed_kwp is null");
+                    SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+                    AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                    try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
+                        hook.cancel = breaker;
+                        try (RecordCursor cursor = f.getCursor()) {
+                            cursor.hasNext();
+                            Assert.fail();
+                        } catch (CairoException expected) {
+                            Assert.assertTrue(expected.isInterruption());
+                        }
+                        Assert.assertEquals("cancellation must stop within one duplicate loop", 32, hook.calls.get());
+                        Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                        hook.cancel = null;
+                        breaker.reset();
+                        f.assertResults(sql);
+                    } finally {
+                        ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+                    }
+                }
             }
         });
     }
@@ -1191,6 +1416,51 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
 
     // Ordinary planner children share the enclosing query registration. Compile
     // the two inputs without top-level QueryProgress wrappers, then wrap the fused root.
+    private RecordCursorFactory filterBuild(RecordCursorFactory buildFactory, Hook hook) {
+        Function filter = new BooleanFunction() {
+            @Override
+            public boolean getBool(Record record) {
+                hook.run();
+                return hook.isBuildAccepted;
+            }
+
+            @Override
+            public boolean isThreadSafe() {
+                return true;
+            }
+        };
+        if (hook.buildFilterMode == 2) {
+            IntHashSet columns = new IntHashSet();
+            columns.add(4);
+            buildFactory = new AsyncJitFilteredRecordCursorFactory(engine, configuration, engine.getMessageBus(),
+                    buildFactory, new ObjList<>(), new CompiledFilter() {
+                        @Override
+                        public long call(long dataAddress, long dataSize, long auxAddress, long varsAddress,
+                                         long varsSize, long rowsAddress, long rowCount) {
+                            throw new AssertionError("expected interpreted column-top filter");
+                        }
+                    }, new CompiledCountOnlyFilter() {
+                        @Override
+                        public long call(long dataAddress, long dataSize, long auxAddress, long varsAddress,
+                                         long varsSize, long rowCount) {
+                            throw new AssertionError("expected interpreted column-top count filter");
+                        }
+                    }, filter, columns,
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD), null,
+                    ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "true", 0, 0),
+                    null, 0, WORKERS, false);
+        } else if (hook.buildFilterMode == 1) {
+            buildFactory = new AsyncFilteredRecordCursorFactory(engine, configuration, engine.getMessageBus(),
+                    buildFactory, filter, new IntHashSet(),
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD), null,
+                    ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "true", 0, 0),
+                    null, 0, WORKERS, false);
+        } else {
+            buildFactory = new FilteredRecordCursorFactory(buildFactory, filter);
+        }
+        return buildFactory;
+    }
+
     private RecordCursorFactory childFactory(String sql) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler();
              SqlCodeGenerator generator = new SqlCodeGenerator(configuration,
@@ -1298,6 +1568,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         final AtomicInteger closed = new AtomicInteger();
         final AtomicInteger maxActive = new AtomicInteger();
         final AtomicInteger initCount = new AtomicInteger();
+        boolean isBuildAccepted;
+        int buildFilterMode;
+        boolean isBuildFiltered;
         boolean instrumentBuild;
         int buildFailAt;
         int buildOpens;
@@ -1430,6 +1703,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 buildFactory = childFactory(buildSql);
                 if (hook != null && hook.instrumentBuild) {
                     buildFactory = new FaultyBuildFactory(buildFactory, hook);
+                }
+                if (hook != null && hook.isBuildFiltered) {
+                    buildFactory = filterBuild(buildFactory, hook);
                 }
                 FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
                     @Override

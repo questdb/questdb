@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryCARWImpl;
@@ -71,6 +72,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private long filterBufEnd = -1;
     // Track the highest partition index that has not been released yet
     private int highestOpenPartitionIndex = -1;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private PartitionFrameCursor partitionFrameCursor;
@@ -166,6 +168,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     @Override
     public @Nullable PageFrame next(long skipTarget) {
         while (true) {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             if (reenterPartitionFrame) {
                 if (reenterParquetDecoder != null) {
                     final TableReaderPageFrame result = computeParquetFrame(reenterPartitionLo, reenterPartitionHi);
@@ -217,6 +220,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     @Override
     public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) throws SqlException {
+        this.circuitBreaker = executionContext.getCircuitBreaker();
         this.partitionFrameCursor = partitionFrameCursor;
         this.reader = partitionFrameCursor.getTableReader();
         TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
@@ -385,6 +389,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 // partitionHi moved to earlier row groups, search backward from cache
                 long rowGroupEndRow = cachedRowGroupStartRow;
                 for (int i = cachedRowGroupIndex - 1; i >= 0; i--) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     final long rowGroupSize = metadata.getRowGroupSize(i);
                     final long rowGroupStartRow = rowGroupEndRow - rowGroupSize;
                     if (partitionHi > rowGroupStartRow) {
@@ -403,6 +408,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         if (targetGroup < 0) {
             long rowGroupStartRow = 0;
             for (int i = 0; i < rowGroupCount; i++) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 final long rowGroupSize = metadata.getRowGroupSize(i);
                 final long rowGroupEndRow = rowGroupStartRow + rowGroupSize;
                 if (partitionHi <= rowGroupEndRow) {
@@ -422,6 +428,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         while (targetGroup >= 0) {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             if (filterBufEnd != -1 && ParquetRowGroupFilter.canSkipRowGroup(
                     targetGroup,
                     metadata,

@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryCARWImpl;
@@ -71,6 +72,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private long filterBufEnd = -1;
     // Track the lowest partition index that has not been released yet
     private int lowestOpenPartitionIndex = 0;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private PartitionFrameCursor partitionFrameCursor;
@@ -167,6 +169,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     @Override
     public @Nullable PageFrame next(long skipTarget) {
         while (true) {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             if (reenterPartitionFrame) {
                 if (reenterParquetDecoder != null) {
                     final TableReaderPageFrame result = computeParquetFrame(reenterPartitionLo, reenterPartitionHi);
@@ -213,6 +216,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     @Override
     public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) throws SqlException {
+        this.circuitBreaker = executionContext.getCircuitBreaker();
         this.partitionFrameCursor = partitionFrameCursor;
         this.reader = partitionFrameCursor.getTableReader();
         TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
@@ -375,6 +379,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         long rowGroupStartRow = cachedRowGroupStartRow;
         for (int i = cachedRowGroupIndex; i < rowGroupCount; i++) {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             final long rowGroupSize = metadata.getRowGroupSize(i);
             final long rowGroupEndRow = rowGroupStartRow + rowGroupSize;
 

@@ -76,6 +76,15 @@ occupancy. The latter cover scheduling-dependent local tasks and peak simultaneo
 SYMBOL view leases when two owners interchange source readers. Their heap cost is
 reported separately as `BOUNDED_SETUP_BYTES`.
 
+The task 9d rerun exposed one source-view lease beyond this scheduling-dependent
+warmup. The current harness also seeds each reusable source reader with a fixed
+21 (one owner) or 42 (two owners) empty SYMBOL views in bounded setup, without
+reading dictionary values. This covers overlapping old expression leases when
+owners exchange readers. The [task 9d report](parallel-hash-join-group-by-cancellation.md)
+retains that initial failure and the rerun evidence. The original task 9c artifacts
+below use the original warmup; successful-execution byte/site assertions and the
+disjoint-symbol measurement range are unchanged.
+
 This setup warms only the audited control pools: views are bounded by expression/
 slot leases, queue cells and decoder shells have fixed caps, and no symbol text is
 cached. Every native dictionary, build and aggregation map closes on each setup

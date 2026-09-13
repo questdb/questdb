@@ -232,6 +232,9 @@ public class Unordered8Map implements Map, Reopenable {
 
     @Override
     public void close() {
+        if (cursor != null) {
+            cursor.close();
+        }
         if (memStart != 0) {
             memLimit = memStart = Unsafe.free(memStart, memLimit - memStart + entrySize, memoryTag, memoryTracker);
             zeroMemStart = 0;
@@ -246,10 +249,15 @@ public class Unordered8Map implements Map, Reopenable {
 
     @Override
     public MapRecordCursor getCursor() {
+        return getCursor(null);
+    }
+
+    @Override
+    public MapRecordCursor getCursor(@Nullable SqlExecutionCircuitBreaker circuitBreaker) {
         if (hasZero) {
-            return cursor.init(memStart, memLimit, zeroMemStart, size + 1);
+            return cursor.init(memStart, memLimit, zeroMemStart, size + 1, circuitBreaker);
         }
-        return cursor.init(memStart, memLimit, 0, size);
+        return cursor.init(memStart, memLimit, 0, size, circuitBreaker);
     }
 
     @Override

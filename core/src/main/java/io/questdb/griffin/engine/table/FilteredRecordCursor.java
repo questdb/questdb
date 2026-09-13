@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -37,6 +38,7 @@ import org.jetbrains.annotations.Nullable;
 class FilteredRecordCursor implements RecordCursor {
     private final Function filter;
     private RecordCursor base;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private Record record;
 
     public FilteredRecordCursor(Function filter) {
@@ -66,6 +68,7 @@ class FilteredRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         while (base.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (filter.getBool(record)) {
                 return true;
             }
@@ -111,6 +114,7 @@ class FilteredRecordCursor implements RecordCursor {
 
     void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
         this.base = base;
+        this.circuitBreaker = executionContext.getCircuitBreaker();
         this.record = base.getRecord();
         filter.init(this, executionContext);
     }

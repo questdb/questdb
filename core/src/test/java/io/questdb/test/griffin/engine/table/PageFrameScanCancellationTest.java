@@ -26,12 +26,16 @@ package io.questdb.test.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -68,6 +72,87 @@ public class PageFrameScanCancellationTest extends AbstractCairoTest {
         };
         super.setUp();
         ((SqlExecutionContextImpl) sqlExecutionContext).with(circuitBreaker);
+    }
+
+    @Test
+    public void testPartitionSizeAndRejectedIntervalTraversalCancellation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x, timestamp_sequence('2020-01-01T12:00:00', 86400000000) ts from long_sequence(64)) timestamp(ts) partition by DAY");
+            SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+            try {
+                for (boolean isInterval : new boolean[]{false, true}) {
+                    for (int order : new int[]{PartitionFrameCursorFactory.ORDER_ASC, PartitionFrameCursorFactory.ORDER_DESC}) {
+                        String sql = "select * from t" + (isInterval ? " where ts in '2020-01-01;1s;1d;64'" : "");
+                        try (RecordCursorFactory factory = select(sql)) {
+                            CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER) {
+                                @Override
+                                public void statefulThrowExceptionIfTrippedTimeThrottled() {
+                                    super.statefulThrowExceptionIfTrippedTimeThrottled();
+                                    if (getCheckCount() == 16) {
+                                        throw CairoException.queryCancelled(-1);
+                                    }
+                                }
+                            };
+                            ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                            try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, order)) {
+                                try {
+                                    if (isInterval) {
+                                        cursor.next();
+                                    } else {
+                                        cursor.calculateSize(new RecordCursor.Counter());
+                                    }
+                                    Assert.fail("expected cancellation inside partition/interval traversal");
+                                } catch (CairoException ex) {
+                                    Assert.assertTrue(ex.isCancellation());
+                                }
+                            }
+                            Assert.assertEquals(16, breaker.getCheckCount());
+                            ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+                            try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, order)) {
+                                RecordCursor.Counter counter = new RecordCursor.Counter();
+                                cursor.calculateSize(counter);
+                                Assert.assertEquals(isInterval ? 0 : 64, counter.get());
+                            }
+                        }
+                    }
+                }
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+            }
+        });
+    }
+
+    @Test
+    public void testDirectFrameCursorsObserveCancellationAndRebind() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x, timestamp_sequence('2020-01-01', 1000000) ts from long_sequence(64)) timestamp(ts) partition by DAY");
+            for (boolean parquet : new boolean[]{false, true}) {
+                if (parquet) {
+                    execute("alter table t convert partition to parquet where ts >= '2020-01-01'");
+                }
+                for (int order : new int[]{PartitionFrameCursorFactory.ORDER_ASC, PartitionFrameCursorFactory.ORDER_DESC}) {
+                    circuitBreaker.resetTimer();
+                    circuitBreaker.setTimeout(Long.MAX_VALUE);
+                    try (RecordCursorFactory factory = select("select * from t")) {
+                        sqlExecutionContext.changePageFrameSizes(1, 1);
+                        try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, order)) {
+                            Assert.assertNotNull(cursor.next());
+                            circuitBreaker.cancel();
+                            try {
+                                cursor.next();
+                                Assert.fail("expected cancellation while preparing frames");
+                            } catch (CairoException ex) {
+                                Assert.assertTrue(ex.isCancellation());
+                            }
+                        }
+                        circuitBreaker.resetTimer();
+                        try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, order)) {
+                            Assert.assertNotNull(cursor.next());
+                        }
+                    }
+                }
+            }
+        });
     }
 
     @Test

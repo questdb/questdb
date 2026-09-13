@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.DirectLongLongSortedList;
+import org.jetbrains.annotations.Nullable;
 
 public final class Unordered4MapCursor implements MapRecordCursor {
     private final long entrySize;
@@ -35,6 +36,7 @@ public final class Unordered4MapCursor implements MapRecordCursor {
     private final Unordered4MapRecord recordA;
     private final Unordered4MapRecord recordB;
     private long address;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private int count;
     private long memLimit;
     private long memStart;
@@ -58,7 +60,7 @@ public final class Unordered4MapCursor implements MapRecordCursor {
 
     @Override
     public void close() {
-        // no-op
+        circuitBreaker = null;
     }
 
     @Override
@@ -132,11 +134,19 @@ public final class Unordered4MapCursor implements MapRecordCursor {
 
     private void skipToNonZeroKey() {
         do {
+            if (circuitBreaker != null) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+            }
             address += entrySize;
         } while (address < memLimit && map.isZeroKey(address));
     }
 
     Unordered4MapCursor init(long memStart, long memLimit, long zeroKeyAddress, int count) {
+        return init(memStart, memLimit, zeroKeyAddress, count, null);
+    }
+
+    Unordered4MapCursor init(long memStart, long memLimit, long zeroKeyAddress, int count, @Nullable SqlExecutionCircuitBreaker circuitBreaker) {
+        this.circuitBreaker = circuitBreaker;
         this.memStart = memStart;
         this.memLimit = memLimit;
         this.count = count;

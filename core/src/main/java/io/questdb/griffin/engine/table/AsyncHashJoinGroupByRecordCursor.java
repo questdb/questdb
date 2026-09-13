@@ -75,6 +75,7 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker breaker, Counter counter) {
         buildResult();
+        circuitBreaker.statefulThrowExceptionIfTripped();
         if (functions.isKeyed()) {
             mapCursor.calculateSize(breaker, counter);
         } else if (!isExhausted) {
@@ -123,6 +124,7 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         buildResult();
+        circuitBreaker.statefulThrowExceptionIfTripped();
         if (functions.isKeyed()) {
             return mapCursor.hasNext();
         }
@@ -195,10 +197,10 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
                             }
                             throw frameSequence.buildInterruptionException();
                         }
-                        shardedCursor.of(shards);
+                        shardedCursor.of(shards, circuitBreaker);
                         mapCursor = shardedCursor;
                     } else {
-                        mapCursor = sharding.mergeOwnerMap(circuitBreaker).getCursor();
+                        mapCursor = sharding.mergeOwnerMap(circuitBreaker).getCursor(circuitBreaker);
                     }
                     metrics.mergeCardinality = mapCursor.size();
                     recordA.of(mapCursor.getRecord());
