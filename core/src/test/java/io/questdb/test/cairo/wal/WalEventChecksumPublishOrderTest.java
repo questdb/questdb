@@ -166,6 +166,19 @@ public class WalEventChecksumPublishOrderTest extends AbstractCairoTest {
      * snapshot's {@code _event.c}. Reading _event.c AFTER _event is deliberate: it can only make the
      * sidecar look MORE complete than it was, so a zero entry found here was genuinely missing while the
      * record was already readable.
+     * <p>
+     * The invariant under test is describe-then-publish: a readable record must have a sidecar entry that
+     * describes it ({@code storedOffset == offset}). It is NOT that the length header is published
+     * atomically. Record starts are not 4-byte aligned, so the publishing store -- the {@code putInt} that
+     * flips the {@code -1} marker to the real length -- is not single-copy atomic on a weakly-ordered
+     * machine, and a reader that walks a live segment to its end-of-events marker can read a byte-mix of
+     * the two (linux-arm64 CI saw {@code len=65535}, i.e. {@code 0x0000FFFF}, against {@code storedLen=50}).
+     * This scanner is such a reader. So is {@code WalReader.openSymbolMaps}, which live views bind to the
+     * base table's active segment on every base commit; the index- and sequencer-bounded readers never
+     * reach an unpublished record. A torn header at a present, matching-offset entry is therefore the
+     * store in flight, not an ordering violation -- the entry was complete before the store began -- and
+     * this scanner must not mistake one for the other. How {@code WalEventCursor.verifyRecordChecksum}
+     * copes with the same read on the production path is that reader's concern, not this test's.
      */
     private static void scanForUndescribedRecord(java.nio.file.Path segment, AtomicReference<String> violation) {
         final byte[] event = readSnapshot(segment.resolve(WalUtils.EVENT_FILE_NAME));
@@ -197,10 +210,22 @@ public class WalEventChecksumPublishOrderTest extends AbstractCairoTest {
                             (int) (entry + WalUtils.WALE_CHECKSUM_ENTRY_OFFSET_OFFSET), Long.BYTES)
                     .order(ByteOrder.LITTLE_ENDIAN).getLong();
             final int storedLength = readInt(sidecar, (int) (entry + WalUtils.WALE_CHECKSUM_ENTRY_LENGTH_OFFSET));
-            if (storedOffset != offset || storedLength != length) {
+            if (storedOffset != offset) {
+                // The record is readable but its sidecar entry does not describe it. Under the writer's
+                // describe-then-publish fence a readable record ALWAYS has its entry, so a mismatch here
+                // -- in practice a zeroed entry, storedOffset=0 -- is the record's length header published
+                // ahead of the _event.c entry. This is the ordering bug the test exists to catch.
                 violation.compareAndSet(null, "record txn=" + txn + " at offset=" + offset + ", len=" + length
                         + " was published ahead of its sidecar entry [storedOffset=" + storedOffset
                         + ", storedLen=" + storedLength + ']');
+                return;
+            }
+            if (storedLength != length) {
+                // storedOffset matches, so the entry IS present and the ordering invariant holds: the
+                // writer completed the entry before it began the publishing store. A disagreeing length
+                // is that store caught in flight -- an unaligned, non-atomic 4-byte putInt over the -1
+                // marker, read as a byte-mix such as 0x0000FFFF -- not a publish-ordering violation. Stop
+                // this pass; a later snapshot sees the completed store.
                 return;
             }
             offset += length;
