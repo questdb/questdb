@@ -26,7 +26,6 @@ package org.questdb;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -66,7 +65,8 @@ public class HashJoinGroupByV1Benchmark {
     private static final List<String> OPTIONS = Arrays.asList(
             "rows", "plants", "selected-keys", "source-rows", "fanout", "key-domain", "hot-percent",
             "workers", "concurrency", "warmups", "runs", "repetitions", "join", "groups", "post-filter",
-            "probe-storage", "build-storage", "cold-helper", "memory-limit", "revision", "interval"
+            "probe-storage", "build-storage", "cold-helper", "memory-limit", "revision", "interval",
+            "build-filter", "parquet-cache-bytes"
     );
 
     public static void main(String[] args) throws Exception {
@@ -91,23 +91,26 @@ public class HashJoinGroupByV1Benchmark {
         int runs = (int) number(options, "runs", 10, 10, 1000);
         int repetitions = (int) number(options, "repetitions", 2, 1, 100);
         long memoryLimit = number(options, "memory-limit", 0, 0, Long.MAX_VALUE);
+        long parquetCacheBytes = number(options, "parquet-cache-bytes", 256L << 20, 1, Long.MAX_VALUE);
+        String buildFilter = choice(options, "build-filter", "in", "in", "like");
         String join = choice(options, "join", "inner", "inner", "left", "right", "inner-swapped", "left-swapped", "right-swapped");
         String groups = choice(options, "groups", "low", "low", "scalar", "high");
-        String filter = choice(options, "post-filter", "none", "none", "selective", "null-accepting", "reject-all");
+        String filter = choice(options, "post-filter", "none", "none", "selective", "null-accepting", "reject-all", "symbol-null-accepting");
         String probeStorage = choice(options, "probe-storage", "native", "native", "mixed", "parquet");
         String buildStorage = choice(options, "build-storage", "native", "native", "mixed", "parquet");
         String interval = choice(options, "interval", "full", "full", "hour");
         if (options.containsKey("cold-helper") && concurrency != 1) {
             throw new IllegalArgumentException("cold measurements require concurrency=1");
         }
-        String sql = sql(join, groups, filter, interval);
+        String sql = sql(join, groups, filter, interval, buildFilter);
         Os.init();
         Path root = Files.createTempDirectory("hash-join-v1-");
         System.out.println("# data_directory=" + root + " (retained for inspection)");
         System.out.println("# options=" + options + " defaults: rows=10000000 plants=100000 selected-keys=min(plants,10000)"
                 + " source-rows=plants*fanout fanout=1 key-domain=plants hot-percent=0 workers=4 concurrency=1"
                 + " warmups=3 runs=10 repetitions=2 join=inner groups=low post-filter=none"
-                + " probe-storage=native build-storage=native memory-limit=0 interval=full seed=130");
+                + " probe-storage=native build-storage=native memory-limit=0 interval=full seed=130"
+                + " build-filter=in parquet-cache-bytes=268435456");
         System.out.println("# SQL\n" + sql);
         WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
             @Override
@@ -121,10 +124,15 @@ public class HashJoinGroupByV1Benchmark {
             }
         });
         ExecutorService owners = Executors.newFixedThreadPool(concurrency);
-        try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root.toString()) {
+        try (CairoEngine engine = new CairoEngine(new HashJoinGroupByBenchmark.BenchmarkConfiguration(root.toString()) {
             @Override
             public long getQueryMemoryLimitBytes() {
                 return memoryLimit;
+            }
+
+            @Override
+            public long getSqlParquetCacheMemorySize() {
+                return parquetCacheBytes;
             }
         })) {
             engine.load();
@@ -303,6 +311,7 @@ public class HashJoinGroupByV1Benchmark {
                         List<List<Object>> result = new ArrayList<>();
                         RecordCursorFactory factory = factories[index];
                         long begin = System.nanoTime();
+                        contexts[index].getCircuitBreaker().resetTimer();
                         try (RecordCursor cursor = factory.getCursor(contexts[index])) {
                             Record record = cursor.getRecord();
                             RecordMetadata metadata = factory.getMetadata();
@@ -365,7 +374,7 @@ public class HashJoinGroupByV1Benchmark {
         return (sorted[(sorted.length - 1) / 2] + (double) sorted[sorted.length / 2]) / 2;
     }
 
-    private static String sql(String join, String groups, String filter, String interval) {
+    private static String sql(String join, String groups, String filter, String interval, String buildFilter) {
         String keys = switch (groups) {
             case "scalar" -> "";
             case "high" -> "r.plant_id, year(r.reading_ts) yr, month(r.reading_ts) mo, ";
@@ -373,7 +382,8 @@ public class HashJoinGroupByV1Benchmark {
         };
         String r = "fact_solar_readings r";
         // Keep a build-only filter for outer semantics and a filtered preserved input when swapped.
-        String p = "(select * from dim_plant where country in ('ES','IT')) p";
+        String p = "(select * from dim_plant where "
+                + (buildFilter.equals("like") ? "country like 'E%' or country like 'I%'" : "country in ('ES','IT')") + ") p";
         String inputs = switch (join) {
             case "left" -> r + " left join " + p;
             case "right" -> p + " right join " + r;
@@ -389,6 +399,7 @@ public class HashJoinGroupByV1Benchmark {
             case "selective" -> " and p.installed_kwp > 90.0";
             case "null-accepting" -> " and (p.installed_kwp > 90.0 or p.installed_kwp is null)";
             case "reject-all" -> " and p.installed_kwp > 100.0";
+            case "symbol-null-accepting" -> " and (p.country like 'E%' or p.country is null)";
             default -> "";
         };
         return "select " + keys + "count(*) joined_rows, count(p.installed_kwp) non_null_capacity, "

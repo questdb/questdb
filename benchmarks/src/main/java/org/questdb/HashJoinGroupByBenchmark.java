@@ -27,9 +27,12 @@ package org.questdb;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
@@ -115,7 +118,7 @@ public class HashJoinGroupByBenchmark {
                 return workers;
             }
         });
-        try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root.toString()))) {
+        try (CairoEngine engine = new CairoEngine(new BenchmarkConfiguration(root.toString()))) {
             engine.load();
             WorkerPoolUtils.setupQueryJobs(pool, engine);
             pool.start();
@@ -212,6 +215,7 @@ public class HashJoinGroupByBenchmark {
         // Start before acquisition: eager build/sort work inside getCursor must be measured too.
         try (NativeSampler sampler = new NativeSampler(context)) {
             long start = System.nanoTime();
+            context.getCircuitBreaker().resetTimer();
             try (RecordCursor cursor = factory.getCursor(context)) {
                 Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
@@ -322,13 +326,42 @@ public class HashJoinGroupByBenchmark {
         }
     }
 
+    static class BenchmarkConfiguration extends DefaultCairoConfiguration {
+        private final SqlExecutionCircuitBreakerConfiguration breakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public int getCircuitBreakerThrottle() {
+                // Match PropServerConfiguration's circuit.breaker.throttle default.
+                return 2_000_000;
+            }
+        };
+
+        BenchmarkConfiguration(String root) {
+            super(root);
+        }
+
+        @Override
+        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+            return breakerConfiguration;
+        }
+    }
+
     static final class BenchmarkContext extends SqlExecutionContextImpl {
+        private final NetworkSqlExecutionCircuitBreaker benchmarkBreaker;
         // Serialize sampling with unbinding so a pooled tracker cannot be attributed to its next owner.
         private MemoryTracker sampledTracker;
 
         BenchmarkContext(CairoEngine engine, int workers) {
             super(engine, workers);
-            with(AllowAllSecurityContext.INSTANCE, null, null, -1, null);
+            // Exercise normal throttled owner/worker checks, including the query registry's
+            // cancellation binding. This embedded runner has no client socket (fd = -1).
+            benchmarkBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration());
+            with(AllowAllSecurityContext.INSTANCE, null, null, -1, benchmarkBreaker);
+        }
+
+        @Override
+        public void close() {
+            benchmarkBreaker.close();
+            super.close();
         }
 
         @Override

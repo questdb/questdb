@@ -22,11 +22,11 @@
 #
 
 """Validate retained RFC 130 samples and emit per-round latency, counters and memory CSV."""
+import argparse
 import csv
 from pathlib import Path
 import re
 import statistics
-import sys
 
 
 COUNTERS = ["build_rows", "build_keys", "build_bytes", "scanned_rows", "matched_pairs",
@@ -36,9 +36,16 @@ MEMORY = ["sampled_query_peak_bytes", "sampled_batch_native_peak_delta_bytes",
           "sampled_native_peak_delta_bytes", "retained_query_bytes", "retained_native_delta_bytes"]
 
 
-def summarize(root):
+def summarize(root, require_complete=False):
     summaries = []
     total = checks = 0
+    if require_complete:
+        script = Path(__file__).with_name("parallel-hash-join-group-by-v1.sh").read_text()
+        expected = set(re.findall(r"^(?:primary|v1) ([\w-]+)(?: |$)", script, re.M))
+        actual = {path.stem for path in root.glob("*.txt")
+                  if path.name not in {"environment.txt", "environment-continuation.txt", "commands.txt"}}
+        if not expected or actual != expected:
+            raise ValueError(f"incomplete matrix: missing={sorted(expected - actual)}, unexpected={sorted(actual - expected)}")
     for path in sorted(root.glob("*.txt")):
         if path.name in {"environment.txt", "environment-continuation.txt", "commands.txt"}:
             continue
@@ -106,4 +113,8 @@ def summarize(root):
 
 
 if __name__ == "__main__":
-    summarize(Path(sys.argv[1]))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", type=Path)
+    parser.add_argument("--require-complete", action="store_true", help="require every case in the reproduction script")
+    args = parser.parse_args()
+    summarize(args.root, args.require_complete)

@@ -148,7 +148,7 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     independent rebinding, cleanup and ordinary-result reuse. See the
     [loop audit, ownership and validation](docs/parallel-hash-join-group-by-cancellation.md).
 
-9e. **Expand the semantic, storage, SYMBOL and negative matrix** — this update.
+9e. **Expand the semantic, storage, SYMBOL and negative matrix** — commit `a7500b88c7`.
     Eight new semantic tests cross independent SQL LHS/RHS grouping and argument
     roles with INNER/LEFT/normalized RIGHT, every allowlisted aggregate/type,
     reordered projections, all nine native/mixed/Parquet input pairs, join-key and
@@ -160,43 +160,47 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     compare exact names/types even for empty results. Excluded plans and invalid
     SQL retain ordinary behavior. See the [coverage map and validation](docs/parallel-hash-join-group-by-semantics.md).
 
+10. **Rebenchmark V1 after tasks 9a–9e and record rollout** — this update.
+    The fixed 100-million-row/four-worker gate passes at **3.312× median
+    speedup in both rounds** with active owner/worker circuit breakers. The 51-case matrix
+    repeats all 44 historical workloads and adds uncached build/post-join SYMBOL
+    predicates and constrained Parquet-cache cases. All **2,320 measured executions
+    and 2,965 result comparisons** pass; all 80 cold preparations verify residency.
+    The runner now installs the normal network breaker with the server's default
+    throttle and no client socket, and complete artifact validation rejects a
+    missing matrix case. Production engine code is unchanged. Keep the experimental
+    default false: swapped RIGHT and other small/build-dominated cases regress.
+    See the [rerun report, measurements and limits](docs/parallel-hash-join-group-by-v1-rerun.md).
+
 The branch supports experimental automatic selection for eligible keyed and
-unkeyed queries. Tasks 1–9, 6a and 9a–9e are complete. **V1 is not complete:**
-task 10 must now be rerun on this implementation. Keep the experimental default
-false; default enablement remains a separate reviewable configuration/planner
-change.
+unkeyed queries. **Experimental V1 is complete:** tasks 1–9, 6a, 9a–9e and the task
+10 rerun are complete. There are no pending V1 implementation tasks. The rollout
+decision retains `cairo.sql.parallel.hash.join.groupby.enabled=false`; accepted
+default enablement remains a separate reviewable configuration/planner change.
+Keep the global parallel GROUP BY gate and positive-worker requirement. Do not
+add a build-size threshold, runtime fallback or consumed-input replay.
 
-## Next pending RFC task: 10 (V1 rerun)
+## Next RFC task: 11 (after V1)
 
-**Rebenchmark completed V1 and make rollout a separate change.**
+**Implement parallel radix build as a separate strategy.**
 
-- Repeat the fixed 100-million-row/four-worker primary acceptance gate after
-  tasks 9a–9e. Use the same workload and at least two rounds of alternating
-  end-to-end measurements, ordinary/fused plans and ordered result checks.
-- Repeat the RFC matrix across eligible join types and physical orientations,
-  build footprints/source costs, match rates, post-filters, fanout/skew, group
-  counts, workers, concurrent load, native/mixed/Parquet, small effective inputs,
-  cold storage and near-limit query memory.
-- Include task 9d's breaker overhead, uncached SYMBOL predicate costs and repeated
-  decoding under the bounded sparse cache. Preserve commands, workload, source
-  revision, environment, all samples, results, phase metrics and memory peaks.
-- Assess total latency, scaling, memory and regressions before any rollout
-  decision. The original swapped-RIGHT and tiny-scan regressions remain inputs
-  to the decision, and the original large Parquet RIGHT pilot was incomplete.
-- Keep the documented disable switch. Any accepted default enablement is a
-  separate configuration/planner change, selected by supported shape/capability.
+- Define hash-to-shard routing behind the frozen lookup interface, scan eligible
+  right frames into slot-owned radix buffers and build independent partitions.
+- Preserve all duplicate payloads and common SYMBOL encoding. Publish only after
+  build tasks finish; stream left probes through the existing aggregation pipeline.
+- Test skew, empty shards, cancellation, cleanup and temporary-memory peaks under
+  the existing tracked-native, bounded-heap and execution-allocation contracts.
+- Measure end-to-end crossover against owner build before defining strategy
+  selection. Do not copy aggregation shard counts/thresholds without evidence.
 
-Parallel radix build (11) and broader extensions (12) remain post-V1. Keep
-`cairo.sql.parallel.hash.join.groupby.enabled=false` and the global parallel GROUP
-BY gate. Do not add a build-size threshold, runtime fallback or input replay.
-
-The [original task 10 report](docs/parallel-hash-join-group-by-v1.md) and its
-[raw data](docs/parallel-hash-join-group-by-v1/summary.csv) describe the earlier
-implementation; their timings and sampled memory peaks do not validate 9a–9e.
-Task 9's qualification results are historical; affected-suite reruns are recorded
-in the task 9a–9e guides. The ten-million-row Parquet RIGHT pilot remains incomplete
-as documented in the original report. Repeated decoding under the bounded sparse
-cache and uncached SYMBOL predicate CPU costs need task 10 measurements.
+Task 12's native right/full outer and broader execution extensions remain separate
+post-V1 work. The [original task 10 report](docs/parallel-hash-join-group-by-v1.md)
+is historical; the [rerun](docs/parallel-hash-join-group-by-v1-rerun.md) qualifies the
+implementation after 9a–9e. Its active-breaker configuration means historical
+absolute timings are not an isolated before/after measure of breaker overhead.
+The earlier ten-million-row Parquet RIGHT pilot remains incomplete; the rerun
+repeats the declared one-million-row native/Parquet pair and makes no large-pilot
+scaling claim. Allocation/retained-heap reports keep their documented boundaries.
 
 Integration notes: children compile under **one enclosing query registration**.
 The factory consumes children/functions/interpreted filter context on constructor
@@ -207,6 +211,27 @@ keep ordinary execution. Probe filter takeover uses interpreted logical getters,
 releases unused JIT handles and composes peeled projection mappings. Ordinary
 serial probe filters that cannot be stolen keep the existing plan. Child partition-
 format guards continue to request normal recompilation; they are not bypassed.
+
+## Validation for the task 10 rerun
+
+The benchmark package passed with `build-rust-library,qdbr-release`. Eight targeted
+smoke workloads passed **388 ordered result checks**, including two concurrent
+owners. Shell syntax, five pre-generation CLI guards and artifact-validator
+positive/negative checks passed. The final validator requires all **51 cases**, two
+rounds and ten runs per arm/owner: **2,320 measured executions and 2,965 result
+comparisons**, with zero mismatches. All **80 cold preparations** passed residency
+verification. All 44 historical workload references are unchanged; the added LIKE
+build and constrained-cache references also match their controls.
+
+The [report](docs/parallel-hash-join-group-by-v1-rerun.md) retains commands, source/jar
+hashes, plans, every sample, phase metrics, sampled query-memory peaks, smoke logs,
+validation output and the interrupted preliminary no-op run. The final matrix
+uses active network breakers, the server-default throttle, unlimited timeout and
+no socket; timer reset is timed and worker wrappers bind independently. It includes
+9d's successful breaker checks, but does not measure client disconnect syscalls or
+replace earlier failure/allocation tests. The production implementation is unchanged;
+task 9e's 2,392 passing Java tests at the measured revision are prerequisite evidence,
+not a fresh suite run in this benchmark-only change.
 
 ## Validation for task 9e
 
@@ -228,7 +253,8 @@ The benchmark package and all **43 ordered smoke-result checks** passed; the
 [smoke output](docs/parallel-hash-join-group-by-semantics/smoke.log.gz) is retained.
 This is integration evidence, not the repeated task 10 performance gate.
 No production change was required. Earlier task 9c/9d allocation measurements
-retain their original boundaries; task 10's latency/rollout rerun is still pending.
+retain their original boundaries; the completed task 10 latency/rollout rerun is
+recorded above.
 
 ## Validation for task 9d
 
@@ -261,8 +287,8 @@ interchanged readers after scheduling-dependent warmup. The harness now seeds
 reading symbol text; the count depends only on query expressions and owner/worker
 slots. Production pooling and measured-execution assertions are unchanged. The
 [cancellation guide](docs/parallel-hash-join-group-by-cancellation.md) retains the
-original failure and explains the deterministic setup. Task 10 must still measure
-end-to-end latency, including these breaker checks, after task 9e.
+original failure and explains the deterministic setup. The task 10 rerun above
+measures end-to-end latency with active breaker checks after task 9e.
 
 ## Validation for task 9c
 
@@ -280,8 +306,8 @@ per-thread counters, allocation counts/stacks, workload and source hashes. Its
 windows with zero bytes attributable to the fused pipeline, including unseen
 symbols, native growth, 131,072 groups, both owners and all four workers. Each
 case also checks cancellation cleanup, same-factory reuse and ordinary results.
-These measurements preserve task 9b's retention bound; they do not replace the
-pending task 10 latency gate. The experimental default remains false.
+These measurements preserve task 9b's retention bound. The completed task 10
+latency gate is recorded above. The experimental default remains false.
 
 ## Validation for task 9b
 
@@ -296,7 +322,7 @@ The [heap guide](docs/parallel-hash-join-group-by-heap.md) records storage/contr
 bounds, measurement exclusions, exact commands and retained per-class/sample
 artifacts. The current change modifies Java only; task 9a's native library still
 requires the `build-rust-library,qdbr-release` profiles. The smoke benchmark is
-integration evidence; task 10 remains pending after 9c–9e.
+integration evidence; the task 10 rerun above follows completed tasks 9c–9e.
 
 ## Validation for task 9a
 
@@ -310,7 +336,7 @@ records every covered allocation site, lifecycle, new regression and exact
 Java/native reproduction command. Compile the changed Rust library with the
 `build-rust-library,qdbr-release` Maven profiles.
 
-## Validation for task 10
+## Validation for the original task 10 benchmark (historical)
 
 The benchmark package build, shell syntax checks, 16 CLI guards and twelve
 concurrent keyed/scalar orientation smoke workloads passed. The final 44-case

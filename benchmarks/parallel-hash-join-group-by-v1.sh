@@ -47,7 +47,8 @@ java_command=(java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED
     git rev-parse HEAD
     git status --short
     sha256sum benchmarks/target/benchmarks.jar benchmarks/src/main/java/org/questdb/HashJoinGroupBy*Benchmark.java
-    sha256sum benchmarks/parallel-hash-join-group-by-v1.sh benchmarks/parallel-hash-join-cold.py
+    sha256sum benchmarks/parallel-hash-join-group-by-v1.sh benchmarks/parallel-hash-join-cold.py benchmarks/summarize-hash-join-group-by-v1.py
+    echo 'breaker=NetworkSqlExecutionCircuitBreaker throttle=2000000 timeout=unlimited fd=-1; reset inside each measured execution'
     java -version
     uname -sr
     lscpu
@@ -119,3 +120,11 @@ v1 parquet-scalar-right --rows=1000000 --probe-storage=parquet --build-storage=p
 v1 cold-native --cold-helper=benchmarks/parallel-hash-join-cold.py
 v1 cold-parquet --probe-storage=parquet --build-storage=parquet --cold-helper=benchmarks/parallel-hash-join-cold.py
 v1 near-memory-limit --plants=1000000 --selected-keys=1000000 --memory-limit=92274688
+# Task 10 rerun after 9a-9e: uncached SYMBOL predicates and decoder eviction.
+v1 symbol-build-like --source-rows=10000000 --build-filter=like
+v1 symbol-build-like-parquet --source-rows=10000000 --build-filter=like --build-storage=parquet
+v1 symbol-post-left --join=left --post-filter=symbol-null-accepting
+v1 symbol-post-left-mixed --join=left --post-filter=symbol-null-accepting --probe-storage=mixed --build-storage=mixed
+v1 symbol-post-right-parquet --rows=1000000 --join=right --post-filter=symbol-null-accepting --probe-storage=parquet --build-storage=parquet
+v1 parquet-cache-small --probe-storage=parquet --build-storage=parquet --parquet-cache-bytes=65536
+v1 parquet-cache-small-scalar-left --groups=scalar --join=left --probe-storage=parquet --build-storage=parquet --parquet-cache-bytes=65536
