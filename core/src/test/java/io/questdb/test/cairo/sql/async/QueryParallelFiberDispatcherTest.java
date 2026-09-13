@@ -30,6 +30,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -40,11 +42,14 @@ import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
+import io.questdb.griffin.engine.groupby.vect.CountVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateEntry;
+import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
@@ -70,7 +75,10 @@ import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.tasks.GroupByLongTopKTask;
 import io.questdb.tasks.GroupByMergeShardTask;
@@ -2267,6 +2275,132 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testVectorAggregateEntryAggregationFailureCompletesOnceAndReleasesSlot() throws Exception {
+        assertVectorEntryModes((engine, mode) -> {
+            final RuntimeException failure = new IllegalStateException("injected frame failure");
+            try (RealEntryFixture fixture = new RealEntryFixture(engine, new AtomicBooleanCircuitBreaker(engine), null, failure, null)) {
+                runVectorEntry(engine, mode, fixture, failure, null);
+                Assert.assertSame(failure, Assert.assertThrows(RuntimeException.class, fixture.error::throwError));
+                Assert.assertTrue(fixture.breaker.checkIfTripped());
+            }
+        });
+    }
+
+    @Test
+    public void testVectorAggregateEntryCancelledBeforeStartCompletesOnce() throws Exception {
+        assertVectorEntryModes((engine, mode) -> {
+            final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+            breaker.cancel();
+            try (RealEntryFixture fixture = new RealEntryFixture(engine, breaker, null, null, null)) {
+                runVectorEntry(engine, mode, fixture, null, null);
+                Assert.assertFalse(fixture.error.hasError());
+                Assert.assertEquals(0, fixture.function.getLong(null));
+            }
+        });
+    }
+
+    @Test
+    public void testVectorAggregateEntryInitialPollCancellationAfterYieldCompletesOnce() throws Exception {
+        assertVectorEntry(VectorEntryRunMode.FIBER, (engine, mode) -> {
+            final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine) {
+                @Override
+                public boolean checkIfTrippedOrYield() {
+                    Assert.assertFalse(checkIfTripped());
+                    // ResourceGroupRuntime.pollCpuGrant can throw cancellation on redispatch,
+                    // after the shared breaker's initial non-throwing cancellation check.
+                    Assert.assertTrue(Fiber.yieldCooperatively());
+                    statefulThrowExceptionIfTrippedNoThrottle();
+                    Assert.fail("the suspended entry must have been cancelled");
+                    return false;
+                }
+            };
+            try (RealEntryFixture fixture = new RealEntryFixture(engine, breaker, null, null, null)) {
+                runVectorEntry(engine, mode, fixture, null, breaker::cancel);
+                assertVectorEntryCancellation(fixture);
+            }
+        });
+    }
+
+    @Test
+    public void testVectorAggregateEntryInitialPollCancellationCompletesOnce() throws Exception {
+        assertVectorEntryModes((engine, mode) -> {
+            final CairoException failure = CairoException.queryCancelled();
+            try (RealEntryFixture fixture = new RealEntryFixture(engine, throwingVectorBreaker(engine, failure), null, null, null)) {
+                runVectorEntry(engine, mode, fixture, failure, null);
+                assertVectorEntryCancellation(fixture);
+            }
+        });
+    }
+
+    @Test
+    public void testVectorAggregateEntryInitialPollFailureCompletesOnce() throws Exception {
+        assertVectorEntryModes((engine, mode) -> {
+            final RuntimeException failure = new IllegalStateException("injected initial poll failure");
+            try (RealEntryFixture fixture = new RealEntryFixture(engine, throwingVectorBreaker(engine, failure), null, null, null)) {
+                runVectorEntry(engine, mode, fixture, failure, null);
+                Assert.assertSame(failure, Assert.assertThrows(RuntimeException.class, fixture.error::throwError));
+                Assert.assertTrue(fixture.breaker.checkIfTripped());
+            }
+        });
+    }
+
+    @Test
+    public void testVectorAggregateEntryInitialPollOutOfMemoryCompletesOnce() throws Exception {
+        assertVectorEntryModes((engine, mode) -> {
+            final OutOfMemoryError failure = new OutOfMemoryError("injected initial poll OOM");
+            final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine) {
+                @Override
+                public boolean checkIfTrippedOrYield() {
+                    throw failure;
+                }
+            };
+            try (RealEntryFixture fixture = new RealEntryFixture(engine, breaker, null, null, null)) {
+                runVectorEntry(engine, mode, fixture, failure, null);
+                Assert.assertSame(failure, Assert.assertThrows(OutOfMemoryError.class, fixture.error::throwError));
+                Assert.assertTrue(breaker.checkIfTripped());
+            }
+        });
+    }
+
+    @Test
+    public void testVectorAggregateEntryOutOfMemoryAlreadyReportedCompletesOnce() throws Exception {
+        assertVectorEntryModes((engine, mode) -> {
+            final AtomicInteger oomCounter = new AtomicInteger(1);
+            try (RealEntryFixture fixture = new RealEntryFixture(engine, new AtomicBooleanCircuitBreaker(engine), oomCounter, null, null)) {
+                runVectorEntry(engine, mode, fixture, null, null);
+                Assert.assertFalse(fixture.error.hasError());
+                Assert.assertEquals(1, oomCounter.get());
+                Assert.assertEquals(0, fixture.function.getLong(null));
+            }
+        });
+    }
+
+    @Test
+    public void testVectorAggregateEntryShortCircuitCompletionFailureDoesNotCountTwice() throws Exception {
+        assertVectorEntryModes((engine, mode) -> {
+            final RuntimeException failure = new IllegalStateException("injected detach failure");
+            final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+            breaker.cancel();
+            try (RealEntryFixture fixture = new RealEntryFixture(engine, breaker, null, null, failure)) {
+                runVectorEntry(engine, mode, fixture, failure, null);
+                Assert.assertFalse(fixture.error.hasError());
+                Assert.assertEquals(0, fixture.function.getLong(null));
+            }
+        });
+    }
+
+    @Test
+    public void testVectorAggregateEntrySuccessCompletesOnceAndReleasesSlot() throws Exception {
+        assertVectorEntryModes((engine, mode) -> {
+            try (RealEntryFixture fixture = new RealEntryFixture(engine, new AtomicBooleanCircuitBreaker(engine), null, null, null)) {
+                runVectorEntry(engine, mode, fixture, null, null);
+                Assert.assertFalse(fixture.error.hasError());
+                Assert.assertEquals(42, fixture.function.getLong(null));
+            }
+        });
+    }
+
+    @Test
     public void testVectorAggregateFiberOwnerHelpsOwnUnpublishedFrames() throws Exception {
         assertParallelFiberOwnerHelpsOwnWork(DrainTaskType.VECTOR_AGGREGATE);
     }
@@ -4197,6 +4331,33 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
         });
     }
 
+    private static void assertVectorEntry(VectorEntryRunMode mode, VectorEntryTestBody body) throws Exception {
+        try {
+            TestUtils.assertMemoryLeak(() -> {
+                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+                try (CairoEngine engine = new CairoEngine(configuration)) {
+                    body.run(engine, mode);
+                }
+            });
+        } catch (Throwable th) {
+            throw new AssertionError("vector aggregate entry [mode=" + mode + ']', th);
+        }
+    }
+
+    private static void assertVectorEntryCancellation(RealEntryFixture fixture) {
+        Assert.assertTrue(fixture.breaker.checkIfTripped());
+        final CairoException failure = Assert.assertThrows(CairoException.class, fixture.error::throwError);
+        Assert.assertTrue(failure.isInterruption());
+        Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, failure.getInterruptionReason());
+        Assert.assertEquals(0, fixture.function.getLong(null));
+    }
+
+    private static void assertVectorEntryModes(VectorEntryTestBody body) throws Exception {
+        for (VectorEntryRunMode mode : VectorEntryRunMode.values()) {
+            assertVectorEntry(mode, body);
+        }
+    }
+
     private static void assertVectorOwnerStealSignalsQueueBeforeDetachedCompletion() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
@@ -4434,6 +4595,14 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
         }
     }
 
+    private static void runExpecting(Runnable action, Throwable expectedFailure) {
+        if (expectedFailure == null) {
+            action.run();
+        } else {
+            Assert.assertSame(expectedFailure, Assert.assertThrows(expectedFailure.getClass(), action::run));
+        }
+    }
+
     private static void runPublishedTask(
             DrainTaskType taskType,
             MessageBus messageBus,
@@ -4471,6 +4640,67 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
         }
     }
 
+    private static void runVectorEntry(
+            CairoEngine engine,
+            VectorEntryRunMode mode,
+            RealEntryFixture fixture,
+            Throwable expectedFailure,
+            Runnable beforeResume
+    ) {
+        final FiberRuntime runtime = mode == VectorEntryRunMode.OWNER_HELP || mode == VectorEntryRunMode.FIBER
+                ? new FiberRuntime(1)
+                : null;
+        try (QueryParallelFiberDispatcher dispatcher = runtime != null
+                ? new QueryParallelFiberDispatcher(engine, engine.getMessageBus(), runtime)
+                : null) {
+            final MPSequence pubSeq = engine.getMessageBus().getVectorAggregatePubSeq();
+            final MCSequence subSeq = engine.getMessageBus().getVectorAggregateSubSeq();
+            try {
+                if (mode == VectorEntryRunMode.DETACHED) {
+                    runExpecting(() -> fixture.entry.runDetached(-1), expectedFailure);
+                } else {
+                    publishVectorAggregateTask(engine.getMessageBus().getVectorAggregateQueue(), pubSeq, fixture.entry);
+                    final long cursor = pubSeq.current();
+                    if (mode == VectorEntryRunMode.FIBER) {
+                        Assert.assertFalse(dispatcher.consumeVectorAggregate(-1));
+                        Assert.assertEquals(1, runtime.drain(1));
+                        if (beforeResume != null) {
+                            Assert.assertEquals("entry must yield after starting but before completing", 1, fixture.started.get());
+                            Assert.assertEquals(0, fixture.completed.get());
+                            Assert.assertEquals(1, runtime.getOutstandingTaskCount());
+                            Assert.assertEquals(1, runtime.getQueuedCount());
+                            beforeResume.run();
+                            Assert.assertEquals(1, runtime.drain(1));
+                        }
+                        Assert.assertEquals("child must finish before checking its owner's completion", 0, runtime.getOutstandingTaskCount());
+                        Assert.assertEquals(0, runtime.getQueuedCount());
+                        Assert.assertEquals(1, dispatcher.getVectorAggregateCreatedTaskCount());
+                    } else {
+                        Assert.assertEquals(cursor, subSeq.next());
+                        if (mode == VectorEntryRunMode.OWNER_HELP) {
+                            runExpecting(() -> fixture.entry.run(-1, subSeq, cursor, dispatcher), expectedFailure);
+                        } else {
+                            runExpecting(() -> fixture.entry.run(-1, subSeq, cursor), expectedFailure);
+                        }
+                    }
+                    Assert.assertEquals("there must be no queued work left to complete the entry", pubSeq.current(), subSeq.current());
+                }
+                Assert.assertEquals(1, fixture.started.get());
+                Assert.assertEquals("started entry must complete exactly once", 1, fixture.completed.get());
+                Assert.assertEquals(0, fixture.locks.getAcquiredSlotCount());
+            } finally {
+                if (runtime != null) {
+                    // No owner query or native aggregation waits on a missing countdown.
+                    // Cancellation lets a yielded child unwind on assertion failure too.
+                    if (runtime.getOutstandingTaskCount() > 0) {
+                        fixture.breaker.cancel();
+                    }
+                    closeRuntime(runtime);
+                }
+            }
+        }
+    }
+
     private static void setBeforeTaskCreationForTesting(
             QueryParallelFiberDispatcher dispatcher,
             String poolFieldName,
@@ -4493,6 +4723,15 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
         };
     }
 
+    private static AtomicBooleanCircuitBreaker throwingVectorBreaker(CairoEngine engine, RuntimeException failure) {
+        return new AtomicBooleanCircuitBreaker(engine) {
+            @Override
+            public boolean checkIfTrippedOrYield() {
+                throw failure;
+            }
+        };
+    }
+
     private enum DrainTaskType {
         LATEST_BY,
         LONG_TOP_K,
@@ -4500,9 +4739,89 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
         VECTOR_AGGREGATE
     }
 
+    private enum VectorEntryRunMode {
+        DETACHED, DIRECT, OWNER_HELP, FIBER
+    }
+
     @FunctionalInterface
     private interface FiberOwnerBody {
         void run() throws Exception;
+    }
+
+    @FunctionalInterface
+    private interface VectorEntryTestBody {
+        void run(CairoEngine engine, VectorEntryRunMode mode) throws Exception;
+    }
+
+    private static final class RealEntryFixture implements QuietCloseable {
+        private final AtomicBooleanCircuitBreaker breaker;
+        private final AtomicInteger completed = new AtomicInteger();
+        private final VectorAggregateEntry entry = new VectorAggregateEntry();
+        private final AsyncQueryErrorState error = new AsyncQueryErrorState();
+        private final CountVectorAggregateFunction function = new CountVectorAggregateFunction(0);
+        private final PerWorkerLocks locks;
+        private final PageFrameMemoryPool pool;
+        private final AtomicInteger started = new AtomicInteger();
+
+        private RealEntryFixture(
+                CairoEngine engine,
+                AtomicBooleanCircuitBreaker breaker,
+                AtomicInteger oomCounter,
+                RuntimeException frameFailure,
+                RuntimeException completionFailure
+        ) throws Exception {
+            this.breaker = breaker;
+            final CairoConfiguration configuration = engine.getConfiguration();
+            locks = new PerWorkerLocks(configuration, 1);
+            pool = new PageFrameMemoryPool(configuration) {
+                @Override
+                public PageFrameMemory navigateTo(int frameIndex) {
+                    if (frameFailure != null) {
+                        throw frameFailure;
+                    }
+                    // count(*) has no key/value column, so it only consumes frameRowCount.
+                    return null;
+                }
+            };
+            try {
+                final ObjList<PageFrameMemoryPool> pools = new ObjList<>();
+                pools.add(pool);
+                final CountDownLatchSPI latch = new CountDownLatchSPI() {
+                    @Override
+                    public void countDown() {
+                        completed.incrementAndGet();
+                    }
+
+                    @Override
+                    public void detachResourceMemoryAndCountDown() {
+                        CountDownLatchSPI.super.detachResourceMemoryAndCountDown();
+                        if (completionFailure != null) {
+                            throw completionFailure;
+                        }
+                    }
+                };
+                // The initializer is package-private in a different Java module. Reflect only
+                // to supply fixture-owned collaborators, never to inspect or repair internals.
+                final Method of = VectorAggregateEntry.class.getDeclaredMethod(
+                        "of", int.class, long.class, int.class, int.class, VectorAggregateFunction.class,
+                        long[].class, ObjList.class, AtomicInteger.class, CountDownLatchSPI.class,
+                        AtomicInteger.class, AsyncQueryErrorState.class, RostiAllocFacade.class,
+                        PerWorkerLocks.class, SqlExecutionCircuitBreaker.class, AsyncQueryProgressState.class
+                );
+                of.setAccessible(true);
+                of.invoke(entry, 0, 42L, -1, -1, function, null, pools, started, latch, oomCounter,
+                        error, null, locks, breaker, new AsyncQueryProgressState());
+            } catch (Throwable th) {
+                pool.close();
+                throw th;
+            }
+        }
+
+        @Override
+        public void close() {
+            entry.clear();
+            pool.close();
+        }
     }
 
     private static final class TestScopeCircuitBreaker extends PostAggregationCircuitBreaker {
