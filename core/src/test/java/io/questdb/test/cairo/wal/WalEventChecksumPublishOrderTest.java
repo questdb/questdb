@@ -13,10 +13,18 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.wal.WalEventCursor;
+import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.str.LPSZ;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -132,6 +140,75 @@ public class WalEventChecksumPublishOrderTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The production counterpart of the scanner's torn-header skip. {@code WalEventCursor} is driven over a
+     * finished segment through a memory whose reads of the first record's length header return a wrong
+     * value a set number of times before the real one, standing in for the publishing store observed
+     * mid-flight. The cursor must re-read until the header agrees with the sidecar and then read the
+     * record with the settled length; a header that never settles must still be rejected as torn.
+     */
+    @Test
+    public void testTornLengthHeaderSettlesBeforeTheRecordIsRead() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1), ('2024-01-01T00:00:01.000000Z', 2)");
+            final TableToken tt = engine.verifyTableName("x");
+            engine.releaseAllWalWriters();
+
+            final java.nio.file.Path eventPath = findWalFile(tt.getDirName(), WalUtils.EVENT_FILE_NAME);
+            final java.nio.file.Path sidecarPath = findWalFile(tt.getDirName(), WalUtils.EVENT_CHECKSUM_FILE_NAME);
+            final int realLength = readInt(Files.readAllBytes(eventPath), WalUtils.WALE_HEADER_SIZE);
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+
+            try (
+                    io.questdb.std.str.Path path = new io.questdb.std.str.Path();
+                    // Mapped as WalEventReader.of(path, -1) maps it -- header and first length only -- so the
+                    // cursor has to extend the mapping itself, and does so by whatever length it reads.
+                    TornHeaderMemory event = new TornHeaderMemory(
+                            ff, path.of(eventPath.toString()).$(), WalUtils.WALE_HEADER_SIZE + Integer.BYTES, WalUtils.WALE_HEADER_SIZE
+                    );
+                    MemoryCMRImpl sidecar = new MemoryCMRImpl(ff, path.of(sidecarPath.toString()).$(), -1, MemoryTag.MMAP_TABLE_WAL_READER)
+            ) {
+                final WalEventCursor cursor = new WalEventCursor(event, sidecar);
+                cursor.setChecksumRequired(true);
+
+                // Undershoot: the torn value sizes the mapping short of the real record, so settling must
+                // also re-extend it. Runs everywhere, the mapping never reaches past the file.
+                cursor.reset();
+                event.tear(Integer.BYTES + Long.BYTES + Byte.BYTES, 3);
+                Assert.assertTrue("the settled header must read as a record", cursor.hasNext());
+                Assert.assertEquals(0, event.tornReadsLeft());
+                Assert.assertEquals(0, cursor.getTxn());
+                Assert.assertEquals(WalTxnType.DATA, cursor.getType());
+                Assert.assertFalse("the settled length must land on the end-of-events marker", cursor.hasNext());
+
+                if (!Os.isWindows()) {
+                    // Overshoot, the shape CI saw: the low half of the -1 marker under the high half of the
+                    // length. It sizes the mapping past the end of the file, which POSIX allows as long as
+                    // nothing reads there; Windows refuses the mapping outright, so the shape is POSIX-only.
+                    cursor.reset();
+                    event.tear((realLength & 0xFFFF0000) | 0xFFFF, 1);
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(0, event.tornReadsLeft());
+                    Assert.assertEquals(0, cursor.getTxn());
+                    Assert.assertFalse(cursor.hasNext());
+                }
+
+                // Never settles: a header that keeps disagreeing with a present entry is a corrupt header.
+                cursor.reset();
+                event.tear(Integer.BYTES + Long.BYTES + Byte.BYTES, Integer.MAX_VALUE);
+                try {
+                    cursor.hasNext();
+                    Assert.fail("a header that never agrees with the sidecar must be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "torn WAL event record");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "storedLen=" + realLength);
+                }
+                Assert.assertTrue("the cursor must have re-read before giving up", Integer.MAX_VALUE - event.tornReadsLeft() > 1);
+            }
+        });
+    }
+
     private static java.nio.file.Path findWalFile(CharSequence tableDirName, String name) throws Exception {
         java.nio.file.Path tableDir = Paths.get(engine.getConfiguration().getDbRoot().toString(), tableDirName.toString());
         try (Stream<java.nio.file.Path> s = Files.walk(tableDir)) {
@@ -177,8 +254,9 @@ public class WalEventChecksumPublishOrderTest extends AbstractCairoTest {
      * base table's active segment on every base commit; the index- and sequencer-bounded readers never
      * reach an unpublished record. A torn header at a present, matching-offset entry is therefore the
      * store in flight, not an ordering violation -- the entry was complete before the store began -- and
-     * this scanner must not mistake one for the other. How {@code WalEventCursor.verifyRecordChecksum}
-     * copes with the same read on the production path is that reader's concern, not this test's.
+     * this scanner must not mistake one for the other. The production cursor settles the same read by
+     * re-reading the header before it trusts, sizes or hashes anything by it; see
+     * {@code WalEventCursor.verifyRecordChecksum} and {@link #testTornLengthHeaderSettlesBeforeTheRecordIsRead}.
      */
     private static void scanForUndescribedRecord(java.nio.file.Path segment, AtomicReference<String> violation) {
         final byte[] event = readSnapshot(segment.resolve(WalUtils.EVENT_FILE_NAME));
@@ -245,5 +323,39 @@ public class WalEventChecksumPublishOrderTest extends AbstractCairoTest {
 
     private static void writeInt(byte[] bytes, int offset, int value) {
         ByteBuffer.wrap(bytes, offset, Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN).putInt(value);
+    }
+
+    /**
+     * A read-only mapping of {@code _event} whose {@code getInt} at one offset -- the length header under
+     * test -- returns a chosen value for a chosen number of reads before yielding the real bytes. Every
+     * other read, and the checksum over the body (taken from the raw address), is the real file.
+     */
+    private static class TornHeaderMemory extends MemoryCMRImpl {
+        private final long headerOffset;
+        private int tornReadsLeft;
+        private int tornValue;
+
+        TornHeaderMemory(FilesFacade ff, LPSZ name, long size, long headerOffset) {
+            super(ff, name, size, MemoryTag.MMAP_TABLE_WAL_READER);
+            this.headerOffset = headerOffset;
+        }
+
+        @Override
+        public int getInt(long offset) {
+            if (offset == headerOffset && tornReadsLeft > 0) {
+                tornReadsLeft--;
+                return tornValue;
+            }
+            return super.getInt(offset);
+        }
+
+        void tear(int value, int reads) {
+            tornValue = value;
+            tornReadsLeft = reads;
+        }
+
+        int tornReadsLeft() {
+            return tornReadsLeft;
+        }
     }
 }
