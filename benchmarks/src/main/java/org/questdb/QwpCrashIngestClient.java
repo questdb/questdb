@@ -48,11 +48,15 @@ import java.time.temporal.ChronoUnit;
 public class QwpCrashIngestClient {
 
     static final long BASE_TS = CrashIngestWriter.BASE_TS;
-    /** Rows per flush. A flush is the unit the server acks, so this is the ack granularity. */
+    /**
+     * Rows per flush. A flush is the unit the server acks, so this is the ack granularity.
+     */
     static final int BATCH = Integer.getInteger("qwp.batch", 1_000);
     static final long MAX_ROWS = Long.getLong("max.rows", 50_000_000L);
     static final String TABLE_NAME = CrashIngestWriter.TABLE_NAME;
-    /** Upper bound on waiting for one batch's ack before giving up on it (and NOT claiming it). */
+    /**
+     * Upper bound on waiting for one batch's ack before giving up on it (and NOT claiming it).
+     */
     static final long ACK_TIMEOUT_MS = Long.getLong("qwp.ack.timeout.ms", 30_000L);
 
     public static void main(String[] args) throws Exception {
@@ -92,7 +96,7 @@ public class QwpCrashIngestClient {
                 + (user.isEmpty() ? "" : "username=" + user + ";password=" + pass + ";")
                 + ("off".equals(ackTier) ? "" : "request_durable_ack=" + ackTier + ";")
                 + (sfDir.isEmpty() ? "" : "sf_dir=" + sfDir + ";sf_durability=" + sfDurability
-                        + ";sf_sync_interval_millis=" + sfSyncMs + ";")
+                                          + ";sf_sync_interval_millis=" + sfSyncMs + ";")
                 // The client runs on a DIFFERENT MACHINE: the power cut kills the server, not this
                 // process. So what carries the un-acked window across the outage is the RECONNECT
                 // POLICY, not client-side disk durability -- sf_durability matters only when the
@@ -214,7 +218,9 @@ public class QwpCrashIngestClient {
         System.out.println("reached maxRows=" + MAX_ROWS + " without kill; exiting normally");
     }
 
-    /** Single LONG from a server query; -1 when unavailable or null. */
+    /**
+     * Single LONG from a server query; -1 when unavailable or null.
+     */
     private static long queryLong(String addr, String sql) {
         try {
             final java.net.HttpURLConnection c = (java.net.HttpURLConnection) java.net.URI.create(
@@ -238,8 +244,10 @@ public class QwpCrashIngestClient {
         }
     }
 
-    /** Rows the SERVER reports it holds; -1 if unavailable (never treated as zero: a failed
-     *  query must not retract a watermark the server already justified). */
+    /**
+     * Rows the SERVER reports it holds; -1 if unavailable (never treated as zero: a failed
+     * query must not retract a watermark the server already justified).
+     */
     private static long queryCount(String addr) {
         try {
             final java.net.HttpURLConnection c = (java.net.HttpURLConnection) java.net.URI.create(
@@ -264,8 +272,10 @@ public class QwpCrashIngestClient {
         }
     }
 
-    /** Runs a statement over the server's HTTP /exec endpoint. Fails loudly: a table that was not
-     *  created is not something to discover later as a column error at every crash boundary. */
+    /**
+     * Runs a statement over the server's HTTP /exec endpoint. Fails loudly: a table that was not
+     * created is not something to discover later as a column error at every crash boundary.
+     */
     private static void exec(String addr, String sql) throws IOException {
         final java.net.HttpURLConnection c = (java.net.HttpURLConnection) java.net.URI.create(
                 "http://" + addr + "/exec?query="
