@@ -37,6 +37,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
@@ -71,6 +72,8 @@ public final class IntHashJoinBuild implements Closeable {
     private final Buffer keys = new Buffer();
     private final int[] offsets;
     private final Buffer rows = new Buffer();
+    private final Buffer scratch = new Buffer();
+    private final Frozen reusableFrozen;
     private final int rowSize;
     private final int[] sourceColumns;
     private final ObjList<SymbolTable> sourceSymbols = new ObjList<>();
@@ -85,6 +88,7 @@ public final class IntHashJoinBuild implements Closeable {
     @Nullable
     private MemoryTracker memoryTracker;
     private boolean open;
+    private long nextHandleBase;
     private long rowCount;
     private long rowBytes;
     private long symbolBytes;
@@ -93,6 +97,15 @@ public final class IntHashJoinBuild implements Closeable {
 
     /** Payload types/indexes are in the same order; indexes address the source record. */
     public IntHashJoinBuild(ColumnTypes payloadTypes, IntList sourceColumns, int initialSlots, long initialRowCapacity) {
+        this(payloadTypes, sourceColumns, initialSlots, initialRowCapacity, false);
+    }
+
+    /**
+     * Reusable mode is for a factory that drains all consumers before reopening.
+     * Its snapshot is a flyweight; retained probes must explicitly reopen for each
+     * execution. The ordinary constructor keeps execution-specific snapshots.
+     */
+    public IntHashJoinBuild(ColumnTypes payloadTypes, IntList sourceColumns, int initialSlots, long initialRowCapacity, boolean reusable) {
         if (initialSlots < 2 || initialSlots > MAX_SLOTS || Integer.bitCount(initialSlots) != 1
                 || initialRowCapacity < 1 || initialRowCapacity > MAX_BUFFER_SIZE
                 || payloadTypes.getColumnCount() != sourceColumns.size()) {
@@ -125,6 +138,7 @@ public final class IntHashJoinBuild implements Closeable {
             offset += size;
         }
         rowSize = (int) ((offset + 7) & -8L);
+        reusableFrozen = reusable ? new Frozen() : null;
     }
 
     /** Copies one row. On failure all execution allocations are released. */
@@ -224,7 +238,8 @@ public final class IntHashJoinBuild implements Closeable {
             circuitBreaker.statefulThrowExceptionIfTripped();
             // Text interning is build-only; readers resolve IDs through symbolEntries.
             symbolSlots.close();
-            frozen = new Frozen();
+            frozen = reusableFrozen != null ? reusableFrozen : new Frozen();
+            frozen.of();
             return frozen;
         } catch (Throwable th) {
             close();
@@ -270,7 +285,7 @@ public final class IntHashJoinBuild implements Closeable {
             throw CairoException.nonCritical().put("hash join build capacity overflow");
         }
         // Separate destination keeps both allocations charged throughout rehashing.
-        Buffer dest = new Buffer();
+        Buffer dest = scratch;
         try {
             dest.allocate((long) slots * 2 * SLOT_SIZE, true);
             for (int i = 0; i < slots; i++) {
@@ -407,7 +422,7 @@ public final class IntHashJoinBuild implements Closeable {
             if (required <= capacity) {
                 return;
             }
-            Buffer dest = new Buffer();
+            Buffer dest = scratch;
             try {
                 dest.allocate(Math.max(required, Math.min(MAX_BUFFER_SIZE, Math.max(initialCapacity, capacity * 2))), false);
                 for (long offset = 0; offset < capacity; offset += COPY_CHUNK_SIZE) {
@@ -429,15 +444,35 @@ public final class IntHashJoinBuild implements Closeable {
     }
 
     private class Frozen implements FrozenHashJoinBuild {
-        private final long charsAddress = symbolChars.address;
-        private final long entriesAddress = symbolEntries.address;
-        private final long keysAddress = keys.address;
-        private final int keysCount = keyCount;
-        private final int slots = keySlotCount;
-        private final long rowsAddress = rows.address;
-        private final long rowsCount = rowCount;
-        private final long size = IntHashJoinBuild.this.getSizeInBytes();
-        private final int symbolsCount = symbolCount;
+        private long charsAddress;
+        private long entriesAddress;
+        private long keysAddress;
+        private int keysCount;
+        private int slots;
+        private long rowsAddress;
+        private long rowsCount;
+        private long size;
+        private int symbolsCount;
+        private long generation;
+        private long handleBase;
+
+        private void of() {
+            if (nextHandleBase > Long.MAX_VALUE - rowBytes - 1) {
+                throw CairoException.nonCritical().put("hash join handle capacity overflow");
+            }
+            handleBase = nextHandleBase;
+            nextHandleBase += rowBytes + 1;
+            charsAddress = symbolChars.address;
+            entriesAddress = symbolEntries.address;
+            keysAddress = keys.address;
+            keysCount = keyCount;
+            slots = keySlotCount;
+            rowsAddress = rows.address;
+            rowsCount = rowCount;
+            size = IntHashJoinBuild.this.getSizeInBytes();
+            symbolsCount = symbolCount;
+            generation++;
+        }
 
         @Override
         public long getKeyCount() {
@@ -462,7 +497,28 @@ public final class IntHashJoinBuild implements Closeable {
             return new View(circuitBreaker);
         }
 
-        private class Symbols implements SymbolTable {
+        private class Symbols implements SymbolTable, QuietCloseable {
+            private final ObjList<Symbols> pool;
+            private long symbolGeneration;
+            private boolean closed;
+
+            private Symbols(ObjList<Symbols> pool) {
+                this.pool = pool;
+                reopen();
+            }
+
+            @Override
+            public void close() {
+                if (!closed && pool != null) {
+                    closed = true;
+                    pool.add(this);
+                }
+            }
+
+            private void reopen() {
+                closed = false;
+                symbolGeneration = generation;
+            }
             private final DirectString a = new DirectString();
             private final DirectString b = new DirectString();
 
@@ -482,7 +538,7 @@ public final class IntHashJoinBuild implements Closeable {
             }
 
             private CharSequence value(int key, DirectString sink) {
-                assert frozen == Frozen.this;
+                assert frozen == Frozen.this && symbolGeneration == generation && !closed;
                 if (key == VALUE_IS_NULL) {
                     return null;
                 }
@@ -497,21 +553,38 @@ public final class IntHashJoinBuild implements Closeable {
         private class View implements Probe {
             private final SqlExecutionCircuitBreaker circuitBreaker;
             private final PayloadRecord record = new PayloadRecord();
-            private final SymbolTable[] symbolTables = new SymbolTable[types.length];
+            private final Symbols[] symbolTables = new Symbols[types.length];
+            private final ObjList<Symbols> symbolPool = new ObjList<>();
+            private long probeGeneration;
             private long next;
 
             private View(SqlExecutionCircuitBreaker circuitBreaker) {
                 this.circuitBreaker = circuitBreaker;
                 for (int i = 0; i < types.length; i++) {
                     if (types[i] == ColumnType.SYMBOL) {
-                        symbolTables[i] = new Symbols();
+                        symbolTables[i] = new Symbols(null);
+                    }
+                }
+                reopen();
+            }
+
+            @Override
+            public void reopen() {
+                if (frozen != Frozen.this) {
+                    throw new IllegalStateException("hash join build has expired");
+                }
+                probeGeneration = generation;
+                next = record.address = 0;
+                for (int i = 0; i < symbolTables.length; i++) {
+                    if (symbolTables[i] != null) {
+                        symbolTables[i].reopen();
                     }
                 }
             }
 
             @Override
             public void find(int key) {
-                assert frozen == Frozen.this;
+                assert frozen == Frozen.this && probeGeneration == generation;
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 long slot = findKeySlot(keysAddress, slots, key, circuitBreaker);
                 next = Unsafe.getLong(slot + 8);
@@ -537,17 +610,22 @@ public final class IntHashJoinBuild implements Closeable {
             @Override
             public SymbolTable newSymbolTable(int columnIndex) {
                 assert types[columnIndex] == ColumnType.SYMBOL;
-                return new Symbols();
+                Symbols symbols = symbolPool.size() > 0 ? symbolPool.getLast() : new Symbols(symbolPool);
+                if (symbolPool.size() > 0) {
+                    symbolPool.remove(symbolPool.size() - 1);
+                }
+                symbols.reopen();
+                return symbols;
             }
 
             @Override
             public long next() {
-                assert frozen == Frozen.this;
+                assert frozen == Frozen.this && probeGeneration == generation;
                 if (next == 0) {
                     throw new IllegalStateException("hash join probe is exhausted");
                 }
                 circuitBreaker.statefulThrowExceptionIfTripped();
-                long handle = next - 1;
+                long handle = handleBase + next - 1;
                 recordAt(handle);
                 next = Unsafe.getLong(record.address);
                 return handle;
@@ -555,9 +633,10 @@ public final class IntHashJoinBuild implements Closeable {
 
             @Override
             public void recordAt(long handle) {
-                assert frozen == Frozen.this;
-                assert handle >= 0 && handle % rowSize == 0 && handle / rowSize < rowsCount;
-                record.address = rowsAddress + handle;
+                assert frozen == Frozen.this && probeGeneration == generation;
+                long offset = handle - handleBase;
+                assert offset >= 0 && offset % rowSize == 0 && offset / rowSize < rowsCount;
+                record.address = rowsAddress + offset;
             }
 
             private class PayloadRecord implements Record {
@@ -624,7 +703,7 @@ public final class IntHashJoinBuild implements Closeable {
                 }
 
                 private long at(int col) {
-                    assert frozen == Frozen.this && address != 0;
+                    assert frozen == Frozen.this && probeGeneration == generation && address != 0;
                     return address + offsets[col];
                 }
             }

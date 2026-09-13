@@ -116,7 +116,7 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     high-cardinality, combined-state, unlimited-limit and reuse tests supplement
     the existing failure/concurrency coverage. See the [allocation audit and validation](docs/parallel-hash-join-group-by-memory.md).
 
-9b. **Keep large and data-dependent execution structures off heap** — this update.
+9b. **Keep large and data-dependent execution structures off heap** — commit `d2eceb5116`.
     Frame descriptors and sparse decoder indices now use tracked native vectors;
     duplicate frame-count lists and per-frame decoder references are removed from
     qualified scans. Source SYMBOL views and fused predicate implementations avoid
@@ -126,35 +126,56 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     fresh execution and reuse, with result and native-balance checks. See the
     [retained-heap audit, measurements and validation](docs/parallel-hash-join-group-by-heap.md).
 
+9c. **Make successful fused execution zero-GC after bounded setup** — this update.
+    Reuse native-growth scratch, frozen/probe/SYMBOL views, scalar shells and
+    native-closed decoder buffers. Preserve independent slot generations, expired
+    handle checks, query tracking and close/reuse semantics. Paired exact owner/
+    worker byte counters and allocation-site stacks cover fresh builds, unseen
+    symbols, forced growth, all merges, output, close, concurrency and reuse.
+    The controlled C1 allocation gate and default-JVM regression/retained-heap
+    checks have separate documented boundaries. See the [execution allocation
+    audit and reproducible artifacts](docs/parallel-hash-join-group-by-allocation.md).
+
 The branch supports experimental automatic selection for eligible keyed and
-unkeyed queries. Tasks 1–9, 6a, 9a and 9b are complete. **V1 is not complete:** the
-current RFC requires 9a–9e after the original task 10 benchmark. Tasks 9c–9e
+unkeyed queries. Tasks 1–9, 6a and 9a–9c are complete. **V1 is not complete:** the
+current RFC requires 9a–9e after the original task 10 benchmark. Tasks 9d–9e
 remain pending, then task 10 must be rerun on that implementation. Keep the
 experimental default false; default enablement remains a separate reviewable
 configuration/planner change.
 
-## Next pending RFC task: 9c (V1)
+## Next pending RFC task: 9d (V1)
 
-**Make the new execution pipeline zero-GC and prove it with allocation measurements.**
+**Complete circuit-breaker integration for every potentially large execution loop.**
 
-- Audit successful execution after bounded setup: cursor acquisition, fresh
-  build, native growth/rehashing, symbols, function/frame initialization, probing,
-  aggregate updates, every merge mode, output, close and repeated execution.
-- Eliminate attributable per-row/match/frame/group/symbol/growth garbage. Reuse
-  bounded control objects and flyweights; retain task 9b's tracked native state.
-  Do not warm a data-sized Java pool to conceal allocation.
-- Measure the owner and every participating worker with allocation counters and
-  allocation stack profiles. Separate compilation, bounded cold setup, shared
-  framework, harness and deliberate exception-reporting allocations.
-- Exercise unseen symbols, forced growth, high-cardinality merging, native and
-  Parquet decoding, concurrency and factory reuse. Publish commands, counts,
-  stacks and measurement boundaries, with result/lifecycle/resource regressions.
+- Audit build-source consumption, filtered scans, keyed/scalar probing and
+  aggregation, cursor-based merging and output, including delegated `hasNext()`
+  implementations that consume many rows internally.
+- Use existing throttled breaker calls on rejected rows, misses, null extensions,
+  and successful matches. Check inside long duplicate/nested loops, preserving
+  current growth, rehash, copy/decode, redistribution and native merge checks.
+- Bind the active query breaker before work and propagate it to independently
+  owned worker slots. Preserve throttling, zero-GC successful checks and correct
+  rebinding; concurrent workers must not share mutable throttle state unsafely.
+- Add deterministic cancellation/timeout tests for large builds, all-miss/all-
+  rejected scans, duplicate chains and merge/output traversal, for keyed/scalar
+  and enabled storage paths. Bound loop work between checks. Verify drain,
+  cleanup, query-memory release, same-factory reuse and unaffected peer queries.
+- Publish the loop audit and named tests; rerun affected regressions and include
+  breaker overhead in task 10's end-to-end measurements.
 
-The 9b reachable-heap profiler is reusable retention evidence, but does not
-measure allocation rate or satisfy 9c. Next are 9d (complete circuit-breaker
-integration), 9e (expanded semantic, storage and negative tests with a coverage
-table), and the repeated task 10 performance/rollout gate. Parallel radix build
-(11) and broader extensions (12) remain post-V1. Keep
+Task **9e** remains the expanded semantic/storage/negative matrix and coverage
+mapping. Explicitly cover **SQL LHS and RHS SYMBOL columns as grouping keys and
+aggregate arguments**, separately and together, including the same column in both
+roles, repeated references, multiple SYMBOL columns, COUNT(SYMBOL), and supported
+SYMBOL-consuming expressions. Test symbol-table initialization/routing for owner,
+workers, merges and output; independent cloned views; RIGHT input swapping;
+empty/null dictionaries and outer null extension; differing text-to-ID mappings;
+native/Parquet/mixed storage; first execution/reuse, dictionary changes, bind
+rebinding and concurrent factories. Compare resolved text and metadata with the
+ordinary path, and map these cases to named tests in the 9e coverage table.
+
+After 9d–9e, repeat task 10's performance/rollout gate. Parallel radix build (11)
+and broader extensions (12) remain post-V1. Keep
 `cairo.sql.parallel.hash.join.groupby.enabled=false` and the global parallel GROUP
 BY gate. Do not add a build-size threshold, runtime fallback or input replay.
 
@@ -162,7 +183,7 @@ The [original task 10 report](docs/parallel-hash-join-group-by-v1.md) and its
 [raw data](docs/parallel-hash-join-group-by-v1/summary.csv) describe the earlier
 implementation; their timings and sampled memory peaks do not validate 9a–9e.
 Task 9's qualification results are historical; affected-suite reruns are recorded
-in the task 9a/9b guides. The ten-million-row Parquet RIGHT pilot remains incomplete
+in the task 9a–9c guides. The ten-million-row Parquet RIGHT pilot remains incomplete
 as documented in the original report. Repeated decoding under the bounded sparse
 cache and uncached SYMBOL predicate CPU costs need task 10 measurements.
 
@@ -175,6 +196,25 @@ keep ordinary execution. Probe filter takeover uses interpreted logical getters,
 releases unused JIT handles and composes peeled projection mappings. Ordinary
 serial probe filters that cannot be stolen keep the existing plan. Child partition-
 format guards continue to request normal recompilation; they are not bypassed.
+
+## Validation for task 9c
+
+**1,985 Java tests passed across 55 suites**, with two existing conditional skips
+and zero failures/errors (1,987 total). The benchmark package and 43 ordered smoke
+checks passed. The retained-heap rerun passed all 864 snapshots, 288 candidate
+executions and 144 ordinary references; every closed query-native balance was
+zero. The largest fixed-case heap increase was 1,256 bytes; the largest array
+was 16,400 bytes.
+
+The [allocation guide](docs/parallel-hash-join-group-by-allocation.md) records the
+controlled JVM flags, compiler/setup/shared-framework/failure boundaries, exact
+per-thread counters, allocation counts/stacks, workload and source hashes. Its
+24-case matrix checks 234 measured candidate executions and 405 owner/worker
+windows with zero bytes attributable to the fused pipeline, including unseen
+symbols, native growth, 131,072 groups, both owners and all four workers. Each
+case also checks cancellation cleanup, same-factory reuse and ordinary results.
+These measurements preserve task 9b's retention bound; they do not replace the
+pending task 10 latency gate. The experimental default remains false.
 
 ## Validation for task 9b
 

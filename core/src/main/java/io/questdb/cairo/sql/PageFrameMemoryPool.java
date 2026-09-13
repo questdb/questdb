@@ -177,7 +177,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // workload's limit. Null leaves decode buffers on global-only accounting
     // (e.g. context-less worker tasks and protocol-layer streaming pools).
     private MemoryTracker memoryTracker;
-    // Created lazily on the first parquet frame so the configuration's decoder factory is fully wired.
+    // Native-closed shell prepared during construction; decoder state opens on demand.
     private ParquetPartitionDecoder parquetMetaDecoder;
     // Lazily created list of zero entries published as column addresses/sizes for
     // an empty decode window; a zero address reads as a column top (NULL).
@@ -199,6 +199,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             parquetIdxToDecodeSlot = new IntIntHashMap(16);
             legacyDecoder = new ParquetFileDecoder();
             sourceColumnTypes = new IntList();
+            // Prepare one bounded, native-closed decode slot even when the first
+            // frames are native or another worker takes all Parquet work. A later
+            // local reduction must not allocate Java controls under queue pressure.
+            parquetMetaDecoder = configuration.newParquetPartitionDecoder();
+            freeParquetBufferShells.add(new ParquetBuffers());
         } catch (Throwable th) {
             close();
             throw th;
@@ -236,7 +241,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         recordAtSlices.close();
         declaredFrameRowCounts.close();
         releaseCoveringBuffers();
-        Misc.freeObjListAndClear(freeParquetBufferShells);
+        // Cursor close is also an execution boundary for reusable factories. Every
+        // parked shell is already native-closed; retain this bounded control pool
+        // just like the decoder and frame-memory shells above.
+
         addressCache = null;
         memoryTracker = null;
     }

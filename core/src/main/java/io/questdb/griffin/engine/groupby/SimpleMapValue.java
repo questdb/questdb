@@ -50,7 +50,7 @@ public class SimpleMapValue implements MapValue, Mutable, QuietCloseable {
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
     private final Long256Impl long256 = new Long256Impl();
-    private final MemoryTracker memoryTracker;
+    private MemoryTracker memoryTracker;
     private boolean isNew;
     private long ptr;
 
@@ -60,7 +60,19 @@ public class SimpleMapValue implements MapValue, Mutable, QuietCloseable {
 
     /** The borrowed tracker must remain alive until this value is closed. */
     public SimpleMapValue(int columnCount, MemoryTracker memoryTracker) {
+        this(columnCount, memoryTracker, true);
+    }
+
+    /** A closed shell can be constructed before a query tracker is available. */
+    public SimpleMapValue(int columnCount, MemoryTracker memoryTracker, boolean allocate) {
         this.columnCount = columnCount;
+        if (allocate) {
+            reopen(memoryTracker);
+        }
+    }
+
+    public void reopen(MemoryTracker memoryTracker) {
+        assert ptr == 0;
         this.memoryTracker = memoryTracker;
         this.ptr = Unsafe.malloc(32L * columnCount, MemoryTag.NATIVE_FAST_MAP, memoryTracker);
     }
@@ -119,7 +131,10 @@ public class SimpleMapValue implements MapValue, Mutable, QuietCloseable {
 
     @Override
     public void close() {
-        this.ptr = Unsafe.free(ptr, 32L * columnCount, MemoryTag.NATIVE_FAST_MAP, memoryTracker);
+        if (ptr != 0) {
+            this.ptr = Unsafe.free(ptr, 32L * columnCount, MemoryTag.NATIVE_FAST_MAP, memoryTracker);
+        }
+        memoryTracker = null;
     }
 
     public void copy(SimpleMapValue srcValue) {

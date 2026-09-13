@@ -89,7 +89,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
         try {
             build = new IntHashJoinBuild(metadata.getPayloadMetadata(), metadata.getBuildColumns(),
-                    64, 64);
+                    64, 64, true);
             if (functions.isKeyed()) {
                 ObjList<GroupByFunctionsUpdater> workerUpdaters = new ObjList<>();
                 for (int i = 0; i < workerCount; i++) {
@@ -101,6 +101,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             }
             for (int i = -1; i < workerCount; i++) {
                 Slot slot = new Slot(engine, metadata.newRecord());
+                if (!functions.isKeyed()) {
+                    slot.value = new SimpleMapValue(functions.getValueTypes().getColumnCount(), null, false);
+                }
                 slots.add(slot);
                 records.add(slot.joinedRecord);
             }
@@ -189,12 +192,16 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 Slot slot = slots.getQuick(i);
                 if (!functions.isKeyed()) {
                     // Allocate under the execution tracker, alongside the live frozen build.
-                    slot.value = new SimpleMapValue(functions.getValueTypes().getColumnCount(), executionContext.getMemoryTracker());
+                    slot.value.reopen(executionContext.getMemoryTracker());
                     functions.getUpdater(i - 1).updateEmpty(slot.value);
                     slot.value.setNew(true);
                 }
                 slot.breaker.init(executionContext.getCircuitBreaker());
-                slot.probe = frozen.newProbe(slot.breaker);
+                if (slot.probe == null) {
+                    slot.probe = frozen.newProbe(slot.breaker);
+                } else {
+                    slot.probe.reopen();
+                }
                 slot.probeRecord.of(symbolTableSource);
                 slot.joinedRecord.of(slot.probeRecord, slot.probeRecord, slot.probe);
             }
@@ -350,10 +357,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         }
 
         void clear() {
-            value = Misc.free(value);
+            Misc.free(value);
             scannedRows = matchedPairs = nullExtendedRows = survivingRows = 0;
             joinedRecord.clear();
-            probe = null;
             try {
                 probeRecord.of(null);
             } finally {

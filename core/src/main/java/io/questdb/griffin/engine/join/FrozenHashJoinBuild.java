@@ -47,6 +47,9 @@ public interface FrozenHashJoinBuild {
     Probe newProbe(SqlExecutionCircuitBreaker circuitBreaker);
 
     interface Probe extends SymbolTableSource {
+        /** Explicitly bind this slot-owned view to a refreshed snapshot, after consumer drain. */
+        void reopen();
+
         /** Replaces the current duplicate iterator, including on a miss. */
         void find(int key);
 

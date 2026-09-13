@@ -674,6 +674,98 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testReusableBuildGrowthDoesNotAllocateHeap() throws Exception {
+        assertMemoryLeak(() -> {
+            com.sun.management.ThreadMXBean bean = (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
+            org.junit.Assume.assumeTrue(bean.isThreadAllocatedMemorySupported());
+            bean.setThreadAllocatedMemoryEnabled(true);
+            ArrayColumnTypes types = new ArrayColumnTypes().add(ColumnType.SYMBOL);
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024 * 1024);
+                 IntHashJoinBuild build = new IntHashJoinBuild(types, indexes(0), 2, 16, true)) {
+                Source source = new Source();
+                io.questdb.std.str.StringSink text = new io.questdb.std.str.StringSink(64);
+                source.text = text;
+                FrozenHashJoinBuild.Probe probe = null;
+                long allocated = 0;
+                for (int execution = 0; execution < 22; execution++) {
+                    long before = bean.getCurrentThreadAllocatedBytes();
+                    build.open(tracker, NOOP);
+                    int rows = execution < 20 ? 512 : 65_536;
+                    for (int row = 0; row < rows; row++) {
+                        text.clear();
+                        text.put(row);
+                        build.append(row, source);
+                    }
+                    FrozenHashJoinBuild snapshot = build.freeze();
+                    if (probe == null) probe = snapshot.newProbe(NOOP);
+                    else probe.reopen();
+                    for (int row = 0; row < rows; row++) {
+                        probe.find(row);
+                        probe.next();
+                        probe.getRecord().getSymA(0).length();
+                    }
+                    build.close();
+                    long bytes = bean.getCurrentThreadAllocatedBytes() - before;
+                    if (execution >= 20) allocated += bytes;
+                    Assert.assertEquals(0, tracker.getUsed());
+                }
+                Assert.assertEquals("fresh builds, unseen symbols and forced native growth", 0, allocated);
+            }
+        });
+    }
+
+    @Test
+    public void testReusableSnapshotRequiresExplicitProbeRebinding() throws Exception {
+        assertMemoryLeak(() -> {
+            ArrayColumnTypes types = new ArrayColumnTypes().add(ColumnType.SYMBOL);
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1 << 20);
+                 IntHashJoinBuild build = new IntHashJoinBuild(types, indexes(0), 2, 16, true)) {
+                Source source = new Source();
+                source.text = "old";
+                build.open(tracker, NOOP);
+                build.append(1, source);
+                FrozenHashJoinBuild snapshot = build.freeze();
+                FrozenHashJoinBuild.Probe probe = snapshot.newProbe(NOOP);
+                FrozenHashJoinBuild.Probe peer = snapshot.newProbe(NOOP);
+                SymbolTable symbols = probe.newSymbolTable(0);
+                probe.find(1);
+                long oldHandle = probe.next();
+                TestUtils.assertEquals("old", symbols.valueOf(0));
+                build.close();
+                Assert.assertEquals(0, tracker.getUsed());
+                Assert.assertThrows(IllegalStateException.class, probe::reopen);
+
+                build.open(tracker, NOOP);
+                source.text = "new";
+                for (int row = 0; row < 4096; row++) {
+                    build.append(row, source);
+                }
+                Assert.assertSame(snapshot, build.freeze());
+                Assert.assertThrows(AssertionError.class, () -> probe.find(1));
+                Assert.assertThrows(AssertionError.class, () -> symbols.valueOf(0));
+                probe.reopen();
+                Assert.assertThrows(AssertionError.class, () -> probe.recordAt(oldHandle));
+                probe.find(4095);
+                probe.next();
+                TestUtils.assertEquals("new", probe.getRecord().getSymA(0));
+                // Rebinding one acquired slot must not revive another slot's view.
+                Assert.assertThrows(AssertionError.class, () -> peer.find(1));
+                peer.reopen();
+                peer.find(1);
+                peer.next();
+                TestUtils.assertEquals("new", peer.getRecord().getSymA(0));
+                io.questdb.std.Misc.freeIfCloseable(symbols);
+                SymbolTable reused = probe.newSymbolTable(0);
+                Assert.assertSame(symbols, reused);
+                TestUtils.assertEquals("new", reused.valueOf(0));
+                io.questdb.std.Misc.freeIfCloseable(reused);
+                build.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
     private static IntList indexes(int... columns) {
         IntList result = new IntList();
         for (int column : columns) {
