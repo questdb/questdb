@@ -83,6 +83,7 @@ public class HashJoinGroupByBenchmark {
         int warmups = (int) number(options, "warmups", 3, 1, 100);
         int runs = (int) number(options, "runs", 10, 10, 1000);
         int repetitions = (int) number(options, "repetitions", 2, 1, 100);
+        boolean activeBreaker = activeBreaker(options);
         CandidateCompiler candidate = options.containsKey("candidate-compiler")
                 ? (CandidateCompiler) Class.forName(options.get("candidate-compiler")).getConstructor().newInstance() : null;
         String gateOption = options.getOrDefault("require-primary-gate", "false");
@@ -90,15 +91,16 @@ public class HashJoinGroupByBenchmark {
             throw new IllegalArgumentException("require-primary-gate must be true or false");
         }
         boolean requirePrimaryGate = Boolean.parseBoolean(gateOption);
-        if (requirePrimaryGate && (candidate == null || rows != 100_000_000 || plants != 100_000
+        if (requirePrimaryGate && (!activeBreaker || candidate == null || rows != 100_000_000 || plants != 100_000
                 || selectedPercent != 10 || fanout != 1 || seed != 130 || workers != 4
                 || warmups < 3 || repetitions < 2)) {
             throw new IllegalArgumentException("primary gate requires the fixed RFC 130 workload, a candidate compiler, "
-                    + "four workers, at least three warmups and two repetitions");
+                    + "active breakers, four workers, at least three warmups and two repetitions");
         }
         Os.init();
         // A fresh directory prevents accidentally overwriting a developer's database.
         Path root = Files.createTempDirectory("hash-join-group-by-");
+        System.out.println("# breaker=" + (activeBreaker ? "active throttle=2000000 timeout=unlimited fd=-1" : "noop diagnostic reference only"));
         System.out.println("# data_directory=" + root + " (retained for inspection)");
         System.out.printf(Locale.ROOT, "# revision=%s java=%s vm=%s os=%s arch=%s processors=%d heap_max=%d vm_args=%s%n",
                 options.getOrDefault("revision", "unspecified"), System.getProperty("java.version"), System.getProperty("java.vm.name"),
@@ -122,7 +124,7 @@ public class HashJoinGroupByBenchmark {
             engine.load();
             WorkerPoolUtils.setupQueryJobs(pool, engine);
             pool.start();
-            try (BenchmarkContext context = new BenchmarkContext(engine, workers)) {
+            try (BenchmarkContext context = new BenchmarkContext(engine, workers, activeBreaker)) {
                 generate(engine, context, rows, plants, selectedPercent, fanout, seed);
                 try (
                         RecordCursorFactory baseline = engine.select(SQL, context);
@@ -277,7 +279,7 @@ public class HashJoinGroupByBenchmark {
 
     private static Map<String, String> options(String[] args) {
         Map<String, String> result = new HashMap<>();
-        List<String> names = Arrays.asList("rows", "plants", "selected-percent", "fanout", "seed", "workers", "warmups", "runs", "repetitions", "revision", "candidate-compiler", "require-primary-gate");
+        List<String> names = Arrays.asList("rows", "plants", "selected-percent", "fanout", "seed", "workers", "warmups", "runs", "repetitions", "revision", "candidate-compiler", "require-primary-gate", "breaker");
         for (String arg : args) {
             int eq = arg.indexOf('=');
             if (!arg.startsWith("--") || eq < 3 || !names.contains(arg.substring(2, eq))
@@ -326,6 +328,14 @@ public class HashJoinGroupByBenchmark {
         }
     }
 
+    static boolean activeBreaker(Map<String, String> options) {
+        String mode = options.getOrDefault("breaker", "active");
+        if (!mode.equals("active") && !mode.equals("noop")) {
+            throw new IllegalArgumentException("breaker must be active or noop (diagnostic reference only)");
+        }
+        return mode.equals("active");
+    }
+
     static class BenchmarkConfiguration extends DefaultCairoConfiguration {
         private final SqlExecutionCircuitBreakerConfiguration breakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
@@ -351,16 +361,23 @@ public class HashJoinGroupByBenchmark {
         private MemoryTracker sampledTracker;
 
         BenchmarkContext(CairoEngine engine, int workers) {
+            this(engine, workers, true);
+        }
+
+        BenchmarkContext(CairoEngine engine, int workers, boolean activeBreaker) {
             super(engine, workers);
             // Exercise normal throttled owner/worker checks, including the query registry's
             // cancellation binding. This embedded runner has no client socket (fd = -1).
-            benchmarkBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration());
+            benchmarkBreaker = activeBreaker
+                    ? new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration()) : null;
             with(AllowAllSecurityContext.INSTANCE, null, null, -1, benchmarkBreaker);
         }
 
         @Override
         public void close() {
-            benchmarkBreaker.close();
+            if (benchmarkBreaker != null) {
+                benchmarkBreaker.close();
+            }
             super.close();
         }
 

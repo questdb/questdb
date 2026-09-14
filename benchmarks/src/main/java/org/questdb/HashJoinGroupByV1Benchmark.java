@@ -66,7 +66,7 @@ public class HashJoinGroupByV1Benchmark {
             "rows", "plants", "selected-keys", "source-rows", "fanout", "key-domain", "hot-percent",
             "workers", "concurrency", "warmups", "runs", "repetitions", "join", "groups", "post-filter",
             "probe-storage", "build-storage", "cold-helper", "memory-limit", "revision", "interval",
-            "build-filter", "parquet-cache-bytes"
+            "build-filter", "parquet-cache-bytes", "breaker"
     );
 
     public static void main(String[] args) throws Exception {
@@ -78,6 +78,7 @@ public class HashJoinGroupByV1Benchmark {
                 throw new IllegalArgumentException("unknown or duplicate option: " + arg);
             }
         }
+        boolean activeBreaker = HashJoinGroupByBenchmark.activeBreaker(options);
         long rows = number(options, "rows", 10_000_000, 1, 1_000_000_000);
         int plants = (int) number(options, "plants", 100_000, 1, 10_000_000);
         int selected = (int) number(options, "selected-keys", Math.min(plants, 10_000), 0, plants);
@@ -105,6 +106,7 @@ public class HashJoinGroupByV1Benchmark {
         String sql = sql(join, groups, filter, interval, buildFilter);
         Os.init();
         Path root = Files.createTempDirectory("hash-join-v1-");
+        System.out.println("# breaker=" + (activeBreaker ? "active throttle=2000000 timeout=unlimited fd=-1" : "noop diagnostic reference only"));
         System.out.println("# data_directory=" + root + " (retained for inspection)");
         System.out.println("# options=" + options + " defaults: rows=10000000 plants=100000 selected-keys=min(plants,10000)"
                 + " source-rows=plants*fanout fanout=1 key-domain=plants hot-percent=0 workers=4 concurrency=1"
@@ -142,7 +144,7 @@ public class HashJoinGroupByV1Benchmark {
             RecordCursorFactory[][] factories = new RecordCursorFactory[2][concurrency];
             try {
                 for (int owner = 0; owner < concurrency; owner++) {
-                    contexts[owner] = new HashJoinGroupByBenchmark.BenchmarkContext(engine, workers);
+                    contexts[owner] = new HashJoinGroupByBenchmark.BenchmarkContext(engine, workers, activeBreaker);
                 }
                 generate(engine, contexts[0], rows, plants, selected, sourceRows, fanout, domain, hotPercent);
                 boolean swapped = join.endsWith("swapped");

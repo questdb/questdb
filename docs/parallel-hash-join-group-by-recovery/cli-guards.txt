@@ -1,0 +1,14 @@
+COMMAND ['java', '-cp', 'benchmarks/target/benchmarks.jar', 'org.questdb.HashJoinGroupByBenchmark', '--candidate-compiler=org.questdb.HashJoinGroupByBenchmark$PlannerCandidateCompiler', '--require-primary-gate=true', '--breaker=noop']
+Exception in thread "main" java.lang.IllegalArgumentException: primary gate requires the fixed RFC 130 workload, a candidate compiler, active breakers, four workers, at least three warmups and two repetitions
+	at org.questdb.HashJoinGroupByBenchmark.main(HashJoinGroupByBenchmark.java:97)
+PASS: rejected before data generation
+COMMAND ['java', '-cp', 'benchmarks/target/benchmarks.jar', 'org.questdb.HashJoinGroupByBenchmark', '--breaker=disabled']
+Exception in thread "main" java.lang.IllegalArgumentException: breaker must be active or noop (diagnostic reference only)
+	at org.questdb.HashJoinGroupByBenchmark.activeBreaker(HashJoinGroupByBenchmark.java:334)
+	at org.questdb.HashJoinGroupByBenchmark.main(HashJoinGroupByBenchmark.java:86)
+PASS: rejected before data generation
+COMMAND ['java', '-cp', 'benchmarks/target/benchmarks.jar', 'org.questdb.HashJoinGroupByV1Benchmark', '--breaker=disabled']
+Exception in thread "main" java.lang.IllegalArgumentException: breaker must be active or noop (diagnostic reference only)
+	at org.questdb.HashJoinGroupByBenchmark.activeBreaker(HashJoinGroupByBenchmark.java:334)
+	at org.questdb.HashJoinGroupByV1Benchmark.main(HashJoinGroupByV1Benchmark.java:81)
+PASS: rejected before data generation

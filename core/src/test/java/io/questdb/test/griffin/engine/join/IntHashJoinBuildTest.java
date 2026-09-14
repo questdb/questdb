@@ -27,11 +27,15 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
 import io.questdb.std.Hash;
@@ -40,6 +44,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.LimitedMemoryTracker;
@@ -56,6 +61,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class IntHashJoinBuildTest extends AbstractCairoTest {
     private static final SqlExecutionCircuitBreaker NOOP = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
@@ -121,6 +128,153 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     Assert.assertEquals(0, record.getByte(10));
                     Assert.assertFalse(record.getBool(11));
                     Assert.assertFalse(probe.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testKnownBuildSizeReservesTrackedRowsAndOverflowReuses() throws Exception {
+        assertMemoryLeak(() -> {
+            // Enough for the exact payload and two key slots, but not a doubling copy.
+            final long capacity = 10_000 * 16L + 32;
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(capacity);
+                 IntHashJoinBuild build = new IntHashJoinBuild(new ArrayColumnTypes().add(ColumnType.DOUBLE), indexes(1), 2, 16);
+                 RecordCursorFactory factory = select("select 1::int k, x*0.5 v from long_sequence(10000)");
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertEquals(10_000, cursor.size());
+                for (int execution = 0; execution < 2; execution++) {
+                    cursor.toTop();
+                    build.open(tracker, NOOP);
+                    FrozenHashJoinBuild frozen = build.build(cursor, 0, cursor.size());
+                    Assert.assertEquals(10_000, frozen.getRowCount());
+                    Assert.assertEquals(capacity, tracker.getUsed());
+                    Assert.assertEquals(capacity, frozen.getSizeInBytes());
+                    FrozenHashJoinBuild.Probe probe = frozen.newProbe(NOOP);
+                    probe.find(1);
+                    probe.next();
+                    Assert.assertEquals(5_000, probe.getRecord().getDouble(0), 0);
+                    build.close();
+                    Assert.assertEquals(0, tracker.getUsed());
+                    build.open(tracker, NOOP);
+                    CairoException error = Assert.assertThrows(CairoException.class,
+                            () -> build.build(cursor, 0, Long.MAX_VALUE));
+                    TestUtils.assertContains(error.getFlyweightMessage(), "hash join build buffer overflow");
+                    Assert.assertEquals(0, tracker.getUsed());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCursorBuildChecksArePeriodicAndBounded() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger clockReads = new AtomicInteger();
+            AtomicInteger consumed = new AtomicInteger();
+            AtomicInteger interruptMode = new AtomicInteger();
+            AtomicBoolean cancelled = new AtomicBoolean();
+            AtomicBoolean expired = new AtomicBoolean();
+            DefaultSqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                public int getCircuitBreakerThrottle() {
+                    return 64;
+                }
+
+                @Override
+                public MillisecondClock getClock() {
+                    return () -> {
+                        clockReads.incrementAndGet();
+                        return expired.get() ? 1002 : 1000;
+                    };
+                }
+            };
+            Record record = new Record() {
+                @Override
+                public double getDouble(int col) {
+                    return consumed.get();
+                }
+
+                @Override
+                public int getInt(int col) {
+                    return 1;
+                }
+            };
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(8 * 1024 * 1024);
+                 NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, config);
+                 IntHashJoinBuild build = newBuild(2, 1_600_000, ColumnType.DOUBLE);
+                 RecordCursor cursor = new RecordCursor() {
+                     @Override
+                     public void close() {
+                     }
+
+                     @Override
+                     public Record getRecord() {
+                         return record;
+                     }
+
+                     @Override
+                     public Record getRecordB() {
+                         throw new UnsupportedOperationException();
+                     }
+
+                     @Override
+                     public boolean hasNext() {
+                         if (consumed.get() == 100_000) {
+                             return false;
+                         }
+                         if (consumed.incrementAndGet() == 32) {
+                             cancelled.set(interruptMode.get() == 1);
+                             expired.set(interruptMode.get() == 2);
+                         }
+                         return true;
+                     }
+
+                     @Override
+                     public long preComputedStateSize() {
+                         return 0;
+                     }
+
+                     @Override
+                     public void recordAt(Record record, long rowId) {
+                         throw new UnsupportedOperationException();
+                     }
+
+                     @Override
+                     public long size() {
+                         return 100_000;
+                     }
+
+                     @Override
+                     public void toTop() {
+                         consumed.set(0);
+                     }
+                 }) {
+                breaker.setCancelledFlag(cancelled);
+                breaker.setTimeout(1);
+                for (int mode = 0; mode < 4; mode++) {
+                    interruptMode.set(mode);
+                    cancelled.set(false);
+                    expired.set(false);
+                    cursor.toTop();
+                    breaker.resetTimer();
+                    build.open(tracker, breaker);
+                    clockReads.set(0);
+                    if (mode == 1 || mode == 2) {
+                        CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0));
+                        Assert.assertEquals(mode == 1, error.isCancellation());
+                        Assert.assertTrue(consumed.get() >= 32 && consumed.get() <= 32 + 64);
+                    } else {
+                        FrozenHashJoinBuild frozen = build.build(cursor, 0);
+                        Assert.assertEquals(100_000, frozen.getRowCount());
+                        Assert.assertTrue("build polling is periodic", clockReads.get() >= 100_000 / 64);
+                        Assert.assertTrue("build polling is throttled", clockReads.get() < 2 * (100_000 / 64));
+                        FrozenHashJoinBuild.Probe probe = frozen.newProbe(NOOP);
+                        probe.find(1);
+                        probe.next();
+                        Assert.assertEquals(100_000, probe.getRecord().getDouble(0), 0);
+                    }
+                    build.close();
+                    Assert.assertEquals(0, tracker.getUsed());
                 }
             }
         });
@@ -289,6 +443,111 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     executor.shutdownNow();
                     // Do not release native backing until readers have stopped even on failure.
                     Assert.assertTrue(executor.awaitTermination(30, TimeUnit.SECONDS));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUncheckedProbeCollisionChecksArePeriodicAndBounded() throws Exception {
+        assertMemoryLeak(() -> {
+            for (boolean timeout : new boolean[]{false, true}) {
+                AtomicInteger clockReads = new AtomicInteger();
+                AtomicBoolean interrupt = new AtomicBoolean();
+                AtomicBoolean cancelled = new AtomicBoolean();
+                DefaultSqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                    @Override
+                    public MillisecondClock getClock() {
+                        return () -> {
+                            int reads = clockReads.incrementAndGet();
+                            if (interrupt.get() && reads >= 2) {
+                                if (timeout) {
+                                    return 1002;
+                                }
+                                cancelled.set(true);
+                            }
+                            return 1000;
+                        };
+                    }
+                };
+                try (NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, config);
+                     IntHashJoinBuild build = new IntHashJoinBuild(new ArrayColumnTypes(), indexes(), 128, 16, true)) {
+                    build.open(null, NOOP);
+                    Source source = new Source();
+                    int key = 0;
+                    for (int i = 0; i < 32; i++) {
+                        while ((Hash.hashInt64(key) & 127) != 0) {
+                            key++;
+                        }
+                        build.append(key++, source);
+                    }
+                    while ((Hash.hashInt64(key) & 127) != 0) {
+                        key++;
+                    }
+                    final int missing = key;
+                    FrozenHashJoinBuild.Probe probe = build.freeze().newProbe(breaker);
+                    breaker.setCancelledFlag(cancelled);
+                    breaker.setTimeout(1);
+                    breaker.resetTimer();
+                    clockReads.set(0);
+                    for (int i = 0; i < 3; i++) {
+                        probe.findUnchecked(missing, 7);
+                        Assert.assertFalse(probe.hasNext());
+                        Assert.assertEquals(1 + (32 * (i + 1) - 1) / 7, clockReads.get());
+                    }
+                    probe.reopen();
+                    clockReads.set(0);
+                    interrupt.set(true);
+                    CairoException error = Assert.assertThrows(CairoException.class, () -> probe.findUnchecked(missing, 7));
+                    Assert.assertEquals(!timeout, error.isCancellation());
+                    Assert.assertEquals(2, clockReads.get());
+                    interrupt.set(false);
+                    cancelled.set(false);
+                    breaker.resetTimer();
+                    probe.reopen();
+                    clockReads.set(0);
+                    probe.findUnchecked(missing, 7);
+                    Assert.assertFalse(probe.hasNext());
+                    Assert.assertEquals(5, clockReads.get());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testProbePairChecksArePeriodicAcrossLookupsAndRebinding() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger clockReads = new AtomicInteger();
+            DefaultSqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                public MillisecondClock getClock() {
+                    return () -> {
+                        clockReads.incrementAndGet();
+                        return 1000;
+                    };
+                }
+            };
+            try (NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, config);
+                 IntHashJoinBuild build = newBuild(2, 2048, ColumnType.DOUBLE)) {
+                build.open(null, NOOP);
+                Source source = new Source();
+                for (int i = 0; i < 130; i++) {
+                    source.row = i;
+                    build.append(1, source);
+                }
+                FrozenHashJoinBuild.Probe probe = build.freeze().newProbe(breaker);
+                for (int binding = 0; binding < 2; binding++) {
+                    probe.reopen();
+                    clockReads.set(0);
+                    for (int lookup = 0; lookup < 2; lookup++) {
+                        probe.findUnchecked(1, 7);
+                        for (int pair = 0; pair < 130; pair++) {
+                            probe.next(7);
+                            Assert.assertEquals(129 - pair + 0.25, probe.getRecord().getDouble(0), 0);
+                            Assert.assertEquals(1 + (130 * lookup + pair) / 7, clockReads.get());
+                        }
+                        Assert.assertFalse(probe.hasNext());
+                    }
                 }
             }
         });
@@ -688,10 +947,14 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 source.text = text;
                 FrozenHashJoinBuild.Probe probe = null;
                 long allocated = 0;
-                for (int execution = 0; execution < 22; execution++) {
+                // Keep the setup cardinality fixed while warming the JVM's loop backedges.
+                // A short setup can charge VM String/byte[] allocations
+                // at the probe-loop backedge to the first measured native growth.
+                final int warmupExecutions = 200;
+                for (int execution = 0; execution < warmupExecutions + 2; execution++) {
                     long before = bean.getCurrentThreadAllocatedBytes();
                     build.open(tracker, NOOP);
-                    int rows = execution < 20 ? 512 : 65_536;
+                    int rows = execution < warmupExecutions ? 512 : 65_536;
                     for (int row = 0; row < rows; row++) {
                         text.clear();
                         text.put(row);
@@ -707,10 +970,68 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     }
                     build.close();
                     long bytes = bean.getCurrentThreadAllocatedBytes() - before;
-                    if (execution >= 20) allocated += bytes;
+                    if (execution >= warmupExecutions) allocated += bytes;
                     Assert.assertEquals(0, tracker.getUsed());
                 }
                 Assert.assertEquals("fresh builds, unseen symbols and forced native growth", 0, allocated);
+            }
+        });
+    }
+
+    @Test
+    public void testReusableProbeRebindsPrivateAndSharedCircuitBreakers() throws Exception {
+        assertMemoryLeak(() -> {
+            DefaultSqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                public int getCircuitBreakerThrottle() {
+                    return 1;
+                }
+            };
+            AtomicBooleanCircuitBreaker atomic = new AtomicBooleanCircuitBreaker(engine, 1);
+            try (NetworkSqlExecutionCircuitBreaker network = new NetworkSqlExecutionCircuitBreaker(engine, config);
+                 SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(engine, config);
+                 IntHashJoinBuild build = new IntHashJoinBuild(new ArrayColumnTypes(), indexes(), 2, 16, true)) {
+                FrozenHashJoinBuild.Probe probe = null;
+                Source source = new Source();
+                for (int execution = 0; execution < 3; execution++) {
+                    network.setCancelledFlag(new AtomicBoolean());
+                    network.resetTimer();
+                    atomic.reset();
+                    SqlExecutionCircuitBreaker owner = execution == 1 ? atomic : network;
+                    wrapper.init(owner);
+                    build.open(null, NOOP);
+                    build.append(1, source);
+                    build.append(1, source);
+                    FrozenHashJoinBuild snapshot = build.freeze();
+                    if (probe == null) {
+                        probe = snapshot.newProbe(wrapper);
+                    } else {
+                        probe.reopen();
+                    }
+                    FrozenHashJoinBuild.Probe peer = snapshot.newProbe(new AtomicBooleanCircuitBreaker(engine, 1));
+                    probe.findUnchecked(1, 1);
+                    probe.next(1);
+                    probe.find(1);
+                    probe.next();
+                    owner.cancel();
+                    CairoException nextError = Assert.assertThrows(CairoException.class, probe::next);
+                    Assert.assertTrue(nextError.isCancellation());
+                    FrozenHashJoinBuild.Probe current = probe;
+                    CairoException findError = Assert.assertThrows(CairoException.class, () -> current.find(1));
+                    Assert.assertTrue(findError.isCancellation());
+                    int missing = 2;
+                    while ((Hash.hashInt64(missing) & 1) != (Hash.hashInt64(1) & 1)) {
+                        missing++;
+                    }
+                    final int collidingKey = missing;
+                    CairoException collisionError = Assert.assertThrows(CairoException.class,
+                            () -> current.findUnchecked(collidingKey, 1));
+                    Assert.assertTrue(collisionError.isCancellation());
+                    peer.find(1);
+                    Assert.assertTrue(peer.hasNext());
+                    peer.next();
+                    build.close();
+                }
             }
         });
     }
@@ -743,9 +1064,17 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 }
                 Assert.assertSame(snapshot, build.freeze());
                 Assert.assertThrows(AssertionError.class, () -> probe.find(1));
+                Assert.assertThrows(AssertionError.class, probe::next);
+                Assert.assertThrows(AssertionError.class, () -> probe.findUnchecked(1, 1));
+                Assert.assertThrows(AssertionError.class, () -> probe.next(1));
                 Assert.assertThrows(AssertionError.class, () -> symbols.valueOf(0));
                 probe.reopen();
                 Assert.assertThrows(AssertionError.class, () -> probe.recordAt(oldHandle));
+                // Both table capacity and native backing grew in the new execution.
+                probe.findUnchecked(4095, 7);
+                Assert.assertTrue(probe.hasNext());
+                probe.next(7);
+                TestUtils.assertEquals("new", probe.getRecord().getSymA(0));
                 probe.find(4095);
                 probe.next();
                 TestUtils.assertEquals("new", probe.getRecord().getSymA(0));

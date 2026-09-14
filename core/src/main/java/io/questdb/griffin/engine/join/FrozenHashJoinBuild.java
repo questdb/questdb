@@ -53,12 +53,23 @@ public interface FrozenHashJoinBuild {
         /** Replaces the current duplicate iterator, including on a miss. */
         void find(int key);
 
+        /**
+         * Skips the row check for a caller that checks its probe scan periodically.
+         * Collision checks use this view's independent counter and the supplied
+         * positive configured interval, including across lookups until reopen().
+         * Read payload columns only after advancing a matching row.
+         */
+        void findUnchecked(int key, int checkInterval);
+
         Record getRecord();
 
         boolean hasNext();
 
         /** Advances the payload record and returns an opaque, execution-local handle. */
         long next();
+
+        /** Advances under this view's periodic check budget at a fixed positive configured interval. */
+        void next(int checkInterval);
 
         /** Positions the payload record without changing the duplicate iterator. */
         void recordAt(long handle);

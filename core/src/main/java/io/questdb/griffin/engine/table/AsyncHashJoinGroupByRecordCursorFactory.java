@@ -230,6 +230,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         try {
             final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
             final PageFrameMemoryPool pool = atom.getFilterContext().getMemoryPool(slotId);
+            final int checkInterval = slot.circuitBreakerCheckInterval;
+            int rowsRemaining = slot.circuitBreakerRowsRemaining;
+            long matchedPairs = 0;
+            boolean completed = false;
             try {
                 // Decoder initialization and map allocation must both release the acquired slot on failure.
                 final PageFrameMemoryRecord probeRecord = slot.probeRecord;
@@ -239,34 +243,42 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 final HashJoinGroupByFunctions functions = atom.getFunctions();
                 final RecordSink sink = functions.getMapSink(slotId);
                 final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
+                final Function probeFilter = atom.getFilterContext().getFilter(slotId);
+                final Function postJoinFilter = functions.getFilter(slotId);
+                final int probeKeyColumn = atom.getProbeKeyColumn();
+                final boolean outer = atom.isOuter();
                 final GroupByMapFragment fragment = atom.getFragment(slotId);
                 if (atom.isSharded()) {
                     fragment.shard(breaker);
                 }
                 final Map map = fragment == null ? null
                         : fragment.isNotSharded() ? fragment.reopenMap() : fragment.getShards().getQuick(0);
-                final Function probeFilter = atom.getFilterContext().getFilter(slotId);
-                final Function postJoinFilter = functions.getFilter(slotId);
-                for (long r = 0, n = sequence.getFrameRowCount(frameIndex); r < n && sequence.isActive(); r++) {
-                    breaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                final long rowCount = sequence.getFrameRowCount(frameIndex);
+                // Carry the local row budget across frames. Duplicate traversal uses
+                // the checked probe API; collisions have an independent probe-owned budget.
+                for (long r = 0; r < rowCount && sequence.isActive(); r++) {
+                    if (--rowsRemaining <= 0) {
+                        slot.breaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        rowsRemaining = checkInterval;
+                    }
                     slot.scannedRows++;
                     probeRecord.setRowIndex(r);
                     if (probeFilter != null && !probeFilter.getBool(probeRecord)) {
                         continue;
                     }
-                    probe.find(probeRecord.getInt(atom.getProbeKeyColumn()));
+                    probe.findUnchecked(probeRecord.getInt(probeKeyColumn), checkInterval);
                     if (probe.hasNext()) {
+                        final long rowId = probeRecord.getRowId();
                         record.setHasMatch(true);
                         do {
-                            breaker.statefulThrowExceptionIfTrippedTimeThrottled();
                             if (!sequence.isActive()) {
                                 return;
                             }
-                            probe.next();
-                            slot.matchedPairs++;
-                            update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                            probe.next(checkInterval);
+                            matchedPairs++;
+                            update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
                         } while (probe.hasNext());
-                    } else if (atom.isOuter()) {
+                    } else if (outer) {
                         record.setHasMatch(false);
                         slot.nullExtendedRows++;
                         update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
@@ -275,7 +287,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 if (fragment != null) {
                     atom.getShardingContext().maybeEnableSharding(fragment, 0);
                 }
+                completed = true;
             } finally {
+                slot.matchedPairs += matchedPairs;
+                slot.circuitBreakerRowsRemaining = completed ? rowsRemaining : 0;
                 pool.releaseParquetBuffers();
             }
         } finally {

@@ -36,7 +36,7 @@ MEMORY = ["sampled_query_peak_bytes", "sampled_batch_native_peak_delta_bytes",
           "sampled_native_peak_delta_bytes", "retained_query_bytes", "retained_native_delta_bytes"]
 
 
-def summarize(root, require_complete=False):
+def summarize(root, require_complete=False, diagnostic_reference=False):
     summaries = []
     total = checks = 0
     if require_complete:
@@ -50,6 +50,8 @@ def summarize(root, require_complete=False):
         if path.name in {"environment.txt", "environment-continuation.txt", "commands.txt"}:
             continue
         text = path.read_text()
+        if diagnostic_reference and "# breaker=noop diagnostic reference only" not in text:
+            raise ValueError(f"reference must explicitly identify its no-op breaker: {path}")
         header = next((line for line in text.splitlines() if line.startswith("arm,repetition,")), None)
         if header is None:
             raise ValueError(f"missing benchmark samples: {path}")
@@ -98,7 +100,7 @@ def summarize(root, require_complete=False):
                 result["queries_per_second"] = len(owners) * 1e9 / statistics.median(batches.values()) if batches else ""
                 summaries.append(result)
         if path.stem == "primary-w4":
-            if "# primary_gate=PASS" not in text or any(row["speedup"] < 2 for row in summaries
+            if (not diagnostic_reference and "# primary_gate=PASS" not in text) or any(row["speedup"] < 2 for row in summaries
                                                         if row["case"] == path.stem and row["arm"] == "candidate"):
                 raise ValueError("primary gate did not pass")
         total += len(rows)
@@ -116,5 +118,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     parser.add_argument("--require-complete", action="store_true", help="require every case in the reproduction script")
+    parser.add_argument("--diagnostic-reference", action="store_true",
+                        help="validate explicitly labeled no-op reference samples; cannot qualify a candidate")
     args = parser.parse_args()
-    summarize(args.root, args.require_complete)
+    summarize(args.root, args.require_complete, args.diagnostic_reference)

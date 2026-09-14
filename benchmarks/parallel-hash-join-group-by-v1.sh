@@ -35,20 +35,28 @@ repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir "$1"
 results_dir="$(cd "$1" && pwd)"
 cd "$repo_dir"
-revision="$(git rev-parse HEAD)"
-if ! git diff --quiet HEAD -- core benchmarks; then
+revision="${BENCHMARK_REVISION:-$(git rev-parse HEAD)}"
+breaker_mode="${BREAKER_MODE:-active}"
+if [[ "$breaker_mode" != active && "$breaker_mode" != noop ]]; then
+    echo "BREAKER_MODE must be active or noop" >&2
+    exit 1
+fi
+benchmark_jar="${BENCHMARK_JAR:-benchmarks/target/benchmarks.jar}"
+benchmark_classpath="${BENCHMARK_CLASSPATH:-$benchmark_jar}"
+if [[ -z "${BENCHMARK_REVISION:-}" ]] && ! git diff --quiet HEAD -- core benchmarks; then
     revision+="+working-tree"
 fi
 java_command=(java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED
     --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Xmx8g
-    -cp benchmarks/target/benchmarks.jar)
+    -cp "$benchmark_classpath")
 {
     date -u +'%Y-%m-%dT%H:%M:%SZ'
     git rev-parse HEAD
     git status --short
-    sha256sum benchmarks/target/benchmarks.jar benchmarks/src/main/java/org/questdb/HashJoinGroupBy*Benchmark.java
+    sha256sum "$benchmark_jar" benchmarks/src/main/java/org/questdb/HashJoinGroupBy*Benchmark.java
     sha256sum benchmarks/parallel-hash-join-group-by-v1.sh benchmarks/parallel-hash-join-cold.py benchmarks/summarize-hash-join-group-by-v1.py
-    echo 'breaker=NetworkSqlExecutionCircuitBreaker throttle=2000000 timeout=unlimited fd=-1; reset inside each measured execution'
+    echo "revision=$revision breaker=$breaker_mode classpath=$benchmark_classpath"
+    echo "active configuration: throttle=2000000 timeout=unlimited fd=-1; reset inside each measured execution"
     java -version
     uname -sr
     lscpu
@@ -62,10 +70,10 @@ run_case() {
     if [[ ! "$name" =~ ${CASE_PATTERN:-.*} ]]; then
         return
     fi
-    printf '%q ' "${java_command[@]}" "$class" "--revision=$revision" "$@" >> "$results_dir/commands.txt"
+    printf '%q ' "${java_command[@]}" "$class" "--revision=$revision" "--breaker=$breaker_mode" "$@" >> "$results_dir/commands.txt"
     printf '> %q 2>&1\n' "$results_dir/$name.txt" >> "$results_dir/commands.txt"
     echo "Running $name"
-    "${java_command[@]}" "$class" "--revision=$revision" "$@" > "$results_dir/$name.txt" 2>&1
+    "${java_command[@]}" "$class" "--revision=$revision" "--breaker=$breaker_mode" "$@" > "$results_dir/$name.txt" 2>&1
     sed -n '/^# .*repetition=/p; /^# result_checks=/p; /^# primary_gate=/p' "$results_dir/$name.txt"
 }
 primary() {
@@ -75,7 +83,7 @@ primary() {
 v1() {
     run_case "$1" org.questdb.HashJoinGroupByV1Benchmark "${@:2}"
 }
-primary primary-w4 --require-primary-gate=true
+primary primary-w4 "--require-primary-gate=$([[ "$breaker_mode" == active ]] && echo true || echo false)"
 primary primary-w1 --workers=1
 primary primary-w2 --workers=2
 v1 inner

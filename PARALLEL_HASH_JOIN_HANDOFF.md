@@ -1,6 +1,6 @@
 # Parallel hash join / fused aggregation handoff
 
-Updated 2026-09-13. Branch: `puzpuzpuz_parallel_fused_hash_join`.
+Updated 2026-09-14. Branch: `puzpuzpuz_parallel_fused_hash_join`.
 Draft PR: [questdb/questdb#7618](https://github.com/questdb/questdb/pull/7618).
 Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussions/130).
 
@@ -160,7 +160,7 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     compare exact names/types even for empty results. Excluded plans and invalid
     SQL retain ordinary behavior. See the [coverage map and validation](docs/parallel-hash-join-group-by-semantics.md).
 
-10. **Rebenchmark V1 after tasks 9a–9e and record rollout** — this update.
+10. **Historical rebenchmark after tasks 9a–9e and rollout** — commit `12ff320ae7`.
     The fixed 100-million-row/four-worker gate passes at **3.312× median
     speedup in both rounds** with active owner/worker circuit breakers. The 51-case matrix
     repeats all 44 historical workloads and adds uncached build/post-join SYMBOL
@@ -172,32 +172,37 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     default false: swapped RIGHT and other small/build-dominated cases regress.
     See the [rerun report, measurements and limits](docs/parallel-hash-join-group-by-v1-rerun.md).
 
+9f. **Recover pre-breaker performance with active cancellation** — this commit.
+    Local row budgets and probe-owned duplicate/collision checks avoid
+    per-row clock reads and wrapper calls while preserving active-query binding,
+    bounded cancellation/timeout checks, mandatory drain, native cleanup and reuse.
+    The fixed original task 10 reference remains unchanged. All **54 bounds across
+    27 cases pass**; primary fused medians are **304.162 and 304.092 ms**, with
+    **7.755× and 7.739× speedup**. All **2,400 affected Java tests** and the
+    24-case exact allocation matrix pass. Failed candidates, matched breaker
+    controls, every sample, profiles, source hashes and limits are retained in the
+    [recovery report](docs/parallel-hash-join-group-by-recovery.md).
+
 The branch supports experimental automatic selection for eligible keyed and
-unkeyed queries. **Experimental V1 is complete:** tasks 1–9, 6a, 9a–9e and the task
-10 rerun are complete. There are no pending V1 implementation tasks. The rollout
-decision retains `cairo.sql.parallel.hash.join.groupby.enabled=false`; accepted
-default enablement remains a separate reviewable configuration/planner change.
-Keep the global parallel GROUP BY gate and positive-worker requirement. Do not
-add a build-size threshold, runtime fallback or consumed-input replay.
+unkeyed queries. Task **9f is complete**, but the updated RFC still requires task 10
+to rerun on this implementation before V1 is complete. Keep
+`cairo.sql.parallel.hash.join.groupby.enabled=false`, the global parallel GROUP BY
+gate, and the positive-worker requirement. Do not add a build-size threshold,
+runtime fallback or consumed-input replay.
 
-## Next RFC task: 11 (after V1)
+## Next RFC task: 10 (V1)
 
-**Implement parallel radix build as a separate strategy.**
+Repeat the full 51-case rollout matrix on the completed task 9f implementation,
+including small effective inputs, cold data, build footprints/source costs, skew,
+near-limit memory, SYMBOL/cache controls, worker scaling and concurrent load.
+Repeat both the primary 2× gate and task 9f's per-case 1.10 recovery bound. Review
+latency, scaling and memory before making a documented rollout decision; default
+enablement remains a separate reviewable configuration/planner change. Tasks 11
+(parallel radix build) and 12 (broader execution) remain after V1.
 
-- Define hash-to-shard routing behind the frozen lookup interface, scan eligible
-  right frames into slot-owned radix buffers and build independent partitions.
-- Preserve all duplicate payloads and common SYMBOL encoding. Publish only after
-  build tasks finish; stream left probes through the existing aggregation pipeline.
-- Test skew, empty shards, cancellation, cleanup and temporary-memory peaks under
-  the existing tracked-native, bounded-heap and execution-allocation contracts.
-- Measure end-to-end crossover against owner build before defining strategy
-  selection. Do not copy aggregation shard counts/thresholds without evidence.
-
-Task 12's native right/full outer and broader execution extensions remain separate
-post-V1 work. The [original task 10 report](docs/parallel-hash-join-group-by-v1.md)
-is historical; the [rerun](docs/parallel-hash-join-group-by-v1-rerun.md) qualifies the
-implementation after 9a–9e. Its active-breaker configuration means historical
-absolute timings are not an isolated before/after measure of breaker overhead.
+The [original task 10 report](docs/parallel-hash-join-group-by-v1.md) is the fixed
+pre-breaker performance reference. The [active-breaker rerun](docs/parallel-hash-join-group-by-v1-rerun.md)
+qualifies the implementation after 9a–9e but not the new performance-recovery gate.
 The earlier ten-million-row Parquet RIGHT pilot remains incomplete; the rerun
 repeats the declared one-million-row native/Parquet pair and makes no large-pilot
 scaling claim. Allocation/retained-heap reports keep their documented boundaries.
@@ -212,7 +217,19 @@ releases unused JIT handles and composes peeled projection mappings. Ordinary
 serial probe filters that cannot be stolen keep the existing plan. Child partition-
 format guards continue to request normal recompilation; they are not bypassed.
 
-## Validation for the task 10 rerun
+## Validation for task 9f
+
+**2,400 Java tests passed across 71 suites**, with 26 conditional skips and
+zero failures/errors (2,426 total). The final 24-case allocation matrix passes
+234 executions and 405 owner/worker windows, with zero unexplained successful-
+execution bytes under the established C1 byte/site boundary. The benchmark
+package, CLI guards, shell syntax and deliberate validator-failure checks pass.
+All 27 recovery workloads repeat two rounds with ten measurements per arm/owner;
+each of their 54 latency bounds passes independently. See the [report and complete
+evidence](docs/parallel-hash-join-group-by-recovery.md) for scope, failed trials,
+exact commands, profiles and source/jar provenance.
+
+## Validation for the historical task 10 rerun
 
 The benchmark package passed with `build-rust-library,qdbr-release`. Eight targeted
 smoke workloads passed **388 ordered result checks**, including two concurrent

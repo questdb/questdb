@@ -35,6 +35,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -44,6 +45,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.HashJoinGroupByCandidate;
 import io.questdb.griffin.HashJoinGroupByFunctions;
@@ -86,6 +88,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
@@ -102,6 +105,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
@@ -568,7 +572,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 Assert.assertEquals(timeout ? SqlExecutionCircuitBreaker.STATE_TIMEOUT
                                         : SqlExecutionCircuitBreaker.STATE_CANCELLED, ex.getInterruptionReason());
                             }
-                            Assert.assertEquals(32, hook.calls.get());
+                            Assert.assertTrue(hook.calls.get() >= 32 && hook.calls.get()
+                                    <= 32 + configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
                             Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                             Assert.assertNull(sqlExecutionContext.getMemoryTracker());
                             timedOut.set(false);
@@ -615,7 +620,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 } catch (CairoException ex) {
                                     Assert.assertTrue(ex.isCancellation());
                                 }
-                                Assert.assertEquals(32, hook.calls.get());
+                                Assert.assertTrue(hook.calls.get() >= 32 && hook.calls.get()
+                                        <= 32 + configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
                                 Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                                 Assert.assertNull(sqlExecutionContext.getMemoryTracker());
                                 hook.cancel = null;
@@ -629,6 +635,16 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
             }
         });
+    }
+
+    @Test
+    public void testNetworkDuplicateChecksArePeriodicAndBounded() throws Exception {
+        assertNetworkProbeChecksArePeriodicAndBounded(true);
+    }
+
+    @Test
+    public void testNetworkProbeChecksArePeriodicAndBounded() throws Exception {
+        assertNetworkProbeChecksArePeriodicAndBounded(false);
     }
 
     @Test
@@ -1087,6 +1103,102 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         assertScalarMergeFailureAndReuse(true);
     }
 
+    private void assertNetworkProbeChecksArePeriodicAndBounded(boolean duplicates) throws Exception {
+        assertMemoryLeak(() -> {
+            frameRows = 4096;
+            createTables();
+            execute("truncate table r");
+            execute("truncate table p");
+            if (duplicates) {
+                execute("insert into r values (1, '2020-01-01', 1.0, 2.0)");
+                execute("insert into p select 1, 'ES', 10.0 from long_sequence(100000)");
+            } else {
+                execute("insert into r select 1, timestamp_sequence('2020-01-01', 60000000), 1.0, 2.0 from long_sequence(100000)");
+                execute("insert into p values (2, 'ES', 10)");
+            }
+            AtomicLong ticks = new AtomicLong(1000);
+            AtomicInteger clockReads = new AtomicInteger();
+            StackWalker stackWalker = StackWalker.getInstance();
+            final int throttle = 64;
+            circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                public int getCircuitBreakerThrottle() {
+                    return throttle;
+                }
+
+                @Override
+                public MillisecondClock getClock() {
+                    return () -> {
+                        // Count the reducer's checks, independently of owner wait-loop
+                        // polling and frame preparation outside the reducer.
+                        if (stackWalker.walk(frames -> frames.anyMatch(frame ->
+                                frame.getMethodName().equals("aggregate")
+                                        && frame.getClassName().equals(AsyncHashJoinGroupByRecordCursorFactory.class.getName())))) {
+                            clockReads.incrementAndGet();
+                        }
+                        return ticks.get();
+                    };
+                }
+            };
+            SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+            try (NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration)) {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                for (int storage = 0; storage < (duplicates ? 2 : 3); storage++) {
+                    if (storage == 1) {
+                        execute("alter table r convert partition to parquet where reading_ts < '2020-02-01'");
+                    } else if (storage == 2) {
+                        execute("alter table r convert partition to parquet where reading_ts >= '2020-02-01'");
+                    }
+                    for (boolean keyed : new boolean[]{false, true}) {
+                        for (int mode = 0; mode < (duplicates ? 1 : 3); mode++) {
+                            Hook hook = new Hook();
+                            String predicate = duplicates ? "installed_kwp > 0 or p.installed_kwp is null" : mode == 0 ? "energy_kwh < 0" : "energy_kwh > 0";
+                            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES)
+                                    + (duplicates || mode == 2 ? OUTER : INNER) + (duplicates ? " where p." : " where r.") + predicate;
+                            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), duplicates ? null : predicate, hook)) {
+                                breaker.setTimeout(Long.MAX_VALUE);
+                                breaker.resetTimer();
+                                try (RecordCursor cursor = f.getCursor()) {
+                                    clockReads.set(0);
+                                    while (cursor.hasNext()) {
+                                        // Consume all groups with the active network breaker.
+                                    }
+                                }
+                                Assert.assertEquals("the fixture must exercise every row/pair", 100_000, hook.calls.get());
+                                Assert.assertTrue("checks must read the clock periodically", clockReads.get() > 0);
+                                Assert.assertTrue("clock reads must be throttled, actual=" + clockReads.get(), clockReads.get() < 25_000);
+                                for (boolean timeout : new boolean[]{false, true}) {
+                                    hook.calls.set(0);
+                                    breaker.setTimeout(timeout ? 10 : Long.MAX_VALUE);
+                                    breaker.resetTimer();
+                                    hook.onLimit = timeout ? () -> ticks.addAndGet(11) : breaker::cancel;
+                                    try (RecordCursor cursor = f.getCursor()) {
+                                        cursor.hasNext();
+                                        Assert.fail("expected interruption inside the probe loop");
+                                    } catch (CairoException ex) {
+                                        Assert.assertEquals(timeout ? SqlExecutionCircuitBreaker.STATE_TIMEOUT
+                                                : SqlExecutionCircuitBreaker.STATE_CANCELLED, ex.getInterruptionReason());
+                                    }
+                                    Assert.assertTrue("bounded probe work: " + hook.calls.get(),
+                                            hook.calls.get() >= 32 && hook.calls.get() <= 32 + 2 * throttle);
+                                    Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                    Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+                                    hook.onLimit = null;
+                                    breaker.setTimeout(Long.MAX_VALUE);
+                                    breaker.resetTimer();
+                                    f.assertResults(sql);
+                                }
+                            }
+                        }
+                    }
+                }
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+                circuitBreakerConfiguration = null;
+            }
+        });
+    }
+
     private void assertRejectedBuildCancellationAndReuse(int filterMode) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -1302,7 +1414,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         } catch (CairoException expected) {
                             Assert.assertTrue(expected.isInterruption());
                         }
-                        Assert.assertEquals("cancellation must stop within one duplicate loop", 32, hook.calls.get());
+                        Assert.assertTrue("cancellation must stop within one throttle window inside the duplicate loop",
+                                hook.calls.get() >= 32 && hook.calls.get()
+                                        <= 32 + configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
                         Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                         hook.cancel = null;
                         breaker.reset();
@@ -1577,6 +1691,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         int buildCloses;
         int buildReads;
         volatile AtomicBooleanCircuitBreaker cancel;
+        volatile Runnable onLimit;
         volatile boolean fail;
         volatile boolean failInit;
         volatile CountDownLatch gate;
@@ -1629,6 +1744,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 }
                 if (fail) {
                     throw CairoException.nonCritical().put("injected probe failure");
+                }
+                if (onLimit != null && count == 32) {
+                    onLimit.run();
                 }
                 if (cancel != null && count == 32) {
                     cancel.cancel();

@@ -197,6 +197,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                     slot.value.setNew(true);
                 }
                 slot.breaker.init(executionContext.getCircuitBreaker());
+                slot.circuitBreakerRowsRemaining = 0;
                 if (slot.probe == null) {
                     slot.probe = frozen.newProbe(slot.breaker);
                 } else {
@@ -251,8 +252,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     void build(RecordCursor cursor, SqlExecutionContext executionContext, HashJoinGroupByMetrics metrics) {
+        // The child cursor is fresh. Unknown/filtered sizes retain incremental growth.
+        final long rowCountHint = cursor.size();
         build.open(executionContext.getMemoryTracker(), executionContext.getCircuitBreaker());
-        frozen = build.build(cursor, buildKeyColumn);
+        frozen = build.build(cursor, buildKeyColumn, rowCountHint);
         metrics.buildRows = frozen.getRowCount();
         metrics.buildKeys = frozen.getKeyCount();
         metrics.buildBytes = frozen.getSizeInBytes();
@@ -333,8 +336,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     static final class Slot implements QuietCloseable {
         final SqlExecutionCircuitBreakerWrapper breaker;
+        final int circuitBreakerCheckInterval;
         final HashJoinGroupByRecord joinedRecord;
         final ProbeRecord probeRecord = new ProbeRecord();
+        int circuitBreakerRowsRemaining;
         FrozenHashJoinBuild.Probe probe;
         SimpleMapValue value;
         long scannedRows;
@@ -344,7 +349,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
         Slot(CairoEngine engine, HashJoinGroupByRecord joinedRecord) {
             this.joinedRecord = joinedRecord;
-            breaker = new SqlExecutionCircuitBreakerWrapper(engine, engine.getConfiguration().getCircuitBreakerConfiguration());
+            final var breakerConfiguration = engine.getConfiguration().getCircuitBreakerConfiguration();
+            breaker = new SqlExecutionCircuitBreakerWrapper(engine, breakerConfiguration);
+            circuitBreakerCheckInterval = Math.max(1, breakerConfiguration.getCircuitBreakerThrottle());
         }
 
         @Override
@@ -359,6 +366,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         void clear() {
             Misc.free(value);
             scannedRows = matchedPairs = nullExtendedRows = survivingRows = 0;
+            circuitBreakerRowsRemaining = 0;
             joinedRecord.clear();
             try {
                 probeRecord.of(null);

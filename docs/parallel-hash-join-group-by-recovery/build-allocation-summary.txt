@@ -1,0 +1,2083 @@
+[1, 96] [B
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.find:587
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:709
+
+[1, 80] [B
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[5, 280] [B
+  io.questdb.griffin.engine.join.IntHashJoinBuild.intern:317
+  io.questdb.griffin.engine.join.IntHashJoinBuild.append:171
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:703
+
+[31, 1488] [B
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:708
+
+[2, 312] [B
+  java.io.UnixFileSystem.resolve:125
+  java.io.File.<init>:373
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:950
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 288] [B
+  java.io.UnixFileSystem.resolve:125
+  java.io.File.<init>:373
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:950
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 280] [B
+  java.io.UnixFileSystem.resolve:125
+  java.io.File.<init>:373
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:950
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 32] [B
+  java.lang.AbstractStringBuilder.<init>:101
+  java.lang.StringBuilder.<init>:106
+  java.net.URLStreamHandler.toExternalForm:485
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 32] [B
+  java.lang.AbstractStringBuilder.<init>:101
+  java.lang.StringBuilder.<init>:106
+  java.net.URLStreamHandler.toExternalForm:485
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 32] [B
+  java.lang.AbstractStringBuilder.<init>:101
+  java.lang.StringBuilder.<init>:106
+  java.net.URLStreamHandler.toExternalForm:485
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 32] [B
+  java.lang.AbstractStringBuilder.<init>:101
+  java.lang.StringBuilder.<init>:106
+  sun.net.util.URLUtil.urlNoFragString:46
+  java.security.CodeSource.<init>:123
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 32] [B
+  java.lang.AbstractStringBuilder.<init>:101
+  java.lang.StringBuilder.<init>:106
+  sun.net.util.URLUtil.urlNoFragString:46
+  java.security.CodeSource.<init>:123
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 32] [B
+  java.lang.AbstractStringBuilder.<init>:101
+  java.lang.StringBuilder.<init>:106
+  sun.net.util.URLUtil.urlNoFragString:46
+  java.security.CodeSource.<init>:123
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 96] [B
+  java.lang.Class.initClassName:-1
+  java.lang.Class.getName:951
+  java.lang.Class.getPackageName:1154
+  java.lang.ClassLoader.postDefineClass:871
+  java.lang.ClassLoader.defineClass:963
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  java.lang.Class.initClassName:-1
+  java.lang.Class.getName:951
+  java.lang.Class.getPackageName:1154
+  java.lang.ClassLoader.postDefineClass:871
+  java.lang.ClassLoader.defineClass:963
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  java.lang.Class.initClassName:-1
+  java.lang.Class.getName:951
+  java.lang.Class.getPackageName:1154
+  java.lang.ClassLoader.postDefineClass:871
+  java.lang.ClassLoader.defineClass:963
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  java.util.Arrays.copyOf:3537
+  java.lang.AbstractStringBuilder.ensureCapacityNewCoder:282
+  java.lang.AbstractStringBuilder.append:650
+  java.lang.StringBuilder.append:179
+  java.net.URLStreamHandler.toExternalForm:489
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  java.util.Arrays.copyOf:3537
+  java.lang.AbstractStringBuilder.ensureCapacityNewCoder:282
+  java.lang.AbstractStringBuilder.append:650
+  java.lang.StringBuilder.append:179
+  java.net.URLStreamHandler.toExternalForm:489
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  java.util.Arrays.copyOf:3537
+  java.lang.AbstractStringBuilder.ensureCapacityNewCoder:282
+  java.lang.AbstractStringBuilder.append:650
+  java.lang.StringBuilder.append:179
+  java.net.URLStreamHandler.toExternalForm:489
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  java.util.Arrays.copyOf:3537
+  java.lang.AbstractStringBuilder.ensureCapacityNewCoder:282
+  java.lang.AbstractStringBuilder.append:650
+  java.lang.StringBuilder.append:179
+  sun.net.util.URLUtil.urlNoFragString:82
+  java.security.CodeSource.<init>:123
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  java.util.Arrays.copyOf:3537
+  java.lang.AbstractStringBuilder.ensureCapacityNewCoder:282
+  java.lang.AbstractStringBuilder.append:650
+  java.lang.StringBuilder.append:179
+  sun.net.util.URLUtil.urlNoFragString:82
+  java.security.CodeSource.<init>:123
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  java.util.Arrays.copyOf:3537
+  java.lang.AbstractStringBuilder.ensureCapacityNewCoder:282
+  java.lang.AbstractStringBuilder.append:650
+  java.lang.StringBuilder.append:179
+  sun.net.util.URLUtil.urlNoFragString:82
+  java.security.CodeSource.<init>:123
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[3, 7368] [B
+  java.util.Arrays.copyOf:3537
+  jdk.internal.loader.Resource.getBytes:102
+  jdk.internal.loader.BuiltinClassLoader.defineClass:773
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[3, 7264] [B
+  java.util.Arrays.copyOf:3537
+  jdk.internal.loader.Resource.getBytes:102
+  jdk.internal.loader.BuiltinClassLoader.defineClass:773
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[3, 9376] [B
+  java.util.Arrays.copyOf:3537
+  jdk.internal.loader.Resource.getBytes:102
+  jdk.internal.loader.BuiltinClassLoader.defineClass:773
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  java.util.Arrays.copyOfRange:3843
+  java.lang.String.<init>:4863
+  java.lang.StringBuilder.toString:478
+  java.net.URLStreamHandler.toExternalForm:491
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  java.util.Arrays.copyOfRange:3843
+  java.lang.String.<init>:4863
+  java.lang.StringBuilder.toString:478
+  java.net.URLStreamHandler.toExternalForm:491
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  java.util.Arrays.copyOfRange:3843
+  java.lang.String.<init>:4863
+  java.lang.StringBuilder.toString:478
+  java.net.URLStreamHandler.toExternalForm:491
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  java.util.Arrays.copyOfRange:3843
+  java.lang.String.<init>:4863
+  java.lang.StringBuilder.toString:478
+  sun.net.util.URLUtil.urlNoFragString:85
+  java.security.CodeSource.<init>:123
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  java.util.Arrays.copyOfRange:3843
+  java.lang.String.<init>:4863
+  java.lang.StringBuilder.toString:478
+  sun.net.util.URLUtil.urlNoFragString:85
+  java.security.CodeSource.<init>:123
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  java.util.Arrays.copyOfRange:3843
+  java.lang.String.<init>:4863
+  java.lang.StringBuilder.toString:478
+  sun.net.util.URLUtil.urlNoFragString:85
+  java.security.CodeSource.<init>:123
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.Class.getPackageName:1156
+  java.lang.ClassLoader.postDefineClass:871
+  java.lang.ClassLoader.defineClass:963
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.Class.getPackageName:1156
+  java.lang.ClassLoader.postDefineClass:871
+  java.lang.ClassLoader.defineClass:963
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.Class.getPackageName:1156
+  java.lang.ClassLoader.postDefineClass:871
+  java.lang.ClassLoader.defineClass:963
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.ClassLoader.checkCerts:1098
+  java.lang.ClassLoader.preDefineClass:854
+  java.lang.ClassLoader.defineClass:960
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.ClassLoader.checkCerts:1098
+  java.lang.ClassLoader.preDefineClass:854
+  java.lang.ClassLoader.defineClass:960
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.ClassLoader.checkCerts:1098
+  java.lang.ClassLoader.preDefineClass:854
+  java.lang.ClassLoader.defineClass:960
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[5, 192] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.ClassLoader.desiredAssertionStatus:2503
+  java.lang.Class.desiredAssertionStatus:3331
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$Symbols.<clinit>:500
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:565
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[5, 192] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.ClassLoader.desiredAssertionStatus:2503
+  java.lang.Class.desiredAssertionStatus:3331
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View$PayloadRecord.<clinit>:660
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[5, 192] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.ClassLoader.desiredAssertionStatus:2503
+  java.lang.Class.desiredAssertionStatus:3331
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<clinit>:553
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.defineClass:761
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.defineClass:761
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.defineClass:761
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.findLoadedModule:652
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:597
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.findLoadedModule:652
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:597
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.findLoadedModule:652
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:597
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.findLoadedModule:652
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:597
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:639
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:615
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.findLoadedModule:652
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:597
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:639
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:615
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] [B
+  java.util.Arrays.copyOfRange:3849
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.findLoadedModule:652
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:597
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:639
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:615
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] [B
+  jdk.internal.loader.Resource.getBytes:91
+  jdk.internal.loader.BuiltinClassLoader.defineClass:773
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] [B
+  jdk.internal.loader.Resource.getBytes:91
+  jdk.internal.loader.BuiltinClassLoader.defineClass:773
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] [B
+  jdk.internal.loader.Resource.getBytes:91
+  jdk.internal.loader.BuiltinClassLoader.defineClass:773
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 312] [B
+  jdk.internal.misc.Unsafe.allocateUninitializedArray:1396
+  java.lang.StringConcatHelper.newArray:578
+  java.lang.StringConcatHelper.doConcat:436
+  java.lang.String.concat:2964
+  java.net.URLStreamHandler.parseURL:275
+  sun.net.www.protocol.file.Handler.parseURL:56
+  java.net.URL.<init>:764
+  java.net.URL.<init>:630
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:935
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 288] [B
+  jdk.internal.misc.Unsafe.allocateUninitializedArray:1396
+  java.lang.StringConcatHelper.newArray:578
+  java.lang.StringConcatHelper.doConcat:436
+  java.lang.String.concat:2964
+  java.net.URLStreamHandler.parseURL:275
+  sun.net.www.protocol.file.Handler.parseURL:56
+  java.net.URL.<init>:764
+  java.net.URL.<init>:630
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:935
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 280] [B
+  jdk.internal.misc.Unsafe.allocateUninitializedArray:1396
+  java.lang.StringConcatHelper.newArray:578
+  java.lang.StringConcatHelper.doConcat:436
+  java.lang.String.concat:2964
+  java.net.URLStreamHandler.parseURL:275
+  sun.net.www.protocol.file.Handler.parseURL:56
+  java.net.URL.<init>:764
+  java.net.URL.<init>:630
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:935
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 96] [B
+  jdk.internal.misc.Unsafe.allocateUninitializedArray:1396
+  java.lang.StringConcatHelper.newArray:578
+  java.lang.StringConcatHelper.doConcat:436
+  java.lang.String.concat:2964
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:687
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 88] [B
+  jdk.internal.misc.Unsafe.allocateUninitializedArray:1396
+  java.lang.StringConcatHelper.newArray:578
+  java.lang.StringConcatHelper.doConcat:436
+  java.lang.String.concat:2964
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:687
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 88] [B
+  jdk.internal.misc.Unsafe.allocateUninitializedArray:1396
+  java.lang.StringConcatHelper.newArray:578
+  java.lang.StringConcatHelper.doConcat:436
+  java.lang.String.concat:2964
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:687
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 96] [B
+  jdk.internal.misc.Unsafe.allocateUninitializedArray:1396
+  java.lang.StringConcatHelper.newArray:578
+  java.lang.StringLatin1.replace:303
+  java.lang.String.replace:2998
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:687
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  jdk.internal.misc.Unsafe.allocateUninitializedArray:1396
+  java.lang.StringConcatHelper.newArray:578
+  java.lang.StringLatin1.replace:303
+  java.lang.String.replace:2998
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:687
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [B
+  jdk.internal.misc.Unsafe.allocateUninitializedArray:1396
+  java.lang.StringConcatHelper.newArray:578
+  java.lang.StringLatin1.replace:303
+  java.lang.String.replace:2998
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:687
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 120] [B
+  sun.management.ThreadImpl.getThreadAllocatedMemory0:-1
+  sun.management.ThreadImpl.getCurrentThreadAllocatedBytes:348
+  com.sun.management.internal.HotSpotThreadImpl.getCurrentThreadAllocatedBytes:67
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:697
+
+[1, 16] [I
+  java.lang.ClassLoader.defineClass1:-1
+  java.lang.ClassLoader.defineClass:962
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] [I
+  java.lang.ClassLoader.defineClass1:-1
+  java.lang.ClassLoader.defineClass:962
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] [I
+  java.lang.ClassLoader.defineClass1:-1
+  java.lang.ClassLoader.defineClass:962
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] [Lio.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$Symbols;
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] [Ljava.lang.Object;
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:565
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] [Ljava.lang.Object;
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 80] [Ljava.lang.Object;
+  io.questdb.std.ObjList.<init>:42
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:557
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 40] io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$Symbols
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:565
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 48] io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View$PayloadRecord
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] io.questdb.std.ObjList
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:557
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 40] io.questdb.std.str.DirectString
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$Symbols.<init>:522
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:565
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 40] io.questdb.std.str.DirectString
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$Symbols.<init>:523
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:565
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 64] java.io.File
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:950
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 64] java.io.File
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:950
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 64] java.io.File
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:950
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 56] java.io.FileCleanable
+  java.io.FileCleanable.register:77
+  java.io.FileInputStream.<init>:140
+  jdk.internal.loader.URLClassPath$FileLoader$1.getInputStream:959
+  jdk.internal.loader.Resource.cachedInputStream:76
+  jdk.internal.loader.Resource.getByteBuffer:133
+  jdk.internal.loader.BuiltinClassLoader.defineClass:767
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 56] java.io.FileCleanable
+  java.io.FileCleanable.register:77
+  java.io.FileInputStream.<init>:140
+  jdk.internal.loader.URLClassPath$FileLoader$1.getInputStream:959
+  jdk.internal.loader.Resource.cachedInputStream:76
+  jdk.internal.loader.Resource.getByteBuffer:133
+  jdk.internal.loader.BuiltinClassLoader.defineClass:767
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 56] java.io.FileCleanable
+  java.io.FileCleanable.register:77
+  java.io.FileInputStream.<init>:140
+  jdk.internal.loader.URLClassPath$FileLoader$1.getInputStream:959
+  jdk.internal.loader.Resource.cachedInputStream:76
+  jdk.internal.loader.Resource.getByteBuffer:133
+  jdk.internal.loader.BuiltinClassLoader.defineClass:767
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 40] java.io.FileDescriptor
+  java.io.FileInputStream.<init>:137
+  jdk.internal.loader.URLClassPath$FileLoader$1.getInputStream:959
+  jdk.internal.loader.Resource.cachedInputStream:76
+  jdk.internal.loader.Resource.getByteBuffer:133
+  jdk.internal.loader.BuiltinClassLoader.defineClass:767
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 40] java.io.FileDescriptor
+  java.io.FileInputStream.<init>:137
+  jdk.internal.loader.URLClassPath$FileLoader$1.getInputStream:959
+  jdk.internal.loader.Resource.cachedInputStream:76
+  jdk.internal.loader.Resource.getByteBuffer:133
+  jdk.internal.loader.BuiltinClassLoader.defineClass:767
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 40] java.io.FileDescriptor
+  java.io.FileInputStream.<init>:137
+  jdk.internal.loader.URLClassPath$FileLoader$1.getInputStream:959
+  jdk.internal.loader.Resource.cachedInputStream:76
+  jdk.internal.loader.Resource.getByteBuffer:133
+  jdk.internal.loader.BuiltinClassLoader.defineClass:767
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 40] java.io.FileInputStream
+  jdk.internal.loader.URLClassPath$FileLoader$1.getInputStream:959
+  jdk.internal.loader.Resource.cachedInputStream:76
+  jdk.internal.loader.Resource.getByteBuffer:133
+  jdk.internal.loader.BuiltinClassLoader.defineClass:767
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 40] java.io.FileInputStream
+  jdk.internal.loader.URLClassPath$FileLoader$1.getInputStream:959
+  jdk.internal.loader.Resource.cachedInputStream:76
+  jdk.internal.loader.Resource.getByteBuffer:133
+  jdk.internal.loader.BuiltinClassLoader.defineClass:767
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 40] java.io.FileInputStream
+  jdk.internal.loader.URLClassPath$FileLoader$1.getInputStream:959
+  jdk.internal.loader.Resource.cachedInputStream:76
+  jdk.internal.loader.Resource.getByteBuffer:133
+  jdk.internal.loader.BuiltinClassLoader.defineClass:767
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[3, 360] java.lang.Class
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 128] java.lang.Class
+  java.lang.ClassLoader.defineClass1:-1
+  java.lang.ClassLoader.defineClass:962
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 128] java.lang.Class
+  java.lang.ClassLoader.defineClass1:-1
+  java.lang.ClassLoader.defineClass:962
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 128] java.lang.Class
+  java.lang.ClassLoader.defineClass1:-1
+  java.lang.ClassLoader.defineClass:962
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.lang.Object
+  java.io.FileInputStream.<init>:81
+  jdk.internal.loader.URLClassPath$FileLoader$1.getInputStream:959
+  jdk.internal.loader.Resource.cachedInputStream:76
+  jdk.internal.loader.Resource.getByteBuffer:133
+  jdk.internal.loader.BuiltinClassLoader.defineClass:767
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.lang.Object
+  java.io.FileInputStream.<init>:81
+  jdk.internal.loader.URLClassPath$FileLoader$1.getInputStream:959
+  jdk.internal.loader.Resource.cachedInputStream:76
+  jdk.internal.loader.Resource.getByteBuffer:133
+  jdk.internal.loader.BuiltinClassLoader.defineClass:767
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.lang.Object
+  java.io.FileInputStream.<init>:81
+  jdk.internal.loader.URLClassPath$FileLoader$1.getInputStream:959
+  jdk.internal.loader.Resource.cachedInputStream:76
+  jdk.internal.loader.Resource.getByteBuffer:133
+  jdk.internal.loader.BuiltinClassLoader.defineClass:767
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.lang.Object
+  java.lang.ClassLoader.getClassLoadingLock:644
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:590
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.lang.Object
+  java.lang.ClassLoader.getClassLoadingLock:644
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:590
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.lang.Object
+  java.lang.ClassLoader.getClassLoadingLock:644
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:590
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.lang.Object
+  java.lang.ClassLoader.getClassLoadingLock:644
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:590
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:639
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:615
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.lang.Object
+  java.lang.ClassLoader.getClassLoadingLock:644
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:590
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:639
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:615
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.lang.Object
+  java.lang.ClassLoader.getClassLoadingLock:644
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:590
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:639
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:615
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.find:587
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:709
+
+[1, 24] java.lang.String
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[5, 120] java.lang.String
+  io.questdb.griffin.engine.join.IntHashJoinBuild.intern:317
+  io.questdb.griffin.engine.join.IntHashJoinBuild.append:171
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:703
+
+[31, 744] java.lang.String
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:708
+
+[2, 48] java.lang.String
+  java.io.UnixFileSystem.resolve:125
+  java.io.File.<init>:373
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:950
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 48] java.lang.String
+  java.io.UnixFileSystem.resolve:125
+  java.io.File.<init>:373
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:950
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 48] java.lang.String
+  java.io.UnixFileSystem.resolve:125
+  java.io.File.<init>:373
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:950
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.Class.initClassName:-1
+  java.lang.Class.getName:951
+  java.lang.Class.getPackageName:1154
+  java.lang.ClassLoader.postDefineClass:871
+  java.lang.ClassLoader.defineClass:963
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.Class.initClassName:-1
+  java.lang.Class.getName:951
+  java.lang.Class.getPackageName:1154
+  java.lang.ClassLoader.postDefineClass:871
+  java.lang.ClassLoader.defineClass:963
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.Class.initClassName:-1
+  java.lang.Class.getName:951
+  java.lang.Class.getPackageName:1154
+  java.lang.ClassLoader.postDefineClass:871
+  java.lang.ClassLoader.defineClass:963
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringBuilder.toString:478
+  java.net.URLStreamHandler.toExternalForm:491
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringBuilder.toString:478
+  java.net.URLStreamHandler.toExternalForm:491
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringBuilder.toString:478
+  java.net.URLStreamHandler.toExternalForm:491
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringBuilder.toString:478
+  sun.net.util.URLUtil.urlNoFragString:85
+  java.security.CodeSource.<init>:123
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringBuilder.toString:478
+  sun.net.util.URLUtil.urlNoFragString:85
+  java.security.CodeSource.<init>:123
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringBuilder.toString:478
+  sun.net.util.URLUtil.urlNoFragString:85
+  java.security.CodeSource.<init>:123
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 48] java.lang.String
+  java.lang.StringConcatHelper.doConcat:439
+  java.lang.String.concat:2964
+  java.net.URLStreamHandler.parseURL:275
+  sun.net.www.protocol.file.Handler.parseURL:56
+  java.net.URL.<init>:764
+  java.net.URL.<init>:630
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:935
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 48] java.lang.String
+  java.lang.StringConcatHelper.doConcat:439
+  java.lang.String.concat:2964
+  java.net.URLStreamHandler.parseURL:275
+  sun.net.www.protocol.file.Handler.parseURL:56
+  java.net.URL.<init>:764
+  java.net.URL.<init>:630
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:935
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 48] java.lang.String
+  java.lang.StringConcatHelper.doConcat:439
+  java.lang.String.concat:2964
+  java.net.URLStreamHandler.parseURL:275
+  sun.net.www.protocol.file.Handler.parseURL:56
+  java.net.URL.<init>:764
+  java.net.URL.<init>:630
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:935
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringConcatHelper.doConcat:439
+  java.lang.String.concat:2964
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:687
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringConcatHelper.doConcat:439
+  java.lang.String.concat:2964
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:687
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringConcatHelper.doConcat:439
+  java.lang.String.concat:2964
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:687
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.Class.getPackageName:1156
+  java.lang.ClassLoader.postDefineClass:871
+  java.lang.ClassLoader.defineClass:963
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.Class.getPackageName:1156
+  java.lang.ClassLoader.postDefineClass:871
+  java.lang.ClassLoader.defineClass:963
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.Class.getPackageName:1156
+  java.lang.ClassLoader.postDefineClass:871
+  java.lang.ClassLoader.defineClass:963
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.ClassLoader.checkCerts:1098
+  java.lang.ClassLoader.preDefineClass:854
+  java.lang.ClassLoader.defineClass:960
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.ClassLoader.checkCerts:1098
+  java.lang.ClassLoader.preDefineClass:854
+  java.lang.ClassLoader.defineClass:960
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.ClassLoader.checkCerts:1098
+  java.lang.ClassLoader.preDefineClass:854
+  java.lang.ClassLoader.defineClass:960
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[5, 120] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.ClassLoader.desiredAssertionStatus:2503
+  java.lang.Class.desiredAssertionStatus:3331
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$Symbols.<clinit>:500
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:565
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[5, 120] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.ClassLoader.desiredAssertionStatus:2503
+  java.lang.Class.desiredAssertionStatus:3331
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View$PayloadRecord.<clinit>:660
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[5, 120] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  java.lang.ClassLoader.desiredAssertionStatus:2503
+  java.lang.Class.desiredAssertionStatus:3331
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<clinit>:553
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.defineClass:761
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.defineClass:761
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.defineClass:761
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.findLoadedModule:652
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:597
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.findLoadedModule:652
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:597
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.findLoadedModule:652
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:597
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.findLoadedModule:652
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:597
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:639
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:615
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.findLoadedModule:652
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:597
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:639
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:615
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.newString:760
+  java.lang.String.substring:2904
+  jdk.internal.loader.BuiltinClassLoader.findLoadedModule:652
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:597
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:639
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:615
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.replace:312
+  java.lang.String.replace:2998
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:687
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.replace:312
+  java.lang.String.replace:2998
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:687
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.String
+  java.lang.StringLatin1.replace:312
+  java.lang.String.replace:2998
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:687
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 48] java.lang.String
+  sun.management.ThreadImpl.getThreadAllocatedMemory0:-1
+  sun.management.ThreadImpl.getCurrentThreadAllocatedBytes:348
+  com.sun.management.internal.HotSpotThreadImpl.getCurrentThreadAllocatedBytes:67
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:697
+
+[1, 24] java.lang.StringBuilder
+  java.net.URLStreamHandler.toExternalForm:485
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.StringBuilder
+  java.net.URLStreamHandler.toExternalForm:485
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 24] java.lang.StringBuilder
+  java.net.URLStreamHandler.toExternalForm:485
+  java.net.URL.toExternalForm:1153
+  java.net.URL.toString:1139
+  java.lang.ClassLoader.defineClassSourceLocation:864
+  java.lang.ClassLoader.defineClass:961
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 128] java.net.URL
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:935
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 128] java.net.URL
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:935
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[2, 128] java.net.URL
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:935
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 40] java.security.CodeSource
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 40] java.security.CodeSource
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 40] java.security.CodeSource
+  jdk.internal.loader.BuiltinClassLoader.defineClass:775
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.security.SecureClassLoader$1
+  java.security.SecureClassLoader.getProtectionDomain:209
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.security.SecureClassLoader$1
+  java.security.SecureClassLoader.getProtectionDomain:209
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.security.SecureClassLoader$1
+  java.security.SecureClassLoader.getProtectionDomain:209
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.security.SecureClassLoader$CodeSourceKey
+  java.security.SecureClassLoader.getProtectionDomain:208
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.security.SecureClassLoader$CodeSourceKey
+  java.security.SecureClassLoader.getProtectionDomain:208
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 16] java.security.SecureClassLoader$CodeSourceKey
+  java.security.SecureClassLoader.getProtectionDomain:208
+  java.security.SecureClassLoader.defineClass:144
+  jdk.internal.loader.BuiltinClassLoader.defineClass:776
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:691
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 32] java.util.concurrent.ConcurrentHashMap$Node
+  java.util.concurrent.ConcurrentHashMap.putVal:1031
+  java.util.concurrent.ConcurrentHashMap.putIfAbsent:1555
+  java.lang.ClassLoader.getClassLoadingLock:645
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:590
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 32] java.util.concurrent.ConcurrentHashMap$Node
+  java.util.concurrent.ConcurrentHashMap.putVal:1031
+  java.util.concurrent.ConcurrentHashMap.putIfAbsent:1555
+  java.lang.ClassLoader.getClassLoadingLock:645
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:590
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 32] java.util.concurrent.ConcurrentHashMap$Node
+  java.util.concurrent.ConcurrentHashMap.putVal:1031
+  java.util.concurrent.ConcurrentHashMap.putIfAbsent:1555
+  java.lang.ClassLoader.getClassLoadingLock:645
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:590
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:639
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:615
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 32] java.util.concurrent.ConcurrentHashMap$Node
+  java.util.concurrent.ConcurrentHashMap.putVal:1031
+  java.util.concurrent.ConcurrentHashMap.putIfAbsent:1555
+  java.lang.ClassLoader.getClassLoadingLock:645
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:590
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:639
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:615
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 32] java.util.concurrent.ConcurrentHashMap$Node
+  java.util.concurrent.ConcurrentHashMap.putVal:1059
+  java.util.concurrent.ConcurrentHashMap.putIfAbsent:1555
+  java.lang.ClassLoader.getClassLoadingLock:645
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:590
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 32] java.util.concurrent.ConcurrentHashMap$Node
+  java.util.concurrent.ConcurrentHashMap.putVal:1059
+  java.util.concurrent.ConcurrentHashMap.putIfAbsent:1555
+  java.lang.ClassLoader.getClassLoadingLock:645
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:590
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:639
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:615
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 56] java.util.concurrent.ConcurrentHashMap$ValueIterator
+  java.util.concurrent.ConcurrentHashMap$ValuesView.iterator:4760
+  jdk.internal.loader.NativeLibraries.find:100
+  java.lang.ClassLoader.findNative:2297
+  sun.management.ThreadImpl.getThreadAllocatedMemory0:-1
+  sun.management.ThreadImpl.getCurrentThreadAllocatedBytes:348
+  com.sun.management.internal.HotSpotThreadImpl.getCurrentThreadAllocatedBytes:67
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:697
+
+[1, 32] jdk.internal.loader.URLClassPath$FileLoader$1
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:954
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:555
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 32] jdk.internal.loader.URLClassPath$FileLoader$1
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:954
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen$View.<init>:556
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706
+
+[1, 32] jdk.internal.loader.URLClassPath$FileLoader$1
+  jdk.internal.loader.URLClassPath$FileLoader.getResource:954
+  jdk.internal.loader.URLClassPath.getResource:332
+  jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull:688
+  jdk.internal.loader.BuiltinClassLoader.loadClassOrNull:620
+  jdk.internal.loader.BuiltinClassLoader.loadClass:578
+  java.lang.ClassLoader.loadClass:490
+  io.questdb.griffin.engine.join.IntHashJoinBuild$Frozen.newProbe:497
+  io.questdb.test.griffin.engine.join.IntHashJoinBuildTest.lambda$testReusableBuildGrowthDoesNotAllocateHeap$0:706

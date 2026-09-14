@@ -1,0 +1,20 @@
+jdk.ExecutionSample with fused reducer ancestor: 8751
+Explicit CircuitBreaker ancestor: 2
+3964 io/questdb/griffin/engine/join/IntHashJoinBuild.findKeySlot
+3269 io/questdb/griffin/engine/table/AsyncHashJoinGroupByRecordCursorFactory.aggregate
+831 io/questdb/griffin/engine/join/JoinRecord.getInt
+375 io/questdb/griffin/engine/table/AsyncHashJoinGroupByRecordCursorFactory.update
+224 io/questdb/std/Hash.hashMem64
+86 io/questdb/cairo/map/OrderedMap.probe0
+1 io/questdb/cairo/sql/NetworkSqlExecutionCircuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled
+1 io/questdb/cairo/sql/NetworkSqlExecutionCircuitBreaker.statefulThrowExceptionIfTripped
+Java sampling includes inlining/native attribution limitations; use phase timers, API semantics and controlled breaker comparisons alongside these samples.
+before-primary.txt
+0 elapsed_ns=710.473998ms build_ns=1.117115ms init_ns=0.085926ms probe_ns=708.759603ms merge_ns=0.208094ms remaining_ms=0.289357
+1 elapsed_ns=711.148332ms build_ns=0.854133ms init_ns=0.084874ms probe_ns=709.645415ms merge_ns=0.181544ms remaining_ms=0.263202
+candidate-primary.txt
+0 elapsed_ns=350.442164ms build_ns=1.096175ms init_ns=0.087659ms probe_ns=348.607569ms merge_ns=0.213088ms remaining_ms=0.293845
+1 elapsed_ns=347.832810ms build_ns=0.890054ms init_ns=0.081432ms probe_ns=346.281703ms merge_ns=0.182327ms remaining_ms=0.2644295
+reference-original-primary.txt
+0 elapsed_ns=319.021921ms build_ns=1.214416ms init_ns=0.063334ms probe_ns=317.212616ms merge_ns=0.202920ms remaining_ms=0.269404
+1 elapsed_ns=318.544936ms build_ns=0.819403ms init_ns=0.056981ms probe_ns=317.139177ms merge_ns=0.172844ms remaining_ms=0.240344

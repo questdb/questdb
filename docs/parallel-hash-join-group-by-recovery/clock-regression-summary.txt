@@ -1,0 +1,1 @@
+The same scoped-clock census fails on the prechange 12ff320ae7 engine for per-row clock reads and passes on the final active-breaker engine. Exact commands, source and logs are in clock-regression.tar.gz.

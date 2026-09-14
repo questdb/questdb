@@ -89,7 +89,6 @@ public final class IntHashJoinBuild implements Closeable {
     private MemoryTracker memoryTracker;
     private boolean open;
     private long nextHandleBase;
-    private long rowCount;
     private long rowBytes;
     private long symbolBytes;
     private int symbolCount;
@@ -146,43 +145,7 @@ public final class IntHashJoinBuild implements Closeable {
         requireBuilding();
         try {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            long slot = findKeySlot(keys.address, keySlotCount, key, circuitBreaker);
-            if (Unsafe.getLong(slot + 8) == 0 && keyCount == keySlotCount / 2) {
-                growTable(keys, keySlotCount);
-                keySlotCount *= 2;
-                slot = findKeySlot(keys.address, keySlotCount, key, circuitBreaker);
-            }
-            rows.ensure(rowBytes + rowSize, initialRowCapacity);
-            long address = rows.address + rowBytes;
-            for (int i = 0; i < types.length; i++) {
-                long dest = address + offsets[i];
-                int column = sourceColumns[i];
-                switch (types[i]) {
-                    case ColumnType.BOOLEAN -> Unsafe.putByte(dest, (byte) (record.getBool(column) ? 1 : 0));
-                    case ColumnType.BYTE -> Unsafe.putByte(dest, record.getByte(column));
-                    case ColumnType.SHORT -> Unsafe.putShort(dest, record.getShort(column));
-                    case ColumnType.CHAR -> Unsafe.putChar(dest, record.getChar(column));
-                    case ColumnType.INT -> Unsafe.putInt(dest, record.getInt(column));
-                    case ColumnType.LONG -> Unsafe.putLong(dest, record.getLong(column));
-                    case ColumnType.DATE -> Unsafe.putLong(dest, record.getDate(column));
-                    case ColumnType.TIMESTAMP -> Unsafe.putLong(dest, record.getTimestamp(column));
-                    case ColumnType.FLOAT -> Unsafe.putFloat(dest, record.getFloat(column));
-                    case ColumnType.DOUBLE -> Unsafe.putDouble(dest, record.getDouble(column));
-                    case ColumnType.SYMBOL -> Unsafe.putInt(dest, intern(sourceSymbols.getQuick(i) != null
-                            ? sourceSymbols.getQuick(i).valueOf(record.getInt(column))
-                            : record.getSymA(column)));
-                    default -> throw new AssertionError();
-                }
-            }
-            long previous = Unsafe.getLong(slot + 8);
-            Unsafe.putLong(address, previous);
-            Unsafe.putInt(slot, key);
-            Unsafe.putLong(slot + 8, rowBytes + 1);
-            if (previous == 0) {
-                keyCount++;
-            }
-            rowBytes += rowSize;
-            rowCount++;
+            appendRow(key, record);
         } catch (Throwable th) {
             close();
             throw th;
@@ -191,8 +154,20 @@ public final class IntHashJoinBuild implements Closeable {
 
     /** Consumes a borrowed cursor once. The caller retains ownership of the cursor. */
     public FrozenHashJoinBuild build(RecordCursor cursor, int keyColumn) {
+        return build(cursor, keyColumn, -1);
+    }
+
+    /** A nonnegative hint is the remaining row count of a freshly acquired cursor. */
+    public FrozenHashJoinBuild build(RecordCursor cursor, int keyColumn, long rowCountHint) {
         requireBuilding();
         try {
+            if (rowCountHint > 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                if (rowCountHint > (MAX_BUFFER_SIZE - rowBytes) / rowSize) {
+                    throw CairoException.nonCritical().put("hash join build buffer overflow");
+                }
+                rows.ensure(rowBytes + rowCountHint * rowSize, initialRowCapacity);
+            }
             // Independent views read the source's native dictionary. Calling getSymA
             // on a cached table record would retain one Java String per symbol.
             for (int i = 0; i < types.length; i++) {
@@ -201,8 +176,15 @@ public final class IntHashJoinBuild implements Closeable {
                 }
             }
             Record record = cursor.getRecord();
+            final var configuration = circuitBreaker.getConfiguration();
+            final int checkInterval = configuration == null ? 1 : Math.max(1, configuration.getCircuitBreakerThrottle());
+            int rowsRemaining = 0;
             while (cursor.hasNext()) {
-                append(record.getInt(keyColumn), record);
+                if (--rowsRemaining <= 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    rowsRemaining = checkInterval;
+                }
+                appendRow(record.getInt(keyColumn), record);
             }
             return freeze();
         } catch (Throwable th) {
@@ -225,7 +207,7 @@ public final class IntHashJoinBuild implements Closeable {
         symbolSlots.close();
         symbolEntries.close();
         symbolChars.close();
-        rowCount = rowBytes = symbolBytes = 0;
+        rowBytes = symbolBytes = 0;
         keyCount = keySlotCount = symbolCount = symbolSlotCount = 0;
         memoryTracker = null;
         circuitBreaker = null;
@@ -278,6 +260,48 @@ public final class IntHashJoinBuild implements Closeable {
             address = base + (long) index * SLOT_SIZE;
         }
         return address;
+    }
+
+    // The caller owns failure cleanup and the row check; nested work still checks here.
+    private void appendRow(int key, Record record) {
+        long slot = findKeySlot(keys.address, keySlotCount, key, circuitBreaker);
+        long previous = Unsafe.getLong(slot + 8);
+        if (previous == 0 && keyCount == keySlotCount / 2) {
+            growTable(keys, keySlotCount);
+            keySlotCount *= 2;
+            slot = findKeySlot(keys.address, keySlotCount, key, circuitBreaker);
+        }
+        final long offset = rowBytes;
+        final long required = offset + rowSize;
+        rows.ensure(required, initialRowCapacity);
+        long address = rows.address + offset;
+        for (int i = 0; i < types.length; i++) {
+            long dest = address + offsets[i];
+            int column = sourceColumns[i];
+            switch (types[i]) {
+                case ColumnType.BOOLEAN -> Unsafe.putByte(dest, (byte) (record.getBool(column) ? 1 : 0));
+                case ColumnType.BYTE -> Unsafe.putByte(dest, record.getByte(column));
+                case ColumnType.SHORT -> Unsafe.putShort(dest, record.getShort(column));
+                case ColumnType.CHAR -> Unsafe.putChar(dest, record.getChar(column));
+                case ColumnType.INT -> Unsafe.putInt(dest, record.getInt(column));
+                case ColumnType.LONG -> Unsafe.putLong(dest, record.getLong(column));
+                case ColumnType.DATE -> Unsafe.putLong(dest, record.getDate(column));
+                case ColumnType.TIMESTAMP -> Unsafe.putLong(dest, record.getTimestamp(column));
+                case ColumnType.FLOAT -> Unsafe.putFloat(dest, record.getFloat(column));
+                case ColumnType.DOUBLE -> Unsafe.putDouble(dest, record.getDouble(column));
+                case ColumnType.SYMBOL -> Unsafe.putInt(dest, intern(sourceSymbols.getQuick(i) != null
+                        ? sourceSymbols.getQuick(i).valueOf(record.getInt(column))
+                        : record.getSymA(column)));
+                default -> throw new AssertionError();
+            }
+        }
+        Unsafe.putLong(address, previous);
+        Unsafe.putInt(slot, key);
+        Unsafe.putLong(slot + 8, offset + 1);
+        if (previous == 0) {
+            keyCount++;
+        }
+        rowBytes = required;
     }
 
     private void growTable(Buffer table, int slots) {
@@ -468,7 +492,7 @@ public final class IntHashJoinBuild implements Closeable {
             keysCount = keyCount;
             slots = keySlotCount;
             rowsAddress = rows.address;
-            rowsCount = rowCount;
+            rowsCount = rowBytes / rowSize;
             size = IntHashJoinBuild.this.getSizeInBytes();
             symbolsCount = symbolCount;
             generation++;
@@ -555,6 +579,11 @@ public final class IntHashJoinBuild implements Closeable {
             private final PayloadRecord record = new PayloadRecord();
             private final Symbols[] symbolTables = new Symbols[types.length];
             private final ObjList<Symbols> symbolPool = new ObjList<>();
+            private int collisionChecksRemaining;
+            private int pairChecksRemaining;
+            private int lookupMask;
+            private long lookupKeysAddress;
+            private long payloadRowsAddress;
             private long probeGeneration;
             private long next;
 
@@ -574,6 +603,12 @@ public final class IntHashJoinBuild implements Closeable {
                     throw new IllegalStateException("hash join build has expired");
                 }
                 probeGeneration = generation;
+                // This view is rebound after the previous execution drains. Cache the
+                // immutable native lookup metadata for its entire acquired lifetime.
+                lookupMask = slots - 1;
+                lookupKeysAddress = keysAddress;
+                payloadRowsAddress = rowsAddress;
+                collisionChecksRemaining = pairChecksRemaining = 0;
                 next = record.address = 0;
                 for (int i = 0; i < symbolTables.length; i++) {
                     if (symbolTables[i] != null) {
@@ -589,6 +624,20 @@ public final class IntHashJoinBuild implements Closeable {
                 long slot = findKeySlot(keysAddress, slots, key, circuitBreaker);
                 next = Unsafe.getLong(slot + 8);
                 record.address = 0;
+            }
+
+            @Override
+            public void findUnchecked(int key, int checkInterval) {
+                assert frozen == Frozen.this && probeGeneration == generation;
+                assert checkInterval > 0;
+                final int mask = lookupMask;
+                final long base = lookupKeysAddress;
+                long address = base + ((long) ((int) Hash.hashInt64(key) & mask)) * SLOT_SIZE;
+                long head = Unsafe.getLong(address + 8);
+                if (head != 0 && Unsafe.getInt(address) != key) {
+                    head = findCollision(key, address, checkInterval);
+                }
+                next = head;
             }
 
             @Override
@@ -632,11 +681,49 @@ public final class IntHashJoinBuild implements Closeable {
             }
 
             @Override
+            public void next(int checkInterval) {
+                assert frozen == Frozen.this && probeGeneration == generation;
+                assert checkInterval > 0;
+                if (next == 0) {
+                    throw new IllegalStateException("hash join probe is exhausted");
+                }
+                if (--pairChecksRemaining <= 0) {
+                    pairChecksRemaining = 0;
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    pairChecksRemaining = checkInterval;
+                }
+                record.address = payloadRowsAddress + next - 1;
+                next = Unsafe.getLong(record.address);
+            }
+
+            @Override
             public void recordAt(long handle) {
                 assert frozen == Frozen.this && probeGeneration == generation;
                 long offset = handle - handleBase;
                 assert offset >= 0 && offset % rowSize == 0 && offset / rowSize < rowsCount;
                 record.address = rowsAddress + offset;
+            }
+
+            private long findCollision(int key, long address, int checkInterval) {
+                final long base = lookupKeysAddress;
+                final long limit = base + ((long) lookupMask + 1) * SLOT_SIZE;
+                int checksRemaining = collisionChecksRemaining;
+                long head;
+                do {
+                    // Keep collision traversal out of the lookup's common fast path.
+                    // A failed check leaves the view ready to check on the next attempt.
+                    if (--checksRemaining <= 0) {
+                        collisionChecksRemaining = 0;
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        checksRemaining = checkInterval;
+                    }
+                    address += SLOT_SIZE;
+                    if (address == limit) {
+                        address = base;
+                    }
+                } while ((head = Unsafe.getLong(address + 8)) != 0 && Unsafe.getInt(address) != key);
+                collisionChecksRemaining = checksRemaining;
+                return head;
             }
 
             private class PayloadRecord implements Record {

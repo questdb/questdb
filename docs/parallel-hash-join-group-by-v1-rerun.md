@@ -6,8 +6,12 @@
 off-heap storage, allocation, cancellation and semantic work. The `+working-tree`
 revision suffix covers this task's benchmark changes; production code is unchanged.
 
+This is historical evidence: RFC task 9f was added after this report and requires
+performance recovery followed by another task 10 rerun. These measurements do not
+complete the updated V1 requirements.
+
 The fixed primary gate passes at **3.312× median end-to-end speedup in both
-rounds**. **Complete experimental V1 and retain the false default.** The wider
+rounds**. **Retain the false default.** The wider
 matrix and its explicit regressions support opt-in use; broad capability-only
 enablement remains premature.
 

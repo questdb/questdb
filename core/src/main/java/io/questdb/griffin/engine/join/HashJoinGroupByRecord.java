@@ -75,7 +75,10 @@ public final class HashJoinGroupByRecord extends OuterJoinRecord implements Symb
 
     /** Select a real payload after next()/recordAt(), or typed nulls for an ON miss. */
     public void setHasMatch(boolean hasMatch) {
-        hasSlave(hasMatch);
+        // Keep repeated hits or misses from writing the same record reference.
+        if (hasMatch != hasSlave()) {
+            hasSlave(hasMatch);
+        }
     }
 
 }
