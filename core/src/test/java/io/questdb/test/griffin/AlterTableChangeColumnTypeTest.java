@@ -2487,6 +2487,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     reader.getColumnVersionReader(),
                     symbolProvider,
                     configuration,
+                    configuration.getCommitMode(),
                     null,
                     Double.NaN,
                     bloomIndexes,

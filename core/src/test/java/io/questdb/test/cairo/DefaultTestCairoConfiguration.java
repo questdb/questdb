@@ -25,12 +25,24 @@
 package io.questdb.test.cairo;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
 
 public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
+
+    /**
+     * The suite's commit mode, not the shipped one. A test that never touches a property lands here rather
+     * than on {@code Overrides}, and the two must agree or coverage depends on whether a test happened to
+     * set something unrelated.
+     */
+    @Override
+    public int getCommitMode() {
+        return CommitMode.fromString(Overrides.TEST_COMMIT_MODE);
+    }
+
     private final Metrics metrics = Metrics.ENABLED;
 
     public DefaultTestCairoConfiguration(CharSequence dbRoot, CharSequence installRoot) {

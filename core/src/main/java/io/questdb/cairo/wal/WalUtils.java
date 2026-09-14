@@ -26,6 +26,10 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurableEpochManifest;
+import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetadata;
@@ -48,6 +52,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -62,6 +67,9 @@ public class WalUtils {
     public static final int DROP_TABLE_WAL_ID = -2;
     public static final String EVENT_FILE_NAME = "_event";
     public static final String EVENT_INDEX_FILE_NAME = "_event.i";
+    // Additive checksum sidecar. _event and _event.i retain their legacy byte layout so an older
+    // binary can drain WAL produced by a newer binary without mis-locating optional record footers.
+    public static final String EVENT_CHECKSUM_FILE_NAME = "_event.c";
     public static final CharSequence INITIAL_META_FILE_NAME = "_meta.0";
     public static final int METADATA_WALID = -1;
     public static final int MIN_WAL_ID = DROP_TABLE_WAL_ID;
@@ -95,10 +103,24 @@ public class WalUtils {
     public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_SUSPENDED + Byte.BYTES;
     public static final String TABLE_REGISTRY_NAME_FILE = "tables.d";
     public static final String TXNLOG_FILE_NAME = "_txnlog";
+    // Additive per-record CRC sidecar for the V1 sequencer txnlog. V1's RECORD_SIZE has no reserved
+    // slot (V2's does), so an in-place CRC would grow the record and stop older binaries reading it.
+    // The ".c" suffix deliberately mirrors _event.c so the two additive sidecars read as one convention.
+    public static final String TXNLOG_CRC_FILE_NAME = "_txnlog.c";
     public static final String TXNLOG_FILE_NAME_META_INX = "_txnlog.meta.i";
     public static final String TXNLOG_FILE_NAME_META_VAR = "_txnlog.meta.d";
     public static final String TXNLOG_PARTS_DIR = "_txn_parts";
     public static final int WALE_HEADER_SIZE = Integer.BYTES + Integer.BYTES;
+    // The high half of the existing format word is ignored by old readers and positively declares
+    // that _event.c is mandatory. The sidecar header is followed by fixed-size entries indexed by
+    // segment txn: [recordOffset:long, recordLength:int, reserved:int, checksum:long].
+    public static final long WALE_CHECKSUM_MAGIC = 0x57414C45434B5331L;
+    public static final int WALE_CHECKSUM_FILE_VERSION = 1;
+    public static final int WALE_CHECKSUM_HEADER_SIZE = 2 * Long.BYTES;
+    public static final int WALE_CHECKSUM_ENTRY_SIZE = 3 * Long.BYTES;
+    public static final int WALE_CHECKSUM_ENTRY_OFFSET_OFFSET = 0;
+    public static final int WALE_CHECKSUM_ENTRY_LENGTH_OFFSET = Long.BYTES;
+    public static final int WALE_CHECKSUM_ENTRY_VALUE_OFFSET = 2 * Long.BYTES;
     public static final long WALE_MAX_TXN_OFFSET_32 = 0L;
     // DEFAULT DEDUP mode means following the table definition. If the table has dedup enabled, then
     // the commit will deduplicate the data, otherwise it will not.
@@ -197,24 +219,63 @@ public class WalUtils {
         // Reset _txn (seqTxn=0, lag, structure version=0) and _meta (new tableId, metadataVersion=0) in
         // the staging dir - exactly as WAL conversion does (TableConverter) - then create the sequencer
         // files so the rename carries a complete table into place.
+        final int timestampType;
+        final int partitionBy;
         try (
                 TxWriter txWriter = new TxWriter(ff, configuration);
                 MemoryMARW metaMem = Vm.getCMARWInstance()
         ) {
             txWriter.ofRW(dstDir.concat(TableUtils.TXN_FILE_NAME).$());
+            // Structural one-shot write, outside any table writer and outside the adaptive epoch's coverage:
+            // take the SYNC grade under ADAPTIVE rather than TxWriter's (correct, but apply-path) lazy gate.
+            txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
             txWriter.resetLagValuesUnsafe();
             TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
             metaMem.putInt(TableUtils.META_OFFSET_TABLE_ID, newTableId);
-            metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
+            // Through resetMetadataVersion, never a raw putLong: the metadataVersion is checksummed into the
+            // meta-format minor-version field, so rewriting it in place otherwise switches off every
+            // version-gated tail field and the clone silently loses its TTL, table format and adaptive
+            // enrolment record.
+            TableUtils.resetMetadataVersion(metaMem, 0);
             txWriter.resetStructureVersionUnsafe();
 
             TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
             try (TableWriterMetadata metadata = new TableWriterMetadata(newToken)) {
                 metadata.reload(dstDir.trimTo(dstLen), metaMem);
                 TableSequencerImpl.createSequencerFiles(configuration, walDirectoryPolicy, dstDir.trimTo(dstLen), metadata, newToken, newTableId);
+                timestampType = metadata.getTimestampIndex() < 0
+                        ? ColumnType.TIMESTAMP
+                        : metadata.getColumnType(metadata.getTimestampIndex());
+                partitionBy = metadata.getPartitionBy();
             }
         }
         dstDir.trimTo(dstLen);
+
+        // The clone is a NEW table - its _txn/_meta were just reset - so it needs its OWN adaptive epoch
+        // anchor; the source's was excluded from the copy (see isRebaseClonedRootFile) because it binds to
+        // metadata this table no longer has. Publish generation zero HERE, in the staging dir, so the atomic
+        // rename below carries a table that is self-consistent from the first instant it is visible: a boot
+        // that finds the published dir - as the live table after the registry swap, or as a crash-orphan the
+        // root-directory scan adopts - can always validate its epoch instead of refusing to start.
+        if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+            DurableEpochManifest.publishInitialAt(
+                    configuration,
+                    newToken,
+                    dstDir.trimTo(dstLen),
+                    timestampType,
+                    partitionBy,
+                    configuration.getMicrosecondClock().getTicks() / 1000L
+            );
+            dstDir.trimTo(dstLen);
+        } else {
+            // No anchor for this clone, so it must not inherit the SOURCE's enrolment record either -- the
+            // copied _meta carries it, and a source left enrolled by a crash (awaiting the reconciliation
+            // its next writer performs) would hand the clone a claim of lazy state with nothing to rewind
+            // to, which recovery refuses. Symmetric to excluding the source's epoch artifacts from the copy:
+            // the clone's _txn/_meta were just reset, so it has no lazy state by construction.
+            DurableEpochManifest.clearEnrollmentRecord(configuration, newToken, dstDir.trimTo(dstLen), dstLen);
+            dstDir.trimTo(dstLen);
+        }
 
         // Mark the new table rebased while it is still invisible in the staging dir, so the permanent
         // _rebase_new marker is in place before the rename makes the table observable to the uploader.
@@ -224,6 +285,118 @@ public class WalUtils {
         // markRebased is false there. No-op effect in OSS, which has no uploader to consume the marker.
         if (markRebased) {
             writeRebaseNewMarker(ff, dstDir);
+        }
+
+        // ADAPTIVE: durably publish the staging table. ff.copy / MemoryMARW.close's munmap / createSequencerFiles
+        // all leave the freshly built _meta/_txn/sequencer file contents in the page cache only, and the caller's
+        // atomic rename makes NEITHER those contents NOR the published dentry durable -- the dentry needs an
+        // fsync of the DESTINATION parent, which the caller issues right after the rename. Recursively MS_SYNC + fdatasync
+        // every file so a power loss cannot publish a table with a size-0 _meta (which recovery would suspend on).
+        // Sync-BEFORE-rename is required: startup adopts the new dir by its presence at the final path, so it must
+        // already be durable when the rename makes it adoptable. Gated on the same mode that decided the epoch
+        // baseline above, so the two cannot disagree.
+        if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+            dstDir.trimTo(dstLen);
+            syncStagingTreeDurable(ff, dstDir, configuration.getWriterFileOpenOpts());
+            dstDir.trimTo(dstLen);
+        }
+    }
+
+    // Recursively make every file under {@code dir} device-durable (full-range MS_SYNC msync + fdatasync of the
+    // mmap-written content), then fsync {@code dir} itself, so an ALTER TABLE ... REBASE WAL staging table is
+    // crash-durable before the caller's atomic rename publishes it (see cloneTableDirForRebase). ADAPTIVE-gated
+    // by the caller. Hard-linked partition columns are synced too: durability is tracked per path, so an
+    // unsynced new path would be lost on a crash even though it shares the source table's durable inode. The
+    // DIRECTORY fsync is required in addition to the per-file content fsync: on POSIX, fdatasync of a newly
+    // created file's CONTENT does NOT make its DIRECTORY ENTRY (dentry) durable — only fsync of the parent
+    // directory does. Children are synced before {@code dir}, so a child dir's own dentries are journaled
+    // before its dentry is journaled into this parent. {@code dir} is restored to its entry length.
+    private static void syncStagingTreeDurable(FilesFacade ff, Path dir, int fileOpts) {
+        final int len = dir.size();
+        final long pFind = ff.findFirst(dir.$());
+        if (pFind < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not enumerate rebase staging directory for durability [path=").put(dir).put(']');
+        }
+        if (pFind > 0) {
+            try {
+                do {
+                    final long pName = ff.findName(pFind);
+                    if (!Files.notDots(pName)) {
+                        continue;
+                    }
+                    dir.trimTo(len).concat(pName);
+                    final int type = ff.findType(pFind);
+                    // DT_UNKNOWN counts as a file, matching TableWriter.fsyncAttachedPartitionFiles: some
+                    // filesystems report it for regular files. Recursing on one now that the enumeration is
+                    // fail-stop would findFirst() a FILE -> ENOTDIR -> -1 -> abort the whole REBASE WAL,
+                    // where before the fail-stop it fell through and was still made durable by the
+                    // directory sync below.
+                    if (type == Files.DT_FILE || type == Files.DT_UNKNOWN) {
+                        fsyncMappedFile(ff, dir, fileOpts);
+                    } else {
+                        syncStagingTreeDurable(ff, dir, fileOpts);
+                    }
+                    dir.trimTo(len);
+                } while (ff.findNext(pFind) > 0);
+            } finally {
+                ff.findClose(pFind);
+                dir.trimTo(len);
+            }
+        }
+        // Now that every child (file content + nested dirs) is durable, fsync THIS directory so the newly
+        // created children's dentries are journaled. Without it a crash could publish (via the rename) a
+        // directory whose entries point at not-yet-durable inodes.
+        fsyncDirDurable(ff, dir);
+    }
+
+    // fsync a single staging DIRECTORY so its dentries are journaled. Windows-guarded (directory fsync is a
+    // POSIX-only operation).
+    // Fail-stop, matching TableUtils.fsyncDirDurable: this barrier is what stands between a power loss and a
+    // rename publishing a table whose dentries point at non-durable inodes, so an unopenable directory must
+    // propagate rather than return success. A silently skipped barrier is indistinguishable from one that
+    // never existed -- and openRO here can fail for transient reasons (EMFILE under load), not just for
+    // reasons that would doom the rebase anyway.
+    private static void fsyncDirDurable(FilesFacade ff, Path dir) {
+        if (Os.isWindows()) {
+            return;
+        }
+        final long dirFd = ff.openRO(dir.$());
+        if (dirFd < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not open rebase staging directory for fsync [path=").put(dir).put(']');
+        }
+        ff.fsyncAndClose(dirFd);
+    }
+
+    // Map the file's full extent, MS_SYNC msync it (flushes the mmap-written content and advances its durable
+    // extent) then fdatasync for the on-device size. A no-op for a 0-length file.
+    // Fail-stop for the same reason as fsyncDirDurable: an unopenable or unmappable staging file leaves
+    // content that the publishing rename would expose as durable when it is not.
+    private static void fsyncMappedFile(FilesFacade ff, Path filePath, int fileOpts) {
+        final long fd = ff.openRW(filePath.$(), fileOpts);
+        if (fd < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not open rebase staging file for durability [path=").put(filePath).put(']');
+        }
+        try {
+            final long size = ff.length(fd);
+            if (size > 0) {
+                final long addr = ff.mmap(fd, size, 0, Files.MAP_RW, MemoryTag.MMAP_TABLE_WRITER);
+                if (addr == -1 || addr == 0) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not map rebase staging file for durability [path=").put(filePath)
+                            .put(", size=").put(size).put(']');
+                }
+                try {
+                    ff.msync(addr, size, false);
+                } finally {
+                    ff.munmap(addr, size, MemoryTag.MMAP_TABLE_WRITER);
+                }
+                ff.fdatasync(fd);
+            }
+        } finally {
+            ff.close(fd);
         }
     }
 
@@ -489,13 +662,25 @@ public class WalUtils {
         }
     }
 
-    // Whether a top-level file should be COPIED into a rebase clone (everything except transient markers).
+    // Whether a top-level file should be COPIED into a rebase clone (everything except transient markers and
+    // the SOURCE table's adaptive epoch anchors). The anchors are deliberately excluded: the clone resets
+    // _txn/_meta to a brand-new table, so every copied .epoch payload/manifest would be bound to metadata this
+    // table no longer has and could never validate - leaving a published dir that recovery reads as "no
+    // trustworthy adaptive epoch generation" and refuses to start on. The clone publishes its OWN
+    // generation-zero baseline instead (see cloneTableDirForRebase).
     private static boolean isRebaseClonedRootFile(CharSequence name) {
         if (Chars.equals(name, TableUtils.TODO_FILE_NAME)
                 || Chars.equals(name, CONVERT_FILE_NAME)
                 || Chars.equals(name, REBASE_NEW_FILE_NAME)
                 || Chars.equals(name, REBASE_SOURCE_FILE_NAME)
-                || Chars.equals(name, TableUtils.TXN_SCOREBOARD_FILE_NAME)) {
+                || Chars.equals(name, TableUtils.TXN_SCOREBOARD_FILE_NAME)
+                || Chars.equals(name, TableUtils.SNAPSHOT_FILE_NAME)
+                || Chars.startsWith(name, DurableEpochManifest.FILE_NAME)
+                // The SOURCE's restore-enrolment marker states something about the SOURCE's files, not the
+                // clone's. Copied in, it would let a clone whose own baseline never landed silently re-enrol
+                // rather than refuse -- the one thing an explicit, per-caller marker exists to prevent.
+                || Chars.equals(name, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME)
+                || Chars.contains(name, TableUtils.EPOCH_COPY_SUFFIX)) {
             return false;
         }
         return !Chars.endsWith(name, WAL_PENDING_FS_MARKER);
@@ -506,6 +691,208 @@ public class WalUtils {
         return Chars.equals(name, SEQ_DIR)
                 || Chars.equals(name, SEQ_DIR_DEPRECATED)
                 || Chars.startsWith(name, WAL_NAME_BASE);
+    }
+
+    /**
+     * A surgical alternative to invalidating a materialized view that a crash left AHEAD of its base.
+     *
+     * <p>Today a view whose {@code lastRefreshBaseTxn} exceeds the base's recovered txn is invalidated
+     * wholesale, so it serves nothing until a FULL refresh rebuilds it. That is correct but expensive:
+     * on a large view a crash that discards a handful of at-risk base txns costs a complete rebuild.
+     *
+     * <p>It is avoidable because every mat-view WAL commit records BOTH the base txn it derived from
+     * ({@link WalEventCursor.MatViewDataInfo#getLastRefreshBaseTableTxn()}) and the timestamp range it
+     * replaced. So the view's WAL is a log of (data, covering base txn) pairs, and the txns to undo are
+     * exactly those recorded above the surviving base txn.
+     *
+     * <p>INVARIANT this relies on: a view txn recorded with {@code baseTxn = N} was refreshed against a
+     * reader FIXED at applied base txn N (see MatViewRefreshJob's {@code engine.detachReader}), so it can
+     * only contain data derivable from base txns &lt;= N. Discarding exactly the txns with
+     * {@code baseTxn > cut} therefore leaves the view consistent with the base -- independently of WHAT
+     * those txns wrote, which is why this also covers O3 late data that a refresh-bound clamp cannot.
+     *
+     * <p>Walks the view's own sequencer transaction log BACKWARDS (same traversal as
+     * {@link #readMatViewState}), unioning the replaced ranges of every txn above the cut and stopping at
+     * the first txn at or below it. Returns false when the range cannot be bounded -- an unreadable event,
+     * an invalidation already in the log, or a log exhausted without reaching the cut -- and the caller
+     * must then fall back to invalidation. Never throws: a failed scan degrades to today's behaviour.
+     *
+     * @param baseTxnCut the base table's recovered txn; view txns recorded above this must be undone
+     * @param plan       out-parameter, populated only when this returns true
+     */
+    public static boolean findMatViewRepairPlan(
+            Path tablePath,
+            CairoConfiguration configuration,
+            MemoryCMR txnLogMemory,
+            WalEventReader walEventReader,
+            long baseTxnCut,
+            MatViewRepairPlan plan
+    ) {
+        plan.clear();
+        try (MemoryCMR mem = txnLogMemory) {
+            final int tablePathLen = tablePath.size();
+            mem.smallFile(configuration.getFilesFacade(), tablePath.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_TX_LOG);
+            if (mem.size() < TableTransactionLogFile.HEADER_SIZE) {
+                return false;
+            }
+            final int formatVersion = mem.getInt(TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET);
+            if (formatVersion == WAL_SEQUENCER_FORMAT_VERSION_V1) {
+                final long txnCount = mem.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+                if (txnCount <= 0 || mem.size() < TableTransactionLogFile.HEADER_SIZE + txnCount * TableTransactionLogV1.RECORD_SIZE) {
+                    return false;
+                }
+                for (long txn = txnCount - 1; txn >= 0; txn--) {
+                    final long offset = TableTransactionLogFile.HEADER_SIZE + txn * TableTransactionLogV1.RECORD_SIZE;
+                    final int verdict = inspectRepairTxn(mem, offset, tablePath, tablePathLen, walEventReader, baseTxnCut, plan);
+                    if (verdict != REPAIR_SCAN_CONTINUE) {
+                        return verdict == REPAIR_SCAN_DONE;
+                    }
+                }
+                return false;
+            }
+            if (formatVersion == WAL_SEQUENCER_FORMAT_VERSION_V2) {
+                final long txnCount = mem.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+                final long partSize = mem.getInt(TableTransactionLogFile.HEADER_SEQ_PART_SIZE_32);
+                if (txnCount <= 0 || partSize <= 0) {
+                    return false;
+                }
+                final long partCount = (txnCount + partSize - 1) / partSize;
+                try (MemoryCMR partMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())) {
+                    for (long part = partCount - 1; part >= 0; part--) {
+                        tablePath.trimTo(tablePathLen).concat(SEQ_DIR).concat(TXNLOG_PARTS_DIR).slash().put(part);
+                        partMem.smallFile(configuration.getFilesFacade(), tablePath.$(), MemoryTag.MMAP_TX_LOG);
+                        final long partTxnCount = Math.min(partSize, txnCount - part * partSize);
+                        for (long txn = partTxnCount - 1; txn >= 0; txn--) {
+                            final long offset = txn * TableTransactionLogV2.RECORD_SIZE;
+                            final int verdict = inspectRepairTxn(partMem, offset, tablePath, tablePathLen, walEventReader, baseTxnCut, plan);
+                            if (verdict != REPAIR_SCAN_CONTINUE) {
+                                return verdict == REPAIR_SCAN_DONE;
+                            }
+                        }
+                    }
+                }
+                return false;
+            }
+            return false;
+        } catch (Throwable th) {
+            // A repair is an OPTIMISATION over invalidation; it must never turn a recoverable
+            // database into a failed boot. Any scan failure degrades to the caller's fallback.
+            return false;
+        }
+    }
+
+    private static final int REPAIR_SCAN_CONTINUE = 0;
+    private static final int REPAIR_SCAN_DONE = 1;
+    private static final int REPAIR_SCAN_ABORT = 2;
+
+    /**
+     * One step of {@link #findMatViewRepairPlan}'s backward walk. Deliberately does NOT close
+     * {@code walEventReader} (unlike {@link #processTransaction}, which consumes it in a
+     * try-with-resources because it only ever reads ONE transaction) -- this scan reads many.
+     */
+    private static int inspectRepairTxn(
+            MemoryCMR mem,
+            long offset,
+            Path tablePath,
+            int tablePathLen,
+            WalEventReader walEventReader,
+            long baseTxnCut,
+            MatViewRepairPlan plan
+    ) {
+        final int walId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET);
+        final int segmentId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_OFFSET);
+        final int segmentTxn = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_TXN_OFFSET);
+        if (walId <= 0) {
+            plan.abortReason = "walId<=0 (" + walId + ")";
+            return REPAIR_SCAN_ABORT;
+        }
+        tablePath.trimTo(tablePathLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+        // MUST close between reads. WalEventReader documents itself as "re-usable AFTER close"
+        // and readMatViewState honours that with a try-with-resources per call -- it only ever
+        // reads one txn. Calling of() twice WITHOUT closing does not reposition the cursor: the
+        // second read returns the FIRST record's payload under a garbage type. Reproduced on a
+        // clean, never-crashed database: every cut reported the same "INVALIDATE ... baseTxn=8793
+        // reason=''" -- baseTxn identical to the newest txn, which is what gave it away.
+        final WalEventCursor cursor;
+        try {
+            walEventReader.close();
+            cursor = walEventReader.of(tablePath, segmentTxn);
+        } catch (Throwable th) {
+            plan.abortReason = "event open failed: " + th.getMessage();
+            return REPAIR_SCAN_ABORT;
+        }
+        if (cursor.getType() == MAT_VIEW_INVALIDATE) {
+            // MAT_VIEW_INVALIDATE is a DUAL-PURPOSE state record, not necessarily an invalidation:
+            // WalWriter.resetMatViewState "marks the materialized view as invalid OR RESETS its
+            // invalidation status, depending on the input values", and every refresh writes one with
+            // invalid=false to carry its refresh intervals. The view's WAL therefore alternates
+            // MAT_VIEW_DATA / MAT_VIEW_INVALIDATE, and branching on the TYPE aborted this scan one txn
+            // in, every time -- on crash states AND on a clean database that never invalidated anything.
+            // Branch on the FLAG.
+            final WalEventCursor.MatViewInvalidationInfo inv = cursor.getMatViewInvalidationInfo();
+            if (inv.isInvalid()) {
+                plan.abortReason = "genuine invalidation at segmentTxn=" + segmentTxn
+                        + " reason='" + inv.getInvalidationReason() + "'";
+                return REPAIR_SCAN_ABORT;
+            }
+            // A state record carries no rows of its own; the DATA txn beside it already accounts for
+            // them. Skip it, but let its watermark close the scan when it is at or below the cut.
+            if (inv.getLastRefreshBaseTableTxn() <= baseTxnCut && plan.txnsAboveCut > 0) {
+                plan.cutBaseTxn = inv.getLastRefreshBaseTableTxn();
+                return REPAIR_SCAN_DONE;
+            }
+            return REPAIR_SCAN_CONTINUE;
+        }
+        if (cursor.getType() != MAT_VIEW_DATA) {
+            plan.abortReason = "event type=" + cursor.getType() + " (not MAT_VIEW_DATA) at segmentTxn=" + segmentTxn;
+            return REPAIR_SCAN_ABORT;
+        }
+        final WalEventCursor.MatViewDataInfo info = cursor.getMatViewDataInfo();
+        final long baseTxn = info.getLastRefreshBaseTableTxn();
+        if (baseTxn <= baseTxnCut) {
+            plan.cutBaseTxn = baseTxn;
+            if (plan.txnsAboveCut == 0) {
+                plan.abortReason = "newest txn already at/below cut";
+                return REPAIR_SCAN_ABORT;
+            }
+            return REPAIR_SCAN_DONE;
+        }
+        long lo = info.getReplaceRangeTsLow();
+        long hi = info.getReplaceRangeTsHi();
+        if (lo >= hi) {
+            // No replace range recorded (e.g. a watermark-only commit): fall back to the data range.
+            lo = info.getMinTimestamp();
+            hi = info.getMaxTimestamp();
+        }
+        if (lo <= hi) {
+            plan.rangeLo = Math.min(plan.rangeLo, lo);
+            plan.rangeHi = Math.max(plan.rangeHi, hi);
+        }
+        plan.txnsAboveCut++;
+        return REPAIR_SCAN_CONTINUE;
+    }
+
+    /**
+     * Out-parameter for {@link #findMatViewRepairPlan}.
+     */
+    public static class MatViewRepairPlan {
+        public String abortReason = "none";
+        public long cutBaseTxn = -1;
+        public long rangeHi = Long.MIN_VALUE;
+        public long rangeLo = Long.MAX_VALUE;
+        public int txnsAboveCut;
+
+        public void clear() {
+            abortReason = "none";
+            cutBaseTxn = -1;
+            rangeLo = Long.MAX_VALUE;
+            rangeHi = Long.MIN_VALUE;
+            txnsAboveCut = 0;
+        }
+
+        public boolean hasRange() {
+            return rangeLo <= rangeHi;
+        }
     }
 
     private static boolean processTransaction(

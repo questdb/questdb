@@ -1,0 +1,8 @@
+[Unit]
+Description=QuestDB adaptive-commit VM crash matrix
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/claude/wt/oss/adaptive-commit
+ExecStart=/usr/bin/bash tools/durability/vm/run-matrix.sh
+# Failures keep their disks under /data/qdb-vmcrash for inspection.

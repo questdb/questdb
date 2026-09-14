@@ -1,0 +1,13 @@
+[Unit]
+Description=Nightly QuestDB VM crash matrix
+
+# SHIPPED DISABLED, deliberately. Enable only once the harness has earned trust:
+#   systemctl --user enable --now qdb-vmcrash.timer
+#   loginctl enable-linger $USER    # else user timers stop at logout
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

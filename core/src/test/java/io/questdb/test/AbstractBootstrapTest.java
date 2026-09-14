@@ -28,6 +28,7 @@ import io.questdb.Bootstrap;
 import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlExecutionContext;
@@ -228,6 +229,12 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println(CAIRO_WAL_ENABLED_DEFAULT + "=false");
             writer.println(METRICS_ENABLED + "=false");
             writer.println(MEMORY_USAGE_LOG_ENABLED + "=false");
+            // The suite's commit mode, so the end-to-end suites exercise the same path as everything else.
+            // These classes extend AbstractTest rather than AbstractCairoTest, so they never pass through
+            // Overrides and would otherwise silently follow whatever the shipped default happens to be.
+            // A caller that wants a different mode passes it in `extra`, which is written after this and
+            // wins on a repeated key.
+            writer.println(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath() + "=" + Overrides.TEST_COMMIT_MODE);
             writer.println(TELEMETRY_ENABLED + "=" + telemetryEnable);
             writer.println(TELEMETRY_DISABLE_COMPLETELY + "=" + !telemetryEnable);
 

@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
@@ -42,6 +43,8 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -55,6 +58,11 @@ public class WalEventCursor {
     private static final int REPLACE_RANGE_LO_OFFSET = REPLACE_RANGE_HI_OFFSET + Long.BYTES;
     private static final int REPLACE_RANGE_EXTRA_OFFSET = REPLACE_RANGE_LO_OFFSET + Long.BYTES;
     private static final int DEDUP_FOOTER_SIZE = REPLACE_RANGE_EXTRA_OFFSET;
+    // Re-reads of a length header that disagrees with a present sidecar entry before the record is
+    // declared torn. The publishing store drains within nanoseconds, so a torn read settles on the
+    // first or second re-read; the budget is slack, not a wait.
+    private static final int TORN_LENGTH_REREAD_LIMIT = 64;
+    private final MemoryCMR checksumMem;
     private final DataInfo dataInfo = new DataInfo();
     private final MemoryCMR eventMem;
     private final LiveViewDataInfo lvDataInfo = new LiveViewDataInfo();
@@ -68,9 +76,11 @@ public class WalEventCursor {
     private long offset = Integer.BYTES; // skip wal meta version
     private long txn = END_OF_EVENTS;
     private byte type = NONE;
+    private boolean checksumRequired;
 
-    public WalEventCursor(MemoryCMR eventMem) {
+    public WalEventCursor(MemoryCMR eventMem, MemoryCMR checksumMem) {
         this.eventMem = eventMem;
+        this.checksumMem = checksumMem;
     }
 
     public void drain() {
@@ -162,23 +172,123 @@ public class WalEventCursor {
 
     public boolean hasNext() {
         offset = nextOffset;
+        final long recordStart = offset;
         int length = readInt();
         if (length < 1) {
             // EOF
             return false;
         }
-        nextOffset = length + nextOffset;
+        nextOffset = recordStart + length;
 
         if (memSize < nextOffset + Integer.BYTES) {
             eventMem.extend(nextOffset + Integer.BYTES);
             memSize = eventMem.size();
         }
+        // The sidecar has the last word on the length: the header just read is the writer's publishing
+        // store and a reader following a live segment's tail can catch it mid-flight. See
+        // verifyRecordChecksum(); the returned length differs from the header only after such a read
+        // settled, and the mapping already covers it.
+        length = verifyRecordChecksum(recordStart, length);
+        nextOffset = recordStart + length;
         txn = readLong();
         if (txn == END_OF_EVENTS) {
             return false;
         }
         readRecord();
         return true;
+    }
+
+    /**
+     * Re-reads the length header at {@code recordStart} until it agrees with the sidecar or the re-read
+     * budget is spent, and returns the last value read. Called only when the sidecar entry describes this
+     * exact offset with a different length: the entry is complete, so the header is the writer's
+     * publishing store observed mid-flight. That store drains within nanoseconds and a re-read or two
+     * settles it; a corrupt header never settles, keeps its observed value, and is rejected by the caller
+     * exactly as before.
+     */
+    private int settleTornLength(long recordStart, int length, int storedLength) {
+        for (int i = 0; i < TORN_LENGTH_REREAD_LIMIT && length != storedLength; i++) {
+            Os.pause();
+            length = eventMem.getInt(recordStart);
+            // Acquire after each re-read: the header is the publishing store, and the body hashed next must
+            // not be loaded from before it. Also pins the load inside the loop.
+            Unsafe.loadFence();
+        }
+        return length;
+    }
+
+    /**
+     * Verifies the record at {@code recordStart} against its sidecar entry and returns the length the
+     * entry vouches for. Without a sidecar (legacy segment) the header is trusted as read.
+     * <p>
+     * The length header is the publishing store (see {@code WalEventWriter.finishRecord()}): the writer
+     * fills the entry, fences, then flips the header from the {@code -1} end-of-events marker to the
+     * length. Record starts are not 4-byte aligned, so on a weakly-ordered machine that store is not
+     * single-copy atomic, and a reader that walks a live segment to its end-of-events marker -- the
+     * live-view segment bind in {@code WalReader.openSymbolMaps()}; index- and sequencer-bounded readers
+     * never reach an unpublished record -- can read a byte-mix of marker and length, e.g.
+     * {@code 0x0000FFFF} for a length of 50. The entry is complete by then, so a present entry whose
+     * length disagrees with the header is re-read a bounded number of times before the record is
+     * declared torn, and nothing is hashed until the entry has vouched for the length: a torn value must
+     * never size the hash.
+     */
+    private int verifyRecordChecksum(long recordStart, int length) {
+        if (!checksumRequired) {
+            return length;
+        }
+        // The fixed prefix (length header + txn) is the least any record has, and the txn is read below
+        // from inside the mapping the caller sized by this length.
+        if (length < Integer.BYTES + Long.BYTES || memSize < recordStart + length) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("invalid checksummed WAL event record [offset=").put(recordStart).put(", len=").put(length).put(']');
+        }
+        // Acquire, pairing with the writer's release in WalEventWriter.finishRecord(): the length the
+        // caller just read is the publishing store, so neither the txn, nor the sidecar entry that
+        // describes the record, nor its body may be loaded from before it.
+        Unsafe.loadFence();
+        final long recordTxn = eventMem.getLong(recordStart + Integer.BYTES);
+        if (recordTxn < 0 || recordTxn > Integer.MAX_VALUE) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("invalid checksummed WAL event txn [txn=").put(recordTxn).put(']');
+        }
+        final long entryOffset = WALE_CHECKSUM_HEADER_SIZE + recordTxn * WALE_CHECKSUM_ENTRY_SIZE;
+        if (entryOffset + WALE_CHECKSUM_ENTRY_SIZE > checksumMem.size()) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("WAL event checksum sidecar is truncated [txn=").put(recordTxn).put(']');
+        }
+        final long storedOffset = checksumMem.getLong(entryOffset + WALE_CHECKSUM_ENTRY_OFFSET_OFFSET);
+        final int storedLength = checksumMem.getInt(entryOffset + WALE_CHECKSUM_ENTRY_LENGTH_OFFSET);
+        final long stored = checksumMem.getLong(entryOffset + WALE_CHECKSUM_ENTRY_VALUE_OFFSET);
+        if (storedOffset == recordStart && storedLength != length && storedLength >= Integer.BYTES + Long.BYTES) {
+            length = settleTornLength(recordStart, length, storedLength);
+            if (length == storedLength && memSize < recordStart + length) {
+                // The torn value undershot and sized the caller's mapping short of the real record.
+                eventMem.extend(recordStart + length + Integer.BYTES);
+                memSize = eventMem.size();
+            }
+        }
+        if (storedOffset != recordStart || storedLength != length || stored == 0) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("torn WAL event record [txn=").put(recordTxn)
+                    .put(", offset=").put(recordStart).put(", len=").put(length)
+                    .put(", storedOffset=").put(storedOffset).put(", storedLen=").put(storedLength)
+                    .put(", expected=").put(stored).put(']');
+        }
+        // Body only -- the 4-byte length header is verified by the storedLength comparison above, because
+        // the writer cannot hash a length it has not written yet without publishing the record first.
+        final long actual = TableUtils.calculateCvAreaChecksum(eventMem.addressOf(recordStart) + Integer.BYTES, length - Integer.BYTES);
+        if (actual != stored) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("torn WAL event record [txn=").put(recordTxn)
+                    .put(", offset=").put(recordStart).put(", len=").put(length)
+                    .put(", storedOffset=").put(storedOffset).put(", storedLen=").put(storedLength)
+                    .put(", expected=").put(stored).put(", actual=").put(actual).put(']');
+        }
+        return length;
+    }
+
+    public void setChecksumRequired(boolean checksumRequired) {
+        this.checksumRequired = checksumRequired;
     }
 
     public void reset() {
@@ -437,10 +547,12 @@ public class WalEventCursor {
         reset();
         if (offset > 0) {
             this.offset = offset;
-            int size = readInt();
+            // Must precede verifyRecordChecksum(): it reads memSize to bound the record before hashing.
+            this.memSize = eventMem.size();
+            final int headerLength = readInt();
+            final int size = verifyRecordChecksum(offset, headerLength);
             this.nextOffset = offset + size;
             this.txn = readLong();
-            this.memSize = eventMem.size();
 
             readRecord();
         }
