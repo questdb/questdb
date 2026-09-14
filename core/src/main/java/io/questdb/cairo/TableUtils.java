@@ -2987,7 +2987,16 @@ public final class TableUtils {
             // absent. Neither is a regression on Windows, where ff.copy simply refused the whole operation
             // before. removeQuiet fails outright on an open or mapped file, so a destination someone is
             // actually holding fail-stops here rather than being silently replaced.
-            if (!ff.removeQuiet(dst)) {
+            //
+            // The exists() re-check is what keeps "destination absent" off the error path, and it is
+            // deliberately NOT expressed as an errno test. removeQuiet decides "absent" by asking
+            // FilesFacade.errno(), which is a VIRTUAL observation point: a fault-injecting test facade that
+            // pins errno() to a sentinel (WalWriterTest#testExceptionThrownIfSequencerCannotCreateDir pins
+            // 999) turns a missing file into a hard failure here, on Windows only, in a test that is aiming
+            // at a completely different call. Asking the filesystem whether the destination is still there
+            // is errno-oracle-independent and preserves the fail-stop above: a genuinely open, mapped or
+            // locked destination still exists after the failed remove, so it still throws.
+            if (!ff.removeQuiet(dst) && ff.exists(dst)) {
                 throw CairoException.critical(ff.errno())
                         .put("could not remove copy destination [dst=").put(dst).put(']');
             }
