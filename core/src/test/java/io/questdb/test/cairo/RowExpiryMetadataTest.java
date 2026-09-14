@@ -1,0 +1,706 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo;
+
+import io.questdb.PropertyKey;
+import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.RowExpiryUtil;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Before;
+import org.junit.Test;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+
+/**
+ * Verifies that the per-object row-expiry policy (predicate + cleanup interval) is persisted to and read
+ * back from the trailing variable-length section of the {@code _meta} file. EXPIRE ROWS is now
+ * MATERIALIZED-VIEW-ONLY (rejected on plain tables / CTAS / LIKE), so every policy round-trip is exercised
+ * through a PASSTHROUGH materialized view over a plain base table. The predecessor of this class
+ * (operating on plain {@code create table ... EXPIRE ROWS}) was deleted in 165f6becc2 when EXPIRE became
+ * mat-view-only; this restores the _meta round-trip + backward-compat coverage adapted to mat views.
+ * <p>
+ * Mat views are WAL tables, so the _meta serializers/readers are shared with plain tables — the policy
+ * section lives in the same trailing region. The two _meta serializers (CREATE path, ALTER-rewrite path)
+ * and both readers (reader metadata, writer metadata) are covered.
+ */
+public class RowExpiryMetadataTest extends AbstractCairoTest {
+
+    private static final long MICROS_PER_MINUTE = 60_000_000L;
+    // _meta column-flag layout (mirrors TableUtils, whose members are package-private): the long flags word
+    // sits at META_OFFSET_COLUMN_TYPES + i*META_COLUMN_DATA_SIZE + 4, and the covering bit is 1<<6.
+    private static final int META_FLAG_BIT_COVERING = 1 << 6;
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        // Mat views are gated behind dev mode (as in MatViewExpireRowsTest).
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
+    @Test
+    public void testAggregatingMatViewDoesNotInheritBaseSymbolIndex() throws Exception {
+        // Index inheritance is passthrough-only: an aggregating view's rows are not base rows, so its
+        // key column must not silently gain the base index (and its maintenance cost/storage).
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol index capacity 512, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select ts, k, avg(v) a from base sample by 1h)");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                final int ki = metadata.getColumnIndexQuiet("k");
+                assertTrue(ki >= 0);
+                assertTrue("aggregating MV must not inherit the base symbol index", !metadata.isColumnIndexed(ki));
+            }
+        });
+    }
+
+    @Test
+    public void testAggregatingMatViewShadowingColumnNameCreates() throws Exception {
+        // A non-symbol view column whose name shadows an indexed base SYMBOL column must not be
+        // flagged indexed: the CREATE would then fail table validation ("indexes are supported only
+        // for SYMBOL columns") for a statement that is valid without inheritance.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol index, k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select ts, sym, avg(v) a from (select ts, upper(k) sym, v from base) sample by 1h)");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                final int si = metadata.getColumnIndexQuiet("sym");
+                assertTrue(si >= 0);
+                assertTrue("shadowing column must not inherit an index", !metadata.isColumnIndexed(si));
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughMatViewInheritsBaseSymbolIndex() throws Exception {
+        // R2: a passthrough materialized view (SELECT * FROM base) inherits the base table's SYMBOL
+        // index for each directly-projected symbol column, so indexed reads over the view (e.g.
+        // LATEST ON under an EXPIRE ROWS retention policy) can use the index instead of a full scan.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol index capacity 512, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select * from base) EXPIRE ROWS WHEN ts < dateadd('d', -1, now()) CLEANUP EVERY 1h");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                final int ki = metadata.getColumnIndexQuiet("k");
+                assertTrue(ki >= 0);
+                assertTrue("passthrough MV should inherit base symbol index", metadata.isColumnIndexed(ki));
+                assertEquals(512, metadata.getIndexValueBlockCapacity(ki));
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughMatViewDoesNotInheritIndexForNonPassthroughColumn() throws Exception {
+        // Only DIRECT pass-through symbol columns inherit the base index. A renamed/expression column
+        // is not a straight pass-through, so it must not silently gain an index.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol index capacity 512, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select k || '_x' k2, v, ts from base) EXPIRE ROWS WHEN ts < dateadd('d', -1, now()) CLEANUP EVERY 1h");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                final int ki = metadata.getColumnIndexQuiet("k2");
+                assertTrue(ki >= 0);
+                assertTrue("expression column must not inherit an index", !metadata.isColumnIndexed(ki));
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughMatViewNonIndexedBaseSymbolStaysUnindexed() throws Exception {
+        // If the base symbol is not indexed, the pass-through MV column stays unindexed.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select * from base) EXPIRE ROWS WHEN ts < dateadd('d', -1, now()) CLEANUP EVERY 1h");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                final int ki = metadata.getColumnIndexQuiet("k");
+                assertTrue(ki >= 0);
+                assertTrue("non-indexed base symbol must stay unindexed", !metadata.isColumnIndexed(ki));
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughMatViewRenamedSymbolColumnInheritsBaseIndex() throws Exception {
+        // A renamed straight pass-through (SELECT k AS k2) copies the base column's data 1:1, so the
+        // rename keeps the inherited index.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol index capacity 512, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select k k2, v, ts from base)");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                final int ki = metadata.getColumnIndexQuiet("k2");
+                assertTrue(ki >= 0);
+                assertTrue("renamed pass-through symbol keeps the inherited base index", metadata.isColumnIndexed(ki));
+                assertEquals(512, metadata.getIndexValueBlockCapacity(ki));
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughMatViewSubqueryShadowingColumnNotIndexed() throws Exception {
+        // Chain resolution: a top-level pass-through of an INNER expression alias that shadows an
+        // indexed base SYMBOL name resolves to the expression, not to the base column, so nothing is
+        // inherited (the view's column is a STRING; flagging it indexed would fail the CREATE).
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol index, k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select * from (select ts, upper(k) sym, v from base))");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                final int si = metadata.getColumnIndexQuiet("sym");
+                assertTrue(si >= 0);
+                assertTrue("expression-derived column must not inherit an index", !metadata.isColumnIndexed(si));
+            }
+        });
+    }
+
+    @Test
+    public void testReadsOldFormatMetaWithoutZeroingTtlOrMisreadingExpiry() throws Exception {
+        // Backward-compat: the LATEST minor version (== EXPIRE_ROWS == 3) must NOT zero TTL on an object
+        // written before this feature, and the trailing expiry section must read as ABSENT (null/0) — not
+        // as garbage — when the stored minor version predates it. Simulated by downgrading the VIEW's _meta
+        // minor-version field (preserving its checksum) on a real passthrough mat view that carries BOTH a
+        // TTL (alter materialized view ... set ttl, confirmed supported) and an EXPIRE ROWS policy.
+        assertMemoryLeak(() -> {
+            execute("create table base (v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select * from base) EXPIRE ROWS WHEN v < 2.0 CLEANUP EVERY 30m");
+            drainWalAndMatViewQueues();
+            execute("alter materialized view v set ttl 7 days");
+            drainWalAndMatViewQueues();
+            final TableToken token = engine.verifyTableName("v");
+
+            // Sanity: at the LATEST minor version both TTL and expiry are present on the view.
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals(7 * 24, metadata.getTtlHoursOrMonths());
+                assertEquals("v < 2.0", metadata.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, metadata.getExpiryCleanupIntervalMicros());
+            }
+
+            // Minor version 1 (TTL exists, but predates EXPIRE ROWS == 3): TTL preserved, expiry absent.
+            setMetaFormatMinorVersion(token, (short) 1);
+            reloadMetadata();
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals("TTL must survive the LATEST bump", 7 * 24, metadata.getTtlHoursOrMonths());
+                assertNull("expiry must read as absent on a pre-EXPIRE-ROWS _meta", metadata.getExpiryPredicate());
+                assertEquals(0, metadata.getExpiryCleanupIntervalMicros());
+            }
+
+            // Minor version 0 (predates TTL too): TTL gated off to 0, expiry still absent — no garbage.
+            setMetaFormatMinorVersion(token, (short) 0);
+            reloadMetadata();
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals(0, metadata.getTtlHoursOrMonths());
+                assertNull(metadata.getExpiryPredicate());
+                assertEquals(0, metadata.getExpiryCleanupIntervalMicros());
+            }
+        });
+    }
+
+    @Test
+    public void testExpiryRoundTripsWithCoveringIndexColumn() throws Exception {
+        // THE KEY OFFSET-WALK GUARD. The trailing expiry section sits AFTER the per-column covering-index
+        // section in _meta, so TableUtils.getMetaExpiryPolicyOffset must skip a NON-EMPTY covering section to
+        // locate the policy. Every other expiry test uses an empty covering section, so this is the only guard
+        // over a non-empty one.
+        //
+        // PATH TAKEN: the mat-view CREATE grammar cannot declare "index type posting include (...)" directly.
+        // Passthrough views may inherit a covering index from their base table, but this test deliberately
+        // isolates the metadata reader from that inheritance path: build a real _meta with a NON-EMPTY covering
+        // section on a PLAIN table, then PATCH a trailing EXPIRE policy onto that _meta in place (the create
+        // path already wrote an empty policy there) and re-read it through the public reader. The reader runs the
+        // real getMetaExpiryPolicyOffset over the non-empty covering section; if the offset walk regresses and
+        // fails to skip it, the reader lands on the wrong bytes and reads back null / a different interval, so
+        // the assertions below FAIL. (The patch helper mirrors the walk only to find WHERE to write; the
+        // verification is done entirely by the SUT reader.)
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table t (
+                    s symbol index type posting include (v), v double, ts timestamp
+                    ) timestamp(ts) partition by day wal""");
+
+            final TableToken token = engine.verifyTableName("t");
+
+            // Sanity: the POSTING INCLUDE produced a non-empty covering section on 's'.
+            final int columnCount;
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                final IntList covering = metadata.getColumnMetadata(metadata.getColumnIndex("s")).getCoveringColumnIndices();
+                assertNotNull("expected a covering-index section", covering);
+                assertTrue("expected a NON-EMPTY covering-index section", covering.size() > 0);
+                columnCount = metadata.getColumnCount();
+                // The freshly-created table has the LATEST minor version (>= EXPIRE_ROWS), so the trailing
+                // policy section is already present (written empty); patching it in place is enough.
+                assertNull(metadata.getExpiryPredicate());
+                assertEquals(0, metadata.getExpiryCleanupIntervalMicros());
+            }
+
+            // Patch a real policy onto the trailing section (AFTER the covering section), then re-read.
+            patchExpiryPolicy(token, columnCount, "v < 2.0", 30 * MICROS_PER_MINUTE);
+            reloadMetadata();
+
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                // The covering section must still be intact (offset walk must not have clobbered it).
+                final IntList covering = metadata.getColumnMetadata(metadata.getColumnIndex("s")).getCoveringColumnIndices();
+                assertNotNull(covering);
+                assertTrue("covering section must survive the patch", covering.size() > 0);
+                // And the policy must read back from PAST the non-empty covering section.
+                assertEquals("offset walk must skip the non-empty covering section", "v < 2.0", metadata.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, metadata.getExpiryCleanupIntervalMicros());
+            }
+            // Writer metadata reader (second reader) must agree.
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                assertEquals("v < 2.0", writer.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, writer.getExpiryCleanupIntervalMicros());
+            }
+        });
+    }
+
+    @Test
+    public void testGetMetaExpiryPolicyOffsetRejectsCorruptColumnNameLength() throws Exception {
+        // A corrupt (negative) column-name length in _meta must not send the policy-offset walk backward
+        // into a wild native read. getMetaExpiryPolicyOffset is the only name walker that runs BEFORE the
+        // column names are validated (MetadataCache.hydrateTableStartup passes a null name index), so it
+        // has to reject an out-of-range name length itself and report "no policy" (-1).
+        assertMemoryLeak(() -> {
+            execute("create table t (a int, b int, ts timestamp) timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("t");
+            engine.releaseInactive();
+
+            try (
+                    MemoryMARW mem = Vm.getCMARWInstance();
+                    Path path = new Path()
+            ) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                final int columnCount = mem.getInt(TableUtils.META_OFFSET_COUNT);
+                final long nameOffset = TableUtils.getColumnNameOffset(columnCount);
+
+                // Happy path: the walk lands on a valid, in-bounds policy offset past the column names.
+                final long goodOffset = TableUtils.getMetaExpiryPolicyOffset(mem, columnCount);
+                assertTrue("expected a valid policy offset past the column names", goodOffset > nameOffset);
+
+                final int originalLen = mem.getInt(nameOffset);
+                try {
+                    // A small negative length would make Vm.getStorageLength move the offset backward; the
+                    // walk must bail out with -1 rather than dereference a wild address.
+                    mem.putInt(nameOffset, -2);
+                    assertEquals(-1L, TableUtils.getMetaExpiryPolicyOffset(mem, columnCount));
+
+                    // An over-255 length (a column name cannot exceed a filename) is out of range too.
+                    mem.putInt(nameOffset, 1_000);
+                    assertEquals(-1L, TableUtils.getMetaExpiryPolicyOffset(mem, columnCount));
+                } finally {
+                    // Restore the real length so teardown sees a valid _meta.
+                    mem.putInt(nameOffset, originalLen);
+                }
+                assertEquals(goodOffset, TableUtils.getMetaExpiryPolicyOffset(mem, columnCount));
+            }
+        });
+    }
+
+    @Test
+    public void testEncodedPolicyFieldsRoundTripThroughTheEscape() {
+        // The codec on its own. Only a BOUNDED field can be split by an embedded separator - the last field
+        // of a policy runs to the end of the stored string - so both bounded fields are covered: the KEEP
+        // LATEST "ON <ts>" column and the KEEP BY value column.
+        final String sep = String.valueOf((char) 0x1F);
+        final String esc = String.valueOf((char) 0x1E);
+        final String ts = "t" + sep + "s";
+        final String col = "v" + sep + "w";
+        final String keys = "\"k" + esc + "S\"";  // the escape char followed by the separator's code
+
+        final String keepLatest = RowExpiryUtil.encodeKeepLatest(ts, keys);
+        assertEquals(ts, RowExpiryUtil.keepLatestTs(keepLatest).toString());
+        assertEquals(keys, RowExpiryUtil.keepLatestKeys(keepLatest).toString());
+        assertEquals("KEEP LATEST ON \"" + ts + "\" PARTITION BY " + keys, RowExpiryUtil.displayPredicate(keepLatest));
+
+        final String keepBy = RowExpiryUtil.encodeKeepBy(0, true, col, keys);
+        assertEquals("KEEP HIGHEST \"" + col + "\" PARTITION BY " + keys, RowExpiryUtil.displayPredicate(keepBy));
+
+        // A name with no reserved character is stored verbatim, so an ordinary policy is unchanged.
+        assertEquals("KEEP LATEST PARTITION BY k", RowExpiryUtil.displayPredicate(RowExpiryUtil.encodeKeepLatest(null, "k")));
+
+        // A lone escape character is not something the encoder emits. Decoding passes it through instead of
+        // guessing, so a hand-built (or corrupt) policy still reads back verbatim rather than losing a char.
+        final String handBuilt = sep + "N0" + sep + "H" + sep + "a" + esc + "b" + sep + "k";
+        assertEquals("KEEP HIGHEST \"a" + esc + "b\" PARTITION BY k", RowExpiryUtil.displayPredicate(handBuilt));
+    }
+
+    @Test
+    public void testKeepByPolicyDecoding() {
+        // Every reader of a KEEP [N] HIGHEST/LOWEST policy - SHOW CREATE / the catalogue functions
+        // (displayPredicate), the read-filter rewrite (windowPredicate) and DDL validation - goes through
+        // RowExpiryUtil.KeepBy, so they agree field for field, including on a string no encoder emits.
+        final String sep = String.valueOf((char) 0x1F);
+
+        final String topN = RowExpiryUtil.encodeKeepBy(3, false, "v", "k");
+        final RowExpiryUtil.KeepBy decoded = new RowExpiryUtil.KeepBy(topN);
+        assertEquals(3, decoded.n);
+        assertFalse(decoded.isHighest);
+        assertEquals("v", decoded.col);
+        assertEquals("k", decoded.keys);
+        assertEquals("KEEP 3 LOWEST v PARTITION BY k", RowExpiryUtil.displayPredicate(topN));
+        assertEquals(
+                "row_number() OVER (PARTITION BY k ORDER BY \"v\" ASC, \"ts\" DESC) > 3",
+                RowExpiryUtil.windowPredicate(topN, "ts")
+        );
+
+        // An unparseable N reads as 0: the bare KEEP HIGHEST/LOWEST form, which carries the stricter
+        // validation rules.
+        final String badCount = sep + "N" + "x7" + sep + "H" + sep + "v" + sep + "k";
+        assertEquals(0, new RowExpiryUtil.KeepBy(badCount).n);
+        assertEquals("KEEP HIGHEST v PARTITION BY k", RowExpiryUtil.displayPredicate(badCount));
+        assertEquals("\"v\" < max(\"v\") OVER (PARTITION BY k)", RowExpiryUtil.windowPredicate(badCount, "ts"));
+
+        // Truncated right after the mode char: every field is missing, so each one reads empty.
+        final String truncated = sep + "N";
+        final RowExpiryUtil.KeepBy empty = new RowExpiryUtil.KeepBy(truncated);
+        assertEquals(0, empty.n);
+        assertEquals("", empty.col);
+        assertEquals("", empty.keys);
+        assertEquals("KEEP LOWEST \"\"", RowExpiryUtil.displayPredicate(truncated));
+    }
+
+    @Test
+    public void testTruncatedMetaReadsAsNoPolicy() throws Exception {
+        // A short or torn _meta - a file that ends inside the column names, or right after the predicate's
+        // length prefix - must make both policy readers report "no policy" instead of reading past the
+        // mapping. The corrupt-LENGTH cases are covered elsewhere; this is the corrupt-SIZE case, and it is
+        // the only one the bounds checks against memSize answer. The file is mapped at the truncated length,
+        // which is exactly what those checks see.
+        assertMemoryLeak(() -> {
+            execute("create table t (s symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("t");
+            final int columnCount;
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                columnCount = metadata.getColumnCount();
+            }
+            patchExpiryPolicy(token, columnCount, "v < 2.0", 30 * MICROS_PER_MINUTE);
+            reloadMetadata();
+            engine.releaseInactive();
+
+            final long nameOffset = TableUtils.getColumnNameOffset(columnCount);
+            final long policyOffset;
+            final long fullSize;
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+                fullSize = configuration.getFilesFacade().length(path.$());
+                assertTrue("_meta must be longer than its policy section", fullSize > nameOffset);
+
+                // Control: the whole file walks to a valid offset and a predicate that fits inside it.
+                try (MemoryCMR mem = Vm.getCMRInstance(configuration.getFilesFacade(), path.$(), fullSize, MemoryTag.MMAP_DEFAULT)) {
+                    policyOffset = TableUtils.getMetaExpiryPolicyOffset(mem, columnCount);
+                    assertTrue("expected a valid policy offset past the column names", policyOffset > nameOffset);
+                    assertEquals(
+                            Vm.getStorageLength("v < 2.0".length()),
+                            TableUtils.getMetaExpiryPredicateStorageLength(mem, policyOffset, fullSize)
+                    );
+                }
+
+                // The file ends inside the column-name section: the offset walk must stop at -1 rather than
+                // read a name length that is not there.
+                try (MemoryCMR mem = Vm.getCMRInstance(configuration.getFilesFacade(), path.$(), nameOffset + 2, MemoryTag.MMAP_DEFAULT)) {
+                    assertEquals(-1L, TableUtils.getMetaExpiryPolicyOffset(mem, columnCount));
+                }
+
+                // The file ends exactly at the policy offset. The walk reports the offset it reached - the
+                // "is there room for a length prefix" check belongs to the caller, and all three readers
+                // (MetadataCache, TableReaderMetadata, TableWriterMetadata) make it before they read.
+                try (MemoryCMR mem = Vm.getCMRInstance(configuration.getFilesFacade(), path.$(), policyOffset, MemoryTag.MMAP_DEFAULT)) {
+                    assertEquals(policyOffset, TableUtils.getMetaExpiryPolicyOffset(mem, columnCount));
+                    assertTrue(
+                            "the caller's bounds check is what rejects a file this short",
+                            policyOffset + Integer.BYTES > mem.size()
+                    );
+                }
+
+                // The file ends right after the length prefix: the offset is reachable, but the predicate
+                // it announces runs past the mapping, so its storage length must come back as -1.
+                final long tornSize = policyOffset + Integer.BYTES;
+                try (MemoryCMR mem = Vm.getCMRInstance(configuration.getFilesFacade(), path.$(), tornSize, MemoryTag.MMAP_DEFAULT)) {
+                    assertEquals(policyOffset, TableUtils.getMetaExpiryPolicyOffset(mem, columnCount));
+                    assertEquals(-1L, TableUtils.getMetaExpiryPredicateStorageLength(mem, policyOffset, tornSize));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCorruptExpiryPredicateLengthReadsAsAbsent() throws Exception {
+        // A corrupt (negative) predicate length in the trailing policy section must not march the read
+        // offset backward into a wild getLong for the cleanup interval. Every reader must fall back to
+        // "no policy" (null predicate, 0 interval) instead of reading a garbage interval or faulting.
+        assertMemoryLeak(() -> {
+            execute("create table t (s symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("t");
+            final int columnCount;
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                columnCount = metadata.getColumnCount();
+            }
+
+            // Write a real policy, confirm it round-trips, then corrupt ONLY its predicate length prefix.
+            patchExpiryPolicy(token, columnCount, "v < 2.0", 30 * MICROS_PER_MINUTE);
+            reloadMetadata();
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals("v < 2.0", metadata.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, metadata.getExpiryCleanupIntervalMicros());
+            }
+
+            corruptExpiryPredicateLength(token, columnCount, -2);
+            reloadMetadata();
+
+            // Reader metadata / metadata cache.
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertNull("corrupt predicate length must read as no predicate", metadata.getExpiryPredicate());
+                assertEquals("corrupt predicate length must not yield a garbage interval", 0, metadata.getExpiryCleanupIntervalMicros());
+            }
+            // Writer metadata.
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                assertNull(writer.getExpiryPredicate());
+                assertEquals(0, writer.getExpiryCleanupIntervalMicros());
+            }
+        });
+    }
+
+    @Test
+    public void testExpiryPredicateLongerThan255CharsRoundTrips() throws Exception {
+        // The predicate is a SQL expression, not a filename, so it is NOT bounded to 255 chars. A reader
+        // that clamped the predicate length to [1, 255] (as a column name is) would corrupt-reject a long
+        // predicate; this pins that a >255-char predicate persists and reads back verbatim.
+        assertMemoryLeak(() -> {
+            execute("create table t (s symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("t");
+            final int columnCount;
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                columnCount = metadata.getColumnCount();
+            }
+
+            final String longPredicate = "v < 2.0 or ".repeat(30); // 330 chars, well past the 255 filename bound
+            assertTrue("predicate must exceed the 255-char filename bound", longPredicate.length() > 255);
+
+            patchExpiryPolicy(token, columnCount, longPredicate, 30 * MICROS_PER_MINUTE);
+            reloadMetadata();
+
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals(longPredicate, metadata.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, metadata.getExpiryCleanupIntervalMicros());
+            }
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                assertEquals(longPredicate, writer.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, writer.getExpiryCleanupIntervalMicros());
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithExpiryPersists() throws Exception {
+        // Round-trip persistence: create a passthrough view with a policy, drop pooled readers, and assert the
+        // predicate + interval read back from disk via BOTH the reader metadata and the writer metadata.
+        assertMemoryLeak(() -> {
+            execute("create table base (s symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select * from base) EXPIRE ROWS WHEN v < 2.0 CLEANUP EVERY 30m");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("v");
+
+            // Read back via the reader metadata (reader #1).
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals("v < 2.0", metadata.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, metadata.getExpiryCleanupIntervalMicros());
+            }
+
+            // Re-open from disk (drop pooled readers) to confirm it round-trips from the file.
+            engine.releaseInactive();
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals("v < 2.0", metadata.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, metadata.getExpiryCleanupIntervalMicros());
+            }
+
+            // Read back via the writer metadata (reader #2).
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                assertEquals("v < 2.0", writer.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, writer.getExpiryCleanupIntervalMicros());
+            }
+        });
+    }
+
+    @Test
+    public void testExpirySurvivesUnrelatedAlter() throws Exception {
+        // The policy must survive an unrelated ALTER that rewrites _meta via the second serializer. A mat
+        // view rejects ADD COLUMN / structural ALTERs, so we use a supported metadata ALTER (set ttl), which
+        // still forces a full _meta rewrite. The expiry section must be re-emitted byte-consistently.
+        assertMemoryLeak(() -> {
+            execute("create table base (s symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select * from base) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("v");
+            // Default cleanup interval is 1h when CLEANUP EVERY is omitted.
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals("v < 2.0", metadata.getExpiryPredicate());
+                assertEquals(3_600_000_000L, metadata.getExpiryCleanupIntervalMicros());
+            }
+
+            // Force a _meta rewrite via the ALTER-rewrite serializer.
+            execute("alter materialized view v set ttl 3 days");
+            drainWalAndMatViewQueues();
+
+            engine.releaseInactive();
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals("predicate must survive an unrelated ALTER", "v < 2.0", metadata.getExpiryPredicate());
+                assertEquals(3_600_000_000L, metadata.getExpiryCleanupIntervalMicros());
+                assertEquals("the ALTER must have taken effect", 3 * 24, metadata.getTtlHoursOrMonths());
+            }
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                assertEquals("v < 2.0", writer.getExpiryPredicate());
+                assertEquals(3_600_000_000L, writer.getExpiryCleanupIntervalMicros());
+            }
+        });
+    }
+
+    @Test
+    public void testNoExpiryByDefault() throws Exception {
+        // A view created WITHOUT a policy reads null/0 from every reader, on disk too.
+        assertMemoryLeak(() -> {
+            execute("create table base (s symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select * from base)");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("v");
+
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertNull(metadata.getExpiryPredicate());
+                assertEquals(0, metadata.getExpiryCleanupIntervalMicros());
+            }
+
+            engine.releaseInactive();
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertNull(metadata.getExpiryPredicate());
+                assertEquals(0, metadata.getExpiryCleanupIntervalMicros());
+            }
+
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                assertNull(writer.getExpiryPredicate());
+                assertEquals(0, writer.getExpiryCleanupIntervalMicros());
+            }
+        });
+    }
+
+    // Patches a non-empty expiry policy (predicate string + cleanup interval) onto the trailing section of an
+    // object's _meta, in place. The CREATE path already wrote an empty policy there (META_FORMAT_MINOR_VERSION
+    // == EXPIRE_ROWS), so this overwrites it. The write OFFSET is found by mirroring getMetaExpiryPolicyOffset
+    // (column names section, then the per-column covering section); the VERIFICATION is done by the SUT reader,
+    // which independently re-walks that offset — so if the SUT's walk regresses, the reader mis-reads.
+    private void patchExpiryPolicy(TableToken token, int columnCount, String predicate, long cleanupIntervalMicros) {
+        try (
+                MemoryMARW mem = Vm.getCMARWInstance();
+                Path path = new Path()
+        ) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+            mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+
+            // Skip the column-names section.
+            long offset = TableUtils.getColumnNameOffset(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                final int strLen = mem.getInt(offset);
+                offset += Vm.getStorageLength(strLen);
+            }
+            // Skip the per-column covering section (an int count, then count ints, for each covering column).
+            for (int i = 0; i < columnCount; i++) {
+                if (isColumnCovering(mem, i)) {
+                    final int includeCount = mem.getInt(offset);
+                    offset += Integer.BYTES;
+                    if (includeCount > 0) {
+                        offset += (long) includeCount * Integer.BYTES;
+                    }
+                }
+            }
+            // Overwrite the trailing policy: putStr(predicate) then putLong(interval). putStr auto-extends.
+            mem.putStr(offset, predicate);
+            offset += Vm.getStorageLength(predicate);
+            mem.putLong(offset, cleanupIntervalMicros);
+        }
+    }
+
+    // Overwrites ONLY the predicate length prefix in the trailing policy section with a raw value (which
+    // may be negative/corrupt), leaving the rest of _meta intact. The policy offset is located with the
+    // production walk so the corruption lands exactly where the readers will look for the predicate.
+    private void corruptExpiryPredicateLength(TableToken token, int columnCount, int rawLength) {
+        try (
+                MemoryMARW mem = Vm.getCMARWInstance();
+                Path path = new Path()
+        ) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+            mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+            final long policyOffset = TableUtils.getMetaExpiryPolicyOffset(mem, columnCount);
+            mem.putInt(policyOffset, rawLength);
+        }
+    }
+
+    private boolean isColumnCovering(MemoryMARW mem, int columnIndex) {
+        final long flags = mem.getLong(TableUtils.META_OFFSET_COLUMN_TYPES + columnIndex * TableUtils.META_COLUMN_DATA_SIZE + 4);
+        return (flags & META_FLAG_BIT_COVERING) != 0;
+    }
+
+    // Drops pooled readers/writers and refreshes the metadata cache so the next read re-reads _meta from disk.
+    private void reloadMetadata() {
+        engine.releaseInactive();
+        try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+            w.clearCache();
+        }
+        engine.getMetadataCache().onStartupAsyncHydrator();
+    }
+
+    // Rewrites the _meta minor-version high short (preserving the low-short checksum so isMetaFormatAtLeast
+    // still trusts the field), simulating an object written by an older QuestDB that did not know about the
+    // given version's trailing/scalar fields. Verbatim from the deleted predecessor.
+    private void setMetaFormatMinorVersion(TableToken token, short version) {
+        try (
+                MemoryMARW mem = Vm.getCMARWInstance();
+                Path path = new Path()
+        ) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+            mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+            final int field = mem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
+            mem.putInt(
+                    TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION,
+                    Numbers.encodeLowHighShorts(Numbers.decodeLowShort(field), version)
+            );
+        }
+    }
+}

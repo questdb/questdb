@@ -210,7 +210,8 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
                     current.getPeriodLength(),
                     current.getPeriodLengthUnit(),
                     current.getPeriodDelay(),
-                    current.getPeriodDelayUnit()
+                    current.getPeriodDelayUnit(),
+                    current.isPassthrough()
             );
             // Mirror TableWriter's definition-swap: both the graph and the state store, so the
             // refresh job (which reads viewState.getViewDefinition()) sees the legacy SQL.

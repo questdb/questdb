@@ -278,6 +278,31 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return true;
     }
 
+    default CharSequence getExpiryMaterializingViewName() {
+        return null;
+    }
+
+    default ExpiryReadPolicy getExpiryReadPolicy() {
+        return isExpiryReadFilterEnabled() ? ExpiryReadPolicy.FILTER : ExpiryReadPolicy.RAW;
+    }
+
+    default ExpiryReadPolicy getExpiryReadPolicy(TableToken tableToken) {
+        return isExpiryReadFilterEnabled(tableToken) ? ExpiryReadPolicy.FILTER : ExpiryReadPolicy.RAW;
+    }
+
+    // Compatibility accessors for contexts that only distinguish filtered and raw reads. Materializing
+    // compilation must use getExpiryReadPolicy(TableToken), where REJECT is distinct from RAW.
+    boolean isExpiryReadFilterEnabled();
+
+    // Per-table refinement of {@link #isExpiryReadFilterEnabled()}: whether the read-time row-expiry
+    // filter applies to reads of THIS table in the current compilation. Follows the global flag by
+    // default; the mat-view refresh context overrides it to keep the filter on every table except the
+    // base, so a policied view referenced as a JOIN table is read filtered during refresh, exactly as
+    // any query reads it.
+    default boolean isExpiryReadFilterEnabled(TableToken tableToken) {
+        return isExpiryReadFilterEnabled();
+    }
+
     // Returns true when the current compile is the CREATE-time or refresh-time
     // compile of a live view's SELECT. Compile-time switch that lets window
     // function factories opt into live-view-only machinery (e.g. the
@@ -390,6 +415,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
+
+    void setExpiryReadFilterEnabled(boolean enabled);
+
+    default void setExpiryReadPolicy(ExpiryReadPolicy policy, @Nullable CharSequence materializingViewName) {
+        if (policy == ExpiryReadPolicy.REJECT) {
+            throw new UnsupportedOperationException("this SQL execution context cannot enter expiry REJECT mode");
+        }
+        setExpiryReadFilterEnabled(policy == ExpiryReadPolicy.FILTER);
+    }
 
     void setIntervalFunctionType(int intervalType);
 

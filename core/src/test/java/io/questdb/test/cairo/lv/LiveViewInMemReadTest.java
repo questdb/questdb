@@ -2461,6 +2461,55 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testNestedLatestByIncludesUnflushedLead() throws Exception {
+        assertMemoryLeak(() -> {
+            buildMixedFlushedPlusLead();
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals(2, instance.getLeadRowCount());
+            try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
+                Assert.assertEquals(3, reader.size());
+            }
+
+            final String sql = "SELECT g, x FROM (SELECT * FROM lv) LATEST ON ts PARTITION BY g ORDER BY g";
+            final String expected = """
+                    g\tx
+                    aa\t3
+                    bb\t5
+                    cc\t4
+                    """;
+            assertQuery(sql).expectSize().noLeakCheck().returns(expected);
+
+            // Advancing the test clock flushes the lead; the same query must still return the same rows.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+            drainWalQueue();
+            Assert.assertEquals(0, instance.getLeadRowCount());
+            assertQuery(sql).expectSize().noLeakCheck().returns(expected);
+        });
+    }
+
+    @Test
+    public void testNestedLatestByIncludesUnflushedNullKey() throws Exception {
+        assertMemoryLeak(() -> {
+            buildTwoSymbolFlushedPlusNullLead();
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals(2, instance.getLeadRowCount());
+            assertQuery("SELECT g, rn FROM (SELECT * FROM lv) LATEST ON ts PARTITION BY g ORDER BY g")
+                    .expectSize().noLeakCheck().returns("""
+                            g\trn
+                            \t4
+                            aa\t3
+                            bb\t2
+                            cc\t5
+                            """);
+        });
+    }
+
+    @Test
     public void testNonCapableO3ResyncsLeadRowCount() throws Exception {
         // M1b: finishLeadRefresh zeroes instance.leadRowCount before o3Replay because
         // the capable path rebuilds the tier as a pure disk subset. The non-capable
