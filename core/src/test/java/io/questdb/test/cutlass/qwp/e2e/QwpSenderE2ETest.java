@@ -3442,16 +3442,10 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testIntColumnIntoIPv4TranslatesNullSentinel() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_int_to_ipv4_null";
-            // The IPv4 arm of QwpWalAppender.appendToWalColumnar accepts
-            // qwpType == TYPE_INT as a legacy-client migration path (a
-            // client that predates TYPE_IPV4 can still ingest into an
-            // IPv4 column by sending int bits). But INT's NULL sentinel
-            // (Integer.MIN_VALUE = 0x80000000) is not IPv4's NULL
-            // sentinel (0 = 0.0.0.0). Without translation the bit
-            // pattern lands verbatim through putFixedColumn's no-bitmap
-            // memcpy fast path, and reads back as the valid address
-            // 128.0.0.0 -- silently changing what the user wrote (a
-            // NULL on the INT side) into a non-null IPv4 value.
+            // Schema mode converts INT input to target-native IPv4 wire data.
+            // Integer.MIN_VALUE is the INT source null sentinel, whereas IPv4
+            // stores null as zero. The client must translate the sentinel before
+            // append instead of sending the address 128.0.0.0.
             execute("CREATE TABLE " + table + " (addr IPv4, ts TIMESTAMP) "
                     + "TIMESTAMP(ts) PARTITION BY DAY WAL");
 
