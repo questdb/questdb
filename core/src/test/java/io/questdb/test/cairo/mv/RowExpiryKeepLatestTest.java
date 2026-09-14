@@ -78,6 +78,98 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeepColumnListIgnoresBlockComments() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, \"group key\" SYMBOL, \"select\" SYMBOL, v DOUBLE, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 'X', 'S', 1, '2024-01-01'),
+                    ('A', 'X', 'S', 2, '2024-01-02'),
+                    ('A', 'Y', 'S', 3, '2024-01-03'),
+                    (NULL, 'X', 'S', 4, '2024-01-01'),
+                    (NULL, 'X', 'S', 5, '2024-01-02')
+                    """);
+            drainWalAndMatViewQueues();
+
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)
+                    EXPIRE ROWS KEEP LATEST PARTITION BY
+                    /* before; CLEANUP EVERY 9h, WITH */ K /* after key */,
+                    /* outer, HIGHEST /* nested CLEANUP EVERY */ LOWEST */ "group key" /* before comma */,
+                    /* after comma */ "select" /* before cleanup */ CLEANUP EVERY 30m;
+                    """);
+            drainWalAndMatViewQueues();
+
+            final String latestExpected = "k\tgroup key\tselect\tv\n"
+                    + "A\tX\tS\t2.0\n"
+                    + "A\tY\tS\t3.0\n"
+                    + "\tX\tS\t5.0\n";
+            assertQuery("SELECT k, \"group key\", \"select\", v FROM mv ORDER BY v")
+                    .expectSize().noLeakCheck().returns(latestExpected);
+            assertQuery("SELECT expire_clause, expire_cleanup_every FROM tables() WHERE table_name = 'mv'")
+                    .noRandomAccess().noLeakCheck().returns("""
+                            expire_clause	expire_cleanup_every
+                            KEEP LATEST PARTITION BY K, "group key", "select"	30m
+                            """);
+
+            sink.clear();
+            printSql("SHOW CREATE MATERIALIZED VIEW mv", sink);
+            final String showCreate = sink.toString();
+            TestUtils.assertContains(showCreate, "EXPIRE ROWS KEEP LATEST PARTITION BY K, \"group key\", \"select\"");
+            Assert.assertFalse(showCreate.contains("nested CLEANUP"));
+            final int createPos = showCreate.indexOf("CREATE MATERIALIZED VIEW");
+            Assert.assertTrue("no CREATE statement in: " + showCreate, createPos > -1);
+            execute(showCreate.substring(createPos).replace("'mv'", "'mv_replay'"));
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT k, \"group key\", \"select\", v FROM mv_replay ORDER BY v")
+                    .expectSize().noLeakCheck().returns(latestExpected);
+
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP HIGHEST v PARTITION BY "
+                    + "/* before */ k/* after */,/* between */\"group key\", \"select\"/* at end */");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT k, \"group key\", \"select\", v FROM mv ORDER BY v")
+                    .noLeakCheck().returns(latestExpected);
+
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP LOWEST v PARTITION BY "
+                    + "k, /* comma, KEEP HIGHEST */ \"group key\", \"select\" CLEANUP EVERY 2h;");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT k, \"group key\", \"select\", v FROM mv ORDER BY v")
+                    .noLeakCheck().returns("k\tgroup key\tselect\tv\n"
+                            + "A\tX\tS\t1.0\n"
+                            + "A\tY\tS\t3.0\n"
+                            + "\tX\tS\t4.0\n");
+
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP 1 HIGHEST v PARTITION BY "
+                    + "k, \"group key\" /* around comma */, /* TOP N */ \"select\";");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT k, \"group key\", \"select\", v FROM mv ORDER BY v")
+                    .noLeakCheck().returns(latestExpected);
+        });
+    }
+
+    @Test
+    public void testKeepColumnListPreservesCommentRejections() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalAndMatViewQueues();
+            final String prefix = "CREATE MATERIALIZED VIEW bad AS (SELECT * FROM base) EXPIRE ROWS KEEP LATEST PARTITION BY k ";
+            final String lineComment = prefix + "-- note\nCLEANUP EVERY 1h";
+            assertExceptionNoLeakCheck(
+                    lineComment,
+                    lineComment.indexOf("--"),
+                    "line comments are not supported in EXPIRE ROWS clauses"
+            );
+            final String unfinished = prefix + "/* outer /* nested */";
+            assertExceptionNoLeakCheck(
+                    unfinished,
+                    unfinished.indexOf("/*"),
+                    "unterminated block comment in EXPIRE ROWS clause"
+            );
+        });
+    }
+
+    @Test
     public void testKeepColumnListRejectsMalformedSeparators() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");

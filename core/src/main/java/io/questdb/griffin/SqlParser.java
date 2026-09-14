@@ -674,11 +674,12 @@ public class SqlParser {
     }
 
     /**
-     * Captures the raw column-list text after {@code PARTITION BY} in a KEEP clause, up to ';' / EOF or the
-     * next clause boundary {@link #expireRowsClauseBoundary} recognises. Unlike the WHEN capture, this
-     * method requires identifiers separated by commas. Name resolution alone is insufficient: unquoted
-     * {@code k limit 1} could match a column name but add a LIMIT when the read query parses the stored text.
-     * Shared by KEEP LATEST and KEEP HIGHEST/LOWEST.
+     * Captures a normalized column list after {@code PARTITION BY} in a KEEP clause, up to ';' / EOF or the
+     * next clause boundary {@link #expireRowsClauseBoundary} recognises. The normalized list preserves each
+     * identifier token, including quoting and case, but omits comments and uses a comma-space separator.
+     * Unlike the WHEN capture, this method requires identifiers separated by commas. Name resolution alone
+     * is insufficient: unquoted {@code k limit 1} could match a column name but add a LIMIT when the read
+     * query parses the stored text. Shared by KEEP LATEST and KEEP HIGHEST/LOWEST.
      */
     private ColumnListCapture captureKeepColumnList(
             GenericLexer lexer,
@@ -690,6 +691,7 @@ public class SqlParser {
         boolean foundCleanup = false;
         boolean hasColumn = false;
         boolean isColumnExpected = true;
+        final StringSink csv = new StringSink();
         CharSequence tok;
         while (true) {
             tok = optTok(lexer);
@@ -707,6 +709,10 @@ public class SqlParser {
             }
             if (isColumnExpected) {
                 validateIdentifier(lexer, tok);
+                if (hasColumn) {
+                    csv.putAscii(", ");
+                }
+                csv.put(tok);
                 hasColumn = true;
                 isColumnExpected = false;
             } else {
@@ -721,7 +727,7 @@ public class SqlParser {
         }
         rejectCommentInExpiryClause(lexer.getContent(), startPos, end);
         final ColumnListCapture capture = new ColumnListCapture();
-        capture.csv = Chars.toString(lexer.getContent(), startPos, end).trim();
+        capture.csv = csv.toString();
         capture.foundCleanup = foundCleanup;
         capture.nextTok = tok;
         capture.startPos = startPos;
@@ -8170,7 +8176,7 @@ public class SqlParser {
     }
 
     /**
-     * Result of {@link #captureKeepColumnList}: the raw PARTITION BY column list and the trailing boundary.
+     * Result of {@link #captureKeepColumnList}: the normalized PARTITION BY column list and trailing boundary.
      */
     private static final class ColumnListCapture {
         String csv;
