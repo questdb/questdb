@@ -818,13 +818,10 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
         // signature is sdt(NDd) - the value slot is DOUBLE - so a LONG column reaches the
         // function through the parser's implicit LONG -> DOUBLE cast, the same SQL-level
         // semantics as writing v::double: 2^53 and 2^53 + 1 are the same double, so the
-        // corridor sees a flat series. With compdev 0.5 below the ULP at 2^53 (which is 2.0),
-        // both tolerance numerators collapse (nU == nL == 0) and the arithmetic cannot certify
-        // the 2 * compdev bound, so sdt keeps every row (F1-SDT-CANCEL: a collapsed corridor
-        // with positive compdev always restarts; the earlier middle-row drop was an artifact
-        // of the deleted nU != nL exemption, not of the cast). Exact-collinearity dropping
-        // remains available via compdev == 0. The integral-exactness repair to minmax/m4 must
-        // not alter sdt.
+        // corridor sees a flat series. Anchor-relative arithmetic cancels the common offset
+        // before applying compdev, so it can certify the corridor and drop the middle row
+        // even though compdev 0.5 sits below the ULP at 2^53 (which is 2.0). SDT bounds the
+        // DOUBLE inputs, not the original LONG values before their implicit conversion.
         assertQuery("select ts, v, sdt(ts, v, 0.5) over (order by ts) keep from t")
                 .ddl("create table t (ts timestamp, v long) timestamp(ts)",
                         """
@@ -838,7 +835,7 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
                 .returns("""
                         ts\tv\tkeep
                         1970-01-01T00:00:00.000001Z\t9007199254740992\ttrue
-                        1970-01-01T00:00:00.000002Z\t9007199254740993\ttrue
+                        1970-01-01T00:00:00.000002Z\t9007199254740993\tfalse
                         1970-01-01T00:00:00.000003Z\t9007199254740992\ttrue
                         """);
     }

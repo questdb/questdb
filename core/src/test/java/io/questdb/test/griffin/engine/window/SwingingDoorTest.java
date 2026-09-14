@@ -373,18 +373,12 @@ public class SwingingDoorTest {
     }
 
     @Test
-    public void testSubUlpCompdevKeepsAllPoints() {
-        // compdev = 1e-20 sits below the ULP of values ~O(1), so BOTH tolerance numerators
-        // collapse to the same double (nU == nL == 0.0). A sub-ULP positive compdev means
-        // the arithmetic cannot certify the 2 * compdev reconstruction bound, so sdt keeps
-        // every point instead of dropping at uncertifiable error (F1-SDT-CANCEL: nU == nL no
-        // longer exempts the collapse restart, because equal numerators can equally come
-        // from cancellation against a large anchor gap where the stored doubles are exact
-        // and NOT collinear - see testCancellationCollapsedNumeratorsKeepMidSeriesPoint).
-        // Exact-collinearity dropping remains available via compdev == 0, pinned by
-        // testCompdevZeroKeepsNonCollinear and the compdev == 0 SQL pins.
+    public void testSubUlpCompdevCompressesFlatSeries() {
+        // Anchor-relative arithmetic cancels the common offset before applying compdev.
+        // Unlike a large anchor gap, this exactly flat series admits a certified corridor
+        // even though compdev sits below the ULP of the absolute values.
         boolean[] k = run(new long[]{1, 2, 3, 4}, new double[]{1, 1, 1, 1}, 1e-20);
-        Assert.assertArrayEquals(new boolean[]{true, true, true, true}, k);
+        Assert.assertArrayEquals(new boolean[]{true, false, false, true}, k);
     }
 
     // ---- tolerance-numerator cancellation: corridor width erased by the SUBTRACTION ----

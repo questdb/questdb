@@ -67,23 +67,22 @@ import org.jetbrains.annotations.Nullable;
  * point is dropped while it stays inside the {@code compdev} corridor swung from the last kept
  * point, and is kept as soon as that corridor closes.
  * <p>
- * <b>Reconstruction error is bounded by {@code 2 * compdev}, not {@code compdev}.</b> The corridor
- * proves each dropped point lies within {@code compdev} of SOME line in the still-feasible slope
- * cone - not specifically of the line later drawn between the two kept points that bracket it.
- * Each of those lines can sit up to {@code compdev} from a given point, so the error is additive
- * and reconstructing the series by joining consecutive kept points can deviate by up to twice
- * {@code compdev}. Size {@code compdev} accordingly: treat it as a half-budget. This is inherent
- * to classic SDT, not an implementation artefact, and is pinned by
- * {@code SubsampleFuzzTest.testSdtCompressionBandInvariants}, whose fuzzing drives the observed
- * worst-case ratio to ~1.9x {@code compdev}.
+ * <b>For positive {@code compdev}, reconstruction error is bounded by {@code 2 * compdev},
+ * not {@code compdev}.</b> The bound describes exact linear interpolation between consecutive
+ * kept points, using the values supplied to SDT as DOUBLEs (after any implicit numeric cast).
+ * The corridor certifies a line within {@code compdev} of every point in the segment. Joining
+ * the kept endpoints can differ from that line by another {@code compdev}, so the errors add.
+ * Size {@code compdev} accordingly: treat it as a half-budget.
  * <p>
- * {@code compdev == 0} drops points that are collinear in double arithmetic. For
- * {@code compdev > 0}, whenever the two tolerance slopes collapse to the same double - because
- * {@code compdev} sits below the ULP of the working magnitudes (the values themselves, the gap
- * to the last kept point, or the slope after division) - the arithmetic cannot certify the
- * {@code 2 * compdev} bound, so {@link SwingingDoor} keeps the point and restarts the corridor
- * instead of dropping at uncertifiable error. Such sub-ULP configurations therefore compress
- * nothing; choose {@code compdev} at or above the data's representable resolution.
+ * {@link SwingingDoor} computes anchor-relative differences and rounds each constraint inward,
+ * accounting for subtraction, tolerance arithmetic, timestamp conversion and division. If
+ * rounding uncertainty closes the certified interval, or arithmetic overflows, it keeps the
+ * pending and current points and restarts the corridor. This can retain extra points near
+ * numerical limits. A tolerance below the values' ULP can still compress a flat series: the
+ * common offset cancels before the tolerance enters the calculation.
+ * <p>
+ * {@code compdev == 0} retains the separate convention of dropping points collinear in double
+ * arithmetic, which need not imply exact collinearity of the input values.
  * <p>
  * ORDER BY is required and custom framing is not allowed. PARTITION BY is supported via a
  * map-backed per-partition {@link SwingingDoor} state (see {@link SdtOverPartitionFunction}).

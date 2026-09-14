@@ -100,35 +100,11 @@ public class SwingingDoor {
             return;
         }
 
-        double nU = value + compdev - anchorValue;
-        double nL = value - compdev - anchorValue;
-        double sU = nU / dt;
-        double sL = nL / dt;
-        // A non-finite slope term (IEEE-754 overflow of value +/- compdev - anchorValue, or a
-        // non-finite stored value) collapses distinct slopes into the same +/-Inf, making the
-        // doors-crossed test unable to see a cross. Keeping the point and restarting the series
-        // here is the only decision that provably honors the 2 * compdev reconstruction bound.
-        if (!(Double.isFinite(sU) && Double.isFinite(sL))) {
-            anchor(index, ts, value);
-            sink.mark(index, true);
-            return;
-        }
-        // The mirror hazard at the small end: the doors-crossed test cannot see a cross once
-        // the two tolerance slopes round to the same double. Either stage of the slope
-        // computation can cause the collapse: the DIVISION (subnormal flush, e.g. a 1e-320
-        // peak over a 1e6-tick span, where the slope-domain ULP dwarfs 2 * compdev / dt), or
-        // the SUBTRACTION producing the numerators (cancellation against a large anchor gap,
-        // e.g. anchor -1e20 vs value 1000 at compdev 1: (value +/- compdev) - anchorValue
-        // absorbs the deviation and the tolerance alike, so nU == nL even though the stored
-        // doubles are exactly representable and NOT collinear - equal numerators only prove
-        // 2 * compdev fell below the ULP of the anchor-gap-dominated difference, not below
-        // the data's own resolution). In both cases the arithmetic cannot certify the stated
-        // 2 * compdev reconstruction bound, and a surviving zero-width corridor drops points
-        // at unbounded multiples of it; keeping the point and restarting is the only decision
-        // that provably honors the bound. compdev == 0 is exempt: a zero-width corridor is
-        // then the requested semantics - sdt(ts, v, 0) drops points collinear in double
-        // arithmetic (pinned by the compdev == 0 tests).
-        if (compdev > 0 && sU == sL) {
+        double sU = slope(value, dt, true);
+        double sL = slope(value, dt, false);
+        // An empty or non-finite certified interval cannot justify dropping the pending point.
+        // Keep both endpoints and restart instead of accepting an uncertain corridor.
+        if (!(Double.isFinite(sU) && Double.isFinite(sL)) || sL > sU) {
             anchor(index, ts, value);
             sink.mark(index, true);
             return;
@@ -152,23 +128,10 @@ public class SwingingDoor {
                 sink.mark(index, true);
                 return;
             }
-            double nU2 = value + compdev - anchorValue;
-            double nL2 = value - compdev - anchorValue;
-            slopeHi = nU2 / dt2;
-            slopeLo = nL2 / dt2;
-            if (!(Double.isFinite(slopeHi) && Double.isFinite(slopeLo))) {
-                // same non-finite hazard against the just-promoted anchor; restart, keeping the point
-                anchor(index, ts, value);
-                sink.mark(index, true);
-                return;
-            }
-            if (compdev > 0 && slopeHi == slopeLo) {
-                // same collapse hazard against the just-promoted anchor: the numerators are
-                // re-derived from its value and divided by dt2, so they can collapse even
-                // though the pre-cross pair over dt stayed distinct - by division (e.g. a
-                // flat step whose +/-compdev numerators flush to +/-0.0) or by cancellation
-                // (the promoted anchor's gap absorbs 2 * compdev in the subtraction).
-                // Restart rather than keep a zero-width corridor alive.
+            slopeHi = slope(value, dt2, true);
+            slopeLo = slope(value, dt2, false);
+            if (!(Double.isFinite(slopeHi) && Double.isFinite(slopeLo)) || slopeLo > slopeHi) {
+                // Re-anchoring must certify the new interval too; reuse the same arithmetic.
                 anchor(index, ts, value);
                 sink.mark(index, true);
                 return;
@@ -219,6 +182,48 @@ public class SwingingDoor {
         pendingIndex = index;
         pendingTs = ts;
         pendingValue = value;
+    }
+
+    /**
+     * For positive compdev, returns an inward bound on (value - anchorValue +/- compdev) / dt.
+     * The upper tolerance slope needs a LOWER bound; the lower tolerance slope needs an UPPER bound.
+     * Every slope in the resulting interval then satisfies the exact tolerance constraints.
+     * Intersecting these intervals preserves that witness for every point we discard.
+     * Joining the anchor to the pending endpoint differs from the witness by at most
+     * compdev within the segment, giving the 2 * compdev reconstruction bound.
+     */
+    private double slope(double value, long dt, boolean isUpper) {
+        double delta = value - anchorValue;
+        if (compdev == 0) {
+            // Preserve the documented zero-tolerance semantics: collinearity in double arithmetic.
+            return delta / dt;
+        }
+        if (!Double.isFinite(delta)) {
+            return Double.NaN;
+        }
+
+        // Subtract the common offset BEFORE applying the tolerance. Bound each rounding step,
+        // not just the final division: a large anchor gap can still round the subtraction.
+        double deltaBound = isUpper ? Math.nextDown(delta) : Math.nextUp(delta);
+        double numerator = isUpper ? deltaBound + compdev : deltaBound - compdev;
+        if (!Double.isFinite(numerator)) {
+            return Double.NaN;
+        }
+        numerator = isUpper ? Math.nextDown(numerator) : Math.nextUp(numerator);
+
+        double denominator = dt;
+        if (dt > (1L << 53)) {
+            // The long-to-double conversion can round either way (Long.MAX_VALUE rounds to
+            // 2^63). Adjacent doubles enclose the exact positive integer. Choose the endpoint
+            // that moves the quotient inward, reversing the choice for negative numerators.
+            denominator = isUpper == (numerator >= 0) ? Math.nextUp(denominator) : Math.nextDown(denominator);
+        }
+        double result = numerator / denominator;
+        if (!Double.isFinite(result)) {
+            return Double.NaN;
+        }
+        // nextUp/nextDown also cover subnormal division and rounding to signed zero.
+        return isUpper ? Math.nextDown(result) : Math.nextUp(result);
     }
 
     // --- state serialization for map-backed per-partition storage ---
