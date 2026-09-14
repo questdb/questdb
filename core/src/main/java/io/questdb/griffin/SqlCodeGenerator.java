@@ -382,6 +382,7 @@ import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
+import io.questdb.std.IntStack;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -541,6 +542,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ObjList<VectorAggregateFunction> tempVaf = new ObjList<>();
     private final IntList tempVecConstructorArgIndexes = new IntList();
     private final ObjList<VectorAggregateFunctionConstructor> tempVecConstructors = new ObjList<>();
+    // Tracks whether the cursor currently being generated is an operand of a time-series join
+    // (ASOF / LT / SPLICE / WINDOW / HORIZON). Those joins walk their operands as monotonically
+    // ascending designated-timestamp streams, so that ordering is a correctness precondition,
+    // not an optimisation.
+    //
+    // This is deliberately separate from the execution context's timestamp-required flag. That
+    // flag asks whether a designated timestamp *column* must exist, and generateSelectChoose()
+    // clears it as soon as a model re-designates one with an explicit TIMESTAMP(ts) — which is
+    // exactly the shape that needs the ordering signal to survive:
+    //   ... LT JOIN (SELECT * FROM (a UNION ALL b ORDER BY ts) TIMESTAMP(ts)) ON (key)
+    private final IntStack timestampOrderRequiredStack = new IntStack();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final boolean validateSampleByFillType;
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
@@ -727,6 +739,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             whereClauseParsers.remove(MAX_RETAINED_WHERE_CLAUSE_PARSERS, whereClauseParsers.size() - 1);
         }
         whereClauseParserDepth = 0;
+        timestampOrderRequiredStack.clear();
         symbolEstimator.clear();
         intListPool.clear();
         pushdownFilterExtractor.clear();
@@ -1313,6 +1326,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // timestamp order is requested directly via order-by advice on this union model or transitively
         final boolean isTsOrderRequested =
                 isTimestampOrderRequested(model, metadataA, timestampIndex, scanDirection)
+                        // An enclosing time-series join walks this cursor as an ascending
+                        // designated-timestamp stream. Concatenating the branches would hand it a
+                        // cursor that steps backwards at the seam, and every row past the seam would
+                        // silently fail to match. Order-by advice does not reach here: the join slave
+                        // subtree is never visited by pushDownOrderByAdviceToJoinModels(), which only
+                        // ever descends into the master.
+                        || (isTimestampOrderRequiredByJoin() && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
                         || factoryA instanceof MergeUnionAllRecordCursorFactory
                         || (factoryA instanceof UnionSymbolCastRecordCursorFactory symbolCastFactory
                         && symbolCastFactory.getBaseFactory() instanceof MergeUnionAllRecordCursorFactory);
@@ -1581,6 +1601,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return advice.size() == 1
                 && metadataA.getColumnIndexQuiet(advice.getQuick(0).token) == timestampIndex
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
+    }
+
+    /**
+     * True when the cursor being generated is an operand of an enclosing time-series join, which
+     * consumes it as a monotonically ascending designated-timestamp stream.
+     */
+    private boolean isTimestampOrderRequiredByJoin() {
+        return timestampOrderRequiredStack.notEmpty() && timestampOrderRequiredStack.peek() == 1;
     }
 
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
@@ -6010,6 +6038,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (i > 0) {
                     executionContext.pushTimestampRequiredFlag(joinsRequiringTimestamp[slaveModel.getJoinType()]);
+                    timestampOrderRequiredStack.push(joinsRequiringTimestamp[slaveModel.getJoinType()] ? 1 : 0);
                     executionContext.popHasInterval();
                     executionContext.pushHasInterval(1);
                 } else { // i == 0
@@ -6024,6 +6053,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                     executionContext.pushTimestampRequiredFlag(isTimestampRequired);
+                    // Both operands of a time-series join are walked in ascending designated-timestamp
+                    // order, so the master carries the same ordering precondition as the slaves.
+                    timestampOrderRequiredStack.push(isTimestampRequired ? 1 : 0);
                     // For successive JOIN operations, if the left table requires timestamp,
                     // it must be the timestamp from the first table in the JOIN chain
                     executionContext.pushHasInterval(0);
@@ -7010,6 +7042,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw th;
                 } finally {
                     executionContext.popTimestampRequiredFlag();
+                    timestampOrderRequiredStack.pop();
                 }
 
                 // check if there are post-filters
