@@ -398,6 +398,11 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         }
         try {
             messageHeader.parse(address, length);
+            if (messageHeader.isSchemaEnabled()) {
+                droppedParseErrorCount++;
+                LOG.error().$("schema frames require negotiated WebSocket transport").$();
+                return DATAGRAM_DROPPED;
+            }
         } catch (QwpParseException e) {
             switch (e.getErrorCode()) {
                 case INVALID_MAGIC -> droppedBadMagicCount++;

@@ -166,6 +166,10 @@ public class QwpMessageHeader {
         return (flags & FLAG_GORILLA) != 0;
     }
 
+    public boolean isSchemaEnabled() {
+        return (flags & FLAG_SCHEMA) != 0;
+    }
+
     /**
      * Parses a header from direct memory.
      *
@@ -289,6 +293,21 @@ public class QwpMessageHeader {
         // at the wire level.
         if (version != VERSION) {
             throw QwpParseException.unsupportedVersion();
+        }
+
+        if ((flags & FLAG_SCHEMA) != 0) {
+            if ((flags & FLAG_CONTROL) != 0) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INVALID_SCHEMA_IDENTITY,
+                        "schema and control flags cannot be combined"
+                );
+            }
+            if (tableCount == 0) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INVALID_SCHEMA_IDENTITY,
+                        "schema frame must contain at least one table"
+                );
+            }
         }
 
         // Validate payload length

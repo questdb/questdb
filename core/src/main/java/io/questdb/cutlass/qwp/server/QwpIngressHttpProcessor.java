@@ -67,6 +67,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // Client opt-in for STATUS_DURABLE_ACK frames. Value "true" (case-insensitive) enables.
     // Any other value, or header absent, leaves the feature disabled for this connection.
     public static final Utf8String HEADER_X_QWP_REQUEST_DURABLE_ACK = new Utf8String("X-QWP-Request-Durable-Ack");
+    public static final Utf8String HEADER_X_QWP_REQUEST_SCHEMA = new Utf8String("X-QWP-Request-Schema");
     // Header values
     public static final Utf8String VALUE_WEBSOCKET = new Utf8String("websocket");
     /**
@@ -112,6 +113,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // frames, so the client must fail at handshake rather than wait forever.
     private static final byte[] RESPONSE_DURABLE_ACK_ENABLED =
             "\r\nX-QWP-Durable-Ack: enabled".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] RESPONSE_SCHEMA_ENABLED =
+            "\r\nX-QWP-Schema: enabled".getBytes(StandardCharsets.US_ASCII);
     // Advertises the server's hard cap on QWP message payload bytes so the
     // ingest client can size its batches without trial-and-error. Without this
     // hint a wide-row sender would have to discover the cap by sending an
@@ -314,6 +317,10 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * than allocating per handshake.
      */
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
+        return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, maxBatchSizeBytes, false);
+    }
+
+    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, boolean schemaEnabled) {
         int size = RESPONSE_PREFIX.length + acceptKey.length
                 + RESPONSE_AFTER_ACCEPT.length + VERSION_BYTES[qwpVersion].length
                 + RESPONSE_SUFFIX.length;
@@ -322,6 +329,9 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         }
         if (durableAckEnabled) {
             size += RESPONSE_DURABLE_ACK_ENABLED.length;
+        }
+        if (schemaEnabled) {
+            size += RESPONSE_SCHEMA_ENABLED.length;
         }
         if (roleBytes != null) {
             size += RESPONSE_ROLE_PREFIX.length + roleBytes.length;
@@ -433,6 +443,10 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * handshake.
      */
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
+        return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, maxBatchSizeBytes, false);
+    }
+
+    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, boolean schemaEnabled) {
         int offset = 0;
 
         for (byte b : RESPONSE_PREFIX) {
@@ -466,6 +480,11 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         // must not be allowed to start.
         if (durableAckEnabled) {
             for (byte b : RESPONSE_DURABLE_ACK_ENABLED) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+        }
+        if (schemaEnabled) {
+            for (byte b : RESPONSE_SCHEMA_ENABLED) {
                 Unsafe.putByte(buf + offset++, b);
             }
         }

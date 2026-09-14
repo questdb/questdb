@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.client.LineSenderServerException;
+import io.questdb.client.LineSenderSchemaException;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
 import io.questdb.client.cutlass.line.LineSenderException;
@@ -915,27 +916,36 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_test_col_type_mismatch")
                         .longColumn("value", 42)
                         .at(1_000_000L, ChronoUnit.MICROS);
-                sender.flush();
+                long firstFsn = sender.flushAndGetSequence();
+                Assert.assertTrue(firstFsn >= 0);
+                Assert.assertTrue(sender.awaitAckedFsn(firstFsn, 10_000));
 
-                // Second row: same column name but double — must throw immediately
-                try {
-                    sender.table("ws_test_col_type_mismatch")
-                            .doubleColumn("value", 3.14)
-                            .at(2_000_000L, ChronoUnit.MICROS);
-                    Assert.fail("Expected LineSenderException for column type mismatch");
-                } catch (LineSenderException e) {
-                    Assert.assertTrue(
-                            "Error should mention type mismatch: " + e.getMessage(),
-                            e.getMessage().contains("Column type mismatch")
-                    );
-                }
+                // The ACK makes the inferred LONG schema current before the
+                // second setter, so this is a deterministic local conversion
+                // failure rather than a MISSING-to-KNOWN adoption race.
+                LineSenderSchemaException error = Assert.assertThrows(
+                        LineSenderSchemaException.class,
+                        () -> sender.table("ws_test_col_type_mismatch")
+                                .doubleColumn("value", 3.14)
+                );
+                Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, error.getReason());
+
+                // The failed row is cancelled automatically. A valid
+                // cross-setter conversion can continue without selecting the
+                // table again.
+                sender.doubleColumn("value", 3.0)
+                        .at(2_000_000L, ChronoUnit.MICROS);
+                long secondFsn = sender.flushAndGetSequence();
+                Assert.assertTrue(secondFsn > firstFsn);
+                Assert.assertTrue(sender.awaitAckedFsn(secondFsn, 10_000));
             }
 
-            // The first row should still be intact on the server
+            // The original and recovery rows should be intact; the rejected
+            // fractional row must not be present.
             drainWalQueue();
-            assertQuery("SELECT value FROM ws_test_col_type_mismatch")
+            assertQuery("SELECT value FROM ws_test_col_type_mismatch ORDER BY timestamp")
                     .noLeakCheck()
-                    .returnsOnce("value\n42\n");
+                    .returnsOnce("value\n42\n3\n");
         });
     }
 

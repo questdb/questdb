@@ -24,24 +24,37 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.client.LineSenderSchemaException;
 import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
 import io.questdb.client.SenderErrorHandler;
+import io.questdb.client.cutlass.http.client.WebSocketClient;
+import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
+import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
+import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.client.std.Decimal128;
 import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
 import io.questdb.client.std.bytes.DirectByteSlice;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
+import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8Sequence;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Array;
 import java.time.temporal.ChronoUnit;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CyclicBarrier;
@@ -550,22 +563,20 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
     @Test
     public void testBinaryColumnValidation() throws Exception {
-        // Client-side validation of the binaryColumn API. A null reference is
-        // rejected so the NULL contract stays explicit (callers must omit the
-        // column instead, which routes through the null bitmap). Nothing here
-        // should reach the wire.
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table("dummy");
-                assertThrowsContains(() -> sender.binaryColumn("b", (byte[]) null),
-                        "BINARY value cannot be null");
-                sender.cancelRow();
-                sender.table("dummy");
-                assertThrowsContains(() ->
-                                sender.binaryColumn("b", (io.questdb.client.std.bytes.DirectByteSlice) null),
-                        "BINARY slice cannot be null");
-                sender.cancelRow();
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.binaryColumn("b", (byte[]) null),
+                        "table=dummy", "column=b", "inputType=BINARY", "targetType=BINARY");
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.binaryColumn("b", (DirectByteSlice) null),
+                        "table=dummy", "column=b", "inputType=BINARY", "targetType=BINARY");
+                Assert.assertEquals(-1, sender.flushAndGetSequence());
             }
+            assertQuery("select count() from tables() where table_name = 'dummy'")
+                    .noLeakCheck()
+                    .returnsOnce("count\n0\n");
         });
     }
 
@@ -604,19 +615,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // as text when the target column is CHAR. Without the guard
             // QwpStringColumnCursor would route through putCharColumn and
             // pick a CHAR from the leading byte(s).
-            execute("CREATE TABLE " + table + " (v CHAR, ts TIMESTAMP) "
+            execute("CREATE TABLE " + table + " (v CHAR, marker LONG, ts TIMESTAMP) "
                     + "TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).binaryColumn("v", payload).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from BINARY to CHAR is not supported", "[column=v]");
-
-            drainWalQueue();
-            assertQuery("SELECT count() FROM " + table)
-                    .noLeakCheck()
-                    .returnsOnce("count\n0\n");
+            assertLegacyBinaryRejectedAndPublicSenderRecovers(port, table, "CHAR", payload);
         });
     }
 
@@ -627,19 +631,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // Symmetric pin to testBinarySourceRejectedByVarcharTarget: raw
             // binary bytes must not land in a STRING column where
             // Utf8s.directUtf8ToUtf16 would reinterpret them as text.
-            execute("CREATE TABLE " + table + " (v STRING, ts TIMESTAMP) "
+            execute("CREATE TABLE " + table + " (v STRING, marker LONG, ts TIMESTAMP) "
                     + "TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).binaryColumn("v", payload).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from BINARY to STRING is not supported", "[column=v]");
-
-            drainWalQueue();
-            assertQuery("SELECT count() FROM " + table)
-                    .noLeakCheck()
-                    .returnsOnce("count\n0\n");
+            assertLegacyBinaryRejectedAndPublicSenderRecovers(port, table, "STRING", payload);
         });
     }
 
@@ -650,19 +647,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // Symmetric pin to testBinarySourceRejectedByVarcharTarget: raw
             // binary bytes must not be interned as a symbol via
             // putStringToSymbolColumn.
-            execute("CREATE TABLE " + table + " (v SYMBOL, ts TIMESTAMP) "
+            execute("CREATE TABLE " + table + " (v SYMBOL, marker LONG, ts TIMESTAMP) "
                     + "TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).binaryColumn("v", payload).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from BINARY to SYMBOL is not supported", "[column=v]");
-
-            drainWalQueue();
-            assertQuery("SELECT count() FROM " + table)
-                    .noLeakCheck()
-                    .returnsOnce("count\n0\n");
+            assertLegacyBinaryRejectedAndPublicSenderRecovers(port, table, "SYMBOL", payload);
         });
     }
 
@@ -670,19 +660,10 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testBinarySourceRejectedByVarcharTarget() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_varchar_rejects_binary";
-            // Pre-create the table with a VARCHAR column. The client sends
-            // TYPE_BINARY via binaryColumn(...), targeting that existing
-            // VARCHAR column. QwpWalAppender's VARCHAR arm pattern-matches
-            // the cursor by class (QwpStringColumnCursor handles both
-            // BINARY and VARCHAR wire layouts since they share the same
-            // offsets + bytes encoding) without checking qwpType, so today
-            // TYPE_BINARY bytes pass through putVarcharColumn unchecked and
-            // raw (possibly non-UTF-8) bytes land in a column QuestDB
-            // treats as UTF-8. The asymmetric BINARY arm has the symmetric
-            // qwpType guard (testBinaryColumnVarcharSourceCoercesToBinary
-            // pins the accepted direction); this test pins that the
-            // opposite direction is rejected.
-            execute("CREATE TABLE " + table + " (v VARCHAR, ts TIMESTAMP) "
+            // Keep both independent observations: the server rejects a raw,
+            // unflagged TYPE_BINARY source and schema-aware Sender rejects it
+            // locally before publishing a row.
+            execute("CREATE TABLE " + table + " (v VARCHAR, marker LONG, ts TIMESTAMP) "
                     + "TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             // Non-UTF-8 bytes: 0x80 is a continuation byte without a lead,
@@ -690,14 +671,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // they break the UTF-8 invariant the rest of QuestDB assumes.
             byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).binaryColumn("v", payload).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from BINARY to VARCHAR is not supported", "[column=v]");
-
-            drainWalQueue();
-            assertQuery("SELECT count() FROM " + table)
-                    .noLeakCheck()
-                    .returnsOnce("count\n0\n");
+            assertLegacyBinaryRejectedAndPublicSenderRecovers(port, table, "VARCHAR", payload);
         });
     }
 
@@ -4821,6 +4795,68 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testTypedUuidPreservesCompletedRowAfterLocalError() throws Exception {
+        runInContext((port) -> {
+            String table = "schema_aware_sender_baseline";
+            execute("CREATE TABLE " + table + " (id UUID, marker STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            UUID uuid1 = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+            UUID uuid2 = UUID.fromString("11111111-2222-3333-4444-555555555555");
+
+            // WebSocket requires the interval trigger to remain enabled. Keep it
+            // at its largest supported value, disable the byte
+            // trigger, and set the row trigger above this pre-flush row count.
+            // Thus row A remains buffered until the explicit flush below.
+            try (Sender sender = connectWs(
+                    port,
+                    2,
+                    0,
+                    TimeUnit.MILLISECONDS.toNanos(Integer.MAX_VALUE - 1L)
+            )) {
+                sender.table(table)
+                        .uuidColumn("id", uuid1.getLeastSignificantBits(), uuid1.getMostSignificantBits())
+                        .stringColumn("marker", "before-error")
+                        .at(1_000_000, ChronoUnit.MICROS);
+
+                try {
+                    sender.table(table)
+                            .stringColumn("marker", "rolled-back")
+                            .longColumn("id", 42);
+                    Assert.fail("Expected schema-directed UUID/LONG rejection");
+                } catch (LineSenderSchemaException e) {
+                    Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, e.getReason());
+                    Assert.assertTrue(e.getMessage(), e.getMessage().contains("table=" + table));
+                    Assert.assertTrue(e.getMessage(), e.getMessage().contains("column=id"));
+                    Assert.assertTrue(e.getMessage(), e.getMessage().contains("inputType=LONG"));
+                    Assert.assertTrue(e.getMessage(), e.getMessage().contains("targetType=UUID"));
+                }
+
+                // The failed setter cancels only its partial row. This flush must still
+                // publish the completed row buffered before the failure.
+                long firstFsn = sender.flushAndGetSequence();
+                Assert.assertTrue("First explicit flush must publish row A", firstFsn >= 0);
+
+                sender.table(table)
+                        .uuidColumn("id", uuid2.getLeastSignificantBits(), uuid2.getMostSignificantBits())
+                        .at(2_000_000, ChronoUnit.MICROS);
+                long secondFsn = sender.flushAndGetSequence();
+                Assert.assertTrue("Second explicit flush must publish a later frame", secondFsn > firstFsn);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT id, marker, ts FROM " + table + " ORDER BY ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tmarker\tts
+                            a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\tbefore-error\t1970-01-01T00:00:01.000000Z
+                            11111111-2222-3333-4444-555555555555\t\t1970-01-01T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testUuid() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_uuid";
@@ -4903,6 +4939,90 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         });
     }
 
+    @Test
+    public void testFloatingToIntegerNaNDependsOnBlockNullBitmap() throws Exception {
+        runInContext(port -> {
+            String[] sources = {"float", "double"};
+            String[] targets = {"byte", "short", "int", "long"};
+            for (String source : sources) {
+                for (String target : targets) {
+                    String plain = source + "_nan_plain_" + target;
+                    String bitmap = source + "_nan_bitmap_" + target;
+                    execute("create table " + plain + " (v " + target + ", ts timestamp) timestamp(ts) partition by day wal");
+                    execute("create table " + bitmap + " (v " + target + ", ts timestamp) timestamp(ts) partition by day wal");
+                    sendLegacyNaN(port, plain, source, false, target.toUpperCase(Locale.ROOT));
+                    sendLegacyNaN(port, bitmap, source, true, target.toUpperCase(Locale.ROOT));
+                    drainWalQueue();
+                    String expected = target.equals("byte") || target.equals("short")
+                            ? "v\tn\n0\tfalse\n"
+                            : "v\tn\nnull\ttrue\n";
+                    assertQuery("select v, v is null n from " + plain).noLeakCheck().returnsOnce(expected);
+                    assertQuery("select count() from " + bitmap).noLeakCheck().returnsOnce("count\n0\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFloatingPositiveTwoToThe63ClampsToLongMax() throws Exception {
+        runInContext(port -> {
+            execute("create table float_long_edge (source symbol, v long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table double_long_edge (source symbol, v long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table float_long_above (v long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table double_long_above (v long, ts timestamp) timestamp(ts) partition by day wal");
+            sendLegacyFloatingLongEdges(port, "float_long_edge", true,
+                    Float.floatToRawIntBits(Math.nextDown(0x1.0p63f)), Float.floatToRawIntBits(0x1.0p63f));
+            sendLegacyFloatingLongEdges(port, "double_long_edge", false,
+                    Double.doubleToRawLongBits(Math.nextDown(0x1.0p63)), Double.doubleToRawLongBits(0x1.0p63));
+            sendLegacyFloatingLongAbove(port, "float_long_above", true,
+                    Float.floatToRawIntBits(Math.nextUp(0x1.0p63f)));
+            sendLegacyFloatingLongAbove(port, "double_long_above", false,
+                    Double.doubleToRawLongBits(Math.nextUp(0x1.0p63)));
+            drainWalQueue();
+            assertQuery("select source, v from float_long_edge order by source")
+                    .noLeakCheck().returnsOnce("source\tv\nat\t9223372036854775807\nbelow\t9223371487098961920\n");
+            assertQuery("select source, v from double_long_edge order by source")
+                    .noLeakCheck().returnsOnce("source\tv\nat\t9223372036854775807\nbelow\t9223372036854774784\n");
+            assertQuery("select count() from float_long_above").noLeakCheck().returnsOnce("count\n0\n");
+            assertQuery("select count() from double_long_above").noLeakCheck().returnsOnce("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testSchemaFloatingNaNAndPositiveTwoToThe63Rules() throws Exception {
+        runInContext(port -> {
+            execute("create table schema_nan_public (v long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table schema_long_edge_public (marker long, v long, ts timestamp) timestamp(ts) partition by day wal");
+            try (QwpWebSocketSender sender = connectWs(port, 0, 0,
+                    TimeUnit.MILLISECONDS.toNanos(Integer.MAX_VALUE - 1L))) {
+                sender.table("schema_nan_public").floatColumn("v", Float.NaN)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+                sender.doubleColumn("v", Double.NaN).at(1_000_001, ChronoUnit.MICROS);
+                sender.at(1_000_002, ChronoUnit.MICROS);
+
+                sender.table("schema_long_edge_public").longColumn("marker", 1).longColumn("v", 1)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.longColumn("marker", 2);
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.floatColumn("v", 0x1.0p63f),
+                        "table=schema_long_edge_public", "column=v", "inputType=FLOAT", "targetType=LONG");
+                sender.longColumn("marker", 3);
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.doubleColumn("v", 0x1.0p63),
+                        "table=schema_long_edge_public", "column=v", "inputType=DOUBLE", "targetType=LONG");
+                sender.longColumn("marker", 4).longColumn("v", 4)
+                        .at(2_000_001, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+            assertQuery("select v, v is null n from schema_nan_public order by ts")
+                    .noLeakCheck().returnsOnce("v\tn\nnull\ttrue\nnull\ttrue\nnull\ttrue\n");
+            assertQuery("select marker, v from schema_long_edge_public order by ts")
+                    .noLeakCheck().returnsOnce("marker\tv\n1\t1\n4\t4\n");
+        });
+    }
+
     private static void assertCoercionError(
             int port, String table,
             java.util.function.BiConsumer<QwpWebSocketSender, String> sendAction,
@@ -4964,6 +5084,258 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         } finally {
             assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory, expectedMsgPart1, expectedMsgPart2);
         }
+    }
+
+    private void assertLegacyBinaryRejectedAndPublicSenderRecovers(
+            int port,
+            String tableName,
+            String targetType,
+            byte[] payload
+    ) throws Exception {
+        WebSocketResponse response;
+        try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
+             QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            client.connect("127.0.0.1", port);
+            client.upgrade("/write/v4", null);
+            Assert.assertFalse(client.isQwpSchemaEnabled());
+            table.getOrCreateColumn("v", io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_BINARY, true)
+                    .addBinary(payload);
+            table.nextRow();
+            int length = encoder.encode(table);
+            Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr()
+                    + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
+            QwpMessageCursor message = new QwpMessageCursor();
+            message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
+            Assert.assertTrue(message.hasNextTable());
+            QwpTableBlockCursor wire = message.nextTable();
+            Assert.assertFalse(message.hasNextTable());
+            Assert.assertEquals(1, wire.getColumnCount());
+            Assert.assertEquals("v", wire.getColumnDef(0).getName());
+            Assert.assertEquals(QwpConstants.TYPE_BINARY, wire.getColumnDef(0).getTypeCode());
+            Assert.assertTrue(wire.hasNextRow());
+            wire.nextRow();
+            assertBytes(payload, wire.getStringColumn(0).getUtf8Value());
+            Assert.assertFalse(wire.hasNextRow());
+            client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+            response = receiveResponse(client);
+        }
+        Assert.assertEquals(WebSocketResponse.STATUS_SCHEMA_MISMATCH, response.getStatus());
+        Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains(
+                "type coercion from BINARY to " + targetType + " is not supported"));
+        Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains("column=v"));
+        drainWalQueue();
+        assertQuery("select count() from " + tableName).noLeakCheck().returnsOnce("count\n0\n");
+
+        try (QwpWebSocketSender sender = connectWs(port)) {
+            sender.table(tableName).longColumn("marker", 1);
+            assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                    () -> sender.binaryColumn("v", payload),
+                    "table=" + tableName, "column=v", "inputType=BINARY", "targetType=" + targetType);
+            sender.longColumn("marker", 2).at(2_000_000, ChronoUnit.MICROS);
+            sender.flush();
+        }
+        drainWalQueue();
+        assertQuery("select marker from " + tableName).noLeakCheck().returnsOnce("marker\n2\n");
+    }
+
+    private static void assertBytes(byte[] expected, Utf8Sequence actual) {
+        Assert.assertNotNull(actual);
+        Assert.assertEquals(expected.length, actual.size());
+        for (int i = 0; i < expected.length; i++) {
+            Assert.assertEquals("byte " + i, expected[i], actual.byteAt(i));
+        }
+    }
+
+    private static void assertSchemaError(
+            LineSenderSchemaException.Reason reason,
+            Runnable action,
+            String... messageParts
+    ) {
+        LineSenderSchemaException error = Assert.assertThrows(LineSenderSchemaException.class, action::run);
+        Assert.assertEquals(reason, error.getReason());
+        Assert.assertFalse(error.isRetryable());
+        for (String messagePart : messageParts) {
+            Assert.assertTrue(error.getMessage(), error.getMessage().contains(messagePart));
+        }
+    }
+
+    private static WebSocketResponse receiveResponse(WebSocketClient client) {
+        AtomicReference<WebSocketResponse> result = new AtomicReference<>();
+        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
+            @Override
+            public void onBinaryMessage(long ptr, int len) {
+                WebSocketResponse response = new WebSocketResponse();
+                Assert.assertTrue(response.readFrom(ptr, len, false));
+                result.set(response);
+            }
+
+            @Override
+            public void onClose(int code, String reason) {
+                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
+            }
+        }, 5_000));
+        Assert.assertNotNull(result.get());
+        return result.get();
+    }
+
+    private static void sendLegacyNaN(int port, String tableName, String source, boolean withBitmap, String target) throws Exception {
+        long rawBits = source.equals("float") ? 0x7fc00000L : 0x7ff8000000000000L;
+        WebSocketResponse response;
+        try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
+             QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            client.connect("127.0.0.1", port);
+            client.upgrade("/write/v4", null);
+            Assert.assertFalse(client.isQwpSchemaEnabled());
+            byte wireType = source.equals("float") ? QwpConstants.TYPE_FLOAT : QwpConstants.TYPE_DOUBLE;
+            QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("v", wireType, withBitmap);
+            if (source.equals("float")) {
+                value.addFloat(Float.intBitsToFloat((int) rawBits));
+            } else {
+                value.addDouble(Double.longBitsToDouble(rawBits));
+            }
+            table.nextRow();
+            if (withBitmap) {
+                table.nextRow();
+            }
+            int length = encoder.encode(table);
+            QwpTableBlockCursor wire = assertLegacyFloatingWire(encoder, length, wireType, withBitmap ? 2 : 1);
+            QwpFixedWidthColumnCursor cursor = wire.getFixedWidthColumn(0);
+            Assert.assertEquals(withBitmap, cursor.getNullBitmapAddress() != 0);
+            if (withBitmap) {
+                Assert.assertEquals(2, Unsafe.getByte(cursor.getNullBitmapAddress()) & 0xff);
+            }
+            Assert.assertEquals(1, cursor.getValueCount());
+            Assert.assertTrue(wire.hasNextRow());
+            wire.nextRow();
+            Assert.assertEquals(!withBitmap, wire.isColumnNull(0));
+            if (source.equals("float")) {
+                Assert.assertEquals((int) rawBits, Unsafe.getInt(cursor.getValuesAddress()));
+            } else {
+                Assert.assertEquals(rawBits, Unsafe.getLong(cursor.getValuesAddress()));
+            }
+            if (withBitmap) {
+                Assert.assertTrue(wire.hasNextRow());
+                wire.nextRow();
+                Assert.assertTrue(wire.isColumnNull(0));
+            }
+            Assert.assertFalse(wire.hasNextRow());
+            client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+            response = receiveResponse(client);
+        }
+        if (withBitmap) {
+            Assert.assertEquals(WebSocketResponse.STATUS_SCHEMA_MISMATCH, response.getStatus());
+            Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains("double value NaN loses precision"));
+            Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains(target));
+            Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains("column=v"));
+        } else {
+            Assert.assertTrue(response.getErrorMessage(), response.isSuccess());
+        }
+    }
+
+    private static void sendLegacyFloatingLongEdges(
+            int port, String tableName, boolean floatSource, long belowBits, long atBits
+    ) throws Exception {
+        try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
+             QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            client.connect("127.0.0.1", port);
+            client.upgrade("/write/v4", null);
+            Assert.assertFalse(client.isQwpSchemaEnabled());
+            QwpTableBuffer.ColumnBuffer source = table.getOrCreateColumn("source", QwpConstants.TYPE_VARCHAR, true);
+            QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("v",
+                    floatSource ? QwpConstants.TYPE_FLOAT : QwpConstants.TYPE_DOUBLE, false);
+            source.addString("below");
+            if (floatSource) value.addFloat(Float.intBitsToFloat((int) belowBits));
+            else value.addDouble(Double.longBitsToDouble(belowBits));
+            table.nextRow();
+            source.addString("at");
+            if (floatSource) value.addFloat(Float.intBitsToFloat((int) atBits));
+            else value.addDouble(Double.longBitsToDouble(atBits));
+            table.nextRow();
+            int length = encoder.encode(table);
+            QwpTableBlockCursor wire = assertLegacyFloatingWire(encoder, length,
+                    floatSource ? QwpConstants.TYPE_FLOAT : QwpConstants.TYPE_DOUBLE, 2, 1);
+            QwpFixedWidthColumnCursor raw = wire.getFixedWidthColumn(1);
+            Assert.assertEquals(0, raw.getNullBitmapAddress());
+            Assert.assertEquals(2, raw.getValueCount());
+            Assert.assertTrue(wire.hasNextRow());
+            wire.nextRow();
+            assertBytes(new byte[]{'b', 'e', 'l', 'o', 'w'}, wire.getStringColumn(0).getUtf8Value());
+            if (floatSource) Assert.assertEquals((int) belowBits, Unsafe.getInt(raw.getValuesAddress()));
+            else Assert.assertEquals(belowBits, Unsafe.getLong(raw.getValuesAddress()));
+            Assert.assertTrue(wire.hasNextRow());
+            wire.nextRow();
+            assertBytes(new byte[]{'a', 't'}, wire.getStringColumn(0).getUtf8Value());
+            if (floatSource) Assert.assertEquals((int) atBits, Unsafe.getInt(raw.getValuesAddress() + Float.BYTES));
+            else Assert.assertEquals(atBits, Unsafe.getLong(raw.getValuesAddress() + Double.BYTES));
+            Assert.assertFalse(wire.hasNextRow());
+            client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+            WebSocketResponse response = receiveResponse(client);
+            Assert.assertTrue(response.getErrorMessage(), response.isSuccess());
+        }
+    }
+
+    private static void sendLegacyFloatingLongAbove(int port, String tableName, boolean floatSource, long bits) throws Exception {
+        WebSocketResponse response;
+        try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
+             QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            client.connect("127.0.0.1", port);
+            client.upgrade("/write/v4", null);
+            Assert.assertFalse(client.isQwpSchemaEnabled());
+            byte wireType = floatSource ? QwpConstants.TYPE_FLOAT : QwpConstants.TYPE_DOUBLE;
+            QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("v", wireType, false);
+            if (floatSource) value.addFloat(Float.intBitsToFloat((int) bits));
+            else value.addDouble(Double.longBitsToDouble(bits));
+            table.nextRow();
+            int length = encoder.encode(table);
+            QwpTableBlockCursor wire = assertLegacyFloatingWire(encoder, length, wireType, 1);
+            QwpFixedWidthColumnCursor cursor = wire.getFixedWidthColumn(0);
+            Assert.assertEquals(0, cursor.getNullBitmapAddress());
+            Assert.assertEquals(1, cursor.getValueCount());
+            Assert.assertTrue(wire.hasNextRow());
+            wire.nextRow();
+            if (floatSource) Assert.assertEquals((int) bits, Unsafe.getInt(cursor.getValuesAddress()));
+            else Assert.assertEquals(bits, Unsafe.getLong(cursor.getValuesAddress()));
+            Assert.assertFalse(wire.hasNextRow());
+            client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+            response = receiveResponse(client);
+        }
+        Assert.assertEquals(WebSocketResponse.STATUS_SCHEMA_MISMATCH, response.getStatus());
+        Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains("loses precision when converted to LONG"));
+        Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains("LONG"));
+        Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains("column=v"));
+    }
+
+    private static QwpTableBlockCursor assertLegacyFloatingWire(
+            QwpWebSocketEncoder encoder, int length, byte valueType, int rowCount, int valueColumnIndex
+    ) throws Exception {
+        Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr()
+                + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
+        QwpMessageCursor message = new QwpMessageCursor();
+        message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
+        Assert.assertTrue(message.hasNextTable());
+        QwpTableBlockCursor wire = message.nextTable();
+        Assert.assertFalse(message.hasNextTable());
+        Assert.assertEquals(valueColumnIndex + 1, wire.getColumnCount());
+        Assert.assertEquals(rowCount, wire.getRowCount());
+        if (valueColumnIndex == 1) {
+            Assert.assertEquals("source", wire.getColumnDef(0).getName());
+            Assert.assertEquals(QwpConstants.TYPE_VARCHAR, wire.getColumnDef(0).getTypeCode());
+        }
+        Assert.assertEquals("v", wire.getColumnDef(valueColumnIndex).getName());
+        Assert.assertEquals(valueType, wire.getColumnDef(valueColumnIndex).getTypeCode());
+        QwpFixedWidthColumnCursor value = wire.getFixedWidthColumn(valueColumnIndex);
+        Assert.assertEquals(valueType == QwpConstants.TYPE_FLOAT ? Float.BYTES : Double.BYTES, value.getValueSize());
+        return wire;
+    }
+
+    private static QwpTableBlockCursor assertLegacyFloatingWire(
+            QwpWebSocketEncoder encoder, int length, byte valueType, int rowCount
+    ) throws Exception {
+        return assertLegacyFloatingWire(encoder, length, valueType, rowCount, 0);
     }
 
     private static void assertThrowsContains(Runnable action, String expectedMsgPart) {

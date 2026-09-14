@@ -72,6 +72,10 @@ public final class QwpConstants {
      * individually fit within the WebSocket recv buffer.
      */
     public static final byte FLAG_DEFER_COMMIT = 0x01;
+    /** Flag bit: table headers carry pinned schema identities. */
+    public static final byte FLAG_SCHEMA = 0x02;
+    /** Flag bit: connection control message (currently schema discovery). */
+    public static final byte FLAG_CONTROL = 0x20;
     /**
      * Flag bit: Delta symbol dictionary encoding enabled.
      * When set, symbol columns use global IDs and send only new dictionary entries.
@@ -181,6 +185,10 @@ public final class QwpConstants {
      * Status: Batch accepted successfully.
      */
     public static final byte STATUS_OK = 0x00;
+    public static final byte SCHEMA_FEEDBACK_MODE_INVALIDATE_ALL = (byte) 0xC0;
+    public static final byte SCHEMA_FEEDBACK_MODE_MASK = (byte) 0xC0;
+    public static final byte SCHEMA_FEEDBACK_MODE_RESERVED = 0x40;
+    public static final byte SCHEMA_FEEDBACK_MODE_UPDATES = (byte) 0x80;
     /**
      * Status: Malformed message.
      */
