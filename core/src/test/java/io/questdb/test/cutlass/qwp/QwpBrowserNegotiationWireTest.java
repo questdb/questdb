@@ -210,6 +210,22 @@ public class QwpBrowserNegotiationWireTest extends AbstractQwpBootstrapTest {
             try (final TestServerMain ignored = startFragmented()) {
                 assertNegotiatedZstdLevel(5, "?qwp_accept_encoding=zstd%3Blevel%3D5", "zstd;level=1");
                 assertNegotiatedZstdLevel(1, "?qwp_accept_encoding=zstd%3Blevel%3D1", "zstd;level=5");
+
+                // Asking for raw through the URL still counts: the injected
+                // header loses, and CAP_COMPRESSION with a raw codec tells the
+                // browser so. A browser that always sends the parameter is
+                // therefore never left decoding frames a header compressed.
+                byte[] raw = readServerInfo("?qwp_accept_encoding=raw", "X-QWP-Accept-Encoding: zstd\r\n");
+                Assert.assertNotEquals(
+                        "a URL-carrier request must advertise CAP_COMPRESSION even when it asked for raw",
+                        0,
+                        readCapabilities(raw) & QwpEgressMsgKind.CAP_COMPRESSION
+                );
+                Assert.assertEquals(
+                        "the trailer must name the raw codec the URL asked for, not the injected zstd",
+                        QwpConstants.COMPRESSION_NONE,
+                        raw[raw.length - 2]
+                );
             }
         });
     }

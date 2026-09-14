@@ -203,21 +203,6 @@ public class QwpEgressCompressionTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
-    public void testNegotiateAcceptEncodingPrefersTheBrowserUrlCarrier() {
-        Utf8String header = new Utf8String("zstd");
-        Utf8String urlParam = new Utf8String("raw");
-
-        Assert.assertNull(QwpEgressUpgradeProcessor.negotiateAcceptEncoding(null, null));
-        Assert.assertSame(header, QwpEgressUpgradeProcessor.negotiateAcceptEncoding(header, null));
-        Assert.assertSame(urlParam, QwpEgressUpgradeProcessor.negotiateAcceptEncoding(null, urlParam));
-        // The browser cannot set the header, so a header present alongside the
-        // URL parameter came from an intermediary. It must not override the
-        // client's own choice -- the same threat negotiateMaxBatchRows guards
-        // against by taking the stricter of its two carriers.
-        Assert.assertSame(urlParam, QwpEgressUpgradeProcessor.negotiateAcceptEncoding(header, urlParam));
-    }
-
-    @Test
     public void testLevel22IsClampedAndDecodesCorrectly() throws Exception {
         // Level 22 on the wire; server clamps it down to MAX_LEVEL (9).
         // The client must decode correctly regardless of the level the
@@ -287,27 +272,6 @@ public class QwpEgressCompressionTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
-    public void testZstdRoundTripsHighlyCompressibleSymbols() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startQuestDB()) {
-                // Rotating symbols over 10k rows gives a ~50x compressible payload.
-                serverMain.execute("CREATE TABLE z(id LONG, s SYMBOL, ts TIMESTAMP) "
-                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
-                serverMain.execute(
-                        "INSERT INTO z SELECT x, CAST('s_' || (x % 8) AS SYMBOL), x::TIMESTAMP FROM long_sequence(10000)");
-                serverMain.awaitTable("z");
-                try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=zstd;")) {
-                    client.connect();
-                    Assert.assertEquals("negotiated QWP version",
-                            QwpConstants.VERSION, client.getNegotiatedQwpVersion());
-                    assertLongSum(client, "SELECT * FROM z", 10000, 10_000L * 10_001L / 2L);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testHeaderNegotiatedCompressionLeavesCapCompressionClear() throws Exception {
         // CAP_COMPRESSION means "SERVER_INFO ends with a codec/level trailer",
         // which only the browser URL carrier produces. A header-negotiated
@@ -327,6 +291,42 @@ public class QwpEgressCompressionTest extends AbstractQwpBootstrapTest {
                             0,
                             info.getCapabilities() & QwpEgressMsgKind.CAP_COMPRESSION
                     );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNegotiateAcceptEncodingPrefersTheBrowserUrlCarrier() {
+        Utf8String header = new Utf8String("zstd");
+        Utf8String urlParam = new Utf8String("raw");
+
+        Assert.assertNull(QwpEgressUpgradeProcessor.negotiateAcceptEncoding(null, null));
+        Assert.assertSame(header, QwpEgressUpgradeProcessor.negotiateAcceptEncoding(header, null));
+        Assert.assertSame(urlParam, QwpEgressUpgradeProcessor.negotiateAcceptEncoding(null, urlParam));
+        // The browser cannot set the header, so a header present alongside the
+        // URL parameter came from an intermediary. It must not override the
+        // client's own choice -- the same threat negotiateMaxBatchRows guards
+        // against by taking the stricter of its two carriers.
+        Assert.assertSame(urlParam, QwpEgressUpgradeProcessor.negotiateAcceptEncoding(header, urlParam));
+    }
+
+    @Test
+    public void testZstdRoundTripsHighlyCompressibleSymbols() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startQuestDB()) {
+                // Rotating symbols over 10k rows gives a ~50x compressible payload.
+                serverMain.execute("CREATE TABLE z(id LONG, s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute(
+                        "INSERT INTO z SELECT x, CAST('s_' || (x % 8) AS SYMBOL), x::TIMESTAMP FROM long_sequence(10000)");
+                serverMain.awaitTable("z");
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=zstd;")) {
+                    client.connect();
+                    Assert.assertEquals("negotiated QWP version",
+                            QwpConstants.VERSION, client.getNegotiatedQwpVersion());
+                    assertLongSum(client, "SELECT * FROM z", 10000, 10_000L * 10_001L / 2L);
                 }
             }
         });

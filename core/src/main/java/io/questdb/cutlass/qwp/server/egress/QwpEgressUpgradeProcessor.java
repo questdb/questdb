@@ -298,11 +298,18 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * header -- the same threat {@link #negotiateMaxBatchRows} guards against
      * by taking the stricter of its two carriers.
      * <p>
-     * Which carrier the client used also decides how it learns the result, so
-     * the caller keys {@code CAP_COMPRESSION} off the URL parameter's presence
-     * rather than off which value won. Doing it the other way round would let
-     * an injected header compress the wire while the browser was told nothing,
-     * leaving it to decode compressed frames as raw.
+     * The caller advertises {@code CAP_COMPRESSION}, and appends the codec and
+     * level to SERVER_INFO, exactly when the URL parameter is present. Because
+     * the URL parameter always wins, that is also exactly when its value
+     * decided the wire, so a client that asked through the URL learns the
+     * result, while a header-only client, which reads
+     * {@code X-QWP-Content-Encoding} instead, never meets a trailer it does not
+     * expect. That does not cover a request with no URL parameter: a header
+     * injected into it still compresses the wire while SERVER_INFO says
+     * nothing, and a browser behind such an intermediary would decode
+     * compressed frames as raw. A browser client closes that gap by always
+     * sending the parameter, {@code raw} included, which the server then
+     * reports back as a raw codec.
      * <p>
      * <b>The URL carrier must be percent-encoded.</b> The two carriers share a
      * value grammar ({@code zstd;level=1}), but only the header is delivered
@@ -480,9 +487,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 QwpIngressHttpProcessor.HEADER_X_QWP_ACCEPT_ENCODING);
         Utf8Sequence acceptEncodingUrlParam = requestHeader.getUrlParam(
                 QwpIngressHttpProcessor.URL_PARAM_QWP_ACCEPT_ENCODING);
-        // Keyed off the carrier the client used, not off which value won: a
-        // client that asked through the URL cannot read the Content-Encoding
-        // response header and needs the codec in the SERVER_INFO frame.
+        // A client that asked through the URL cannot read the Content-Encoding
+        // response header and needs the codec in the SERVER_INFO frame. The URL
+        // value always wins, so its presence also means it decided the wire;
+        // negotiateAcceptEncoding documents the case this leaves uncovered.
         boolean browserCompressionNegotiation = acceptEncodingUrlParam != null;
         Utf8Sequence acceptEncoding = negotiateAcceptEncoding(acceptEncodingHeader, acceptEncodingUrlParam);
         long negotiatedCompression = QwpEgressCompressionNegotiator.negotiate(acceptEncoding);

@@ -38,10 +38,17 @@ public class QwpBrowserOriginTest {
                 new Utf8String("localhost:9000"),
                 false
         ));
+        // Schemes compare case-insensitively on both branches: the HTTPS pair
+        // covers the secure prefix, the HTTP pair the plaintext one.
         Assert.assertTrue(QwpIngressHttpProcessor.isSameOrigin(
                 new Utf8String("HTTPS://QUESTDB.EXAMPLE.COM"),
                 new Utf8String("questdb.example.com"),
                 true
+        ));
+        Assert.assertTrue(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("HTTP://LOCALHOST:9000"),
+                new Utf8String("localhost:9000"),
+                false
         ));
         Assert.assertTrue(QwpIngressHttpProcessor.isSameOrigin(
                 new Utf8String("http://[::1]:9000"),

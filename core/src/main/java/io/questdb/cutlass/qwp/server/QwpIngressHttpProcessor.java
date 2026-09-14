@@ -124,6 +124,9 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
                     Connection: close\r
                     Content-Length: 0\r
                     X-QuestDB-Role:\s""").getBytes(StandardCharsets.US_ASCII);
+    // Lower-case, as Utf8s.startsWithLowerCaseAscii requires of its pattern.
+    private static final Utf8String ORIGIN_PREFIX_HTTP = new Utf8String("http://");
+    private static final Utf8String ORIGIN_PREFIX_HTTPS = new Utf8String("https://");
     private static final byte[] RESPONSE_AFTER_ACCEPT = "\r\nX-QWP-Version: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_CONTENT_ENCODING_PREFIX =
             "\r\nX-QWP-Content-Encoding: ".getBytes(StandardCharsets.US_ASCII);
@@ -329,10 +332,10 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
             return false;
         }
         final int prefixLength;
-        if (!secureConnection && startsWithIgnoreCaseAscii(origin, "http://")) {
-            prefixLength = 7;
-        } else if (secureConnection && startsWithIgnoreCaseAscii(origin, "https://")) {
-            prefixLength = 8;
+        if (!secureConnection && Utf8s.startsWithLowerCaseAscii(origin, ORIGIN_PREFIX_HTTP)) {
+            prefixLength = ORIGIN_PREFIX_HTTP.size();
+        } else if (secureConnection && Utf8s.startsWithLowerCaseAscii(origin, ORIGIN_PREFIX_HTTPS)) {
+            prefixLength = ORIGIN_PREFIX_HTTPS.size();
         } else {
             return false;
         }
@@ -698,18 +701,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
             }
         }
         return false;
-    }
-
-    private static boolean startsWithIgnoreCaseAscii(Utf8Sequence value, String prefix) {
-        if (value.size() < prefix.length()) {
-            return false;
-        }
-        for (int i = 0; i < prefix.length(); i++) {
-            if (toLowerAscii(value.byteAt(i)) != prefix.charAt(i)) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private static byte toLowerAscii(byte value) {
