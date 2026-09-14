@@ -1,0 +1,3 @@
+User confirmation: "Yes, the machine is available; run both matrices"
+Recorded UTC: 2026-09-14T10:41:39.724315+00:00
+Latency and allocation run sequentially; no tests or builds overlap latency collection.

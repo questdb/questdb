@@ -5,9 +5,11 @@ The experimental configuration remains false. The later
 [shared-throttle follow-up](parallel-hash-join-group-by-throttling.md) superseded
 the counters described below and failed 3 of 54 recovery bounds at `d2e59fc832`.
 The current [boundary-check simplification](parallel-hash-join-group-by-breaker-boundaries.md)
-is unbenchmarked, so task 9f remains open before task 10's full rollout matrix.
-V1 is not yet complete. This report retains the original investigation and
-measurements.
+passes all 54 recovery bounds in the [task 9g remeasurement](parallel-hash-join-group-by-remeasurement.md)
+at `4a05a7eb24`. Its 24-case C1 allocation matrix also passes. An unresolved
+swapped-RIGHT warmup JVM crash reopens the execution-reliability prerequisite and
+blocks task 10 despite a successful retry. V1 is not yet complete. This report
+retains the original investigation and measurements.
 
 ## Fixed reference and measurement boundary
 

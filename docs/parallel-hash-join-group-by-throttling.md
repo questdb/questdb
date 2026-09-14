@@ -3,7 +3,10 @@
 **Historical implementation and benchmark at `d2e59fc832`.** The subsequent
 [boundary-check simplification](parallel-hash-join-group-by-breaker-boundaries.md)
 moves probe scans to frame checks and removes collision and map-entry polling.
-The measurements below apply to `d2e59fc832`, not that unbenchmarked follow-up.
+The measurements below apply to `d2e59fc832`. The subsequent
+[task 9g remeasurement](parallel-hash-join-group-by-remeasurement.md) reports all
+54 recovery bounds and 24 C1 allocation cases passing at `4a05a7eb24`, alongside
+an unresolved swapped-RIGHT warmup crash that blocks rollout qualification.
 
 This follow-up to task 9f removes the operator-specific throttle counters from
 commit `4ae9efb0f0`. The fused join now calls the existing
@@ -130,5 +133,6 @@ remain excluded from acceptance evidence. The completed run has its own
 [user-authorization record](parallel-hash-join-group-by-throttling/confirmed/authorization.txt).
 
 **Obtain explicit user confirmation before starting further benchmarks.**
-Task 9f still needs performance recovery before task 10 can proceed.
-V1 is not complete, and the experimental flag remains false.
+At this historical revision, task 9f still needed performance recovery. The
+current task 9g report above records recovered latency and the new reliability
+blocker. V1 is not complete, and the experimental flag remains false.

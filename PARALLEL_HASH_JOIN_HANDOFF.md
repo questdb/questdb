@@ -7,8 +7,10 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
 **Benchmark coordination:** other agents may be running on this machine. Do not
 start or resume performance or allocation benchmarks without explicit user
 confirmation for the run. Existing permission to edit, test, commit or push does
-not authorize benchmark execution. The shared-throttle follow-up's first latency
-run was stopped; its partial output is not acceptance evidence.
+not authorize benchmark execution. Task 9g's two matrices were authorized and
+completed in this session. A swapped-RIGHT warmup JVM crash is retained as an unresolved reliability failure; its retry
+passed. Further benchmark runs still require explicit confirmation. The earlier
+shared-throttle interruption remains excluded from acceptance evidence.
 
 ## Completed
 
@@ -207,39 +209,50 @@ the temporary map merge/shard overloads and shared-breaker overrides are removed
 Owner checks at probe/merge completion and existing shard-task/scheduling checks
 preserve interruption and drain before output or cleanup. See the
 [current placement and validation](docs/parallel-hash-join-group-by-breaker-boundaries.md).
-This version has not been benchmarked; the `d2e59fc832` latency/allocation results
-remain historical evidence. Obtain confirmation before a new benchmark run.
+Task 9g now measures this implementation at `4a05a7eb24`: all 54 latency recovery
+bounds and all 24 C1 allocation cases pass. An unresolved swapped-RIGHT warmup
+JVM crash prevents full qualification despite a successful unchanged retry. See
+the [remeasurement report](docs/parallel-hash-join-group-by-remeasurement.md).
+
+9g. **Re-measure V1 latency and allocation after circuit-breaker simplification** — this commit.
+    The frozen implementation is `4a05a7eb24`. All **54/54 recovery bounds** pass,
+    with primary fused medians **283.420/279.123 ms** and **8.244×/8.360× speedup**.
+    All 1,360 measured executions and 1,741 ordered result checks pass. The separate
+    **24-case C1 allocation matrix** passes 234 executions and 405 owner/worker
+    windows with zero unexplained bytes. Compressed-groups, concurrent-4 and
+    high-cardinality pass both rounds. The first swapped-RIGHT warmup JVM aborted
+    with SIGSEGV; an unchanged retry passed, but the cause remains unresolved.
+    Task 9's reliability prerequisite is reopened and blocks task 10. See the
+    [report, crash evidence and gate outcomes](docs/parallel-hash-join-group-by-remeasurement.md).
 
 The branch supports experimental automatic selection for eligible keyed and
-unkeyed queries. Task **9f passed at `4ae9efb0f0`**, but the shared-throttle follow-up
-failed individual recovery bounds. The current boundary simplification awaits
-performance requalification before task 10. Keep
+unkeyed queries. Task **9f's numerical recovery bounds pass on `4a05a7eb24`**;
+task **9g's measurement/publication work is complete**. Task 9's reliability
+prerequisite remains open because of the warmup crash. Keep
 `cairo.sql.parallel.hash.join.groupby.enabled=false`, the global parallel GROUP BY
 gate, and the positive-worker requirement. Do not add a build-size threshold,
 runtime fallback or consumed-input replay.
 
-## Next RFC work: task 9g remeasurement in a separate session, then task 10 (V1)
+## Next V1 work: resolve the warmup crash, then task 10
 
-**9g. Re-measure V1 latency and allocation after circuit-breaker simplification — pending.**
-The user will run this task in a separate session; no benchmarks belong to this
-implementation session. Task 9g is added to RFC 130 before task 10.
+The initial task 9g run aborted during swapped-RIGHT warmup at 2026-09-14
+10:49:31 UTC, before that case emitted measured samples. The owner executor thread
+`pool-1-thread-1` received SIGSEGV with instruction pointer `0x1`; a stack return
+address points into C1-compiled `AsyncHashJoinGroupByRecordCursorFactory.update`.
+The crash report does not establish an engine or JVM cause. No core dump exists.
 
-The last confirmed run (`d2e59fc832`) failed 3 of 54 recovery bounds; see the
-[per-case results](docs/parallel-hash-join-group-by-throttling.md). The current
-boundary simplification is unbenchmarked. After user confirmation, repeat the
-fixed 27-case recovery and 24-case C1 matrices, retaining all individual bounds
-and previous failed trials. Preserve the standard throttled API for build rows
-and duplicate advances, the frame/shard boundaries for other work, and the fixed
-reference. Further benchmark runs require explicit user confirmation.
+The first eleven completed cases were retained; swapped-RIGHT and the remaining
+fifteen cases ran with the same jar, JDK, flags and workloads. The retry and every
+latency/allocation gate passed. Do not treat the successful retry or focused
+regressions as a fix. Preserve the
+[crash and initial run](docs/parallel-hash-join-group-by-remeasurement/interrupted/)
+and [continuation commands](docs/parallel-hash-join-group-by-remeasurement/continue.sh).
+Investigate the failure, add a regression where feasible, and repeat affected
+qualification on the final implementation. Further performance/allocation runs
+require explicit shared-host confirmation. Keep the pinned reference and bounds;
+retain every failed trial.
 
-Task 9g must pin the final source/jar, retain every sample, phase timing, logical
-counter, ordered result and allocation window, and publish every gate's pass/fail
-outcome. Explicitly revisit compressed-groups, concurrent-4 and high-cardinality.
-Do not overlap latency collection with tests, builds or allocation profiling.
-Update the PR and handoff after the run. A failed gate keeps task 9f or the
-relevant resource prerequisite open and blocks task 10.
-
-After recovery passes, repeat the full 51-case rollout matrix,
+After the reliability prerequisite is resolved, repeat the full 51-case rollout matrix,
 including small effective inputs, cold data, build footprints/source costs, skew,
 near-limit memory, SYMBOL/cache controls, worker scaling and concurrent load.
 Repeat both the primary 2× gate and task 9f's per-case 1.10 recovery bound. Review
@@ -264,15 +277,28 @@ releases unused JIT handles and composes peeled projection mappings. Ordinary
 serial probe filters that cannot be stolen keep the existing plan. Child partition-
 format guards continue to request normal recompilation; they are not bypassed.
 
-## Validation for the current boundary simplification
+## Validation for task 9g
+
+The benchmark package and both artifact validators pass. All **54 recovery
+bounds**, both primary **2× gates**, and all **24 allocation cases** pass, with
+1,360 latency executions/1,741 result checks and 234 allocation executions/405
+thread windows. **83 tests passed across four focused suites**, with no
+failures/errors, after both matrices: `AsyncHashJoinGroupByTest`,
+`HashJoinGroupByPlannerTest`, `HashJoinGroupByConcurrentTest`, and
+`IntHashJoinBuildTest`. No production code changed. See the
+[commands, per-suite results and artifacts](docs/parallel-hash-join-group-by-remeasurement.md).
+The initial swapped-RIGHT warmup crash remains an unresolved reliability failure;
+these successful checks do not close it.
+
+## Historical validation for the boundary simplification at `4a05a7eb24`
 
 **2,517 Java tests passed across 73 affected suites**, with 37 conditional skips and no failures/errors (2,554 total).
 Core compilation and diff checks pass. Frame-level cancellation/timeout across
 native/mixed/Parquet, duplicate throttling, final-frame cancellation, merge drain,
 resource cleanup and reuse are covered. See the [current audit and retained
-logs](docs/parallel-hash-join-group-by-breaker-boundaries.md). No performance or
-allocation benchmarks were run for this version; requalification needs user
-confirmation.
+logs](docs/parallel-hash-join-group-by-breaker-boundaries.md). The original change
+ran no benchmarks. Task 9g now supplies the latency/allocation measurements and
+unresolved crash outcome above.
 
 ## Historical validation for the shared-throttle follow-up
 

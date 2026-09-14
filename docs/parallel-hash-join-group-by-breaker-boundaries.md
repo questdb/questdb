@@ -75,17 +75,21 @@ also adds pending V1 task 9g.
 
 ## Benchmark status
 
-**No performance or allocation benchmarks were run for this change.** Obtain
-explicit user confirmation before starting a new batch on this shared machine.
-The last confirmed run measured `d2e59fc832`: 51/54 recovery bounds passed, primary
-fused medians were 327.088/325.963 ms with 7.080×/7.108× speedup, and all 24 C1
-allocation cases passed. Those results are retained in the
-[historical shared-throttle report](parallel-hash-join-group-by-throttling.md) and
-do not qualify this implementation.
+The original boundary-simplification change ran no benchmarks. The subsequent
+[task 9g remeasurement](parallel-hash-join-group-by-remeasurement.md) measures
+this implementation at `4a05a7eb24`: **54/54 recovery bounds pass**, with primary
+fused medians **283.420/279.123 ms** and **8.244×/8.360× speedup**. All **24 C1
+allocation cases** pass, with 234 executions, 405 owner/worker windows and zero
+unexplained bytes under the established scope. The original reference and all
+acceptance bounds are unchanged.
 
-New RFC **task 9g is pending for a separate benchmark session**, as requested by
-the user. It repeats the fixed 27-case recovery and 24-case C1 allocation matrices
-on the final source/jar and publishes every gate's outcome. Task 9f remains open
-pending that performance requalification. Keep every original per-case/repetition 1.10 bound, the primary
-2× gate, the frozen reference and the failed trials. Task 10's full 51-case rollout
-matrix follows recovery. V1 is not complete; the experimental flag remains false.
+The initial swapped-RIGHT warmup JVM aborted with SIGSEGV before measured samples.
+An unchanged retry passed, but the cause remains unresolved. Task 9g's measurements
+are published; task 9's execution-reliability prerequisite is reopened and blocks
+task 10. Keep the crash evidence and resolve it before rollout qualification.
+Further benchmark runs require explicit shared-host confirmation.
+
+The [shared-throttle measurements](parallel-hash-join-group-by-throttling.md)
+at `d2e59fc832`, including its three failed bounds, remain historical evidence.
+Task 10 is still the full 51-case rollout matrix. V1 is not complete, and the
+experimental flag remains false.
