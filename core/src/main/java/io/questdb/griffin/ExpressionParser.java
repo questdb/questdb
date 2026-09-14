@@ -2185,6 +2185,43 @@ public class ExpressionParser {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
                         if (scopeStack.notEmpty()) {
+                            // A 'from' here means the expression ended while a '(' was still open.
+                            // That is either an unclosed parenthesis (e.g. a function call whose
+                            // ')' was forgotten) or a stray 'from' inside a balanced pair
+                            // (e.g. something(null from x)). We are about to throw either way, so
+                            // look ahead over the rest of the input: if a ')' closes the enclosing
+                            // paren before the statement ends, the paren is balanced and the 'from'
+                            // is the real problem; otherwise the '(' was never closed, so point at
+                            // it rather than at 'from', which is only where the parser noticed.
+                            if (SqlKeywords.isFromKeyword(tok)) {
+                                int localDepth = 0;
+                                boolean isBalanced = false;
+                                CharSequence ahead;
+                                while ((ahead = SqlUtil.fetchNext(lexer)) != null) {
+                                    if (ahead.length() == 1) {
+                                        final char c = ahead.charAt(0);
+                                        if (c == '(') {
+                                            localDepth++;
+                                        } else if (c == ')') {
+                                            if (localDepth == 0) {
+                                                isBalanced = true;
+                                                break;
+                                            }
+                                            localDepth--;
+                                        } else if (c == ';') {
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (!isBalanced) {
+                                    for (int i = 0, n = opStack.size(); i < n; i++) {
+                                        ExpressionNode open = opStack.peek(i);
+                                        if (open.type == ExpressionNode.CONTROL && !open.token.isEmpty() && open.token.charAt(0) == '(') {
+                                            throw SqlException.$(open.position, "unbalanced (");
+                                        }
+                                    }
+                                }
+                            }
                             throw SqlException.$(lastPos, "dangling literal");
                         }
                         lexer.unparseLast();
