@@ -78,6 +78,11 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testCopySquashLeavesNoOrphanPartitionVersionDir() throws Exception {
+        // Pinned, not inherited: the COPY route below IS the subject, and it only happens under ADAPTIVE.
+        // Under any other mode the squash overwrites in place, no superseded version directory is ever
+        // published, and the assertion passes trivially -- green while proving nothing. Pinned rather than
+        // skipped so this keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // Under ADAPTIVE the squash takes the COPY route, because the durable-epoch pin blocks the
         // in-place overwrite. A copy PUBLISHES a new partition version directory and queues the old
         // one, and that queued removal is itself epoch-protected -- so the superseded directory

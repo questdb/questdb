@@ -735,6 +735,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
      */
     @Test
     public void testCanAttachParquetPartitionMissingMetadataFile() throws Exception {
+        // The two durability gates this test exists to reach are guarded by
+        // `effectiveCommitMode != CommitMode.NOSYNC`, so under a nosync sweep the row counts below still
+        // pass while neither fsync is executed -- green, and proving nothing. Skipped rather than pinned
+        // because the gate is "not nosync", so sync/async/adaptive all exercise it and pinning one of them
+        // would needlessly narrow the coverage this test gets from the sweep matrix.
+        Overrides.assumeDurableCommitMode();
         assertMemoryLeak(() -> {
             String tableName = "tabAttachParquetOk";
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);

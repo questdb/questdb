@@ -31,6 +31,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TxnLogCrcSidecar;
 import io.questdb.std.str.Path;
+import io.questdb.test.cairo.Overrides;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -49,6 +50,12 @@ public class TxnLogCrcSidecarCrashTest extends AbstractCrashConsistencyTest {
 
     @Override
     public void setUp() {
+        // The sweep's whole subject is the sidecar's durability ORDERING, and TableTransactionLogV1 gates
+        // crcSidecar.sync(...) on `commitMode != CommitMode.NOSYNC`. Under a nosync sweep neither the
+        // sidecar nor the txnlog is ever made durable, the crash model rolls them back together, and the
+        // `ops >= 8` precondition below has no durability ops to count. "Not nosync" rather than "adaptive":
+        // sync and async exercise the same ordering, so pinning adaptive would narrow the matrix for nothing.
+        Overrides.assumeDurableCommitMode();
         // Must be set BEFORE the engine is built: setting it inside a test method is too late and the
         // tables come out V2. The assertIsV1 precondition below exists because that actually happened.
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
