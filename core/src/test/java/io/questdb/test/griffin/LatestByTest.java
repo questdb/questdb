@@ -96,6 +96,33 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestKeyPushdownAbsentNullSubsetSkipsOlderPartitionsAndReusesFactory() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = failOpenForPartition("2024-01-01");
+            execute("CREATE TABLE null_subset (s SYMBOL, v DOUBLE, ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO null_subset VALUES
+                    ('c', 1, '2024-01-01'),
+                    ('a', 10, '2024-01-02'),
+                    ('b', 20, '2024-01-02')
+                    """);
+            String query = latestKeyQuery("null_subset", "s IN ('a', NULL)", false);
+            String filteredQuery = latestKeyQuery("null_subset", "s IN ('a', NULL) AND v > 0", false);
+            try (
+                    RecordCursorFactory factory = select(query);
+                    RecordCursorFactory filteredFactory = select(filteredQuery)
+            ) {
+                assertFactory(factory).withContext(sqlExecutionContext).expectSize().returns("v\n10.0\n");
+                assertFactory(filteredFactory).withContext(sqlExecutionContext).returns("v\n10.0\n");
+                execute("INSERT INTO null_subset VALUES (NULL, 30, '2024-01-03')");
+                assertFactory(factory).withContext(sqlExecutionContext).expectSize().returns("v\n10.0\n30.0\n");
+                assertFactory(filteredFactory).withContext(sqlExecutionContext).returns("v\n10.0\n30.0\n");
+            }
+        });
+    }
+
+    @Test
     public void testLatestKeyPushdownAllSymbolsReuse() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE all_keys (s SYMBOL, v DOUBLE, ts " + timestampType.getTypeName()
