@@ -627,6 +627,20 @@ public class QueryAssertion {
     }
 
     /**
+     * Like {@link #timestamp} but makes no claim about scan order. Use it when the result genuinely
+     * carries a designated timestamp while the factory that produces it does not emit rows in
+     * timestamp order -- a keyed GROUP BY, UNION or non-timestamp sort re-designated with
+     * {@code timestamp(col)}. Such a factory reports {@code SCAN_DIRECTION_OTHER}, so
+     * {@link #timestamp}/{@link #timestampAsc} would (correctly) fail; this step still pins the
+     * expected column so a query that silently gains, loses or relabels its timestamp is caught.
+     */
+    public QueryAssertion timestampUnordered(CharSequence column) {
+        this.expectedTimestamp = column;
+        this.expectedTimestampOrder = TimestampOrder.UNORDERED;
+        return this;
+    }
+
+    /**
      * Also assert that the compiled factory's base factory (see
      * {@link RecordCursorFactory#getBaseFactory()}) is exactly {@code baseFactoryClass}. Use to pin the
      * execution strategy a query must compile to, e.g. that a filtered scan routes through
@@ -1692,7 +1706,13 @@ public class QueryAssertion {
             }
         } else {
             boolean expectAscendingOrder = order != TimestampOrder.DESC;
-            if (expectAscendingOrder) {
+            if (order == TimestampOrder.UNORDERED) {
+                try {
+                    Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_OTHER, factory.getScanDirection());
+                } catch (AssertionError e) {
+                    throw new AssertionError("expected UNORDERED timestamp", e);
+                }
+            } else if (expectAscendingOrder) {
                 try {
                     Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, factory.getScanDirection());
                 } catch (AssertionError e) {
@@ -1710,7 +1730,9 @@ public class QueryAssertion {
             Assert.assertTrue("Column '" + column + "' can't be found in metadata", index > -1);
             Assert.assertNotEquals("Expected non-negative value as timestamp index", -1, index);
             Assert.assertEquals("Timestamp column index", index, factory.getMetadata().getTimestampIndex());
-            assertTimestampColumnValues(factory, sqlExecutionContext, expectAscendingOrder);
+            if (order != TimestampOrder.UNORDERED) {
+                assertTimestampColumnValues(factory, sqlExecutionContext, expectAscendingOrder);
+            }
         }
     }
 
@@ -2104,6 +2126,7 @@ public class QueryAssertion {
         FACTORY_TAGS[MemoryTag.NATIVE_TABLE_WAL_WRITER] = false;
     }
 
-    // Expected designated-timestamp scan order, set by timestamp()/timestampAsc()/timestampDesc().
-    private enum TimestampOrder {ASC, DESC}
+    // Expected designated-timestamp scan order, set by
+    // timestamp()/timestampAsc()/timestampDesc()/timestampUnordered().
+    private enum TimestampOrder {ASC, DESC, UNORDERED}
 }

@@ -164,7 +164,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public int getScanDirection() {
-        return SortedRecordCursorFactory.getScanDirection(orderByFilter);
+        return SortedRecordCursorFactory.getScanDirection(orderByFilter, getMetadata().getTimestampIndex());
     }
 
     @Override
