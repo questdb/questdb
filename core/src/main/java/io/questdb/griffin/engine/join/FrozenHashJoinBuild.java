@@ -54,8 +54,7 @@ public interface FrozenHashJoinBuild {
         void find(int key);
 
         /**
-         * Skips the row check for a caller that checks its probe scan periodically.
-         * Collision checks use this view's bound breaker's throttled API.
+         * Skips the row check for a caller that checks at probe frame boundaries.
          * Read payload columns only after advancing a matching row.
          */
         void findUnchecked(int key);

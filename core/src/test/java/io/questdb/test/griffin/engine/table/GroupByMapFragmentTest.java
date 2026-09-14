@@ -29,8 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.engine.table.GroupByMapFragment;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LimitedMemoryTracker;
@@ -54,56 +52,6 @@ import org.junit.Test;
  * point deterministic.
  */
 public class GroupByMapFragmentTest extends AbstractCairoTest {
-
-    @Test
-    public void testCancellationWhileRedistributingAndReuse() throws Exception {
-        assertMemoryLeak(() -> {
-            ArrayColumnTypes keys = new ArrayColumnTypes().add(ColumnType.INT);
-            ArrayColumnTypes values = new ArrayColumnTypes().add(ColumnType.LONG);
-            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024 * 1024L);
-                 GroupByMapFragment fragment = new GroupByMapFragment(configuration, keys, values, 4, 0)) {
-                fragment.setMemoryTracker(tracker);
-                Map source = fragment.getMap();
-                source.setMemoryTracker(tracker);
-                source.reopen();
-                for (int i = 0; i < 10000; i++) {
-                    MapKey key = source.withKey();
-                    key.putInt(i);
-                    key.createValue().putLong(0, i);
-                }
-                int[] checks = {0};
-                AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine) {
-                    @Override
-                    public void statefulThrowExceptionIfTripped() {
-                        if (++checks[0] == 32) {
-                            cancel();
-                        }
-                        super.statefulThrowExceptionIfTripped();
-                    }
-                };
-                try {
-                    fragment.shard(breaker);
-                    Assert.fail("expected cancellation inside redistribution");
-                } catch (CairoException expected) {
-                    Assert.assertTrue(expected.isInterruption());
-                }
-                Assert.assertEquals(32, checks[0]);
-                Assert.assertTrue(fragment.isNotSharded());
-                Assert.assertEquals(10000, source.size());
-                long copied = 0;
-                for (int i = 0; i < fragment.getShards().size(); i++) {
-                    copied += fragment.getShards().getQuick(i).size();
-                }
-                Assert.assertTrue("redistribution must stop within 32 row/slot checks", copied > 0 && copied < 32);
-                fragment.close();
-                Assert.assertEquals(0, tracker.getUsed());
-                fragment.shard();
-                Assert.assertFalse(fragment.isNotSharded());
-                fragment.close();
-                Assert.assertEquals(0, tracker.getUsed());
-            }
-        });
-    }
 
     @Test
     public void testShardOpenBreachReleasesPartialShardMap() throws Exception {

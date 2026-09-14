@@ -183,6 +183,7 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
                 metrics.probeNanos = System.nanoTime() - start;
                 atom.collectMetrics(metrics);
                 start = System.nanoTime();
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                 if (functions.isKeyed()) {
                     final GroupByShardingContext sharding = atom.getShardingContext();
                     if (sharding.isSharded()) {
@@ -200,7 +201,7 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
                         shardedCursor.of(shards, circuitBreaker);
                         mapCursor = shardedCursor;
                     } else {
-                        mapCursor = sharding.mergeOwnerMap(circuitBreaker).getCursor(circuitBreaker);
+                        mapCursor = sharding.mergeOwnerMap().getCursor(circuitBreaker);
                     }
                     metrics.mergeCardinality = mapCursor.size();
                     recordA.of(mapCursor.getRecord());
@@ -209,6 +210,8 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
                     recordA.of(atom.mergeScalar(circuitBreaker));
                     metrics.mergeCardinality = 1;
                 }
+                // Observe cancellation during the last frame or merge before exposing output.
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                 metrics.mergeNanos = System.nanoTime() - start;
                 isBuilt = true;
             } catch (Throwable th) {

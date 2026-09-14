@@ -50,19 +50,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class PostAggregationCircuitBreakerTest extends AbstractCairoTest {
 
     @Test
-    public void testSharedChecksObserveCancellationAndReset() {
-        final PostAggregationCircuitBreaker breaker = new PostAggregationCircuitBreaker(engine);
-        for (int execution = 0; execution < 2; execution++) {
-            breaker.statefulThrowExceptionIfTripped();
-            breaker.statefulThrowExceptionIfTrippedTimeThrottled();
-            breaker.cancel();
-            Assert.assertTrue(Assert.assertThrows(CairoException.class, breaker::statefulThrowExceptionIfTripped).isCancellation());
-            Assert.assertTrue(Assert.assertThrows(CairoException.class, breaker::statefulThrowExceptionIfTrippedTimeThrottled).isCancellation());
-            breaker.reset();
-        }
-    }
-
-    @Test
     public void testCancelWithoutErrorTripsWithNoErrorRecorded() {
         final PostAggregationCircuitBreaker breaker = new PostAggregationCircuitBreaker(engine);
         breaker.cancel();

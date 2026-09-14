@@ -105,18 +105,6 @@ public class PostAggregationCircuitBreaker extends AtomicBooleanCircuitBreaker {
     }
 
     @Override
-    public void statefulThrowExceptionIfTripped() {
-        // Merge workers share this flag-only channel. It has no clock or socket
-        // to throttle, and must not mutate the inherited single-threaded counter.
-        statefulThrowExceptionIfTrippedNoThrottle();
-    }
-
-    @Override
-    public void statefulThrowExceptionIfTrippedTimeThrottled() {
-        statefulThrowExceptionIfTrippedNoThrottle();
-    }
-
-    @Override
     public synchronized void reset() {
         super.reset();
         errorMsg.clear();

@@ -125,12 +125,7 @@ public interface Map extends Mutable, Closeable, Reopenable {
 
     boolean isOpen();
 
-    default void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
-        merge(srcMap, mergeFunc, null);
-    }
-
-    // The breaker belongs to the acquired merge slot, or is a thread-safe cancellation channel.
-    void merge(Map srcMap, MapValueMergeFunction mergeFunc, @Nullable SqlExecutionCircuitBreaker circuitBreaker);
+    void merge(Map srcMap, MapValueMergeFunction mergeFunc);
 
     /**
      * Creates an independent cursor over the same materialized data.

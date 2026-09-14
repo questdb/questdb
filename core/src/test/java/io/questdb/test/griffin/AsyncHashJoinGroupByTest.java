@@ -529,8 +529,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOuterMissCancellationAndDuplicateTimeoutAndReuse() throws Exception {
+    public void testOuterMissFrameCancellationAndDuplicateTimeoutAndReuse() throws Exception {
         assertMemoryLeak(() -> {
+            frameRows = 1024;
             createTables();
             SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
             try {
@@ -573,7 +574,10 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                         : SqlExecutionCircuitBreaker.STATE_CANCELLED, ex.getInterruptionReason());
                             }
                             Assert.assertTrue(hook.calls.get() >= 32 && hook.calls.get()
-                                    <= 32 + configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
+                                    <= (timeout ? 32 + configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle() : frameRows));
+                            if (!timeout) {
+                                Assert.assertEquals("the single all-miss frame finishes before owner cancellation", 1000, hook.calls.get());
+                            }
                             Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                             Assert.assertNull(sqlExecutionContext.getMemoryTracker());
                             timedOut.set(false);
@@ -590,8 +594,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectedProbeCancellationAcrossStorageAndReuse() throws Exception {
+    public void testRejectedProbeFrameCancellationAcrossStorageAndReuse() throws Exception {
         assertMemoryLeak(() -> {
+            frameRows = 4096;
             createTables();
             execute("truncate table r");
             execute("insert into r select 999999, timestamp_sequence('2020-01-01', 60000000), 1.0, 2.0 from long_sequence(100000)");
@@ -620,8 +625,10 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 } catch (CairoException ex) {
                                     Assert.assertTrue(ex.isCancellation());
                                 }
-                                Assert.assertTrue(hook.calls.get() >= 32 && hook.calls.get()
-                                        <= 32 + configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
+                                // Native frames absorb short tails; Parquet uses a row group (January has 44,640 rows).
+                                final int maxFrameRows = storage == 0 ? 2 * frameRows : 44_640;
+                                Assert.assertTrue("bounded frame work: " + hook.calls.get(),
+                                        hook.calls.get() >= 32 && hook.calls.get() <= maxFrameRows);
                                 Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                                 Assert.assertNull(sqlExecutionContext.getMemoryTracker());
                                 hook.cancel = null;
@@ -643,7 +650,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNetworkProbeChecksArePeriodicAndBounded() throws Exception {
+    public void testNetworkProbeChecksAtFrameBoundaries() throws Exception {
         assertNetworkProbeChecksArePeriodicAndBounded(false);
     }
 
@@ -1118,6 +1125,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             }
             AtomicLong ticks = new AtomicLong(1000);
             AtomicInteger clockReads = new AtomicInteger();
+            AtomicInteger frameChecks = new AtomicInteger();
             StackWalker stackWalker = StackWalker.getInstance();
             final int throttle = 64;
             circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
@@ -1135,6 +1143,10 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 frame.getMethodName().equals("aggregate")
                                         && frame.getClassName().equals(AsyncHashJoinGroupByRecordCursorFactory.class.getName())))) {
                             clockReads.incrementAndGet();
+                        } else if (stackWalker.walk(frames -> frames.anyMatch(frame ->
+                                frame.getMethodName().equals("reduce")
+                                        && frame.getClassName().equals(UnorderedPageFrameReduceJob.class.getName())))) {
+                            frameChecks.incrementAndGet();
                         }
                         return ticks.get();
                     };
@@ -1160,13 +1172,19 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 breaker.resetTimer();
                                 try (RecordCursor cursor = f.getCursor()) {
                                     clockReads.set(0);
+                                    frameChecks.set(0);
                                     while (cursor.hasNext()) {
                                         // Consume all groups with the active network breaker.
                                     }
                                 }
                                 Assert.assertEquals("the fixture must exercise every row/pair", 100_000, hook.calls.get());
-                                Assert.assertTrue("checks must read the clock periodically", clockReads.get() > 0);
-                                Assert.assertTrue("clock reads must be throttled, actual=" + clockReads.get(), clockReads.get() < 25_000);
+                                Assert.assertTrue("the shared reducer must check each frame", frameChecks.get() > 0);
+                                if (duplicates) {
+                                    Assert.assertTrue("duplicate checks must read the clock periodically", clockReads.get() > 0);
+                                    Assert.assertTrue("clock reads must be throttled, actual=" + clockReads.get(), clockReads.get() < 25_000);
+                                } else {
+                                    Assert.assertEquals("rejected rows, misses and outer null extensions use frame checks", 0, clockReads.get());
+                                }
                                 for (boolean timeout : new boolean[]{false, true}) {
                                     hook.calls.set(0);
                                     breaker.setTimeout(timeout ? 10 : Long.MAX_VALUE);
@@ -1179,8 +1197,10 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                         Assert.assertEquals(timeout ? SqlExecutionCircuitBreaker.STATE_TIMEOUT
                                                 : SqlExecutionCircuitBreaker.STATE_CANCELLED, ex.getInterruptionReason());
                                     }
+                                    // Native frames absorb short tails; Parquet uses a row group (January has 44,640 rows).
+                                    final int maxFrameRows = storage == 0 ? 2 * frameRows : 44_640;
                                     Assert.assertTrue("bounded probe work: " + hook.calls.get(),
-                                            hook.calls.get() >= 32 && hook.calls.get() <= 32 + 2 * throttle);
+                                            hook.calls.get() >= 32 && hook.calls.get() <= (duplicates ? 32 + 2 * throttle : maxFrameRows));
                                     Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                                     Assert.assertNull(sqlExecutionContext.getMemoryTracker());
                                     hook.onLimit = null;

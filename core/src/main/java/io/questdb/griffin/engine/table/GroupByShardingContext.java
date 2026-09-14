@@ -162,15 +162,15 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         return perWorkerLocks.acquireSlot(carrierId, circuitBreaker);
     }
 
-    public void mergeShard(int slotId, int shardIndex, SqlExecutionCircuitBreaker circuitBreaker) {
-        mergeShard(shardIndex, getFunctionUpdater(slotId), circuitBreaker);
+    public void mergeShard(int slotId, int shardIndex) {
+        mergeShard(shardIndex, getFunctionUpdater(slotId));
     }
 
     public void release(int slotId) {
         perWorkerLocks.releaseSlot(slotId);
     }
 
-    private Map mergeOwnerMap(GroupByFunctionsUpdater functionUpdater, @Nullable SqlExecutionCircuitBreaker circuitBreaker) {
+    private Map mergeOwnerMap(GroupByFunctionsUpdater functionUpdater) {
         final Map destMap = ownerFragment.reopenMap();
         final int perWorkerMapCount = perWorkerFragments.size();
 
@@ -201,7 +201,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         // Now do the actual merge.
         for (int i = 0; i < perWorkerMapCount; i++) {
             final Map srcMap = perWorkerFragments.getQuick(i).getMap();
-            destMap.merge(srcMap, functionUpdater, circuitBreaker);
+            destMap.merge(srcMap, functionUpdater);
             srcMap.close();
         }
 
@@ -215,7 +215,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         return destMap;
     }
 
-    private void mergeShard(int shardIndex, GroupByFunctionsUpdater functionUpdater, SqlExecutionCircuitBreaker circuitBreaker) {
+    private void mergeShard(int shardIndex, GroupByFunctionsUpdater functionUpdater) {
         assert sharded;
 
         final Map destMap = reopenDestShard(shardIndex);
@@ -255,11 +255,11 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         for (int i = 0; i < perWorkerMapCount; i++) {
             final GroupByMapFragment srcFragment = perWorkerFragments.getQuick(i);
             final Map srcMap = srcFragment.getShards().getQuick(shardIndex);
-            destMap.merge(srcMap, functionUpdater, circuitBreaker);
+            destMap.merge(srcMap, functionUpdater);
             srcMap.close();
         }
         // Merge shard from the owner fragment.
-        destMap.merge(srcOwnerMap, functionUpdater, circuitBreaker);
+        destMap.merge(srcOwnerMap, functionUpdater);
         srcOwnerMap.close();
 
         // Don't forget to update the stats.
@@ -361,11 +361,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     }
 
     Map mergeOwnerMap() {
-        return mergeOwnerMap(null);
-    }
-
-    Map mergeOwnerMap(@Nullable SqlExecutionCircuitBreaker circuitBreaker) {
-        return mergeOwnerMap(getFunctionUpdater(-1), circuitBreaker);
+        return mergeOwnerMap(getFunctionUpdater(-1));
     }
 
     /**
@@ -405,7 +401,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                 if (isFiberOwner) {
                     lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
                 }
-                mergeShard(-1, shardIndex, circuitBreaker);
+                mergeShard(-1, shardIndex);
             }
             finalizeShardStats();
             return destShards;
@@ -432,7 +428,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                             if (isOwnerParkable) {
                                 lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
                             }
-                            mergeShard(-1, shardIndex, circuitBreaker);
+                            mergeShard(-1, shardIndex);
                             ownCount++;
                             total++;
                             mergedCount = -postAggregationDoneLatch.getCount();
@@ -549,9 +545,11 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     }
 
     void shardAll(SqlExecutionCircuitBreaker circuitBreaker) {
-        ownerFragment.shard(circuitBreaker);
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+        ownerFragment.shard();
         for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
-            perWorkerFragments.getQuick(i).shard(circuitBreaker);
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            perWorkerFragments.getQuick(i).shard();
         }
     }
 }

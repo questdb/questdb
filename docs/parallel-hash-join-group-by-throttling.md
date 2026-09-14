@@ -1,5 +1,10 @@
 # Shared circuit-breaker throttling for parallel hash joins
 
+**Historical implementation and benchmark at `d2e59fc832`.** The subsequent
+[boundary-check simplification](parallel-hash-join-group-by-breaker-boundaries.md)
+moves probe scans to frame checks and removes collision and map-entry polling.
+The measurements below apply to `d2e59fc832`, not that unbenchmarked follow-up.
+
 This follow-up to task 9f removes the operator-specific throttle counters from
 commit `4ae9efb0f0`. The fused join now calls the existing
 `statefulThrowExceptionIfTripped()` API for scanned probe rows, copied build rows,

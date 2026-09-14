@@ -1,11 +1,13 @@
 # Fused hash join performance recovery (RFC task 9f)
 
 Task **9f passed at commit `4ae9efb0f0`** under [RFC 130](https://github.com/questdb/rfc/discussions/130).
-The experimental configuration remains false. Task 10 must now repeat the full
-rollout matrix on the completed implementation; V1 is not yet complete.
-The [shared-throttle follow-up](parallel-hash-join-group-by-throttling.md) supersedes
-the counters described below and publishes its own validation. This report retains
-the original investigation and measurements.
+The experimental configuration remains false. The later
+[shared-throttle follow-up](parallel-hash-join-group-by-throttling.md) superseded
+the counters described below and failed 3 of 54 recovery bounds at `d2e59fc832`.
+The current [boundary-check simplification](parallel-hash-join-group-by-breaker-boundaries.md)
+is unbenchmarked, so task 9f remains open before task 10's full rollout matrix.
+V1 is not yet complete. This report retains the original investigation and
+measurements.
 
 ## Fixed reference and measurement boundary
 

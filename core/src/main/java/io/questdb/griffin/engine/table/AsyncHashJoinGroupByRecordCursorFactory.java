@@ -246,13 +246,14 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 final boolean outer = atom.isOuter();
                 final GroupByMapFragment fragment = atom.getFragment(slotId);
                 if (atom.isSharded()) {
-                    fragment.shard(breaker);
+                    fragment.shard();
                 }
                 final Map map = fragment == null ? null
                         : fragment.isNotSharded() ? fragment.reopenMap() : fragment.getShards().getQuick(0);
                 final long rowCount = sequence.getFrameRowCount(frameIndex);
-                for (long r = 0; r < rowCount && sequence.isActive(); r++) {
-                    slot.breaker.statefulThrowExceptionIfTripped();
+                // The shared reduce job checks the breaker before each frame, as for GROUP BY.
+                // Duplicate iteration below checks separately because join fanout can exceed a frame.
+                for (long r = 0; r < rowCount; r++) {
                     slot.scannedRows++;
                     probeRecord.setRowIndex(r);
                     if (probeFilter != null && !probeFilter.getBool(probeRecord)) {

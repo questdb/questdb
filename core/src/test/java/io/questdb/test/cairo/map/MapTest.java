@@ -41,12 +41,9 @@ import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.cairo.map.Unordered8Map;
 import io.questdb.cairo.map.UnorderedVarcharMap;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
-import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
@@ -60,7 +57,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -80,8 +76,6 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @RunWith(Parameterized.class)
 public class MapTest extends AbstractCairoTest {
@@ -522,115 +516,6 @@ public class MapTest extends AbstractCairoTest {
                     MapKey key = map.withKey();
                     populateKey(key, i);
                     key.createValue();
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testMergeCancellationWhileCopyingAndCombining() throws Exception {
-        assertMemoryLeak(() -> {
-            SingleColumnType keys = keyColumnType(ColumnType.INT);
-            SingleColumnType values = new SingleColumnType(ColumnType.INT);
-            for (boolean intersecting : new boolean[]{false, true}) {
-                try (Map dest = createMap(keys, values, 64, 0.8, Integer.MAX_VALUE);
-                     Map source = createMap(keys, values, 64, 0.8, Integer.MAX_VALUE)) {
-                    for (int i = 0; i < 10000; i++) {
-                        MapKey key = source.withKey();
-                        populateKey(key, i);
-                        key.createValue().putInt(0, i);
-                        if (intersecting) {
-                            key = dest.withKey();
-                            populateKey(key, i);
-                            key.createValue().putInt(0, 0);
-                        }
-                    }
-                    int[] checks = {0};
-                    AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine) {
-                        @Override
-                        public void statefulThrowExceptionIfTripped() {
-                            if (++checks[0] == 32) {
-                                cancel();
-                            }
-                            super.statefulThrowExceptionIfTripped();
-                        }
-                    };
-                    try {
-                        dest.merge(source, new TestMapValueMergeFunction(), breaker);
-                        Assert.fail("expected cancellation inside a map merge");
-                    } catch (io.questdb.cairo.CairoException expected) {
-                        Assert.assertTrue(expected.isInterruption());
-                    }
-                    Assert.assertEquals(32, checks[0]);
-                    Assert.assertEquals(10000, source.size());
-                    dest.clear();
-                    dest.merge(source, new TestMapValueMergeFunction());
-                    Assert.assertEquals(10000, dest.size());
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testMergeNetworkChecksArePeriodicAndBounded() throws Exception {
-        assertMemoryLeak(() -> {
-            AtomicInteger clockReads = new AtomicInteger();
-            AtomicInteger mode = new AtomicInteger();
-            AtomicBoolean cancelled = new AtomicBoolean();
-            DefaultSqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
-                @Override
-                public int getCircuitBreakerThrottle() {
-                    return 64;
-                }
-
-                @Override
-                public MillisecondClock getClock() {
-                    return () -> {
-                        int reads = clockReads.incrementAndGet();
-                        if (mode.get() == 1 && reads >= 2) {
-                            cancelled.set(true);
-                        }
-                        return mode.get() == 2 && reads >= 2 ? 1002 : 1000;
-                    };
-                }
-            };
-            SingleColumnType keys = keyColumnType(ColumnType.INT);
-            SingleColumnType values = new SingleColumnType(ColumnType.INT);
-            try (Map source = createMap(keys, values, 64, 0.8, Integer.MAX_VALUE);
-                 Map dest = createMap(keys, values, 64, 0.8, Integer.MAX_VALUE);
-                 NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, config)) {
-                for (int i = 0; i < 10000; i++) {
-                    MapKey key = source.withKey();
-                    populateKey(key, i);
-                    key.createValue().putInt(0, i);
-                }
-                breaker.setCancelledFlag(cancelled);
-                breaker.setTimeout(1);
-                for (boolean intersecting : new boolean[]{false, true}) {
-                    for (int execution = 0; execution < 4; execution++) {
-                        dest.clear();
-                        if (intersecting) {
-                            dest.merge(source, new TestMapValueMergeFunction());
-                        }
-                        mode.set(0);
-                        cancelled.set(false);
-                        breaker.resetTimer();
-                        clockReads.set(0);
-                        mode.set(execution);
-                        if (execution == 1 || execution == 2) {
-                            io.questdb.cairo.CairoException error = Assert.assertThrows(io.questdb.cairo.CairoException.class,
-                                    () -> dest.merge(source, new TestMapValueMergeFunction(), breaker));
-                            Assert.assertEquals(execution == 1, error.isCancellation());
-                            Assert.assertTrue(error.isInterruption());
-                            Assert.assertEquals(2, clockReads.get());
-                        } else {
-                            dest.merge(source, new TestMapValueMergeFunction(), breaker);
-                            Assert.assertEquals(10000, dest.size());
-                            Assert.assertTrue("merge checks must read the clock periodically", clockReads.get() > 0);
-                            Assert.assertTrue("merge must not read the clock for every entry", clockReads.get() < 1000);
-                        }
-                        Assert.assertEquals(10000, source.size());
-                    }
                 }
             }
         });

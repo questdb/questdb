@@ -321,7 +321,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 dest.setNew(false);
             }
         }
-        breaker.statefulThrowExceptionIfTrippedNoThrottle();
         return dest;
     }
 

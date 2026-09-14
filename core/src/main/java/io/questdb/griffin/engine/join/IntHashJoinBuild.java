@@ -245,11 +245,10 @@ public final class IntHashJoinBuild implements Closeable {
         }
     }
 
-    private static long findKeySlot(long base, int slots, int key, SqlExecutionCircuitBreaker circuitBreaker) {
+    private static long findKeySlot(long base, int slots, int key) {
         int index = (int) Hash.hashInt64(key) & (slots - 1);
         long address = base + (long) index * SLOT_SIZE;
         while (Unsafe.getLong(address + 8) != 0 && Unsafe.getInt(address) != key) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
             index = (index + 1) & (slots - 1);
             address = base + (long) index * SLOT_SIZE;
         }
@@ -258,12 +257,12 @@ public final class IntHashJoinBuild implements Closeable {
 
     // The caller owns failure cleanup and the row check; nested work still checks here.
     private void appendRow(int key, Record record) {
-        long slot = findKeySlot(keys.address, keySlotCount, key, circuitBreaker);
+        long slot = findKeySlot(keys.address, keySlotCount, key);
         long previous = Unsafe.getLong(slot + 8);
         if (previous == 0 && keyCount == keySlotCount / 2) {
             growTable(keys, keySlotCount);
             keySlotCount *= 2;
-            slot = findKeySlot(keys.address, keySlotCount, key, circuitBreaker);
+            slot = findKeySlot(keys.address, keySlotCount, key);
         }
         final long offset = rowBytes;
         final long required = offset + rowSize;
@@ -316,7 +315,6 @@ public final class IntHashJoinBuild implements Closeable {
                     int index = (int) Hash.hashInt64(key) & (slots * 2 - 1);
                     long target = dest.address + (long) index * SLOT_SIZE;
                     while (Unsafe.getLong(target + 8) != 0) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
                         index = (index + 1) & (slots * 2 - 1);
                         target = dest.address + (long) index * SLOT_SIZE;
                     }
@@ -351,7 +349,6 @@ public final class IntHashJoinBuild implements Closeable {
         long slot = symbolSlots.address + (long) index * SLOT_SIZE;
         long entry;
         while ((entry = Unsafe.getLong(slot + 8)) != 0) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
             if (Unsafe.getInt(slot) == hash && symbolEquals((int) entry - 1, value)) {
                 return (int) entry - 1;
             }
@@ -364,7 +361,6 @@ public final class IntHashJoinBuild implements Closeable {
             index = (int) Hash.hashInt64(hash) & (symbolSlotCount - 1);
             slot = symbolSlots.address + (long) index * SLOT_SIZE;
             while (Unsafe.getLong(slot + 8) != 0) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
                 index = (index + 1) & (symbolSlotCount - 1);
                 slot = symbolSlots.address + (long) index * SLOT_SIZE;
             }
@@ -612,7 +608,7 @@ public final class IntHashJoinBuild implements Closeable {
             public void find(int key) {
                 assert frozen == Frozen.this && probeGeneration == generation;
                 circuitBreaker.statefulThrowExceptionIfTripped();
-                long slot = findKeySlot(keysAddress, slots, key, circuitBreaker);
+                long slot = findKeySlot(keysAddress, slots, key);
                 next = Unsafe.getLong(slot + 8);
                 record.address = 0;
             }
@@ -683,7 +679,6 @@ public final class IntHashJoinBuild implements Closeable {
                 final long limit = base + ((long) lookupMask + 1) * SLOT_SIZE;
                 long head;
                 do {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
                     address += SLOT_SIZE;
                     if (address == limit) {
                         address = base;

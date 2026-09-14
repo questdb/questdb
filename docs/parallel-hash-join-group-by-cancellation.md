@@ -2,13 +2,16 @@
 
 Task 9d adds checks to delegated filtered build scans, frame preparation,
 Parquet row-group traversal, sparse map cursors and final output. The keyed and
-scalar reducer already checked probe rows and duplicate pairs, including rejected
-predicates, misses and outer null extensions. Those checks remain in place.
+scalar reducer checks rejected/missed probe rows at frame boundaries and retains
+throttled duplicate-pair checks. The later boundary simplification removes polling
+inside hash-collision walks, map redistribution and map merge loops.
 
 The experimental flag remains false. The [shared-throttle follow-up](parallel-hash-join-group-by-throttling.md)
 replaces task 9f's operator-specific counters with the standard
-`statefulThrowExceptionIfTripped()` API. The loop and ownership audit below reflects
-that implementation; the validation section retains the original task 9d results.
+`statefulThrowExceptionIfTripped()` API. The [boundary-check follow-up](parallel-hash-join-group-by-breaker-boundaries.md)
+aligns probe and merge polling with the existing parallel GROUP BY factories.
+The loop and ownership audit below reflects that implementation; the validation
+section retains the original task 9d results.
 Task 10 must repeat the full rollout matrix on the completed implementation.
 
 ## Loop audit
@@ -23,7 +26,7 @@ wall-clock deadline for an operating-system call or native codec invocation.
 | Execution loop | Breaker and work bound |
 | --- | --- |
 | `AsyncHashJoinGroupByRecordCursorFactory.getCursor`, build acquisition | Owner query breaker bound before opening children; existing time check before build. |
-| `IntHashJoinBuild.build` / `append` | Each consumed build row calls the active owner's standard throttled API; standalone append retains its row check. Known-size row reservation checks before allocation and retains tracked allocation/copy bounds. Null INT keys are counted; checks also remain in collision searches, rehash, SYMBOL hashing/comparison/copy and chunked native allocation/copy. |
+| `IntHashJoinBuild.build` / `append` | Each consumed build row calls the active owner's standard throttled API; standalone append retains its row check. Known-size row reservation checks before allocation and retains tracked allocation/copy bounds. Null INT keys are counted; checks remain in rehash, SYMBOL hashing/comparison/copy and chunked native allocation/copy. Collision walks have no checks. |
 | `FilteredRecordCursor.hasNext` | Newly bound owner row check before each predicate evaluation, including rejected rows hidden inside one `hasNext`. Binding is refreshed by every `of`. |
 | `AsyncFilteredRecordCursorFactory.filter` | Acquired job/continuation wrapper; new row checks in both row-ID and count-only loops, before predicate rejection. The slot is released in `finally`. |
 | `AsyncJitFilteredRecordCursorFactory.filter` | Same new row checks in the interpreted column-top/type-conversion branches. Native JIT evaluation has a time check before the call and processes one native frame or selected Parquet row-group range; it does not run a Java cursor loop. |
@@ -32,14 +35,14 @@ wall-clock deadline for an operating-system call or native codec invocation.
 | Full/interval partition `next` and `calculateSize` | The query breaker binds in the partition factory/`of`; new time checks per partition/interval attempt, including empty partitions and nonintersecting ranges consumed inside one call. Interval frame-count estimation also checks per range. Direct non-query reader users keep a NOOP overload. |
 | Forward/backward `computeParquetFrame` | New time checks during row-group seeking and pruning, including groups rejected before any frame is returned. |
 | Frame navigation / Parquet decoding | Existing frame checks remain; decoding processes the requested frame/window through the existing native decoder. The audit does not promise interruption inside a single native codec call. |
-| Fused reducer's outer row loop | Every scanned row calls the independently bound slot wrapper's standard throttled API, including rejected rows, all-miss INNER and LEFT null extension. The breaker owns the counter and configured interval. The active sequence flag is tested on every row. |
-| Frozen lookup / duplicate traversal | Checked `find`/`next` retain their public behavior. The fused caller uses `findUnchecked` after its row check and the existing checked `next()` inside the duplicate loop. Collision steps also call the bound breaker's standard throttled API; no probe-owned counters remain. The sequence-active test remains inside every duplicate iteration, before post-join rejection or aggregate updates. |
-| Grouping sink and aggregate updater | Called only after the row/pair checks; per-record function and key loops are bounded by compiled query shape. Empty scalar initialization is bounded by configured slots/functions. |
-| `GroupByMapFragment.shard` | Standard throttled check per redistributed record; obtains `getCursor(breaker)` so sparse cursor initialization and empty-slot traversal also consult the breaker. |
+| Fused reducer's outer row loop | The shared `UnorderedPageFrameReduceJob.reduce` checks the active query before each frame, as for parallel GROUP BY and Top-K. Rejected rows, all-miss INNER and LEFT null extension finish at frame granularity. There is no per-probe-row breaker or sequence-flag poll; the owner checks again before merging, including after the last frame. |
+| Frozen lookup / duplicate traversal | Standalone `find` checks at lookup entry; the fused caller uses `findUnchecked` under the scheduler's frame check. Neither path checks collision steps. The existing `next()` checks each duplicate advance with the standard throttled API; no probe-owned counters remain. The sequence-active test remains inside every duplicate iteration, before post-join rejection or aggregate updates. |
+| Grouping sink and aggregate updater | Called under frame/pair checks; per-record function and key loops are bounded by compiled query shape. Empty scalar initialization is bounded by configured slots/functions. |
+| `GroupByMapFragment.shard` | Uses the ordinary unchecked redistribution loop and cursor. The scheduler checks before a reducer frame; final `shardAll` checks before each fragment. No per-entry or empty-slot check during redistribution. |
 | `Unordered4MapCursor` / `Unordered8MapCursor` | Optional breaker binds before `init` calls `toTop`. New row checks per slot while skipping empty runs, including initial seek, between returned groups, final tail and reread. Ordinary cursor acquisition clears the binding. Cursor/map close also clears it, including failed initialization. |
-| Owner map merge | Map merge loops use the standard throttled API per source slot/entry. Destination/source accounting and source-close ordering are unchanged. |
-| Sharded map merge | Existing owner checks while publishing/waiting; shared `PostAggregationCircuitBreaker` propagates cancellation/errors to detached merge workers. Its non-mutating checks remain safe for concurrent workers. Every published task drains before source maps close. |
-| Scalar merge | Existing row check per slot and final unthrottled owner check; no grouping cursor or data-dependent output traversal. |
+| Owner map merge | Uses ordinary map merge loops with no per-slot/entry checks. The fused owner checks before and after result merging. Destination/source accounting and source-close ordering are unchanged. |
+| Sharded map merge | Existing owner checks while publishing/waiting; shared `PostAggregationCircuitBreaker` propagates cancellation/errors to detached merge workers. Workers check the flag before each shard task, as in ordinary parallel GROUP BY. No breaker is passed into map merge loops. Every published task drains before the owner tears down shared execution storage. |
+| Scalar merge | Existing row check per slot and the common unthrottled owner check after merging; no grouping cursor or data-dependent output traversal. |
 | Fused output `hasNext` / `calculateSize` | New owner row checks after result construction. Keyed output binds the breaker to owner/sharded map cursors before any sparse initialization. Scalar output is at most one row; keyed size calculation uses map counts rather than walking rows. |
 | Final projection, sorting and LIMIT | Existing parents consume the checked fused cursor. Random record lookup is constant work; `toTop` reuses the same execution binding and checked sparse seek. |
 | Drain and cleanup | Intentionally finish even after cancellation: sequence `await`, shard-merge drain and slot/native-resource release must complete before frozen build, symbol views or maps are freed. Bounded schema/slot teardown loops do not throw fresh cancellation exceptions. |
@@ -62,18 +65,17 @@ Initialization/reset starts a fresh local window, wrapper-to-wrapper binding
 unwraps the delegate, and cleanup clears the active binding. Successful checks
 add no objects, thread locals, locks or heap collections.
 
-The fused slot and probe no longer maintain their own throttle counters. Scanned
-rows, duplicate advances and collision steps all call the independently bound
-slot breaker's standard API. The breaker initializes a fresh counter when the
-query binds; nested work contributes to the same counter, so it cannot postpone
-checks by resetting an outer-loop budget. Build work similarly uses the owner
-breaker's standard API.
+The fused slot and probe no longer maintain their own throttle counters.
+Duplicate advances call the independently bound slot breaker's standard API;
+probe input scans use the shared scheduler's frame checks. The breaker initializes
+a fresh counter when the query binds. Build rows use the owner's standard API.
+Collision walks and map redistribution/merge entries have no breaker polling.
 
 Each probe still caches two frozen native addresses and the table mask, refreshed
 on rebinding. The global network breaker and wrapper implementations are unchanged.
-The shared `PostAggregationCircuitBreaker` overrides the standard API to read its
-cancellation flag without changing the inherited single-threaded counter. It has
-no clock or socket to throttle, and merge workers may call it concurrently.
+The shared `PostAggregationCircuitBreaker` uses its existing non-mutating flag
+check before each shard task. The temporary stateful overrides and map-entry
+breaker plumbing have been removed.
 See the [follow-up audit](parallel-hash-join-group-by-throttling.md) for the parallel
 factory survey and updated cancellation, allocation and performance evidence.
 
@@ -84,8 +86,8 @@ factory survey and updated cancellation, allocation and performance evidence.
 | Large builds, growth and copy | `AsyncHashJoinGroupByTest.testBuildCancellationAndReuseKeyedAndScalar`; `IntHashJoinBuildTest.testCancellationAtEveryBuildCheckAndReuse`, `testCancellationDuringPayloadCopy`, `testCancellationInsideDuplicateIteration`: interruption, native balance and reuse. |
 | Rejected build rows hidden inside delegated cursors | `AsyncHashJoinGroupByTest.testRejectedSerialBuildCancellationAndReuse`, `testRejectedAsyncBuildCancellationAndReuse`, `testRejectedJitBuildCancellationAndReuse`: 100,000-row builds; native/mixed/Parquet; keyed/scalar; cancellation/timeout at predicate call 32; stop within the owning slot's configured row throttle; close and ordinary-result reuse. The JIT fixture asserts it reaches the interpreted column-top branch. |
 | Count-only delegated filtering | `AsyncHashJoinGroupByTest.testRejectedCountOnlyFilterCancellationAndReuse`: interpreted and JIT column-top count-only tasks, bounded rejected-row checks, query cleanup and a successful 100,000-row count on reuse. |
-| All-miss and all-rejected probe scans | `AsyncHashJoinGroupByTest.testRejectedProbeCancellationAcrossStorageAndReuse`: native/mixed/Parquet and keyed/scalar, cancellation triggered at predicate call 32 and observed within the configured throttle bound, released worker slots and query tracker, ordinary-result reuse. |
-| Duplicate chains, null extension and timeout | `testCancellationInsideDuplicateChainAndReuse`, `testScalarCancellationInsideDuplicateChainAndReuse`, `testOuterMissCancellationAndDuplicateTimeoutAndReuse` in `AsyncHashJoinGroupByTest`: interruption within the configured throttle bound after cancellation at joined pair 32, even within a 100,000-row duplicate chain, both aggregation modes, accepted/rejected post-join predicates, native/Parquet probes and reuse. |
+| All-miss and all-rejected probe scans | `AsyncHashJoinGroupByTest.testRejectedProbeFrameCancellationAcrossStorageAndReuse` and `testNetworkProbeChecksAtFrameBoundaries`: native/mixed/Parquet and keyed/scalar, cancellation/timeout triggered at predicate call 32 and observed at the next frame/merge boundary, released worker slots and query tracker, ordinary-result reuse. |
+| Duplicate chains, null extension and timeout | `testCancellationInsideDuplicateChainAndReuse`, `testScalarCancellationInsideDuplicateChainAndReuse`, `testOuterMissFrameCancellationAndDuplicateTimeoutAndReuse` in `AsyncHashJoinGroupByTest`: interruption within the configured throttle bound after cancellation at joined pair 32, even within a 100,000-row duplicate chain, both aggregation modes, accepted/rejected post-join predicates, native/Parquet probes and reuse. Outer misses use frame boundaries, including cancellation within the last frame. |
 | Frame preparation | `PageFrameScanCancellationTest.testDirectFrameCursorsObserveCancellationAndRebind`: direct forward/backward native/Parquet cursors, cancellation between frame requests at production row-throttle settings, successful reacquisition. Existing `testMultiFrameScanObservesMidScanCancellation` covers the record-cursor parent. |
 | Delegated partition traversal | `PageFrameScanCancellationTest.testPartitionSizeAndRejectedIntervalTraversalCancellation`: forward/backward full size calculation and all-rejected interval scans, cancellation at 16 checks and successful same-factory reuse. Full/interval cursor and interval-filter suites cover ordinary data, empty partitions, Parquet and timestamp variants. |
 | Sparse initialization and output holes | `MapCursorCancellationTest.testSparseInitializationAndTraversalCancelAndRebind`: 4/8-byte maps with long initial/final empty runs, interruption at exactly 16 slot checks, checked and ordinary acquisition, reread and sharded output reuse. |

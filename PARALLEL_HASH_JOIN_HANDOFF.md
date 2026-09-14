@@ -189,7 +189,7 @@ run was stopped; its partial output is not acceptance evidence.
     controls, every sample, profiles, source hashes and limits are retained in the
     [recovery report](docs/parallel-hash-join-group-by-recovery.md).
 
-**Shared-throttle follow-up** — commit `d2e59fc832`. Replaces task 9f's local row,
+**Historical shared-throttle follow-up** — commit `d2e59fc832`. Replaces task 9f's local row,
 duplicate and collision countdowns with `statefulThrowExceptionIfTripped()`.
 Map redistribution and all four map merge implementations also use that API in
 entry loops. The shared post-aggregation channel retains counter-free flag checks.
@@ -199,19 +199,45 @@ record 2,529 passing tests across 73 suites. The confirmed benchmark run passes
 The earlier interrupted run remains excluded; further benchmarks require explicit
 user confirmation.
 
+**Current boundary-check simplification.** Probe scans now rely on the shared
+reducer's frame check, matching parallel GROUP BY and Top-K. Duplicate advances
+retain `statefulThrowExceptionIfTripped()` because one input row can fan out.
+Collision walks and map redistribution/merge entries no longer check the breaker;
+the temporary map merge/shard overloads and shared-breaker overrides are removed.
+Owner checks at probe/merge completion and existing shard-task/scheduling checks
+preserve interruption and drain before output or cleanup. See the
+[current placement and validation](docs/parallel-hash-join-group-by-breaker-boundaries.md).
+This version has not been benchmarked; the `d2e59fc832` latency/allocation results
+remain historical evidence. Obtain confirmation before a new benchmark run.
+
 The branch supports experimental automatic selection for eligible keyed and
 unkeyed queries. Task **9f passed at `4ae9efb0f0`**, but the shared-throttle follow-up
-still fails individual recovery bounds and needs performance recovery before task 10. Keep
+failed individual recovery bounds. The current boundary simplification awaits
+performance requalification before task 10. Keep
 `cairo.sql.parallel.hash.join.groupby.enabled=false`, the global parallel GROUP BY
 gate, and the positive-worker requirement. Do not add a build-size threshold,
 runtime fallback or consumed-input replay.
 
-## Next RFC work: recover task 9f, then task 10 (V1)
+## Next RFC work: task 9g remeasurement in a separate session, then task 10 (V1)
 
-The confirmed run fails 3 of 54 recovery bounds; see the
-[per-case results](docs/parallel-hash-join-group-by-throttling.md). Preserve the
-standard throttled API and fixed reference while addressing the remaining
-regressions. Further benchmark runs require explicit user confirmation.
+**9g. Re-measure V1 latency and allocation after circuit-breaker simplification — pending.**
+The user will run this task in a separate session; no benchmarks belong to this
+implementation session. Task 9g is added to RFC 130 before task 10.
+
+The last confirmed run (`d2e59fc832`) failed 3 of 54 recovery bounds; see the
+[per-case results](docs/parallel-hash-join-group-by-throttling.md). The current
+boundary simplification is unbenchmarked. After user confirmation, repeat the
+fixed 27-case recovery and 24-case C1 matrices, retaining all individual bounds
+and previous failed trials. Preserve the standard throttled API for build rows
+and duplicate advances, the frame/shard boundaries for other work, and the fixed
+reference. Further benchmark runs require explicit user confirmation.
+
+Task 9g must pin the final source/jar, retain every sample, phase timing, logical
+counter, ordered result and allocation window, and publish every gate's pass/fail
+outcome. Explicitly revisit compressed-groups, concurrent-4 and high-cardinality.
+Do not overlap latency collection with tests, builds or allocation profiling.
+Update the PR and handoff after the run. A failed gate keeps task 9f or the
+relevant resource prerequisite open and blocks task 10.
 
 After recovery passes, repeat the full 51-case rollout matrix,
 including small effective inputs, cold data, build footprints/source costs, skew,
@@ -238,7 +264,17 @@ releases unused JIT handles and composes peeled projection mappings. Ordinary
 serial probe filters that cannot be stolen keep the existing plan. Child partition-
 format guards continue to request normal recompilation; they are not bypassed.
 
-## Validation for the shared-throttle follow-up
+## Validation for the current boundary simplification
+
+**2,517 Java tests passed across 73 affected suites**, with 37 conditional skips and no failures/errors (2,554 total).
+Core compilation and diff checks pass. Frame-level cancellation/timeout across
+native/mixed/Parquet, duplicate throttling, final-frame cancellation, merge drain,
+resource cleanup and reuse are covered. See the [current audit and retained
+logs](docs/parallel-hash-join-group-by-breaker-boundaries.md). No performance or
+allocation benchmarks were run for this version; requalification needs user
+confirmation.
+
+## Historical validation for the shared-throttle follow-up
 
 **2,529 tests passed across 73 suites**, with 37 conditional skips and no
 failures/errors (2,566 total). Benchmark packaging and diff checks pass. The
