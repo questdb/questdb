@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CommitMode;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 /**
@@ -40,6 +41,10 @@ import org.junit.Test;
  * failing anything.
  * <p>
  * This fails if a fourth path is added and forgets the switch, or if one of the three drifts.
+ * <p>
+ * Paths 1 and 2 are asserted here. Path 3 is asserted by {@link BootstrapCommitModeTest}, which this class
+ * cannot reach: it extends {@code AbstractCairoTest}, while {@code createDummyConfiguration} lives on
+ * {@code AbstractBootstrapTest}.
  */
 public class TestCommitModeSwitchTest extends AbstractCairoTest {
 
@@ -74,10 +79,20 @@ public class TestCommitModeSwitchTest extends AbstractCairoTest {
      */
     @Test
     public void testShippedDefaultIsSeparateFromTheSuiteDefault() {
+        // The shipped default is asserted UNCONDITIONALLY: no sweep flag may move CommitMode.DEFAULT.
         Assert.assertEquals(
                 "the shipped default is nosync until an ingest benchmark justifies moving it",
                 CommitMode.NOSYNC,
                 CommitMode.DEFAULT
+        );
+        // The SUITE default is asserted only when nobody asked for something else. An explicit
+        // -Dquestdb.test.commit.mode=X is a deliberate sweep, not a regression in the default, so it skips
+        // this half rather than failing it -- otherwise the sweep documented on Overrides.TEST_COMMIT_MODE
+        // cannot run at all. Skip, not early return: a skip is counted, a return would be a false green.
+        Assume.assumeFalse(
+                "explicit -Dquestdb.test.commit.mode=" + Overrides.TEST_COMMIT_MODE
+                        + ": sweeping, so the adaptive-default pin does not apply",
+                Overrides.TEST_COMMIT_MODE_EXPLICIT
         );
         Assert.assertEquals(
                 "the suite runs adaptive so the durable path is covered by every test",
