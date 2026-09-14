@@ -2593,6 +2593,48 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCleanupSkipsScanWithUnappliedWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('OLD', 1.0, '2024-01-05T00:00:00.000000Z'),
+                    ('KEEP', 3.0, '2024-01-05T01:00:00.000000Z'),
+                    ('NEW', 4.0, '2024-01-20T00:00:00.000000Z')""");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate = expiryPredicate("mv");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            Assert.assertEquals(tracker.getSeqTxn(), tracker.getWriterTxn());
+            try (WalWriter writer = engine.getWalWriter(token)) {
+                final TableWriter.Row row = writer.newRow(1_704_412_800_000_000L);
+                row.putSym(0, "BACKFILL");
+                row.putDouble(1, 3.0);
+                row.append();
+                writer.commit();
+            }
+            final long seqTxn = tracker.getSeqTxn();
+            Assert.assertTrue("precondition: unapplied WAL", tracker.getWriterTxn() < seqTxn);
+
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertFalse(job.cleanupTable(token, predicate));
+                Assert.assertEquals("backlog must defer cleanup before scanning", 0, job.getScalarPartitionScanCount());
+                Assert.assertEquals("deferred cleanup must not sequence a transaction", seqTxn, tracker.getSeqTxn());
+                assertPhysicalRows(3);
+
+                drainWalAndMatViewQueues();
+                Assert.assertTrue("cleanup must succeed once WAL is applied", job.cleanupTable(token, predicate));
+                Assert.assertEquals(1, job.getScalarPartitionScanCount());
+            }
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(3);
+            assertQuery("SELECT sym FROM mv ORDER BY sym").noLeakCheck().returns("sym\nBACKFILL\nKEEP\nNEW\n");
+        });
+    }
+
+    @Test
     public void testCleanupWithStalePredicateDuringUnappliedDropExpireSurvives() throws Exception {
         assertConcurrentPolicyChangeKeepsRows("alter materialized view mv drop expire", null);
     }
@@ -2608,10 +2650,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     // Deterministic pin for the per-commit sequencer-txn gate when the writer is caught up and a policy change
-    // lands MID-SWEEP. Because the seqTxn baseline is the reader's own applied txn (readerSeqTxn), even the
-    // committed-but-not-applied testCleanupWithStalePredicate...Unapplied tests reach the bounds-DROP fast path
-    // (racyOpsAllowed is true against that baseline) and defer at the per-commit gate. This test pins the same
-    // gate under the fully-applied mid-sweep race: the view is fully applied so racyOpsAllowed == true and the
+    // lands MID-SWEEP. The testCleanupWithStalePredicate...Unapplied tests defer at the upfront backlog
+    // check. This test instead pins the per-commit gate: the view is fully applied so racyOpsAllowed == true and the
     // bounds-DROP fast path IS entered, and an in-job barrier injects the loosening ALTER exactly before the
     // first destructive commit — advancing the sequencer past the sweep's expectedSeqTxn while the writer was
     // caught up. Only the per-commit gate on the bounds-DROP fast path can defer here; without it the
@@ -2881,8 +2921,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     // see RowExpiryCleanupJob) is what prevents the wipe. As in testDeterministicBackfillBetweenScanAndCommit-
     // Survives, there is no in-job hook to pause between the survivor scan and the destructive commit, so we
     // reproduce the gate's precondition DETERMINISTICALLY: the policy change is left COMMITTED-BUT-NOT-APPLIED
-    // (its sequencer txn is published but not applied, so writerTxn < seqTxn). With the reader-txn baseline the
-    // bounds-DROP fast path is entered and the per-commit gate (getSeqTxn() != expectedSeqTxn) is what defers.
+    // (its sequencer txn is published but not applied, so writerTxn < seqTxn). The upfront backlog check
+    // defers before entering the bounds-DROP fast path.
     // Cleanup with the stale strict predicate MUST defer (reclaim nothing); after the change is applied, every row the new policy keeps must
     // still be physically present. The instruction-level scan-vs-commit interleave with the writer caught up is
     // exercised probabilistically by MatViewRowExpiryFuzzTest.

@@ -465,13 +465,15 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // trips the per-commit gate below (the mid-sweep window). A fresh getSeqTxn() would instead adopt
         // the post-reader sequencer state and could let a stale-predicate wipe commit.
         long expectedSeqTxn = isWal ? readerSeqTxn : 0;
-        // For WAL, only attempt racy reclamation when the writer is still caught up to the reader snapshot (no
-        // apply since it opened that the survivor scan would miss). Non-WAL is always allowed (synchronous,
-        // recount-checked).
-        final boolean racyOpsAllowed = !isWal || txnTracker.getWriterTxn() == expectedSeqTxn;
+        // For WAL, require both the writer and sequencer to match the reader snapshot. An existing WAL
+        // backlog guarantees that the commit fence will reject, so skip the scan and survivor copy upfront.
+        // The commit fence still guards against transactions sequenced after this check.
+        // Non-WAL is always allowed (synchronous, recount-checked).
+        final boolean racyOpsAllowed = !isWal || (txnTracker.getWriterTxn() == expectedSeqTxn
+                && txnTracker.getSeqTxn() == expectedSeqTxn);
         if (!racyOpsAllowed) {
-            // The table applied WAL transactions after this sweep's reader opened, so the survivor scan no
-            // longer covers the table's contents and no partition can be reclaimed this time round.
+            // WAL apply advanced past the reader snapshot or the sequencer has newer transactions.
+            // Neither case allows reclamation against this snapshot.
             isLastCleanupDeferred = true;
         }
 
