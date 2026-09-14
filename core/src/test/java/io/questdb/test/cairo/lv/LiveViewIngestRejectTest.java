@@ -30,6 +30,8 @@ import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
+import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
+import io.questdb.log.LogFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
@@ -62,6 +64,7 @@ public class LiveViewIngestRejectTest extends AbstractBootstrapTest {
     @Before
     @Override
     public void setUp() {
+        LogFactory.enableGuaranteedLogging(LineTcpConnectionContext.class);
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         capture.start();
@@ -70,6 +73,7 @@ public class LiveViewIngestRejectTest extends AbstractBootstrapTest {
     @After
     @Override
     public void tearDown() throws Exception {
+        LogFactory.disableGuaranteedLogging(LineTcpConnectionContext.class);
         capture.stop();
         super.tearDown();
     }
