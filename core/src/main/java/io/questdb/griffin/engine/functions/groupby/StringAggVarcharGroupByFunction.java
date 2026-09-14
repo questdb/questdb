@@ -44,13 +44,13 @@ class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFu
     private static final int INITIAL_SINK_CAPACITY = 512;
     private static final int LIST_CLEAR_THRESHOLD = 64;
     private final Function arg;
-    private final char delimiter;
+    private final Utf8Sequence delimiter;
     private boolean isShared;
     private int sinkIndex = 0;
     private ObjList<DirectUtf8Sink> sinks = new ObjList<>();
     private int valueIndex;
 
-    public StringAggVarcharGroupByFunction(Function arg, char delimiter) {
+    public StringAggVarcharGroupByFunction(Function arg, Utf8Sequence delimiter) {
         this.arg = arg;
         this.delimiter = delimiter;
     }
@@ -108,8 +108,8 @@ class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFu
         final Utf8Sequence str = arg.getVarcharA(record);
         if (str != null) {
             final boolean nullValue = mapValue.getBool(valueIndex + 1);
-            if (!nullValue) {
-                sink.putAscii(delimiter);
+            if (!nullValue && delimiter != null) {
+                sink.put(delimiter);
             }
             sink.put(str);
             mapValue.putBool(valueIndex + 1, false);
