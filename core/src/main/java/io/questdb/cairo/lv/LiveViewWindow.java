@@ -1073,25 +1073,25 @@ public class LiveViewWindow implements QuietCloseable {
      * safe because a frozen partition never mutates its key: {@code FrozenPartition.key} is
      * final and the directory and partition-map writers only read it.
      *
-     * @param entryStateBytes       the state bytes one published entry carries, per member
-     * @param valuesOut             the per-key anchor values, index-aligned with
-     *                              {@code keysOut}, or null for a member walk, whose keys
-     *                              are the window root's to publish an anchor value for
-     * @param payloadsOut           the per-key images, per member, or null for the legacy
-     *                              anchor-only shape that publishes no payload
-     * @param logicalBytesInOut     each member's running logical total: seeded by the caller
-     *                              with the root the freeze builds on, charged in place here
-     * @param isElisionRuledOutOut  per key, index-aligned with {@code keysOut}: true where
-     *                              this walk already knows the key's entry cannot be the one
-     *                              the durable predecessor holds, so the seal owes it no
-     *                              predecessor probe. A complete walk answers false
-     *                              throughout - it holds no dirty entry to read the fact off
-     *                              - and so does an incremental walk over a key whose anchor
-     *                              moved on a row other than its first of the cadence. The
-     *                              seal treats it as a hint and probes for every key it
-     *                              reads false for, so under-reporting costs a probe and
-     *                              nothing else. Null for a member walk, whose images the
-     *                              window root does not publish
+     * @param entryStateBytes      the state bytes one published entry carries, per member
+     * @param valuesOut            the per-key anchor values, index-aligned with
+     *                             {@code keysOut}, or null for a member walk, whose keys
+     *                             are the window root's to publish an anchor value for
+     * @param payloadsOut          the per-key images, per member, or null for the legacy
+     *                             anchor-only shape that publishes no payload
+     * @param logicalBytesInOut    each member's running logical total: seeded by the caller
+     *                             with the root the freeze builds on, charged in place here
+     * @param isElisionRuledOutOut per key, index-aligned with {@code keysOut}: true where
+     *                             this walk already knows the key's entry cannot be the one
+     *                             the durable predecessor holds, so the seal owes it no
+     *                             predecessor probe. A complete walk answers false
+     *                             throughout - it holds no dirty entry to read the fact off
+     *                             - and so does an incremental walk over a key whose anchor
+     *                             moved on a row other than its first of the cadence. The
+     *                             seal treats it as a hint and probes for every key it
+     *                             reads false for, so under-reporting costs a probe and
+     *                             nothing else. Null for a member walk, whose images the
+     *                             window root does not publish
      */
     private void freezeCheckpointEntries(
             @NotNull MemoryCARW keyBuffer,

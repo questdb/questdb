@@ -100,16 +100,16 @@ public enum LiveViewLifecycleState {
      * therefore means "the instance has been marked dropped" and resolves to
      * {@link #DROPPING}.
      *
-     * @param registryVisible        {@code true} iff the live view has a committed
-     *                               registry entry not marked for drop
-     * @param invalid                {@code _lv.s.invalid}
-     * @param recoveryBlocked        the view's recovery stopped rather than finished:
-     *                               its checkpoint timeline declares a format version
-     *                               this build does not implement, or its rebuild from
-     *                               the applied base was refused. Reports as
-     *                               {@link #INVALID}: refresh is stopped either way, and
-     *                               an operator looking for stopped views must find it
-     * @param seeding                {@code _lv.s.seedState == SEEDING}
+     * @param registryVisible {@code true} iff the live view has a committed
+     *                        registry entry not marked for drop
+     * @param invalid         {@code _lv.s.invalid}
+     * @param recoveryBlocked the view's recovery stopped rather than finished:
+     *                        its checkpoint timeline declares a format version
+     *                        this build does not implement, or its rebuild from
+     *                        the applied base was refused. Reports as
+     *                        {@link #INVALID}: refresh is stopped either way, and
+     *                        an operator looking for stopped views must find it
+     * @param seeding         {@code _lv.s.seedState == SEEDING}
      */
     public static LiveViewLifecycleState derive(
             boolean registryVisible,

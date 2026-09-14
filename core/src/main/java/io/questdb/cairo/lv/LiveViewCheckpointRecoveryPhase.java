@@ -79,7 +79,7 @@ package io.questdb.cairo.lv;
  * view does neither - it is not stopped - so the two recovery columns are where it
  * shows.
  *
- * <h3>Why the block is where this ends, rather than a recovery</h3>
+ * <h2>Why the block is where this ends, rather than a recovery</h2>
  * A recovery would have to prove that replaying the source history still
  * available reproduces the output the view is already serving. QuestDB retains
  * no evidence that can prove it: WAL segments are purged once applied, dropped
@@ -88,7 +88,7 @@ package io.questdb.cairo.lv;
  * leaves the decision to the operator, whose re-CREATE is an explicit act with
  * explicitly different historical results rather than a silent restatement.
  *
- * <h3>The exit</h3>
+ * <h2>The exit</h2>
  * {@code SHOW CREATE LIVE VIEW} reproduces the definition, {@code DROP LIVE
  * VIEW} clears the blocked timeline with the view, and re-CREATE rebuilds from
  * the base rows that survive today. There is no unblock command. A format block
@@ -101,7 +101,7 @@ package io.questdb.cairo.lv;
  * {@code cairo.live.view.rebuild.restatement.guard.enabled} off to let rebuilds
  * follow the base table.
  *
- * <h3>What the released WAL floor costs</h3>
+ * <h2>What the released WAL floor costs</h2>
  * A blocked view releases its base WAL floor, as an invalid view does. It has to:
  * a blocked view's floor never advances, so any hold it takes grows without
  * bound, on a base table every other writer and view shares. The price is paid on

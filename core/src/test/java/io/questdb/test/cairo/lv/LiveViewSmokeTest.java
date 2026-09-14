@@ -296,21 +296,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // windowed average is correct (also proving CREATE-accept), then performs a
     // byte-exact snapshot/restore round-trip of the function's partition state
     // (write -> toTop -> restore -> write again, comparing the two payloads).
-    /**
-     * Asserts the {@code base_apply_wait_*} pair {@code live_views()} reports for the view
-     * {@code lv}: the base seqTxn its refresh waits to see applied and how long it has waited,
-     * or a NULL pair when it waits for nothing. Both arguments are null or neither is - the two
-     * columns describe one wait, so one of them alone is never a legal reading.
-     */
-    private void assertWaitReported(Long waitSeqTxn, Long waitMicros) throws Exception {
-        Assert.assertEquals("both columns describe one wait", waitSeqTxn == null, waitMicros == null);
-        assertQuery("SELECT base_apply_wait_seqtxn, base_apply_wait_micros FROM live_views() WHERE view_name = 'lv'")
-                .noLeakCheck()
-                .noRandomAccess()
-                .returns("base_apply_wait_seqtxn\tbase_apply_wait_micros\n"
-                        + (waitSeqTxn == null ? "null\tnull" : waitSeqTxn + "\t" + waitMicros) + "\n");
-    }
-
     private void assertAvgDecimalFrameRoundTrip(
             String decimalType,
             String frameClause,
@@ -1729,6 +1714,21 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
         printSql("SHOW CREATE LIVE VIEW " + viewName + ";");
         TestUtils.assertEquals(originalDdl, sink.toString().replace("ddl\n", ""));
+    }
+
+    /**
+     * Asserts the {@code base_apply_wait_*} pair {@code live_views()} reports for the view
+     * {@code lv}: the base seqTxn its refresh waits to see applied and how long it has waited,
+     * or a NULL pair when it waits for nothing. Both arguments are null or neither is - the two
+     * columns describe one wait, so one of them alone is never a legal reading.
+     */
+    private void assertWaitReported(Long waitSeqTxn, Long waitMicros) throws Exception {
+        Assert.assertEquals("both columns describe one wait", waitSeqTxn == null, waitMicros == null);
+        assertQuery("SELECT base_apply_wait_seqtxn, base_apply_wait_micros FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("base_apply_wait_seqtxn\tbase_apply_wait_micros\n"
+                        + (waitSeqTxn == null ? "null\tnull" : waitSeqTxn + "\t" + waitMicros) + "\n");
     }
 
     // Builds a live view that lags behind one base commit, removes the base's WAL directory and

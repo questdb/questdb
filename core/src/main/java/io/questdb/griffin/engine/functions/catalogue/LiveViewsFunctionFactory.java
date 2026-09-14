@@ -820,7 +820,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // view_status; or why it has not finished yet, rebuild_deferred
                         // on a rebuild waiting for its base table's apply. Both NULL for
                         // a view whose recovery finished or never had to run.
-                        case COLUMN_CHECKPOINT_RECOVERY_PHASE -> LiveViewCheckpointRecoveryPhase.name(checkpointRecoveryPhase);
+                        case COLUMN_CHECKPOINT_RECOVERY_PHASE ->
+                                LiveViewCheckpointRecoveryPhase.name(checkpointRecoveryPhase);
                         case COLUMN_CHECKPOINT_RECOVERY_REASON -> checkpointRecoveryReason;
                         // The dependency plans a localized repair would union, read off
                         // the compiled SELECT. NULL until the view compiles one.
