@@ -6659,22 +6659,26 @@ public class SqlOptimiser implements Mutable {
                         // in sub-query
 
                         try {
-                            traversalAlgo.traverse(node, literalCheckingVisitor.of(parent.getAliasToColumnMap()));
+                            final boolean isLatestKeyPushdown = node == latestKeySelector && nested.getLatestBy().size() > 0;
+                            final ExpressionNode pushedNode = isLatestKeyPushdown
+                                    ? deepClone(expressionNodePool, node)
+                                    : node;
+                            traversalAlgo.traverse(pushedNode, literalCheckingVisitor.of(parent.getAliasToColumnMap()));
 
                             // go ahead and rewrite expression
-                            traversalAlgo.traverse(node, literalRewritingVisitor.of(parent.getAliasToColumnNameMap()));
+                            traversalAlgo.traverse(pushedNode, literalRewritingVisitor.of(parent.getAliasToColumnNameMap()));
 
                             // whenever nested model has explicitly defined columns it must also
                             // have its own nested model, where we assign new "where" clauses
-                            final ExpressionNode pushedNode = node == latestKeySelector && nested.getLatestBy().size() > 0 && isOrKeyword(node.token)
-                                    ? rewriteLatestKeyOr(node)
-                                    : node;
-                            pushedNode.innerPredicate = false;
-                            addWhereNode(nested, pushedNode);
+                            final ExpressionNode normalisedNode = isLatestKeyPushdown && isOrKeyword(pushedNode.token)
+                                    ? rewriteLatestKeyOr(pushedNode)
+                                    : pushedNode;
+                            normalisedNode.innerPredicate = false;
+                            addWhereNode(nested, normalisedNode);
                             // the predicate just landed on a nested join sub-query whose join
                             // optimisation already ran, so re-derive transitive constant filters to
                             // let the constant reach the slave scans (e.g. a view wrapping LEFT JOINs)
-                            deriveTransitiveFiltersFromPushedPredicate(nested, pushedNode, sqlExecutionContext);
+                            deriveTransitiveFiltersFromPushedPredicate(nested, normalisedNode, sqlExecutionContext);
                             // we do not have to deal with "union" models here
                             // because "where" clause is made to apply to the result of the union
                         } catch (NonLiteralException ignore) {

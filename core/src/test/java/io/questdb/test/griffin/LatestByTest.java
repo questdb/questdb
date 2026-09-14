@@ -427,6 +427,34 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestKeyPushdownPreservesSharedDeclaredExpressions() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int index = 0; index < 2; index++) {
+                String table = "declared_" + index;
+                createLatestKeyFixture(table, index == 1 ? " INDEX" : "");
+                String singleKeyPlan = index == 1 ? "Index backward scan" : "symbolFilter:";
+                String listPlan = index == 1 ? "symbolFilter:" : "includedSymbols:";
+
+                assertQuery(("""
+                        DECLARE @p := (k = 'a')
+                        SELECT v FROM (SELECT s AS k, v FROM %s LATEST ON ts PARTITION BY s)
+                        WHERE @p AND @p
+                        """).formatted(table)).withPlanContaining(singleKeyPlan).sizeMayVary().returns("v\n11.0\n");
+                assertQuery(("""
+                        DECLARE @p := (k = 'a' OR k = 'b')
+                        SELECT v FROM (SELECT s AS k, v FROM %s LATEST ON ts PARTITION BY s)
+                        WHERE @p AND @p
+                        """).formatted(table)).withPlanContaining(listPlan).sizeMayVary().returns("v\n11.0\n20.0\n");
+                assertQuery(("""
+                        DECLARE @key := k
+                        SELECT v FROM (SELECT s AS k, v FROM %s LATEST ON ts PARTITION BY s)
+                        WHERE @key = 'a' AND 'a' = @key
+                        """).formatted(table)).withPlanContaining(singleKeyPlan).sizeMayVary().returns("v\n11.0\n");
+            }
+        });
+    }
+
+    @Test
     public void testLatestKeyPushdownWithinFallback() throws Exception {
         assertLatestKeyWithinFallback(false);
     }
