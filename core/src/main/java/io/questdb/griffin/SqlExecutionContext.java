@@ -294,6 +294,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
+    /**
+     * Returns true while a cursor is being opened only to learn a query's column types, as
+     * {@code CREATE VIEW} does to derive the view's metadata from its SELECT. No principal is
+     * reading data through such a cursor, so view auditing skips it: an audit row for it would
+     * assert an access to rows that nobody asked for.
+     */
+    default boolean isMetadataProbe() {
+        return false;
+    }
+
     boolean isParallelFilterEnabled();
 
     boolean isParallelGroupByEnabled();
@@ -408,6 +418,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * at workload end so the context is ready for the next workload.
      */
     default void setMemoryTracker(@Nullable MemoryTracker tracker) {
+    }
+
+    default void setMetadataProbe(boolean value) {
     }
 
     void setNowAndFixClock(long now, int nowTimestampType);

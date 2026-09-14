@@ -54,6 +54,24 @@ public class ExpressionNode implements Mutable, Sinkable {
     public static final int OPERATION = MEMBER_ACCESS + 1;
     public static final int QUERY = OPERATION + 1;
     public static final int SET_OPERATION = QUERY + 1;
+    /**
+     * A parenthesised value list from a {@code DECLARE @x := (a, b, c)} right-hand side.
+     * <p>
+     * This is a parse-time marker, not a value: it exists only between {@code parseDeclare} and
+     * {@link io.questdb.griffin.SqlParser#spliceValueLists}, which splices its elements into the
+     * argument list of the {@code IN} that references the variable. Nothing downstream of the
+     * parser ever sees this type - a marker that survives to the splice pass in any other position
+     * is reported as an error rather than left to fail obscurely later.
+     * <p>
+     * It holds its members in {@link #args}, in reverse source order like every other multi-argument
+     * node, but with {@code paramCount} left at zero and no {@code lhs}/{@code rhs}: the expression
+     * parser reads {@code paramCount} as a child count while doing its own argument-stack
+     * accounting, and a marker that declares children it never pushed corrupts it. That makes this
+     * the one node whose children are not described by {@code paramCount}, so anything walking a
+     * tree by {@code paramCount} skips its members, and anything switching on {@code args.size()}
+     * has to treat it as a special case - see {@link #deepHashCode} and {@code compareArgsExact}.
+     */
+    public static final int VALUE_LIST = SET_OPERATION + 1;
     public static final ExpressionNodeFactory FACTORY = new ExpressionNodeFactory();
     public static final int UNKNOWN = 0;
     public final ObjList<ExpressionNode> args = new ObjList<>(4);
@@ -252,9 +270,11 @@ public class ExpressionNode implements Mutable, Sinkable {
             hash = 31 * hash + Chars.lowerCaseHashCode(node.token);
         }
         // Hash children - must be consistent with compareArgsExact()
-        // When args.size() < 3, comparison uses lhs/rhs; otherwise uses args
+        // When args.size() < 3, comparison uses lhs/rhs; otherwise uses args. A VALUE_LIST keeps
+        // its members in args at any size and has no lhs/rhs, so it has to read them from args or
+        // every short list would hash alike.
         int argsSize = node.args.size();
-        if (argsSize < 3) {
+        if (argsSize < 3 && node.type != VALUE_LIST) {
             hash = 31 * hash + deepHashCode(node.lhs);
             hash = 31 * hash + deepHashCode(node.rhs);
         } else {
@@ -770,7 +790,11 @@ public class ExpressionNode implements Mutable, Sinkable {
             return false;
         }
 
-        if (groupByArgsSize < 3) {
+        // Same VALUE_LIST carve-out as compareArgsExact and deepHashCode: it keeps its members in
+        // args at any size and has no lhs/rhs, so the short-node path would compare two different
+        // lists as equal. Guarded here too so the three agree - a marker is not meant to reach any
+        // of them, and if one ever does, it should not be this one that quietly says "same".
+        if (groupByArgsSize < 3 && groupByExpr.type != VALUE_LIST && columnExpr.type != VALUE_LIST) {
             return compareNodesGroupBy(groupByExpr.lhs, columnExpr.lhs, translatingModel)
                     && compareNodesGroupBy(groupByExpr.rhs, columnExpr.rhs, translatingModel);
         }
@@ -791,7 +815,9 @@ public class ExpressionNode implements Mutable, Sinkable {
             return false;
         }
 
-        if (groupByArgsSize < 3) {
+        // See deepHashCode: a VALUE_LIST holds its members in args whatever its size, so comparing
+        // lhs/rhs would report two different short lists as equal.
+        if (groupByArgsSize < 3 && a.type != VALUE_LIST && b.type != VALUE_LIST) {
             return compareNodesExact(a.lhs, b.lhs) && compareNodesExact(a.rhs, b.rhs);
         }
 
