@@ -547,18 +547,14 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     public void testCooperateFiberOwnerYieldsOnlyToQueuedFiber() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final AtomicLong clockTicks = new AtomicLong();
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public NanosecondClock getNanosecondClock() {
-                    return () -> clockTicks.getAndAdd(TimeUnit.MILLISECONDS.toNanos(1));
-                }
-            };
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 final FiberRuntime runtime = new FiberRuntime(2);
                 final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
                         engine,
                         engine.getMessageBus(),
-                        runtime
+                        runtime,
+                        () -> clockTicks.getAndAdd(TimeUnit.MILLISECONDS.toNanos(1))
                 );
                 try {
                     // nothing queued: the helper keeps its carrier across every interval
@@ -591,8 +587,68 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testDefaultBatchClockDoesNotReadWallClock() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicInteger wallClockReads = new AtomicInteger();
+            final AtomicLong wallClockTicks = new AtomicLong(TimeUnit.SECONDS.toNanos(10));
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public NanosecondClock getNanosecondClock() {
+                    return () -> {
+                        wallClockReads.incrementAndGet();
+                        return wallClockTicks.get();
+                    };
+                }
+
+                @Override
+                public int getVectorAggregateQueueCapacity() {
+                    return 4;
+                }
+            };
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                        engine,
+                        engine.getMessageBus(),
+                        runtime
+                );
+                try {
+                    final MessageBus messageBus = engine.getMessageBus();
+                    final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+                    final AtomicInteger doneCounter = new AtomicInteger();
+                    final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
+                    final int readsBeforeBatch = wallClockReads.get();
+                    for (int i = 0; i < 3; i++) {
+                        publishVectorAggregateTask(
+                                messageBus.getVectorAggregateQueue(),
+                                messageBus.getVectorAggregatePubSeq(),
+                                new TestVectorAggregateEntry(circuitBreaker, doneCounter, 262_144, () ->
+                                        wallClockTicks.addAndGet(-TimeUnit.SECONDS.toNanos(1)), progressState)
+                        );
+                    }
+
+                    // A real clock may end any batch after its first entry, so allow three mounts.
+                    for (int i = 0; i < 3 && doneCounter.get() < 3; i++) {
+                        Assert.assertFalse(dispatcher.consumeVectorAggregate(-1));
+                        Assert.assertEquals(1, runtime.drain(1));
+                    }
+                    Assert.assertEquals(3, doneCounter.get());
+                    Assert.assertFalse(circuitBreaker.checkIfTripped());
+                    Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                    Assert.assertEquals(messageBus.getVectorAggregatePubSeq().current(), messageBus.getVectorAggregateSubSeq().current());
+                    Assert.assertEquals("batch elapsed time must not read the wall clock", readsBeforeBatch, wallClockReads.get());
+                } finally {
+                    closeRuntime(runtime);
+                    Misc.free(dispatcher);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLatestByConsumerStopsAtTimeBudget() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
+            final AtomicLong clockTicks = new AtomicLong();
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public int getLatestByQueueCapacity() {
@@ -604,7 +660,8 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
                         engine,
                         engine.getMessageBus(),
-                        runtime
+                        runtime,
+                        clockTicks::get
                 );
                 try {
                     final MessageBus messageBus = engine.getMessageBus();
@@ -626,10 +683,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                             pubSeq,
                             cancelledBreaker,
                             () -> {
-                                final long startNanos = System.nanoTime();
-                                while (System.nanoTime() - startNanos < batchNanos) {
-                                    Thread.onSpinWait();
-                                }
+                                clockTicks.addAndGet(batchNanos);
                                 releaseCount.incrementAndGet();
                             },
                             progressState
@@ -2033,30 +2087,32 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     @Test
     public void testOwnerCooperationYieldsAtHostBudgetWithoutQueuedWork() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
+            final AtomicLong clockTicks = new AtomicLong();
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 final FiberRuntime runtime = new FiberRuntime(1);
                 final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
                         engine,
                         engine.getMessageBus(),
-                        runtime
+                        runtime,
+                        clockTicks::get
                 );
                 try {
                     final long batchNanos = TimeUnit.MILLISECONDS.toNanos(4);
                     dispatcher.setBatchNanosForTesting(batchNanos);
                     dispatcher.setBatchCheckRowsForTesting(0);
                     // nothing is queued, so only the host budget can make the owner give the carrier up
-                    final SpinningOwnerTask owner = new SpinningOwnerTask(dispatcher, 10, batchNanos / 2);
+                    final AdvancingOwnerTask owner = new AdvancingOwnerTask(dispatcher, clockTicks, 10, batchNanos / 2);
                     Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(owner));
                     Assert.assertEquals(1, runtime.drain(1));
                     Assert.assertFalse(owner.isDone());
-                    Assert.assertTrue(owner.iterations >= 2 && owner.iterations < 10);
-                    final long deadline = System.nanoTime() + 5_000_000_000L;
-                    while (!owner.isDone() && System.nanoTime() < deadline) {
-                        runtime.drain(1);
+                    Assert.assertEquals(3, owner.iterations);
+                    for (int i = 0; i < 4; i++) {
+                        Assert.assertEquals(1, runtime.drain(1));
                     }
                     Assert.assertTrue(owner.isDone());
                     Assert.assertEquals(10, owner.iterations);
+                    Assert.assertEquals(5, runtime.getMountCount());
                 } finally {
                     closeRuntime(runtime);
                     Misc.free(dispatcher);
@@ -2067,74 +2123,17 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
 
     @Test
     public void testVectorAggregateBatchYieldsToQueuedFiberOnlyAfterSlice() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public int getVectorAggregateQueueCapacity() {
-                    return 8;
-                }
-            };
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                final FiberRuntime runtime = new FiberRuntime(2);
-                final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
-                        engine,
-                        engine.getMessageBus(),
-                        runtime
-                );
-                try {
-                    final MessageBus messageBus = engine.getMessageBus();
-                    final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
-                    final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
-                    final AtomicInteger doneCounter = new AtomicInteger();
-                    final MPSequence pubSeq = messageBus.getVectorAggregatePubSeq();
-                    final RingQueue<VectorAggregateTask> queue = messageBus.getVectorAggregateQueue();
-                    final long sliceNanos = TimeUnit.MILLISECONDS.toNanos(1);
-                    final Runnable spinSlice = () -> {
-                        final long startNanos = System.nanoTime();
-                        while (System.nanoTime() - startNanos < sliceNanos) {
-                            Thread.onSpinWait();
-                        }
-                    };
-                    dispatcher.setBatchNanosForTesting(Long.MAX_VALUE);
-                    dispatcher.setBatchSliceNanosForTesting(sliceNanos);
-                    dispatcher.setBatchCheckRowsForTesting(0);
-                    for (int i = 0; i < 3; i++) {
-                        publishVectorAggregateTask(
-                                queue,
-                                pubSeq,
-                                new TestVectorAggregateEntry(circuitBreaker, doneCounter, 1, spinSlice, progressState)
-                        );
-                    }
-
-                    Assert.assertFalse(dispatcher.consumeVectorAggregate(-1));
-                    final OneShotTask competitor = new OneShotTask();
-                    Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(competitor));
-                    // every entry uses up the slice, so the batch yields to the queued competitor
-                    // after one entry and resumes behind it
-                    Assert.assertEquals(1, runtime.drain(1));
-                    Assert.assertEquals(1, doneCounter.get());
-                    Assert.assertFalse(competitor.isDone());
-                    Assert.assertEquals(1, dispatcher.getBatchSliceYieldCount());
-                    Assert.assertEquals(1, runtime.drain(1));
-                    Assert.assertTrue(competitor.isDone());
-                    Assert.assertEquals(1, doneCounter.get());
-
-                    // with nothing queued the resumed batch keeps the carrier past the slice
-                    Assert.assertEquals(1, runtime.drain(1));
-                    Assert.assertEquals(3, doneCounter.get());
-                    Assert.assertEquals(1, dispatcher.getBatchSliceYieldCount());
-                    Assert.assertEquals(1, dispatcher.getVectorAggregateCreatedTaskCount());
-                } finally {
-                    closeRuntime(runtime);
-                    Misc.free(dispatcher);
-                }
+        for (boolean isDirect : new boolean[]{false, true}) {
+            for (long wallClockStep : new long[]{0, -TimeUnit.SECONDS.toNanos(1), TimeUnit.SECONDS.toNanos(1)}) {
+                assertVectorBatchYieldsToQueuedFiberOnlyAfterSlice(isDirect, wallClockStep);
             }
-        });
+        }
     }
 
     @Test
     public void testVectorAggregateBatchStopsAtTimeBudget() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
+            final AtomicLong clockTicks = new AtomicLong();
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public int getVectorAggregateQueueCapacity() {
@@ -2146,7 +2145,8 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
                         engine,
                         engine.getMessageBus(),
-                        runtime
+                        runtime,
+                        clockTicks::get
                 );
                 try {
                     final MessageBus messageBus = engine.getMessageBus();
@@ -2163,12 +2163,8 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     publishVectorAggregateTask(
                             queue,
                             pubSeq,
-                            new TestVectorAggregateEntry(circuitBreaker, doneCounter, 1, () -> {
-                                final long startNanos = System.nanoTime();
-                                while (System.nanoTime() - startNanos < batchNanos) {
-                                    Thread.onSpinWait();
-                                }
-                            }, progressState)
+                            new TestVectorAggregateEntry(circuitBreaker, doneCounter, 1,
+                                    () -> clockTicks.addAndGet(batchNanos), progressState)
                     );
                     publishVectorAggregateTask(
                             queue,
@@ -3606,8 +3602,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     private static void assertParallelFiberOwnerHelpsOwnWork(DrainTaskType taskType) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final AtomicLong clockTicks = new AtomicLong();
-            // Every clock read advances by the owner yield interval, so each helped unit of work
-            // after the first one yields the carrier.
+            // Advance beyond the slice while keeping the owner runtime's queue empty.
             final NanosecondClock nanosecondClock = () -> clockTicks.getAndAdd(1_000_000L);
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
@@ -3633,11 +3628,6 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 @Override
                 public int getLatestByQueueCapacity() {
                     return 1;
-                }
-
-                @Override
-                public NanosecondClock getNanosecondClock() {
-                    return nanosecondClock;
                 }
 
                 @Override
@@ -3695,12 +3685,18 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                          WorkerPoolMode.FIBER_HOST
                  )) {
                 TestUtils.setupWorkerPool(queryPool, engine);
+                engine.getMessageBus().getQueryParallelFiberDispatcher().close();
+                final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                        engine,
+                        engine.getMessageBus(),
+                        queryPool.getFiberRuntime(),
+                        nanosecondClock
+                );
+                queryPool.freeResourceOnExit(dispatcher);
+                engine.getMessageBus().setQueryParallelFiberDispatcher(dispatcher);
                 queryPool.start(LOG);
-                final QueryParallelFiberDispatcher dispatcher = engine.getMessageBus()
-                        .getQueryParallelFiberDispatcher();
                 // this helper checks the no-queued-work rule; the host budget has its own test
                 dispatcher.setBatchNanosForTesting(Long.MAX_VALUE);
-                Assert.assertNotNull(dispatcher);
 
                 final String sql;
                 final Class<?> expectedFactoryClass;
@@ -3860,6 +3856,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     }
                     Assert.assertNull(ownerFailure.get());
                     Assert.assertEquals(expectedRowCount, rowCount.get());
+                    Assert.assertTrue("owner cooperation must consult the injected clock", clockTicks.get() > 0);
                     Assert.assertEquals(expectedValueSum, valueSum.get());
                     Assert.assertEquals(pubSeq.current(), subSeq.current());
                     Assert.assertEquals(
@@ -4326,6 +4323,97 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 } finally {
                     Misc.free(dispatcher);
                     closeRuntime(runtime);
+                }
+            }
+        });
+    }
+
+    private static void assertVectorBatchYieldsToQueuedFiberOnlyAfterSlice(boolean isDirect, long wallClockStep) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicLong clockTicks = new AtomicLong();
+            final AtomicLong wallClockTicks = new AtomicLong(TimeUnit.SECONDS.toNanos(10));
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public NanosecondClock getNanosecondClock() {
+                    return wallClockTicks::get;
+                }
+
+                @Override
+                public int getVectorAggregateQueueCapacity() {
+                    return 8;
+                }
+            };
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                final FiberRuntime runtime = new FiberRuntime(2);
+                final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                        engine,
+                        engine.getMessageBus(),
+                        runtime,
+                        clockTicks::get
+                );
+                try {
+                    final MessageBus messageBus = engine.getMessageBus();
+                    final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+                    final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
+                    final AtomicInteger doneCounter = new AtomicInteger();
+                    final PerWorkerLocks locks = new PerWorkerLocks(configuration, 1);
+                    final MPSequence pubSeq = messageBus.getVectorAggregatePubSeq();
+                    final MCSequence subSeq = messageBus.getVectorAggregateSubSeq();
+                    final RingQueue<VectorAggregateTask> queue = messageBus.getVectorAggregateQueue();
+                    final long sliceNanos = TimeUnit.MILLISECONDS.toNanos(2);
+                    final int taskCount = 5;
+                    final int workerId = isDirect ? 0 : -1;
+                    final Runnable advanceClock = () -> {
+                        Assert.assertFalse(circuitBreaker.checkIfTrippedOrYield());
+                        final int slot = locks.acquireSlot(workerId, circuitBreaker);
+                        try {
+                            if (doneCounter.get() == 0) {
+                                wallClockTicks.addAndGet(wallClockStep);
+                            }
+                            clockTicks.addAndGet(sliceNanos / 2);
+                        } finally {
+                            locks.releaseSlot(slot);
+                        }
+                    };
+                    dispatcher.setBatchNanosForTesting(Long.MAX_VALUE);
+                    dispatcher.setBatchSliceNanosForTesting(sliceNanos);
+                    for (int i = 0; i < taskCount; i++) {
+                        publishVectorAggregateTask(queue, pubSeq, new TestVectorAggregateEntry(
+                                circuitBreaker, doneCounter, dispatcher.getBatchCheckRows(), advanceClock, progressState
+                        ));
+                    }
+
+                    final OneShotTask competitor = new OneShotTask();
+                    if (isDirect) {
+                        Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(competitor));
+                        Assert.assertFalse(dispatcher.consumeVectorAggregate(workerId));
+                    } else {
+                        Assert.assertFalse(dispatcher.consumeVectorAggregate(workerId));
+                        Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(competitor));
+                        Assert.assertEquals(1, runtime.drain(1));
+                    }
+                    Assert.assertEquals("one entry is below the slice; two reach it", 2, doneCounter.get());
+                    Assert.assertEquals(pubSeq.current() - 3, subSeq.current());
+                    Assert.assertFalse(competitor.isDone());
+                    Assert.assertEquals(1, dispatcher.getBatchSliceYieldCount());
+                    Assert.assertEquals(0, locks.getAcquiredSlotCount());
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertTrue(competitor.isDone());
+                    Assert.assertEquals(2, doneCounter.get());
+
+                    // With no competitor left, the last three entries pass the slice without yielding.
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertEquals(taskCount, doneCounter.get());
+                    Assert.assertEquals(1, dispatcher.getBatchSliceYieldCount());
+                    Assert.assertEquals(0, dispatcher.getBatchTimeoutCount());
+                    Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                    Assert.assertEquals(0, locks.getAcquiredSlotCount());
+                    Assert.assertFalse(circuitBreaker.checkIfTripped());
+                    Assert.assertEquals(pubSeq.current(), subSeq.current());
+                    Assert.assertEquals(1, dispatcher.getVectorAggregateCreatedTaskCount());
+                } finally {
+                    closeRuntime(runtime);
+                    Misc.free(dispatcher);
                 }
             }
         });
@@ -4907,6 +4995,32 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
         }
     }
 
+    private static class AdvancingOwnerTask extends FiberTask {
+        private final AtomicLong clockTicks;
+        private final QueryParallelFiberDispatcher dispatcher;
+        private final long iterationNanos;
+        private final int runs;
+        private int iterations;
+        private long lastYieldNanos = QueryParallelFiberDispatcher.OWNER_YIELD_UNSET;
+
+        private AdvancingOwnerTask(QueryParallelFiberDispatcher dispatcher, AtomicLong clockTicks, int runs, long iterationNanos) {
+            this.clockTicks = clockTicks;
+            this.dispatcher = dispatcher;
+            this.iterationNanos = iterationNanos;
+            this.runs = runs;
+        }
+
+        @Override
+        protected boolean runStep() {
+            while (iterations < runs) {
+                clockTicks.addAndGet(iterationNanos);
+                iterations++;
+                lastYieldNanos = dispatcher.cooperateFiberOwner(lastYieldNanos);
+            }
+            return true;
+        }
+    }
+
     private static class CooperatingOwnerTask extends FiberTask {
         private final QueryParallelFiberDispatcher dispatcher;
 
@@ -4918,33 +5032,6 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
         protected boolean runStep() {
             long lastYieldNanos = QueryParallelFiberDispatcher.OWNER_YIELD_UNSET;
             for (int i = 0; i < 3; i++) {
-                lastYieldNanos = dispatcher.cooperateFiberOwner(lastYieldNanos);
-            }
-            return true;
-        }
-    }
-
-    private static class SpinningOwnerTask extends FiberTask {
-        private final QueryParallelFiberDispatcher dispatcher;
-        private final int runs;
-        private final long spinNanos;
-        private int iterations;
-        private long lastYieldNanos = QueryParallelFiberDispatcher.OWNER_YIELD_UNSET;
-
-        private SpinningOwnerTask(QueryParallelFiberDispatcher dispatcher, int runs, long spinNanos) {
-            this.dispatcher = dispatcher;
-            this.runs = runs;
-            this.spinNanos = spinNanos;
-        }
-
-        @Override
-        protected boolean runStep() {
-            while (iterations < runs) {
-                final long startNanos = System.nanoTime();
-                while (System.nanoTime() - startNanos < spinNanos) {
-                    Thread.onSpinWait();
-                }
-                iterations++;
                 lastYieldNanos = dispatcher.cooperateFiberOwner(lastYieldNanos);
             }
             return true;

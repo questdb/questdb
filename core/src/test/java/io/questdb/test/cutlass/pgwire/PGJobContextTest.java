@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
@@ -7937,12 +7938,12 @@ nodejs code:
 
         registry.setListener((query, queryId, context) -> {
             if (queryA.contentEquals(query)) {
-                context.getCircuitBreaker().setFd(-1);
+                ((NetworkSqlExecutionCircuitBreaker) context.getCircuitBreaker()).of(-1);
                 contextA.set(context);
                 queryIdA.set(queryId);
                 trackerA.set(context.getMemoryTracker());
             } else if (queryB.contentEquals(query)) {
-                context.getCircuitBreaker().setFd(-1);
+                ((NetworkSqlExecutionCircuitBreaker) context.getCircuitBreaker()).of(-1);
                 contextB.set(context);
                 queryIdB.set(queryId);
                 trackerB.set(context.getMemoryTracker());

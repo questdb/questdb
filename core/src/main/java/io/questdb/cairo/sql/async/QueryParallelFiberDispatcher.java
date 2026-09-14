@@ -48,6 +48,7 @@ import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.tasks.GroupByLongTopKTask;
 import io.questdb.tasks.GroupByMergeShardTask;
@@ -85,8 +86,18 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     private volatile boolean isClosed;
 
     public QueryParallelFiberDispatcher(CairoEngine engine, MessageBus messageBus, FiberRuntime runtime) {
+        this(engine, messageBus, runtime, System::nanoTime);
+    }
+
+    @TestOnly
+    public QueryParallelFiberDispatcher(
+            CairoEngine engine,
+            MessageBus messageBus,
+            FiberRuntime runtime,
+            NanosecondClock nanosecondClock
+    ) {
         this.messageBus = messageBus;
-        this.batchPolicy = new PageFrameReduceDispatcher.BatchPolicy(runtime, engine.getConfiguration().getNanosecondClock());
+        this.batchPolicy = new PageFrameReduceDispatcher.BatchPolicy(runtime, nanosecondClock);
         this.runtime = runtime;
         this.timerClock = engine.getConfiguration().getMillisecondClock();
         this.timerIntervalMillis = Math.max(1, engine.getConfiguration().getQueryContinuationWakeIntervalMillis());

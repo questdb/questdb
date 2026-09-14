@@ -132,17 +132,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean checkIfTripped(long millis, long fd) {
-                return false;
-            }
-
-            @Override
             public AtomicBoolean getCancelledFlag() {
-                return null;
-            }
-
-            @Override
-            public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
                 return null;
             }
 
@@ -184,10 +174,6 @@ public class SecurityTest extends AbstractCairoTest {
             @Override
             public void setCancelledFlag(AtomicBoolean cancelledFlag) {
 
-            }
-
-            @Override
-            public void setFd(long fd) {
             }
 
             @Override

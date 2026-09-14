@@ -290,13 +290,11 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
                         networkBreaker.statefulThrowExceptionIfTrippedOrYield();
                     }
                     Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield());
-                    Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield(0, -1));
                     Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, atomicBreaker.getStateOrYield());
                     Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, atomicBreaker.getStateOrYield(0, -1));
                     atomicBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                     atomicBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                     Assert.assertFalse(networkBreaker.checkIfTrippedOrYield());
-                    Assert.assertFalse(networkBreaker.checkIfTrippedOrYield(1_000, -1));
                     Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, networkBreaker.getStateOrYield());
                     Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, networkBreaker.getStateOrYield(1_000, -1));
                     networkBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
@@ -696,7 +694,6 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
                 final AtomicBoolean cancellationFlag = new AtomicBoolean();
                 final AtomicBooleanCircuitBreaker ownerBreaker = new AtomicBooleanCircuitBreaker(pollingEngine, 5);
                 ownerBreaker.setCancelledFlag(cancellationFlag);
-                ownerBreaker.setFd(42);
                 final SqlExecutionCircuitBreakerConfiguration wrapperConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
                     @Override
                     public int getCircuitBreakerThrottle() {
@@ -721,7 +718,6 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
                     Assert.assertNotSame(ownerBreaker, second.getDelegate());
                     Assert.assertNotSame(first.getDelegate(), second.getDelegate());
                     Assert.assertEquals(AtomicBooleanCircuitBreaker.class, first.getDelegate().getClass());
-                    Assert.assertEquals(42, first.getFd());
 
                     final int initialPollCount = pollCount.get();
                     first.statefulThrowExceptionIfTrippedOrYield();
@@ -908,13 +904,12 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
         final int stride = SqlExecutionCircuitBreaker.COOPERATIVE_POLL_STRIDE;
         Assert.assertFalse(breaker.checkIfTrippedOrYield());
         Assert.assertEquals(initialPollCount + 1, pollCount.get());
-        Assert.assertFalse(breaker.checkIfTrippedOrYield(0, -1));
         Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, breaker.getStateOrYield());
         Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, breaker.getStateOrYield(0, -1));
         breaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
         breaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         Assert.assertEquals(initialPollCount + 1, pollCount.get());
-        for (int i = 6; i < stride; i++) {
+        for (int i = 5; i < stride; i++) {
             Assert.assertFalse(breaker.checkIfTrippedOrYield());
         }
         Assert.assertEquals(initialPollCount + 1, pollCount.get());
@@ -934,12 +929,11 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     ) throws InterruptedException {
         final int initialPollCount = pollCount.get();
         Assert.assertFalse(breaker.checkIfTrippedOrYield());
-        Assert.assertFalse(breaker.checkIfTrippedOrYield(0, -1));
         Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, breaker.getStateOrYield());
         Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, breaker.getStateOrYield(0, -1));
         Assert.assertEquals(
                 "shared boolean/state checks must each poll without mutable shared cadence",
-                initialPollCount + 4,
+                initialPollCount + 3,
                 pollCount.get()
         );
 
@@ -964,7 +958,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
         join(first);
         join(second);
         Assert.assertNull(failure.get());
-        Assert.assertEquals(initialPollCount + 4 + 2 * callsPerThread, pollCount.get());
+        Assert.assertEquals(initialPollCount + 3 + 2 * callsPerThread, pollCount.get());
     }
 
     private static void assertStatefulCooperativePollCadence(

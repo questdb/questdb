@@ -41,7 +41,6 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     private final CairoEngine engine;
     @Deprecated
     protected volatile AtomicBoolean cancelledFlag = new AtomicBoolean(false);
-    private long fd = -1;
     private int testCount = 0;
     private int throttle;
 
@@ -61,11 +60,6 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public boolean checkIfTripped(long millis, long fd) {
-        return isCancelled();
-    }
-
-    @Override
     public boolean checkIfTripped() {
         return isCancelled();
     }
@@ -79,17 +73,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
         return isTripped;
     }
 
-    @Override
-    public boolean checkIfTrippedOrYield(long millis, long fd) {
-        final boolean isTripped = checkIfTripped(millis, fd);
-        if (!isTripped) {
-            cooperativePollAfterCheck();
-        }
-        return isTripped;
-    }
-
     public void clear() {
-        fd = -1;
         resetCooperativePollState();
     }
 
@@ -116,13 +100,8 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public @Nullable SqlExecutionCircuitBreakerConfiguration getConfiguration() {
-        return null;
-    }
-
-    @Override
     public long getFd() {
-        return fd;
+        return -1;
     }
 
     @Override
@@ -198,11 +177,6 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
         this.cancelledFlag = cancelledFlag;
     }
 
-    @Override
-    public void setFd(long fd) {
-        this.fd = fd;
-    }
-
     public void statefulThrowExceptionIfTripped() {
         // Always perform a real check on the first call after a reset (testCount == 0), so empty/instant
         // queries that consult the breaker only a handful of times still observe cancellation. Otherwise
@@ -217,7 +191,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     public void statefulThrowExceptionIfTrippedNoThrottle() {
         testCount = 0;
         if (isCancelled()) {
-            throw CairoException.queryCancelled(fd);
+            throw CairoException.queryCancelled(-1);
         }
     }
 
@@ -278,7 +252,6 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     void of(AtomicBooleanCircuitBreaker source) {
         source.copyCancelledFlagTo(cancellationBinding);
         cancelledFlag = cancellationBinding.getFlag();
-        fd = source.fd;
         throttle = source.throttle;
         // Wrappers rebind this worker-local breaker for every reduce task. Preserve cooperative
         // cadence across those task boundaries while forcing the task's first cancellation check.

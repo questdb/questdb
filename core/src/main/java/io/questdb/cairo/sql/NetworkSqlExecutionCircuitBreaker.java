@@ -49,7 +49,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private long fd = -1;
     private boolean isClosed;
     // Wall-clock time (millis) of the last heavy connection probe; gates the throttled probes in
-    // statefulThrowExceptionIfTrippedTimeThrottled(), checkIfTripped(long, long) and getState(long, long).
+    // statefulThrowExceptionIfTrippedTimeThrottled(), checkIfTripped() and getState(long, long).
     // Written without synchronization: consults of a shared instance must never be concurrent - the
     // thread currently driving the connection owns it (dispatcher handoffs between requests are
     // sequential); worker threads operate on per-worker wrapper copies.
@@ -101,13 +101,8 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public boolean checkIfTripped() {
-        return checkIfTripped(powerUpTime, fd);
-    }
-
-    @Override
-    public boolean checkIfTripped(long millis, long fd) {
         final long now = clock.getTicks();
-        if (now - timeout > millis) {
+        if (now - timeout > powerUpTime) {
             return true;
         }
         if (cancellationBinding.isCancelled() || engine.isClosing()) {
@@ -132,15 +127,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public boolean checkIfTrippedOrYield() {
         final boolean isTripped = checkIfTripped();
-        if (!isTripped) {
-            cooperativePoll();
-        }
-        return isTripped;
-    }
-
-    @Override
-    public boolean checkIfTrippedOrYield(long millis, long fd) {
-        final boolean isTripped = checkIfTripped(millis, fd);
         if (!isTripped) {
             cooperativePoll();
         }
@@ -174,11 +160,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public AtomicBoolean getCancelledFlag() {
         return cancellationBinding.getFlag();
-    }
-
-    @Override
-    public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
-        return configuration;
     }
 
     public long getDefaultMaxTime() {
@@ -317,11 +298,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public synchronized void setCancelledFlag(AtomicBoolean cancelledFlag, long generation) {
         cancellationBinding.set(cancelledFlag, generation);
-    }
-
-    @Override
-    public void setFd(long fd) {
-        this.fd = fd;
     }
 
     public void setSecret(int secret) {

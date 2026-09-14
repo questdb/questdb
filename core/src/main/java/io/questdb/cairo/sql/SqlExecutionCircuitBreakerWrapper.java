@@ -57,11 +57,6 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
-    public boolean checkIfTripped(long millis, long fd) {
-        return delegate.checkIfTripped(millis, fd);
-    }
-
-    @Override
     public boolean checkIfTripped() {
         return delegate.checkIfTripped();
     }
@@ -74,11 +69,6 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     @Override
     public boolean checkIfTrippedOrYield() {
         return delegate.checkIfTrippedOrYield();
-    }
-
-    @Override
-    public boolean checkIfTrippedOrYield(long millis, long fd) {
-        return delegate.checkIfTrippedOrYield(millis, fd);
     }
 
     public void clear() {
@@ -113,11 +103,6 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     @Override
     public AtomicBoolean getCancelledFlag() {
         return delegate.getCancelledFlag();
-    }
-
-    @Override
-    public @Nullable SqlExecutionCircuitBreakerConfiguration getConfiguration() {
-        return delegate.getConfiguration();
     }
 
     @TestOnly
@@ -171,8 +156,8 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
 
     public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
         if (atomicBooleanCircuitBreaker != null
-                && executionContextCircuitBreaker.getClass() == AtomicBooleanCircuitBreaker.class) {
-            atomicBooleanCircuitBreaker.of((AtomicBooleanCircuitBreaker) executionContextCircuitBreaker);
+                && executionContextCircuitBreaker instanceof AtomicBooleanCircuitBreaker booleanCircuitBreaker) {
+            atomicBooleanCircuitBreaker.of(booleanCircuitBreaker);
             delegate = atomicBooleanCircuitBreaker;
         } else if (executionContextCircuitBreaker.isThreadSafe()) {
             delegate = executionContextCircuitBreaker;
@@ -214,11 +199,6 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     @Override
     public void setCancelledFlag(AtomicBoolean cancelled, long generation) {
         delegate.setCancelledFlag(cancelled, generation);
-    }
-
-    @Override
-    public void setFd(long fd) {
-        delegate.setFd(fd);
     }
 
     @Override

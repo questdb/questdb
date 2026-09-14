@@ -58,11 +58,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
         }
 
         @Override
-        public boolean checkIfTripped(long millis, long fd) {
-            return false;
-        }
-
-        @Override
         public void clearCancelledFlag(AtomicBoolean expected) {
         }
 
@@ -75,11 +70,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
 
         @Override
         public AtomicBoolean getCancelledFlag() {
-            return null;
-        }
-
-        @Override
-        public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
             return null;
         }
 
@@ -122,10 +112,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
         }
 
         @Override
-        public void setFd(long fd) {
-        }
-
-        @Override
         public void statefulThrowExceptionIfTripped() {
         }
 
@@ -149,8 +135,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
      */
     void cancel();
 
-    boolean checkIfTripped(long millis, long fd);
-
     /**
      * Same as {@link #checkIfTripped()} but bypasses the connection-probe throttle. Meant for cold
      * error paths that classify an abort after the fact and need a current connection verdict.
@@ -166,15 +150,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
      */
     default boolean checkIfTrippedOrYield() {
         return checkIfTripped();
-    }
-
-    /**
-     * Timestamped boolean breaker check followed by the policy-neutral cooperative-poll extension
-     * point when the breaker is still healthy. Use only at a call site where the current
-     * continuation may safely suspend.
-     */
-    default boolean checkIfTrippedOrYield(long millis, long fd) {
-        return checkIfTripped(millis, fd);
     }
 
     default void clearCancelledFlag(AtomicBoolean expected) {
@@ -197,9 +172,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
 
     AtomicBoolean getCancelledFlag();
 
-    @Nullable
-    SqlExecutionCircuitBreakerConfiguration getConfiguration();
-
     long getFd();
 
     default long getRemainingTimeoutMillis() {
@@ -218,7 +190,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
     int getState();
 
     /**
-     * Similar to checkIfTripped(long millis, long fd) method but returns int value describing reason for tripping.
+     * Classifies the breaker verdict for a query that started at {@code millis} on connection {@code fd}.
      *
      * @return circuit breaker state, one of: <br>
      * - {@link #STATE_OK} <br>
@@ -269,8 +241,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
     default void setCancelledFlag(AtomicBoolean cancelled, long generation) {
         setCancelledFlag(cancelled);
     }
-
-    void setFd(long fd);
 
     /**
      * Uses internal state of the circuit breaker to assert conditions. This method also
