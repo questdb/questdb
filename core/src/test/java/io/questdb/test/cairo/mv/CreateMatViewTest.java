@@ -27,6 +27,7 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
@@ -42,6 +43,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -1534,6 +1536,189 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewWithIndexInheritedAliasCollisionDoesNotLoseIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (
+                        k SYMBOL CAPACITY 2048 INDEX TYPE POSTING INCLUDE (payload),
+                        s LONG,
+                        payload VARCHAR,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT s AS k, k AS k2, payload AS p, ts FROM src)");
+            execute("""
+                    INSERT INTO src VALUES
+                        ('A', 10, 'first', '2026-01-01T00:00:00.000000Z'),
+                        (null, 20, 'null-key', '2026-01-02T00:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+
+            // Exercise an out-of-order incremental refresh, then verify the same index after a full rebuild.
+            execute("INSERT INTO src VALUES ('B', 30, 'backfill', '2026-01-01T12:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            for (int pass = 0; pass < 2; pass++) {
+                try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                    final int k2 = metadata.getColumnIndex("k2");
+                    assertTrue(metadata.isColumnIndexed(k2));
+                    assertEquals(IndexType.POSTING, metadata.getIndexType(k2));
+                    final IntList coveringColumnIndices = metadata.getColumnMetadata(k2).getCoveringColumnIndices();
+                    assertNotNull(coveringColumnIndices);
+                    assertEquals(2, coveringColumnIndices.size());
+                    assertEquals(metadata.getColumnIndex("p"), coveringColumnIndices.getQuick(0));
+                    assertEquals(metadata.getColumnIndex("ts"), coveringColumnIndices.getQuick(1));
+                }
+                assertQuery("SELECT k2, p, ts FROM mv WHERE k2 = 'B'")
+                        .withPlanContaining("CoveringIndex on: k2")
+                        .timestamp("ts")
+                        .expectSize()
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns("""
+                                k2\tp\tts
+                                B\tbackfill\t2026-01-01T12:00:00.000000Z
+                                """);
+                assertQuery("SELECT k2, p, ts FROM mv WHERE k2 = null")
+                        .withPlanContaining("CoveringIndex on: k2")
+                        .timestamp("ts")
+                        .expectSize()
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns("""
+                                k2\tp\tts
+                                \tnull-key\t2026-01-02T00:00:00.000000Z
+                                """);
+                assertQuery("SELECT k, k2, p, ts FROM mv ORDER BY ts")
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
+                                k\tk2\tp\tts
+                                10\tA\tfirst\t2026-01-01T00:00:00.000000Z
+                                30\tB\tbackfill\t2026-01-01T12:00:00.000000Z
+                                20\t\tnull-key\t2026-01-02T00:00:00.000000Z
+                                """);
+                if (pass == 0) {
+                    execute("REFRESH MATERIALIZED VIEW mv FULL");
+                    drainWalAndMatViewQueues();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithIndexInheritedAliasSwapCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (
+                        k SYMBOL CAPACITY 2048 INDEX CAPACITY 512,
+                        s LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT k AS s, s AS k, ts FROM src)");
+            execute("""
+                    INSERT INTO src VALUES
+                        ('A', 10, '2026-01-01T00:00:00.000000Z'),
+                        (null, 20, '2026-01-02T00:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+
+            // Exercise incremental index maintenance, then verify the same index after a full rebuild.
+            execute("INSERT INTO src VALUES ('B', 30, '2026-01-03T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            for (int pass = 0; pass < 2; pass++) {
+                try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                    final int s = metadata.getColumnIndex("s");
+                    assertTrue(metadata.isColumnIndexed(s));
+                    assertEquals(IndexType.BITMAP, metadata.getIndexType(s));
+                    assertEquals(512, metadata.getIndexValueBlockCapacity(s));
+                    assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("k")));
+                }
+                assertQuery("SELECT s, k, ts FROM mv WHERE s = 'B'")
+                        .withPlanContaining("Index forward scan on: s")
+                        .timestamp("ts")
+                        .noLeakCheck()
+                        .returns("""
+                                s\tk\tts
+                                B\t30\t2026-01-03T00:00:00.000000Z
+                                """);
+                assertQuery("SELECT s, k, ts FROM mv WHERE s = null")
+                        .withPlanContaining("Index forward scan on: s")
+                        .timestamp("ts")
+                        .noLeakCheck()
+                        .returns("""
+                                s\tk\tts
+                                \t20\t2026-01-02T00:00:00.000000Z
+                                """);
+                assertQuery("SELECT s, k, ts FROM mv ORDER BY ts")
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
+                                s\tk\tts
+                                A\t10\t2026-01-01T00:00:00.000000Z
+                                \t20\t2026-01-02T00:00:00.000000Z
+                                B\t30\t2026-01-03T00:00:00.000000Z
+                                """);
+                if (pass == 0) {
+                    execute("REFRESH MATERIALIZED VIEW mv FULL");
+                    drainWalAndMatViewQueues();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithIndexInheritedNestedAndQualifiedAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (k SYMBOL INDEX CAPACITY 512, s LONG, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    CREATE MATERIALIZED VIEW nested_swap AS (
+                        SELECT s AS sym, k AS num, ts
+                        FROM (SELECT k AS s, s AS k, ts FROM src)
+                    )
+                    """);
+            execute("""
+                    CREATE MATERIALIZED VIEW qualified AS (
+                        SELECT b.k AS "in", b.s, b.ts FROM src b
+                    )
+                    """);
+            execute("""
+                    CREATE MATERIALIZED VIEW top_shadow AS (
+                        SELECT s::SYMBOL AS k, ts FROM src
+                    )
+                    """);
+            execute("""
+                    CREATE MATERIALIZED VIEW nested_shadow AS (
+                        SELECT k, ts FROM (SELECT s::SYMBOL AS k, ts FROM src)
+                    )
+                    """);
+            drainWalAndMatViewQueues();
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("nested_swap"))) {
+                assertTrue(metadata.isColumnIndexed(metadata.getColumnIndex("sym")));
+                assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("num")));
+            }
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("qualified"))) {
+                assertTrue(metadata.isColumnIndexed(metadata.getColumnIndex("in")));
+                assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("s")));
+            }
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("top_shadow"))) {
+                assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("k")));
+            }
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("nested_shadow"))) {
+                assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("k")));
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewWithIndexInheritedOncePerBaseColumn() throws Exception {
         // A passthrough view inherits an indexed base SYMBOL column's index. When the view projects that
         // base column more than once, the index goes to the first projection and the copies stay plain.
@@ -1548,6 +1733,28 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 final int k = metadata.getColumnIndex("k");
                 assertTrue(metadata.isColumnIndexed(k));
                 assertEquals(512, metadata.getIndexValueBlockCapacity(k));
+                assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("k2")));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithIndexInheritedPreservesFirstDuplicateExplicitIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (k SYMBOL INDEX CAPACITY 512, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (SELECT k AS k1, k AS k2, ts FROM src),
+                    INDEX (k1 CAPACITY 2048)
+                    """);
+            drainWalAndMatViewQueues();
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                final int k1 = metadata.getColumnIndex("k1");
+                assertTrue(metadata.isColumnIndexed(k1));
+                assertEquals(2048, metadata.getIndexValueBlockCapacity(k1));
                 assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("k2")));
             }
         });

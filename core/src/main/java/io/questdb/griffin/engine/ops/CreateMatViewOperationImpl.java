@@ -521,7 +521,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     final QueryColumn column = columns.getQuick(i);
                     final int baseColumnIndex = resolveBaseColumnIndex(
                             column.getAst(),
-                            queryModel,
+                            queryModel.getNestedModel(),
                             baseTableName,
                             baseTableMetadata
                     );
@@ -553,7 +553,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         // aggregating view's rows are not base rows, so it never inherits.
                         inheritBaseSymbolColumnIndex(
                                 column.getAst(),
-                                queryModel,
+                                queryModel.getNestedModel(),
                                 columnModel,
                                 columnName,
                                 baseTableName,
