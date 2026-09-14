@@ -1606,45 +1606,49 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_geohash_err";
             execute("CREATE TABLE " + table + " (v GEOHASH(5c), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "GEOHASH");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).byteColumn("v", (byte) 1).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from BYTE to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from DOUBLE to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).floatColumn("v", 1.5f).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from FLOAT to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).intColumn("v", 1).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from INT", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).longColumn("v", 1L).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG256 to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).shortColumn("v", (short) 1).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from SHORT to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "GEOHASH");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "GEOHASH");
-            assertCoercionError(port, table,
-                    (s, t) -> {
-                        UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
-                        s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "type coercion from UUID to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).stringColumn("v", "!!!").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot parse geohash from string", "!!!");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                assertUnsupportedGeoHash(() -> sender.table(table).boolColumn("v", true), table, "BOOLEAN");
+                assertUnsupportedGeoHash(() -> sender.table(table).byteColumn("v", (byte) 1), table, "BYTE");
+                assertUnsupportedGeoHash(() -> sender.table(table).doubleColumn("v", 3.14), table, "DOUBLE");
+                assertUnsupportedGeoHash(() -> sender.table(table).floatColumn("v", 1.5f), table, "FLOAT");
+                assertUnsupportedGeoHash(() -> sender.table(table).intColumn("v", 1), table, "INT");
+                assertUnsupportedGeoHash(() -> sender.table(table).longColumn("v", 1L), table, "LONG");
+                assertUnsupportedGeoHash(
+                        () -> sender.table(table).long256Column("v", 1, 0, 0, 0),
+                        table,
+                        "LONG256"
+                );
+                assertUnsupportedGeoHash(() -> sender.table(table).shortColumn("v", (short) 1), table, "SHORT");
+                assertUnsupportedGeoHash(() -> sender.table(table).symbol("v", "hello"), table, "SYMBOL");
+                assertUnsupportedGeoHash(
+                        () -> sender.table(table).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS),
+                        table,
+                        "TIMESTAMP"
+                );
+                UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+                assertUnsupportedGeoHash(
+                        () -> sender.table(table).uuidColumn(
+                                "v",
+                                uuid.getLeastSignificantBits(),
+                                uuid.getMostSignificantBits()
+                        ),
+                        table,
+                        "UUID"
+                );
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.table(table).stringColumn("v", "!!!"),
+                        "table=" + table,
+                        "column=v",
+                        "inputType=STRING",
+                        "targetType=GEOHASH",
+                        "invalid GEOHASH text"
+                );
+
+                sender.table(table).stringColumn("v", "s24se").at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM " + table).noLeakCheck().returnsOnce("v\ns24se\n");
         });
     }
 
@@ -5131,6 +5135,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         for (String messagePart : messageParts) {
             Assert.assertTrue(error.getMessage(), error.getMessage().contains(messagePart));
         }
+    }
+
+    private static void assertUnsupportedGeoHash(Runnable action, String table, String inputType) {
+        assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                action,
+                "table=" + table, "column=v", "inputType=" + inputType, "targetType=GEOHASH");
     }
 
     private static WebSocketResponse receiveResponse(WebSocketClient client) {
