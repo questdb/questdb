@@ -914,6 +914,68 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
      * becomes the table's {@code _txn} min for the first partition - so taking the piece's tsLo alone loses
      * every merged row underneath it, and {@code min(ts)}, which reads {@code _txn}, disagrees with the rows.
      */
+    /**
+     * FORCE DROP of the last partition recomputes the table's max from the partition that becomes
+     * active. On a COMPOSITE partition the last live row is not the last file row - a merge-append
+     * relocates pieces, so file order is not timestamp order and the rows past the live count are
+     * dead. Reading the file row at {@code liveRows - 1} names a dead row, and the writer then
+     * appends the next commit against a max that is below rows the partition still holds.
+     */
+    @Test
+    public void testForceDropLastPartitionKeepsCompositeMaxTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later day, so 2020-02-03 is never the active partition and the write takes the O3 path.
+            execute("INSERT INTO x SELECT 90000, '2020-02-06T00:00:00.000000'::TIMESTAMP ts FROM long_sequence(1)");
+            execute("INSERT INTO x SELECT x::INT, timestamp_sequence('2020-02-03T02:00', 60*1000000L) ts" +
+                    " FROM long_sequence(100)");
+            drainWalQueue();
+
+            // Merges the piece and relocates it to the tail: the day's live rows no longer start at
+            // file row 0, so file row liveRows-1 is dead space.
+            execute("INSERT INTO x SELECT 80000 + x::INT, timestamp_sequence('2020-02-03T02:30:30', 60*1000000L) ts" +
+                    " FROM long_sequence(5)");
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("x")) {
+                Assert.assertTrue("the partition has to be composite for this to be the composite path",
+                        reader.getTxFile().isPartitionComposite(0));
+            }
+
+            execute("ALTER TABLE x FORCE DROP PARTITION LIST '2020-02-06'");
+            drainWalQueue();
+
+            final long trueMax = MicrosTimestampDriver.floor("2020-02-03T03:39:00.000000");
+            try (TableReader reader = engine.getReader("x")) {
+                Assert.assertEquals(
+                        "_txn max timestamp came from a dead file row",
+                        trueMax,
+                        reader.getMaxTimestamp()
+                );
+            }
+
+            // The next commit is the one that pays for a wrong max: it lands below it and must still
+            // take the O3 path rather than being appended as if it were in order.
+            execute("INSERT INTO x VALUES (555, '2020-02-03T03:00:00.000000')");
+            drainWalQueue();
+            Assert.assertFalse("the commit after the force drop suspended the table",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+            assertQuery("SELECT count() c FROM x")
+                    .noRandomAccess().expectSize().returns("c\n106\n");
+            // max(ts) over the designated timestamp answers off _txn, which is what the drop corrupted.
+            assertQuery("SELECT max(ts)::varchar hi FROM x")
+                    .expectSize()
+                    .returns("hi\n2020-02-03T03:39:00.000000Z\n");
+            // The row that was the true max is still there, and the inserted row landed in its own second.
+            assertQuery("SELECT i, ts FROM x WHERE i IN (100, 555)")
+                    .timestamp("ts").sizeMayVary()
+                    .returns("i\tts\n" +
+                            "555\t2020-02-03T03:00:00.000000Z\n" +
+                            "100\t2020-02-03T03:39:00.000000Z\n");
+        });
+    }
+
     @Test
     public void testFreshRewriteMergeTakesItsFloorFromTheO3Side() throws Exception {
         assertMemoryLeak(() -> {
