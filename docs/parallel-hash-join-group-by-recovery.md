@@ -4,7 +4,7 @@ Task **9f passed at commit `4ae9efb0f0`** under [RFC 130](https://github.com/que
 The experimental configuration remains false. The later
 [shared-throttle follow-up](parallel-hash-join-group-by-throttling.md) superseded
 the counters described below and failed 3 of 54 recovery bounds at `d2e59fc832`.
-The current [boundary-check simplification](parallel-hash-join-group-by-breaker-boundaries.md)
+The current [boundary-check simplification](https://github.com/questdb/questdb/blob/4a05a7eb242e1225e57b3f1bd7d3798059a2820c/core/src/main/java/io/questdb/cairo/sql/async/UnorderedPageFrameReduceJob.java)
 passes all 54 recovery bounds in the [task 9g remeasurement](parallel-hash-join-group-by-remeasurement.md)
 at `4a05a7eb24`. Its 24-case C1 allocation matrix also passes. An unresolved
 swapped-RIGHT warmup JVM crash reopens the execution-reliability prerequisite and

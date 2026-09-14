@@ -50,17 +50,17 @@ import java.io.Closeable;
  * allocated by construction. {@link #open} binds the execution's tracker before
  * allocation; any append/build failure closes the entire partial build.
  * <p>
- * Linear probing at a maximum load of 1/2. A slot holds an INT key and a LONG
- * payload offset plus one (zero marks an unused slot). Thus zero, negative and
- * INT_NULL keys need no special representation and null keys match each other.
- * Rows hold a previous-match offset plus one followed by aligned typed payloads.
+ * Linear probing at a maximum load of 1/2. A 16-byte slot holds an INT key at
+ * offset 0 and a LONG payload offset plus one at offset 8. Zero, negative and
+ * INT_NULL keys need no special representation and nulls match; a zero head marks an unused slot.
+ * Rows hold an eight-byte previous-match offset plus one, then aligned typed payloads.
  * Duplicate iteration is in reverse input order, as in the light join's LongChain.
  * <p>
  * SYMBOLs are interned by text in one owned UTF-16 dictionary shared by all payload
  * columns. Source symbol IDs and record/string flyweights are never retained.
  * Hash tables, rows, dictionary indexes and characters all use tracked native
  * buffers. Growth accounts for both old and new allocations and is cancellable.
- * See docs/parallel-hash-join-group-by-build.md for bounds and lifetime details.
+ * Frozen views expire at close; reusable views must rebind after consumer drain.
  */
 public final class IntHashJoinBuild implements Closeable {
     private static final long COPY_CHUNK_SIZE = 1024 * 1024;

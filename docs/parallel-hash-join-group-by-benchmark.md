@@ -173,7 +173,7 @@ capacity. Primary retained native memory is 0.916 MiB fused versus 0.465 MiB
 ordinary (1.97×); at 100,000 filtered keys it is 8.166 versus 5.153 MiB (1.58×).
 Tiny builds can have lower total native memory in the fused pipeline because
 other map/pool allocations also differ. Whole-query samples do not establish the
-standalone payload representation's cost; the earlier [storage comparison](parallel-hash-join-group-by-build.md)
+standalone payload representation's cost; the earlier [storage comparison](parallel-hash-join-group-by-build-results.csv)
 retains its build-time and row-ID memory regressions.
 
 The 1% variant finds 1,000,554 pairs and produces 60 groups: with the generator's

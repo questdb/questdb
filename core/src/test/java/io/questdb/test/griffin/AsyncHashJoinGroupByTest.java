@@ -45,6 +45,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
+import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.HashJoinGroupByCandidate;
@@ -123,6 +124,101 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     public void setUp() {
         factoryProvider = SlotGatedWorkStealingStrategy.newFactoryProvider();
         super.setUp();
+    }
+
+    @Test
+    public void testUniqueOwnerLocalFrameCancellationAndReuse() throws Exception {
+        final int normalStealingThreshold = configuration.getSqlParallelWorkStealingThreshold();
+        circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public int getCircuitBreakerThrottle() {
+                return 0;
+            }
+        };
+        assertMemoryLeak(() -> {
+            frameRows = 16;
+            createTables();
+            execute("TRUNCATE TABLE r");
+            execute("TRUNCATE TABLE p");
+            execute("INSERT INTO p VALUES (1, 'ES', 17)");
+            execute("""
+                    INSERT INTO r
+                    SELECT 1, timestamp_sequence('2020-01-01', 60000000), 1.0, 2.0
+                    FROM long_sequence(100000)
+                    """);
+            Assert.assertNull(engine.getMessageBus().getPageFrameReduceDispatcher());
+            Assert.assertTrue(100_000 > (long) frameRows * engine.getMessageBus().getUnorderedPageFrameReduceQueue().getCycle());
+            SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+            AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine, 0);
+            try {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                for (boolean isKeyed : new boolean[]{false, true}) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 0);
+                    Hook hook = new Hook();
+                    AtomicBoolean isLocal = new AtomicBoolean();
+                    hook.onLimit = () -> {
+                        isLocal.set(StackWalker.getInstance().walk(frames -> frames.anyMatch(frame ->
+                                frame.getClassName().equals(UnorderedPageFrameSequence.class.getName())
+                                        && frame.getMethodName().equals("reduceLocally"))));
+                        breaker.cancel();
+                    };
+                    String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + INNER + " WHERE r.energy_kwh > 0";
+                    // With no workers and an adaptive threshold of zero, a full
+                    // queue routes subsequent frames to the owner directly.
+                    try (Fixture fixture = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), "energy_kwh > 0", hook)) {
+                        breaker.reset();
+                        try (RecordCursor cursor = fixture.getCursor()) {
+                            cursor.hasNext();
+                            Assert.fail("expected cancellation during local unique probing");
+                        } catch (CairoException error) {
+                            Assert.assertTrue(error.isCancellation());
+                        }
+                        Assert.assertTrue("the cancellation must originate inside local reduction", isLocal.get());
+                        Assert.assertTrue("cancellation must stop within one native frame, rows=" + hook.calls.get(),
+                                hook.calls.get() >= 32 && hook.calls.get() <= 32 + frameRows);
+                        Assert.assertEquals(0, fixture.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                        Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+                        hook.onLimit = null;
+                        breaker.reset();
+                        // The ordinary oracle may use an ordered filter, which
+                        // needs owner stealing while no filter workers are running.
+                        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, normalStealingThreshold);
+                        fixture.assertResults(sql);
+                    }
+                }
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+            }
+        });
+    }
+
+    @Test
+    public void testUniqueLateDuplicateAndEmptyBuildReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            for (String aggregate : new String[]{AGGREGATES, SCALAR_AGGREGATES}) {
+                for (String join : new String[]{INNER, OUTER, " FROM p RIGHT JOIN r ON r.plant_id=p.plant_id"}) {
+                    String[] filters = join.equals(INNER)
+                            ? new String[]{""}
+                            : new String[]{"", " WHERE p.installed_kwp > 6 OR p.installed_kwp IS NULL"};
+                    for (String filter : filters) {
+                        String sql = aggregate + join + filter;
+                        try (Fixture fixture = new Fixture(sql); Reducers reducers = new Reducers()) {
+                            for (int execution = 0; execution < 2; execution++) {
+                                execute("TRUNCATE TABLE p");
+                                fixture.assertResults(sql);
+                                execute("INSERT INTO p VALUES (1, 'Aa', 17), (2, 'BB', 3), (NULL, NULL, 11), (-1, 'Aa', 5)");
+                                fixture.assertResults(sql);
+                                execute("INSERT INTO p VALUES (1, 'BB', 19)");
+                                fixture.assertResults(sql);
+                                execute("INSERT INTO p VALUES (NULL, 'Aa', 13), (1, NULL, 23)");
+                                fixture.assertResults(sql);
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -595,53 +691,12 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testRejectedProbeFrameCancellationAcrossStorageAndReuse() throws Exception {
-        assertMemoryLeak(() -> {
-            frameRows = 4096;
-            createTables();
-            execute("truncate table r");
-            execute("insert into r select 999999, timestamp_sequence('2020-01-01', 60000000), 1.0, 2.0 from long_sequence(100000)");
-            SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
-            AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine, 0);
-            try {
-                for (int storage = 0; storage < 3; storage++) {
-                    if (storage == 1) {
-                        execute("alter table r convert partition to parquet where reading_ts < '2020-02-01'");
-                    } else if (storage == 2) {
-                        execute("alter table r convert partition to parquet where reading_ts >= '2020-02-01'");
-                    }
-                    for (boolean keyed : new boolean[]{false, true}) {
-                        for (boolean reject : new boolean[]{false, true}) {
-                            Hook hook = new Hook();
-                            // The accepted probe predicate counts rows even when every hash lookup misses.
-                            String predicate = reject ? "energy_kwh < 0" : "energy_kwh > 0";
-                            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + INNER + " where r." + predicate;
-                            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), predicate, hook)) {
-                                ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
-                                breaker.reset();
-                                hook.cancel = breaker;
-                                try (RecordCursor cursor = f.getCursor()) {
-                                    cursor.hasNext();
-                                    Assert.fail("expected cancellation during all-miss/all-rejected probe");
-                                } catch (CairoException ex) {
-                                    Assert.assertTrue(ex.isCancellation());
-                                }
-                                // Native frames absorb short tails; Parquet uses a row group (January has 44,640 rows).
-                                final int maxFrameRows = storage == 0 ? 2 * frameRows : 44_640;
-                                Assert.assertTrue("bounded frame work: " + hook.calls.get(),
-                                        hook.calls.get() >= 32 && hook.calls.get() <= maxFrameRows);
-                                Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                                Assert.assertNull(sqlExecutionContext.getMemoryTracker());
-                                hook.cancel = null;
-                                breaker.reset();
-                                f.assertResults(sql);
-                            }
-                        }
-                    }
-                }
-            } finally {
-                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
-            }
-        });
+        assertProbeFrameCancellationAcrossStorageAndReuse(false);
+    }
+
+    @Test
+    public void testUniqueProbeFrameCancellationAcrossStorageAndReuse() throws Exception {
+        assertProbeFrameCancellationAcrossStorageAndReuse(true);
     }
 
     @Test
@@ -1215,6 +1270,60 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             } finally {
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
                 circuitBreakerConfiguration = null;
+            }
+        });
+    }
+
+    private void assertProbeFrameCancellationAcrossStorageAndReuse(boolean isUniqueBuild) throws Exception {
+        assertMemoryLeak(() -> {
+            frameRows = 4096;
+            createTables();
+            if (isUniqueBuild) {
+                execute("truncate table p");
+                execute("INSERT INTO p VALUES (999999, 'ES', 17)");
+            }
+            execute("truncate table r");
+            execute("insert into r select 999999, timestamp_sequence('2020-01-01', 60000000), 1.0, 2.0 from long_sequence(100000)");
+            SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+            AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine, 0);
+            try {
+                for (int storage = 0; storage < 3; storage++) {
+                    if (storage == 1) {
+                        execute("alter table r convert partition to parquet where reading_ts < '2020-02-01'");
+                    } else if (storage == 2) {
+                        execute("alter table r convert partition to parquet where reading_ts >= '2020-02-01'");
+                    }
+                    for (boolean keyed : new boolean[]{false, true}) {
+                        for (boolean reject : new boolean[]{false, true}) {
+                            Hook hook = new Hook();
+                            // Count rows for both all-miss duplicate builds and all-match unique builds.
+                            String predicate = reject ? "energy_kwh < 0" : "energy_kwh > 0";
+                            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + INNER + " where r." + predicate;
+                            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), predicate, hook)) {
+                                ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                                breaker.reset();
+                                hook.cancel = breaker;
+                                try (RecordCursor cursor = f.getCursor()) {
+                                    cursor.hasNext();
+                                    Assert.fail("expected cancellation during probe");
+                                } catch (CairoException ex) {
+                                    Assert.assertTrue(ex.isCancellation());
+                                }
+                                // Native frames absorb short tails; Parquet uses a row group (January has 44,640 rows).
+                                final int maxFrameRows = storage == 0 ? 2 * frameRows : 44_640;
+                                Assert.assertTrue("bounded frame work: " + hook.calls.get(),
+                                        hook.calls.get() >= 32 && hook.calls.get() <= maxFrameRows);
+                                Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+                                hook.cancel = null;
+                                breaker.reset();
+                                f.assertResults(sql);
+                            }
+                        }
+                    }
+                }
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
             }
         });
     }

@@ -1,7 +1,7 @@
 # Shared circuit-breaker throttling for parallel hash joins
 
 **Historical implementation and benchmark at `d2e59fc832`.** The subsequent
-[boundary-check simplification](parallel-hash-join-group-by-breaker-boundaries.md)
+[boundary-check simplification](https://github.com/questdb/questdb/blob/4a05a7eb242e1225e57b3f1bd7d3798059a2820c/core/src/main/java/io/questdb/cairo/sql/async/UnorderedPageFrameReduceJob.java)
 moves probe scans to frame checks and removes collision and map-entry polling.
 The measurements below apply to `d2e59fc832`. The subsequent
 [task 9g remeasurement](parallel-hash-join-group-by-remeasurement.md) reports all

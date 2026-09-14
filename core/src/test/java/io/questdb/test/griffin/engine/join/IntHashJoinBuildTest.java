@@ -68,6 +68,104 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     private static final SqlExecutionCircuitBreaker NOOP = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
 
     @Test
+    public void testUniqueDuplicateAndEmptyBuildReuseAcrossPayloadWidths() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger row = new AtomicInteger();
+            Record source = new Record() {
+                @Override
+                public int getInt(int column) {
+                    return row.get();
+                }
+
+                @Override
+                public double getDouble(int column) {
+                    return row.get() * 0.5;
+                }
+
+                @Override
+                public CharSequence getSymA(int column) {
+                    return switch (row.get() % 3) {
+                        case 0 -> "Aa";
+                        case 1 -> "BB";
+                        default -> null;
+                    };
+                }
+            };
+            // Empty, narrow and wide layouts, with growth through page/cache-line boundaries.
+            for (int width : new int[]{0, 1, 3, 17}) {
+                ArrayColumnTypes types = new ArrayColumnTypes();
+                IntList columns = new IntList();
+                for (int i = 0; i < width; i++) {
+                    types.add(i == 0 ? ColumnType.INT : i == 1 ? ColumnType.SYMBOL : ColumnType.DOUBLE);
+                    columns.add(i);
+                }
+                try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(32 * 1024 * 1024);
+                     IntHashJoinBuild build = new IntHashJoinBuild(types, columns, 2, 8, true)) {
+                    FrozenHashJoinBuild.Probe reusable = null;
+                    // Exercise empty -> unique -> late duplicate -> skew -> unique reuse.
+                    for (int execution = 0; execution < 5; execution++) {
+                        build.open(tracker, NOOP);
+                        Map<Integer, List<Integer>> expected = new HashMap<>();
+                        int count = execution == 0 ? 0 : 4097;
+                        for (int r = 0; r < count; r++) {
+                            row.set(r);
+                            int key = execution == 3 ? (r % 7) : execution == 2 && r == count - 1 ? 0 : r;
+                            key = key == 1 ? Numbers.INT_NULL : key == 2 ? Integer.MAX_VALUE : key == 3 ? -1 : key;
+                            expected.computeIfAbsent(key, ignored -> new ArrayList<>()).add(r);
+                            build.append(key, source);
+                        }
+                        FrozenHashJoinBuild frozen = build.freeze();
+                        Assert.assertEquals(count, frozen.getRowCount());
+                        Assert.assertEquals(expected.size(), frozen.getKeyCount());
+                        Assert.assertEquals(tracker.getUsed(), frozen.getSizeInBytes());
+                        if (reusable == null) {
+                            reusable = frozen.newProbe(NOOP);
+                        } else {
+                            reusable.reopen();
+                        }
+                        List<Long> handles = new ArrayList<>();
+                        List<Integer> payloadRows = new ArrayList<>();
+                        for (Map.Entry<Integer, List<Integer>> entry : expected.entrySet()) {
+                            reusable.findUnchecked(entry.getKey());
+                            List<Integer> matches = new ArrayList<>();
+                            while (reusable.hasNext()) {
+                                long handle = reusable.next();
+                                int value = width == 0 ? 0 : reusable.getRecord().getInt(0);
+                                matches.add(value);
+                                handles.add(handle);
+                                payloadRows.add(value);
+                            }
+                            Assert.assertEquals(entry.getValue().size(), matches.size());
+                            if (width > 0) {
+                                matches.sort(Integer::compare);
+                                Assert.assertEquals(entry.getValue(), matches);
+                            }
+                        }
+                        reusable.findUnchecked(-42);
+                        Assert.assertFalse(reusable.hasNext());
+                        for (int h = 0; h < handles.size(); h++) {
+                            reusable.recordAt(handles.get(h));
+                            int value = payloadRows.get(h);
+                            if (width > 0) {
+                                Assert.assertEquals(value, reusable.getRecord().getInt(0));
+                            }
+                            for (int column = 2; column < width; column++) {
+                                Assert.assertEquals(value * 0.5, reusable.getRecord().getDouble(column), 0);
+                            }
+                            if (width > 1) {
+                                row.set(value);
+                                TestUtils.assertEquals(source.getSymA(1), reusable.getRecord().getSymA(1));
+                            }
+                        }
+                        build.close();
+                        Assert.assertEquals(0, tracker.getUsed());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAllPayloadTypesAndPrunedMappingAfterCursorClose() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table payload (b boolean, by byte, sh short, ch char, i int, l long, d date, ts timestamp, "

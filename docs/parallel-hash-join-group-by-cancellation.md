@@ -8,7 +8,7 @@ inside hash-collision walks, map redistribution and map merge loops.
 
 The experimental flag remains false. The [shared-throttle follow-up](parallel-hash-join-group-by-throttling.md)
 replaces task 9f's operator-specific counters with the standard
-`statefulThrowExceptionIfTripped()` API. The [boundary-check follow-up](parallel-hash-join-group-by-breaker-boundaries.md)
+`statefulThrowExceptionIfTripped()` API. The [boundary-check follow-up](https://github.com/questdb/questdb/blob/4a05a7eb242e1225e57b3f1bd7d3798059a2820c/core/src/main/java/io/questdb/cairo/sql/async/UnorderedPageFrameReduceJob.java)
 aligns probe and merge polling with the existing parallel GROUP BY factories.
 The loop and ownership audit below reflects that implementation; the validation
 section retains the original task 9d results.

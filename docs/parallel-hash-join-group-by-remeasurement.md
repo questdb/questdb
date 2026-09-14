@@ -10,7 +10,7 @@ execution failure. Task 10 must wait for that reliability prerequisite.
 This change publishes evidence; production code, workload settings, acceptance
 bounds and the experimental default are unchanged. The design remains
 [RFC 130](https://github.com/questdb/rfc/discussions/130), with the
-[frame/shard circuit-breaker boundaries](parallel-hash-join-group-by-breaker-boundaries.md)
+[frame/shard circuit-breaker boundaries](https://github.com/questdb/questdb/blob/4a05a7eb242e1225e57b3f1bd7d3798059a2820c/core/src/main/java/io/questdb/cairo/sql/async/UnorderedPageFrameReduceJob.java)
 introduced at the measured revision.
 
 ## Fixed implementation and protocol

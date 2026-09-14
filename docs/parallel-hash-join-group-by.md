@@ -2,7 +2,7 @@
 
 [RFC 130](https://github.com/questdb/rfc/discussions/130), implementation tasks 1–9, 6a and 9a–9d.
 
-The branch includes the [immutable build boundary](parallel-hash-join-group-by-build.md),
+The branch includes the [immutable build boundary](../core/src/main/java/io/questdb/griffin/engine/join/FrozenHashJoinBuild.java),
 [joined metadata and function initialization](parallel-hash-join-group-by-functions.md),
 [keyed execution and merging](parallel-hash-join-group-by-execution.md),
 [scalar execution](parallel-hash-join-group-by-unkeyed.md),
@@ -14,9 +14,8 @@ and [circuit-breaker integration](parallel-hash-join-group-by-cancellation.md).
 Task 6 connects these components to ordinary SQL compilation behind an experimental
 flag. The [planner and diagnostics guide](parallel-hash-join-group-by-planner.md)
 documents selection, configuration, ownership, EXPLAIN and benchmark counters.
-The [handoff](../PARALLEL_HASH_JOIN_HANDOFF.md) records progress and the next V1
-task, 9e. Its expanded semantic/storage/negative matrix and a repeat of the
-historical task 10 benchmark remain pending. The experimental flag remains disabled by default.
+The experimental flag remains disabled by default. RFC 130 tracks the remaining
+V1 qualification and rollout work.
 
 ## Capability table
 
