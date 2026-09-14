@@ -120,6 +120,26 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
+     * Splits the directory-cumulative row range {@code [rowLo, rowHi)} of {@code partitionIndex} into the FILE row
+     * ranges of the pieces it overlaps, appending them to {@code out} as {@code (fileLo, fileHi)} pairs, {@code fileHi}
+     * exclusive, in ascending cumulative-row order.
+     */
+    public void collectPieceFileRanges(int partitionIndex, long rowLo, long rowHi, LongList out) {
+        final int pieceCount = getPieceCount(partitionIndex);
+        for (int ordinal = findPieceByRow(partitionIndex, rowLo); ordinal < pieceCount && rowLo < rowHi; ordinal++) {
+            final long pieceCumLo = getPieceCumulativeLo(partitionIndex, ordinal);
+            final long pieceCumHi = pieceCumLo + getPieceRowCount(partitionIndex, ordinal);
+            final long subLo = Math.max(rowLo, pieceCumLo);
+            final long subHi = Math.min(rowHi, pieceCumHi);
+            if (subLo < subHi) {
+                final long shift = getPieceShift(partitionIndex, ordinal);
+                out.add(subLo + shift, subHi + shift);
+                rowLo = subHi;
+            }
+        }
+    }
+
+    /**
      * The ordinal of the piece owning {@code ts} inside {@code partitionIndex}, by the same floor rule the record level
      * uses: the piece at or below the timestamp.
      */
@@ -226,15 +246,6 @@ public class PartitionGeometry implements Closeable, Mutable {
         return pieceLong(res, ordinal, PIECE_CUMULATIVE_LO);
     }
 
-    public long getPieceRowCount(int partitionIndex, int ordinal) {
-        final int res = resolveInternal(partitionIndex);
-        if (res < 0) {
-            assert ordinal == 0;
-            return txReader.getPartitionSize(partitionIndex);
-        }
-        return pieceLong(res, ordinal, PIECE_ROW_COUNT);
-    }
-
     /**
      * When this piece's bytes last moved. Unlike {@link #getLastWriteMicros(int)}, which every commit
      * refreshes for the whole partition, this stays put while the piece does.
@@ -245,6 +256,15 @@ public class PartitionGeometry implements Closeable, Mutable {
             return Numbers.LONG_NULL;
         }
         return pieceLong(res, ordinal, PIECE_LAST_WRITE_MICROS);
+    }
+
+    public long getPieceRowCount(int partitionIndex, int ordinal) {
+        final int res = resolveInternal(partitionIndex);
+        if (res < 0) {
+            assert ordinal == 0;
+            return txReader.getPartitionSize(partitionIndex);
+        }
+        return pieceLong(res, ordinal, PIECE_ROW_COUNT);
     }
 
     public long getPieceRowOffset(int partitionIndex, int ordinal) {
@@ -262,26 +282,6 @@ public class PartitionGeometry implements Closeable, Mutable {
      */
     public long getPieceShift(int partitionIndex, int ordinal) {
         return getPieceRowOffset(partitionIndex, ordinal) - getPieceCumulativeLo(partitionIndex, ordinal);
-    }
-
-    /**
-     * Splits the directory-cumulative row range {@code [rowLo, rowHi)} of {@code partitionIndex} into the FILE row
-     * ranges of the pieces it overlaps, appending them to {@code out} as {@code (fileLo, fileHi)} pairs, {@code fileHi}
-     * exclusive, in ascending cumulative-row order.
-     */
-    public void collectPieceFileRanges(int partitionIndex, long rowLo, long rowHi, LongList out) {
-        final int pieceCount = getPieceCount(partitionIndex);
-        for (int ordinal = findPieceByRow(partitionIndex, rowLo); ordinal < pieceCount && rowLo < rowHi; ordinal++) {
-            final long pieceCumLo = getPieceCumulativeLo(partitionIndex, ordinal);
-            final long pieceCumHi = pieceCumLo + getPieceRowCount(partitionIndex, ordinal);
-            final long subLo = Math.max(rowLo, pieceCumLo);
-            final long subHi = Math.min(rowHi, pieceCumHi);
-            if (subLo < subHi) {
-                final long shift = getPieceShift(partitionIndex, ordinal);
-                out.add(subLo + shift, subHi + shift);
-                rowLo = subHi;
-            }
-        }
     }
 
     /**

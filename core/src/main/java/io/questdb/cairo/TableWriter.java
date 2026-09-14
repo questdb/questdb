@@ -2327,7 +2327,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // find out if we are removing min partition
                 long nextMinTimestamp = minTimestamp;
                 if (timestamp == txWriter.getPartitionTimestampByIndex(0)) {
-                    nextMinTimestamp = readMinTimestamp();
+                    // Partition 0 is still attached here, so the next min comes from index 1.
+                    nextMinTimestamp = readMinTimestamp(1);
                 }
 
                 // all good, commit
@@ -2580,29 +2581,45 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (removedCount > 0) {
             if (txWriter.getPartitionCount() > 0) {
                 if (firstPartitionDropped) {
-                    minTimestamp = readMinTimestamp();
+                    // The partitions are already removed here, so the one that now holds the min is
+                    // index 0 - unlike dropPartitionByExactTimestamp(), which reads it before removal.
+                    minTimestamp = readMinTimestamp(0);
                     txWriter.setMinTimestamp(minTimestamp);
                 }
 
                 if (activePartitionDropped) {
                     final int partitionIndex = txWriter.getPartitionCount() - 1;
-                    long activePartitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                    long activePartitionRows = txWriter.getPartitionSize(partitionIndex);
-                    final boolean isParquet = txWriter.isPartitionParquet(partitionIndex);
-                    long parquetFileSize = isParquet ? txWriter.getPartitionParquetFileSize(partitionIndex) : -1L;
-                    long txn = txWriter.getPartitionNameTxn(partitionIndex);
-                    setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, activePartitionTs, txn);
-                    try {
-                        readPartitionMinMaxTimestamps(activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), isParquet, parquetFileSize, activePartitionRows);
-                        maxTimestamp = attachMaxTimestamp;
-                    } finally {
-                        path.trimTo(pathSize);
+                    if (txWriter.isPartitionComposite(partitionIndex)) {
+                        // Same reasoning as readMinTimestamp(): once a merge-append relocates a piece to
+                        // the tail, the last piece by tsLo order carries the directory's true max, not
+                        // the last live file row.
+                        final PartitionGeometry geometry = getGeometry();
+                        maxTimestamp = geometry.getPieceTimestampHi(partitionIndex, geometry.getPieceCount(partitionIndex) - 1);
+                    } else {
+                        long activePartitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+                        long activePartitionRows = txWriter.getPartitionSize(partitionIndex);
+                        final boolean isParquet = txWriter.isPartitionParquet(partitionIndex);
+                        long parquetFileSize = isParquet ? txWriter.getPartitionParquetFileSize(partitionIndex) : -1L;
+                        long txn = txWriter.getPartitionNameTxn(partitionIndex);
+                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, activePartitionTs, txn);
+                        try {
+                            readPartitionMinMaxTimestamps(activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), isParquet, parquetFileSize, activePartitionRows);
+                            maxTimestamp = attachMaxTimestamp;
+                        } finally {
+                            path.trimTo(pathSize);
+                        }
                     }
                 }
 
                 txWriter.finishPartitionSizeUpdate(minTimestamp, maxTimestamp);
                 if (activePartitionDropped) {
                     openLastPartition();
+                    if (isLastPartitionAppendBlocked()) {
+                        // openLastPartition() leaves a COMPOSITE or parquet last partition closed and
+                        // returns before openPartition() re-syncs partitionTimestampHi, which still names
+                        // the partition this drop removed. Same fixup as dropPartitionByExactTimestamp.
+                        partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(maxTimestamp);
+                    }
                 }
                 txWriter.bumpTruncateVersion();
 
@@ -8173,7 +8190,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // find out if we are removing min partition
             long nextMinTimestamp = minTimestamp;
             if (timestamp == txWriter.getPartitionTimestampByIndex(0)) {
-                nextMinTimestamp = readMinTimestamp();
+                // Partition 0 is still attached here, so the next min comes from index 1.
+                nextMinTimestamp = readMinTimestamp(1);
             }
 
             // NOTE: this method should not commit to _txn file
@@ -14330,17 +14348,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return true;
     }
 
-    private long readMinTimestamp() {
-        if (txWriter.isPartitionComposite(1)) {
+    private long readMinTimestamp(int partitionIndex) {
+        if (txWriter.isPartitionComposite(partitionIndex)) {
             // Physical row 0 can be dead space once a merge-append parks a relocated piece at the tail.
-            return getGeometry().getPieceTimestampLo(1, 0);
+            return getGeometry().getPieceTimestampLo(partitionIndex, 0);
         }
         other.of(path).trimTo(pathSize); // reset the path to table root
-        final long timestamp = txWriter.getPartitionTimestampByIndex(1);
-        final boolean isParquet = txWriter.isPartitionParquet(1);
+        final long timestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final boolean isParquet = txWriter.isPartitionParquet(partitionIndex);
         try {
             setStateForTimestamp(other, timestamp);
-            return isParquet ? readMinTimestampParquet(other) : readMinTimestampNative(other, timestamp);
+            return isParquet ? readMinTimestampParquet(other, partitionIndex) : readMinTimestampNative(other, timestamp);
         } finally {
             other.trimTo(pathSize);
         }
@@ -14361,9 +14379,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long readMinTimestampParquet(Path partitionPath) {
+    private long readMinTimestampParquet(Path partitionPath, int partitionIndex) {
         try {
-            final long parquetFileSize = txWriter.getPartitionParquetFileSize(1);
+            final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
             int partitionDirLen = partitionPath.size();
             openParquetMetadataOrThrow(partitionPath, partitionDirLen, parquetFileSize);
             final int parquetTsIndex = parquetMetaReader.getDesignatedTimestampColumnIndex();
