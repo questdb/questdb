@@ -74,11 +74,11 @@ public class GroupByMapFragmentTest extends AbstractCairoTest {
                 int[] checks = {0};
                 AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine) {
                     @Override
-                    public void statefulThrowExceptionIfTrippedTimeThrottled() {
-                        if (++checks[0] == GroupByMapFragment.NUM_SHARDS + 32) {
+                    public void statefulThrowExceptionIfTripped() {
+                        if (++checks[0] == 32) {
                             cancel();
                         }
-                        super.statefulThrowExceptionIfTrippedTimeThrottled();
+                        super.statefulThrowExceptionIfTripped();
                     }
                 };
                 try {
@@ -87,14 +87,14 @@ public class GroupByMapFragmentTest extends AbstractCairoTest {
                 } catch (CairoException expected) {
                     Assert.assertTrue(expected.isInterruption());
                 }
-                Assert.assertEquals(GroupByMapFragment.NUM_SHARDS + 32, checks[0]);
+                Assert.assertEquals(32, checks[0]);
                 Assert.assertTrue(fragment.isNotSharded());
                 Assert.assertEquals(10000, source.size());
                 long copied = 0;
                 for (int i = 0; i < fragment.getShards().size(); i++) {
                     copied += fragment.getShards().getQuick(i).size();
                 }
-                Assert.assertEquals(31, copied);
+                Assert.assertTrue("redistribution must stop within 32 row/slot checks", copied > 0 && copied < 32);
                 fragment.close();
                 Assert.assertEquals(0, tracker.getUsed());
                 fragment.shard();

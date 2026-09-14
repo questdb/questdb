@@ -4,6 +4,12 @@ Updated 2026-09-14. Branch: `puzpuzpuz_parallel_fused_hash_join`.
 Draft PR: [questdb/questdb#7618](https://github.com/questdb/questdb/pull/7618).
 Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussions/130).
 
+**Benchmark coordination:** other agents may be running on this machine. Do not
+start or resume performance or allocation benchmarks without explicit user
+confirmation for the run. Existing permission to edit, test, commit or push does
+not authorize benchmark execution. The shared-throttle follow-up's first latency
+run was stopped; its partial output is not acceptance evidence.
+
 ## Completed
 
 1. **Define eligibility and build the comparison harness** — commit `2a0fe6f6b3`.
@@ -172,7 +178,7 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     default false: swapped RIGHT and other small/build-dominated cases regress.
     See the [rerun report, measurements and limits](docs/parallel-hash-join-group-by-v1-rerun.md).
 
-9f. **Recover pre-breaker performance with active cancellation** — this commit.
+9f. **Recover pre-breaker performance with active cancellation** — commit `4ae9efb0f0`.
     Local row budgets and probe-owned duplicate/collision checks avoid
     per-row clock reads and wrapper calls while preserving active-query binding,
     bounded cancellation/timeout checks, mandatory drain, native cleanup and reuse.
@@ -183,16 +189,29 @@ Design and dependency order: [RFC 130](https://github.com/questdb/rfc/discussion
     controls, every sample, profiles, source hashes and limits are retained in the
     [recovery report](docs/parallel-hash-join-group-by-recovery.md).
 
+**Shared-throttle follow-up** — this commit. Replaces task 9f's local row,
+duplicate and collision countdowns with `statefulThrowExceptionIfTripped()`.
+Map redistribution and all four map merge implementations also use that API in
+entry loops. The shared post-aggregation channel retains counter-free flag checks.
+The [parallel factory audit and validation](docs/parallel-hash-join-group-by-throttling.md)
+record 2,529 passing tests across 73 suites. Performance and C1 allocation reruns
+are pending explicit user confirmation; earlier measurements describe `4ae9efb0f0`.
+
 The branch supports experimental automatic selection for eligible keyed and
-unkeyed queries. Task **9f is complete**, but the updated RFC still requires task 10
-to rerun on this implementation before V1 is complete. Keep
+unkeyed queries. Task **9f passed at `4ae9efb0f0`**; its shared-throttle follow-up
+still needs performance/allocation requalification before task 10 and V1 completion. Keep
 `cairo.sql.parallel.hash.join.groupby.enabled=false`, the global parallel GROUP BY
 gate, and the positive-worker requirement. Do not add a build-size threshold,
 runtime fallback or consumed-input replay.
 
-## Next RFC task: 10 (V1)
+## Next RFC work: requalify task 9f, then task 10 (V1)
 
-Repeat the full 51-case rollout matrix on the completed task 9f implementation,
+After explicit user confirmation that the machine is available, repeat the fixed
+27-case recovery matrix and C1 allocation matrix on the shared-throttle code.
+Keep the `58b1dc04cc` reference, two rounds, ten measurements per arm/owner and
+all individual 1.10 bounds. No benchmark has qualified this follow-up yet.
+
+After requalification passes, repeat the full 51-case rollout matrix,
 including small effective inputs, cold data, build footprints/source costs, skew,
 near-limit memory, SYMBOL/cache controls, worker scaling and concurrent load.
 Repeat both the primary 2× gate and task 9f's per-case 1.10 recovery bound. Review
@@ -217,7 +236,16 @@ releases unused JIT handles and composes peeled projection mappings. Ordinary
 serial probe filters that cannot be stolen keep the existing plan. Child partition-
 format guards continue to request normal recompilation; they are not bypassed.
 
-## Validation for task 9f
+## Validation for the shared-throttle follow-up
+
+**2,529 tests passed across 73 suites**, with 37 conditional skips and no
+failures/errors (2,566 total). Benchmark packaging and diff checks pass. The
+latency run was interrupted during the primary case because other agents were
+using the host. Performance and allocation benchmarks await explicit user
+confirmation; do not reuse historical results as qualification for the new code.
+See the [audit and evidence](docs/parallel-hash-join-group-by-throttling.md).
+
+## Historical validation for task 9f at `4ae9efb0f0`
 
 **2,400 Java tests passed across 71 suites**, with 26 conditional skips and
 zero failures/errors (2,426 total). The final 24-case allocation matrix passes

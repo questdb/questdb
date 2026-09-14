@@ -1,8 +1,11 @@
 # Fused hash join performance recovery (RFC task 9f)
 
-Task **9f passes** under [RFC 130](https://github.com/questdb/rfc/discussions/130).
+Task **9f passed at commit `4ae9efb0f0`** under [RFC 130](https://github.com/questdb/rfc/discussions/130).
 The experimental configuration remains false. Task 10 must now repeat the full
-rollout matrix on this implementation; V1 is not yet complete.
+rollout matrix on the completed implementation; V1 is not yet complete.
+The [shared-throttle follow-up](parallel-hash-join-group-by-throttling.md) supersedes
+the counters described below and publishes its own validation. This report retains
+the original investigation and measurements.
 
 ## Fixed reference and measurement boundary
 
@@ -277,8 +280,8 @@ wall-clock timers and has inlining/native-attribution limits. The primary's
 large regression and recovery occur in probe/aggregation; fresh build, binding,
 merge and final consumption remain inside the end-to-end boundary.
 
-The final engine is the implementation in the commit containing this report,
-identified before commit by parent `12ff320ae7`, the
+The measured engine is commit `4ae9efb0f0`, identified before commit by
+parent `12ff320ae7`, the
 [complete core/benchmark patch](parallel-hash-join-group-by-recovery/final-source.patch.gz)
 and [jar/source hashes](parallel-hash-join-group-by-recovery/final-artifacts.sha256).
 Its allocation and latency runs use the same frozen jar. No compilation, tests,

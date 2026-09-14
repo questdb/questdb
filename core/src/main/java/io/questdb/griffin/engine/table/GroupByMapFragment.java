@@ -183,7 +183,7 @@ public class GroupByMapFragment implements QuietCloseable {
             MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
                 if (circuitBreaker != null) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                 }
                 final long hashCode = record.keyHashCode();
                 final Map shard = getShardMap(hashCode);

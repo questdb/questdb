@@ -457,6 +457,11 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 AtomicBoolean cancelled = new AtomicBoolean();
                 DefaultSqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
                     @Override
+                    public int getCircuitBreakerThrottle() {
+                        return 7;
+                    }
+
+                    @Override
                     public MillisecondClock getClock() {
                         return () -> {
                             int reads = clockReads.incrementAndGet();
@@ -491,14 +496,14 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     breaker.resetTimer();
                     clockReads.set(0);
                     for (int i = 0; i < 3; i++) {
-                        probe.findUnchecked(missing, 7);
+                        probe.findUnchecked(missing);
                         Assert.assertFalse(probe.hasNext());
                         Assert.assertEquals(1 + (32 * (i + 1) - 1) / 7, clockReads.get());
                     }
                     probe.reopen();
                     clockReads.set(0);
                     interrupt.set(true);
-                    CairoException error = Assert.assertThrows(CairoException.class, () -> probe.findUnchecked(missing, 7));
+                    CairoException error = Assert.assertThrows(CairoException.class, () -> probe.findUnchecked(missing));
                     Assert.assertEquals(!timeout, error.isCancellation());
                     Assert.assertEquals(2, clockReads.get());
                     interrupt.set(false);
@@ -506,7 +511,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     breaker.resetTimer();
                     probe.reopen();
                     clockReads.set(0);
-                    probe.findUnchecked(missing, 7);
+                    probe.findUnchecked(missing);
                     Assert.assertFalse(probe.hasNext());
                     Assert.assertEquals(5, clockReads.get());
                 }
@@ -519,6 +524,11 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             AtomicInteger clockReads = new AtomicInteger();
             DefaultSqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                public int getCircuitBreakerThrottle() {
+                    return 7;
+                }
+
                 @Override
                 public MillisecondClock getClock() {
                     return () -> {
@@ -538,11 +548,12 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 FrozenHashJoinBuild.Probe probe = build.freeze().newProbe(breaker);
                 for (int binding = 0; binding < 2; binding++) {
                     probe.reopen();
+                    breaker.resetTimer();
                     clockReads.set(0);
                     for (int lookup = 0; lookup < 2; lookup++) {
-                        probe.findUnchecked(1, 7);
+                        probe.findUnchecked(1);
                         for (int pair = 0; pair < 130; pair++) {
-                            probe.next(7);
+                            probe.next();
                             Assert.assertEquals(129 - pair + 0.25, probe.getRecord().getDouble(0), 0);
                             Assert.assertEquals(1 + (130 * lookup + pair) / 7, clockReads.get());
                         }
@@ -1009,8 +1020,8 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                         probe.reopen();
                     }
                     FrozenHashJoinBuild.Probe peer = snapshot.newProbe(new AtomicBooleanCircuitBreaker(engine, 1));
-                    probe.findUnchecked(1, 1);
-                    probe.next(1);
+                    probe.findUnchecked(1);
+                    probe.next();
                     probe.find(1);
                     probe.next();
                     owner.cancel();
@@ -1025,7 +1036,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     }
                     final int collidingKey = missing;
                     CairoException collisionError = Assert.assertThrows(CairoException.class,
-                            () -> current.findUnchecked(collidingKey, 1));
+                            () -> current.findUnchecked(collidingKey));
                     Assert.assertTrue(collisionError.isCancellation());
                     peer.find(1);
                     Assert.assertTrue(peer.hasNext());
@@ -1065,15 +1076,14 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 Assert.assertSame(snapshot, build.freeze());
                 Assert.assertThrows(AssertionError.class, () -> probe.find(1));
                 Assert.assertThrows(AssertionError.class, probe::next);
-                Assert.assertThrows(AssertionError.class, () -> probe.findUnchecked(1, 1));
-                Assert.assertThrows(AssertionError.class, () -> probe.next(1));
+                Assert.assertThrows(AssertionError.class, () -> probe.findUnchecked(1));
                 Assert.assertThrows(AssertionError.class, () -> symbols.valueOf(0));
                 probe.reopen();
                 Assert.assertThrows(AssertionError.class, () -> probe.recordAt(oldHandle));
                 // Both table capacity and native backing grew in the new execution.
-                probe.findUnchecked(4095, 7);
+                probe.findUnchecked(4095);
                 Assert.assertTrue(probe.hasNext());
-                probe.next(7);
+                probe.next();
                 TestUtils.assertEquals("new", probe.getRecord().getSymA(0));
                 probe.find(4095);
                 probe.next();

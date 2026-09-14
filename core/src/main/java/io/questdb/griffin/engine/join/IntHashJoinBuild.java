@@ -176,14 +176,8 @@ public final class IntHashJoinBuild implements Closeable {
                 }
             }
             Record record = cursor.getRecord();
-            final var configuration = circuitBreaker.getConfiguration();
-            final int checkInterval = configuration == null ? 1 : Math.max(1, configuration.getCircuitBreakerThrottle());
-            int rowsRemaining = 0;
             while (cursor.hasNext()) {
-                if (--rowsRemaining <= 0) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                    rowsRemaining = checkInterval;
-                }
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 appendRow(record.getInt(keyColumn), record);
             }
             return freeze();
@@ -579,8 +573,6 @@ public final class IntHashJoinBuild implements Closeable {
             private final PayloadRecord record = new PayloadRecord();
             private final Symbols[] symbolTables = new Symbols[types.length];
             private final ObjList<Symbols> symbolPool = new ObjList<>();
-            private int collisionChecksRemaining;
-            private int pairChecksRemaining;
             private int lookupMask;
             private long lookupKeysAddress;
             private long payloadRowsAddress;
@@ -608,7 +600,6 @@ public final class IntHashJoinBuild implements Closeable {
                 lookupMask = slots - 1;
                 lookupKeysAddress = keysAddress;
                 payloadRowsAddress = rowsAddress;
-                collisionChecksRemaining = pairChecksRemaining = 0;
                 next = record.address = 0;
                 for (int i = 0; i < symbolTables.length; i++) {
                     if (symbolTables[i] != null) {
@@ -627,15 +618,14 @@ public final class IntHashJoinBuild implements Closeable {
             }
 
             @Override
-            public void findUnchecked(int key, int checkInterval) {
+            public void findUnchecked(int key) {
                 assert frozen == Frozen.this && probeGeneration == generation;
-                assert checkInterval > 0;
                 final int mask = lookupMask;
                 final long base = lookupKeysAddress;
                 long address = base + ((long) ((int) Hash.hashInt64(key) & mask)) * SLOT_SIZE;
                 long head = Unsafe.getLong(address + 8);
                 if (head != 0 && Unsafe.getInt(address) != key) {
-                    head = findCollision(key, address, checkInterval);
+                    head = findCollision(key, address);
                 }
                 next = head;
             }
@@ -675,25 +665,9 @@ public final class IntHashJoinBuild implements Closeable {
                 }
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 long handle = handleBase + next - 1;
-                recordAt(handle);
-                next = Unsafe.getLong(record.address);
-                return handle;
-            }
-
-            @Override
-            public void next(int checkInterval) {
-                assert frozen == Frozen.this && probeGeneration == generation;
-                assert checkInterval > 0;
-                if (next == 0) {
-                    throw new IllegalStateException("hash join probe is exhausted");
-                }
-                if (--pairChecksRemaining <= 0) {
-                    pairChecksRemaining = 0;
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                    pairChecksRemaining = checkInterval;
-                }
                 record.address = payloadRowsAddress + next - 1;
                 next = Unsafe.getLong(record.address);
+                return handle;
             }
 
             @Override
@@ -704,25 +678,17 @@ public final class IntHashJoinBuild implements Closeable {
                 record.address = rowsAddress + offset;
             }
 
-            private long findCollision(int key, long address, int checkInterval) {
+            private long findCollision(int key, long address) {
                 final long base = lookupKeysAddress;
                 final long limit = base + ((long) lookupMask + 1) * SLOT_SIZE;
-                int checksRemaining = collisionChecksRemaining;
                 long head;
                 do {
-                    // Keep collision traversal out of the lookup's common fast path.
-                    // A failed check leaves the view ready to check on the next attempt.
-                    if (--checksRemaining <= 0) {
-                        collisionChecksRemaining = 0;
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                        checksRemaining = checkInterval;
-                    }
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     address += SLOT_SIZE;
                     if (address == limit) {
                         address = base;
                     }
                 } while ((head = Unsafe.getLong(address + 8)) != 0 && Unsafe.getInt(address) != key);
-                collisionChecksRemaining = checksRemaining;
                 return head;
             }
 

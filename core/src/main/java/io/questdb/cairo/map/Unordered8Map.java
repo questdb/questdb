@@ -315,7 +315,7 @@ public class Unordered8Map implements Map, Reopenable {
         OUTER:
         for (long srcAddr = src8Map.memStart; srcAddr < src8Map.memLimit; srcAddr += entrySize) {
             if (circuitBreaker != null) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                circuitBreaker.statefulThrowExceptionIfTripped();
             }
             long key = Unsafe.getLong(srcAddr);
             if (key == 0) {

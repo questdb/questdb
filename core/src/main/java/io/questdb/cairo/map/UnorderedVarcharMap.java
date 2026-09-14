@@ -331,7 +331,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         OUTER:
         for (long srcAddr = srcVarcharMap.memStart; srcAddr < srcVarcharMap.memLimit; srcAddr += entrySize) {
             if (circuitBreaker != null) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                circuitBreaker.statefulThrowExceptionIfTripped();
             }
             long srcHashSizeFlags = Unsafe.getLong(srcAddr);
             if (srcHashSizeFlags == 0) {

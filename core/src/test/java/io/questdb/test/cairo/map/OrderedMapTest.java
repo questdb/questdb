@@ -101,11 +101,11 @@ public class OrderedMapTest extends AbstractCairoTest {
                 int[] checks = {0};
                 AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine) {
                     @Override
-                    public void statefulThrowExceptionIfTrippedTimeThrottled() {
+                    public void statefulThrowExceptionIfTripped() {
                         if (++checks[0] == 32) {
                             cancel();
                         }
-                        super.statefulThrowExceptionIfTrippedTimeThrottled();
+                        super.statefulThrowExceptionIfTripped();
                     }
                 };
                 try {

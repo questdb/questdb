@@ -675,7 +675,7 @@ public class OrderedMap implements Map, Reopenable {
         OUTER:
         for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
             if (circuitBreaker != null) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                circuitBreaker.statefulThrowExceptionIfTripped();
             }
             // Read the slot as a single 64-bit value, as probe0 does.
             long srcSlot = Unsafe.getLong(srcMap.offsetsAddr + ((long) i << 3));
@@ -732,7 +732,7 @@ public class OrderedMap implements Map, Reopenable {
         OUTER:
         for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
             if (circuitBreaker != null) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                circuitBreaker.statefulThrowExceptionIfTripped();
             }
             // Read the slot as a single 64-bit value, as probe0 does.
             long srcSlot = Unsafe.getLong(srcMap.offsetsAddr + ((long) i << 3));

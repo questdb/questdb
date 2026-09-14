@@ -315,7 +315,7 @@ public class Unordered4Map implements Map, Reopenable {
         OUTER:
         for (long srcAddr = src4Map.memStart; srcAddr < src4Map.memLimit; srcAddr += entrySize) {
             if (circuitBreaker != null) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                circuitBreaker.statefulThrowExceptionIfTripped();
             }
             int key = Unsafe.getInt(srcAddr);
             if (key == 0) {

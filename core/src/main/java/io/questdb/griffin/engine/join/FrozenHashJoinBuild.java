@@ -55,11 +55,10 @@ public interface FrozenHashJoinBuild {
 
         /**
          * Skips the row check for a caller that checks its probe scan periodically.
-         * Collision checks use this view's independent counter and the supplied
-         * positive configured interval, including across lookups until reopen().
+         * Collision checks use this view's bound breaker's throttled API.
          * Read payload columns only after advancing a matching row.
          */
-        void findUnchecked(int key, int checkInterval);
+        void findUnchecked(int key);
 
         Record getRecord();
 
@@ -67,9 +66,6 @@ public interface FrozenHashJoinBuild {
 
         /** Advances the payload record and returns an opaque, execution-local handle. */
         long next();
-
-        /** Advances under this view's periodic check budget at a fixed positive configured interval. */
-        void next(int checkInterval);
 
         /** Positions the payload record without changing the duplicate iterator. */
         void recordAt(long handle);
