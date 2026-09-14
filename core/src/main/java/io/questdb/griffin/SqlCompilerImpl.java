@@ -6856,7 +6856,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             lexer.of(RowExpiryUtil.buildRowExpiryKeepFilter(Chars.toString(predicate)));
             f = functionParser.parseFunction(parser.expr(lexer, (QueryModel) null, this), metadata, executionContext);
         } catch (SqlException | CairoException | ImplicitCastException e) {
-            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reasonOf(e));
+            final String reason = reasonOf(e);
+            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reason);
         } finally {
             Misc.free(f);
         }
