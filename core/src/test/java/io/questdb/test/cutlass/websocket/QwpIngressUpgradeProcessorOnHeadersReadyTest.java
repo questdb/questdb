@@ -66,51 +66,6 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     }
 
     @Test
-    public void testBrowserHandshakeOmitsIngressServerInfoWhenParamAbsent() throws Exception {
-        // Guards the `browserHandshake != null` term: appending the frame to
-        // every 101 would put six unsolicited bytes in front of a native
-        // client's first frame, and unreserved, since requiredHandshakeSize
-        // only accounts for them under the same flag.
-        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo(null, false));
-    }
-
-    @Test
-    public void testBrowserSubprotocolAlonePullsIngressServerInfo() throws Exception {
-        // The subprotocol offer is a browser carrier in its own right, and the
-        // capability byte is the only place a browser can read the durable-ACK
-        // verdict. A client that wants durable ACK must not also have to pass
-        // qwp_browser_handshake=v1 to find out whether it got it.
-        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo(
-                null,
-                "questdb.qwp.durable-ack.v1",
-                true,
-                false));
-    }
-
-    @Test
-    public void testBrowserSubprotocolServerInfoReportsDurableAckOn() throws Exception {
-        // The only assertion that pins the capability bit SET through
-        // onHeadersReady. Without it, hard-coding the durableAckEnabled
-        // argument of writeBrowserServerInfoFrame to false leaves every other
-        // browser test green while every browser is told durable ACK is
-        // unavailable and silently never enters durable mode -- the frame is
-        // the browser's only carrier for that verdict.
-        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo(
-                null,
-                "questdb.qwp.durable-ack.v1",
-                new FakeEnabledDurableAckRegistry(),
-                true,
-                true));
-    }
-
-    @Test
-    public void testBrowserHandshakeOmitsIngressServerInfoWhenParamVersionUnknown() throws Exception {
-        // Guards the equalsAscii("v1", ...) term. A future browser handshake
-        // revision must not be answered with a v1 frame.
-        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo("v2", false));
-    }
-
-    @Test
     public void testBrowserHandshakeFailsHardWhenServerInfoDoesNotFitBuffer() throws Exception {
         // The browser frame is appended to the raw send buffer AFTER the 101,
         // so a buffer that fits the 101 alone must fail the handshake rather
@@ -147,8 +102,53 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     }
 
     @Test
+    public void testBrowserHandshakeOmitsIngressServerInfoWhenParamAbsent() throws Exception {
+        // Guards the `browserHandshake != null` term: appending the frame to
+        // every 101 would put six unsolicited bytes in front of a native
+        // client's first frame, and unreserved, since requiredHandshakeSize
+        // only accounts for them under the same flag.
+        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo(null, false));
+    }
+
+    @Test
     public void testBrowserHandshakeOmitsIngressServerInfoWhenParamEmpty() throws Exception {
         assertMemoryLeak(() -> assertBrowserHandshakeServerInfo("", false));
+    }
+
+    @Test
+    public void testBrowserHandshakeOmitsIngressServerInfoWhenParamVersionUnknown() throws Exception {
+        // Guards the equalsAscii("v1", ...) term. A future browser handshake
+        // revision must not be answered with a v1 frame.
+        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo("v2", false));
+    }
+
+    @Test
+    public void testBrowserSubprotocolAlonePullsIngressServerInfo() throws Exception {
+        // The subprotocol offer is a browser carrier in its own right, and the
+        // capability byte is the only place a browser can read the durable-ACK
+        // verdict. A client that wants durable ACK must not also have to pass
+        // qwp_browser_handshake=v1 to find out whether it got it.
+        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo(
+                null,
+                "questdb.qwp.durable-ack.v1",
+                true,
+                false));
+    }
+
+    @Test
+    public void testBrowserSubprotocolServerInfoReportsDurableAckOn() throws Exception {
+        // The only assertion that pins the capability bit SET through
+        // onHeadersReady. Without it, hard-coding the durableAckEnabled
+        // argument of writeBrowserServerInfoFrame to false leaves every other
+        // browser test green while every browser is told durable ACK is
+        // unavailable and silently never enters durable mode -- the frame is
+        // the browser's only carrier for that verdict.
+        assertMemoryLeak(() -> assertBrowserHandshakeServerInfo(
+                null,
+                "questdb.qwp.durable-ack.v1",
+                new FakeEnabledDurableAckRegistry(),
+                true,
+                true));
     }
 
     @Test
@@ -318,16 +318,6 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     }
 
     @Test
-    public void testOnHeadersReadyDoesNotEnableDurableAckWhenHeaderAbsent() throws Exception {
-        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, null, new FakeEnabledDurableAckRegistry(), false, false));
-    }
-
-    @Test
-    public void testOnHeadersReadyEnablesDurableAckWhenHeaderTrueAndRegistryEnabled() throws Exception {
-        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, "true", new FakeEnabledDurableAckRegistry(), true, false));
-    }
-
-    @Test
     public void testOnHeadersReadyDoesNotConfirmSubprotocolForHeaderOnlyDurableAck() throws Exception {
         // A native client opts in through X-QWP-Request-Durable-Ack and offers
         // no subprotocol. RFC 6455 s4.1 makes a client fail the connection when
@@ -339,6 +329,11 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
                 new FakeEnabledDurableAckRegistry(),
                 true,
                 false));
+    }
+
+    @Test
+    public void testOnHeadersReadyDoesNotEnableDurableAckWhenHeaderAbsent() throws Exception {
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, null, new FakeEnabledDurableAckRegistry(), false, false));
     }
 
     @Test
@@ -364,6 +359,11 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
                 new FakeEnabledDurableAckRegistry(),
                 true,
                 true));
+    }
+
+    @Test
+    public void testOnHeadersReadyEnablesDurableAckWhenHeaderTrueAndRegistryEnabled() throws Exception {
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, "true", new FakeEnabledDurableAckRegistry(), true, false));
     }
 
     @Test

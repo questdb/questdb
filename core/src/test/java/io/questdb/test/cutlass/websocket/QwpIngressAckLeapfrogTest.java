@@ -617,25 +617,6 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testDurableAckPollRequiresNegotiation() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
-
-            ObjList<byte[]> sent = ingestOnFreshConnection(
-                    processor,
-                    httpConfig,
-                    createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage())
-            );
-
-            Assert.assertTrue(
-                    "an unnegotiated durable ACK poll must receive STATUS_PARSE_ERROR",
-                    indexOfBinaryFrame(sent, QwpConstants.STATUS_PARSE_ERROR, 0) >= 0
-            );
-        });
-    }
-
     /**
      * The reject arm must also clamp the pipelined tail. A refused poll is
      * consumed without an ack of its own, so {@code markSequenceUnresolved}
@@ -757,6 +738,25 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             try (TableReader reader = engine.getReader("tab")) {
                 Assert.assertEquals("the refused poll must neither add nor drop rows", 1, reader.size());
             }
+        });
+    }
+
+    @Test
+    public void testDurableAckPollRequiresNegotiation() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+
+            ObjList<byte[]> sent = ingestOnFreshConnection(
+                    processor,
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage())
+            );
+
+            Assert.assertTrue(
+                    "an unnegotiated durable ACK poll must receive STATUS_PARSE_ERROR",
+                    indexOfBinaryFrame(sent, QwpConstants.STATUS_PARSE_ERROR, 0) >= 0
+            );
         });
     }
 

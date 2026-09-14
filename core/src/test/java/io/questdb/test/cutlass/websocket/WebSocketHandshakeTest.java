@@ -46,6 +46,76 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class WebSocketHandshakeTest extends AbstractWebSocketTest {
 
     @Test
+    public void testBrowserEgressServerInfoCompressionTrailer() throws Exception {
+        assertMemoryLeak(() -> {
+            long buf = allocateBuffer(256);
+            try {
+                int written = QwpEgressUpgradeProcessor.writeServerInfoFrame(
+                        buf,
+                        256,
+                        (byte) 1,
+                        DefaultQwpServerInfoProvider.INSTANCE,
+                        0,
+                        true,
+                        (byte) 1,
+                        (byte) 3
+                );
+                byte[] frame = readBytes(buf, written);
+                Assert.assertEquals((byte) 0x82, frame[0]);
+                int capabilities = ByteBuffer.wrap(frame)
+                        .order(ByteOrder.LITTLE_ENDIAN)
+                        .getInt(24);
+                Assert.assertNotEquals(0, capabilities & QwpEgressMsgKind.CAP_COMPRESSION);
+                Assert.assertEquals(1, frame[written - 2]);
+                Assert.assertEquals(3, frame[written - 1]);
+            } finally {
+                freeBuffer(buf, 256);
+            }
+        });
+    }
+
+    @Test
+    public void testBrowserIngressServerInfoFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            long buf = allocateBuffer(16);
+            try {
+                int written = QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(
+                        buf,
+                        16,
+                        1_048_576,
+                        true
+                );
+                Assert.assertEquals(8, written);
+                byte[] frame = readBytes(buf, written);
+                Assert.assertEquals((byte) 0x82, frame[0]);
+                Assert.assertEquals(6, frame[1]);
+                Assert.assertEquals(1, frame[2]);
+                Assert.assertEquals(0, frame[3]);
+                Assert.assertEquals(0, frame[4]);
+                Assert.assertEquals(16, frame[5]);
+                Assert.assertEquals(0, frame[6]);
+                Assert.assertEquals(QwpConstants.SERVER_INFO_CAP_DURABLE_ACK, frame[7]);
+
+                // The capability byte is the whole point of the frame for a
+                // browser: it is the only carrier that can tell one apart from
+                // the other, since the subprotocol echo is now unconditional.
+                Assert.assertEquals(
+                        8,
+                        QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 16, 1_048_576, false)
+                );
+                Assert.assertEquals(0, readBytes(buf, 8)[7]);
+
+                // One byte short of the frame: refuse rather than write past
+                // the end of the raw send buffer. Exactly enough still writes.
+                Assert.assertEquals(-1, QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 7, 1_048_576, false));
+                Assert.assertEquals(8, QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 8, 1_048_576, false));
+            } finally {
+                freeBuffer(buf, 16);
+            }
+        });
+    }
+
+    @Test
     public void testComputeAcceptKeyConsistent() {
         // Same key should always produce same accept value
         String clientKey = "x3JJHMbDL1EzLkh9GBhXDw==";
@@ -119,6 +189,19 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
                 new Utf8String("Upgrade, keep-alive")));
         Assert.assertTrue(QwpIngressHttpProcessor.isConnectionUpgrade(
                 new Utf8String("Connection, Upgrade, keep-alive")));
+    }
+
+    @Test
+    public void testContainsWebSocketProtocol() {
+        Utf8String durableAck = QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK;
+        Assert.assertTrue(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("questdb.qwp.durable-ack.v1"), durableAck));
+        Assert.assertTrue(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("application.v1, questdb.qwp.durable-ack.v1\t"), durableAck));
+        Assert.assertFalse(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("application.v1,questdb.qwp.durable-ack.v10"), durableAck));
+        Assert.assertFalse(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("QUESTDB.QWP.DURABLE-ACK.V1"), durableAck));
     }
 
     @Test
@@ -199,19 +282,6 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testContainsWebSocketProtocol() {
-        Utf8String durableAck = QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK;
-        Assert.assertTrue(QwpIngressHttpProcessor.containsWebSocketProtocol(
-                new Utf8String("questdb.qwp.durable-ack.v1"), durableAck));
-        Assert.assertTrue(QwpIngressHttpProcessor.containsWebSocketProtocol(
-                new Utf8String("application.v1, questdb.qwp.durable-ack.v1\t"), durableAck));
-        Assert.assertFalse(QwpIngressHttpProcessor.containsWebSocketProtocol(
-                new Utf8String("application.v1,questdb.qwp.durable-ack.v10"), durableAck));
-        Assert.assertFalse(QwpIngressHttpProcessor.containsWebSocketProtocol(
-                new Utf8String("QUESTDB.QWP.DURABLE-ACK.V1"), durableAck));
-    }
-
-    @Test
     public void testKeyWithAllBase64Characters() {
         // Test key containing varied base64 characters
         // Use a valid 24-char base64 string with varied characters including +/
@@ -285,76 +355,6 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
                         "Sec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n"));
             } finally {
                 freeBuffer(buf, 512);
-            }
-        });
-    }
-
-    @Test
-    public void testBrowserIngressServerInfoFrame() throws Exception {
-        assertMemoryLeak(() -> {
-            long buf = allocateBuffer(16);
-            try {
-                int written = QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(
-                        buf,
-                        16,
-                        1_048_576,
-                        true
-                );
-                Assert.assertEquals(8, written);
-                byte[] frame = readBytes(buf, written);
-                Assert.assertEquals((byte) 0x82, frame[0]);
-                Assert.assertEquals(6, frame[1]);
-                Assert.assertEquals(1, frame[2]);
-                Assert.assertEquals(0, frame[3]);
-                Assert.assertEquals(0, frame[4]);
-                Assert.assertEquals(16, frame[5]);
-                Assert.assertEquals(0, frame[6]);
-                Assert.assertEquals(QwpConstants.SERVER_INFO_CAP_DURABLE_ACK, frame[7]);
-
-                // The capability byte is the whole point of the frame for a
-                // browser: it is the only carrier that can tell one apart from
-                // the other, since the subprotocol echo is now unconditional.
-                Assert.assertEquals(
-                        8,
-                        QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 16, 1_048_576, false)
-                );
-                Assert.assertEquals(0, readBytes(buf, 8)[7]);
-
-                // One byte short of the frame: refuse rather than write past
-                // the end of the raw send buffer. Exactly enough still writes.
-                Assert.assertEquals(-1, QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 7, 1_048_576, false));
-                Assert.assertEquals(8, QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 8, 1_048_576, false));
-            } finally {
-                freeBuffer(buf, 16);
-            }
-        });
-    }
-
-    @Test
-    public void testBrowserEgressServerInfoCompressionTrailer() throws Exception {
-        assertMemoryLeak(() -> {
-            long buf = allocateBuffer(256);
-            try {
-                int written = QwpEgressUpgradeProcessor.writeServerInfoFrame(
-                        buf,
-                        256,
-                        (byte) 1,
-                        DefaultQwpServerInfoProvider.INSTANCE,
-                        0,
-                        true,
-                        (byte) 1,
-                        (byte) 3
-                );
-                byte[] frame = readBytes(buf, written);
-                Assert.assertEquals((byte) 0x82, frame[0]);
-                int capabilities = ByteBuffer.wrap(frame)
-                        .order(ByteOrder.LITTLE_ENDIAN)
-                        .getInt(24);
-                Assert.assertNotEquals(0, capabilities & QwpEgressMsgKind.CAP_COMPRESSION);
-                Assert.assertEquals(1, frame[written - 2]);
-                Assert.assertEquals(3, frame[written - 1]);
-            } finally {
-                freeBuffer(buf, 256);
             }
         });
     }

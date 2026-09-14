@@ -38,16 +38,19 @@ import java.io.OutputStream;
 import java.net.Socket;
 
 /**
- * Wire coverage of the browser-only URL carriers. A browser WebSocket cannot
- * set {@code X-QWP-Accept-Encoding} or {@code X-QWP-Max-Batch-Rows} on egress,
- * and cannot read the {@code X-QWP-Max-Batch-Size} response header on ingress,
- * so the server also reads {@code qwp_accept_encoding},
- * {@code qwp_max_batch_rows} and {@code qwp_browser_handshake} from the upgrade
- * URL. The unit tests around {@code negotiateMaxBatchRows},
- * {@code negotiateAcceptEncoding} and {@code writeServerInfoFrame} cover the
- * functions in isolation; only a real upgrade proves {@code onHeadersReady}
- * reads the right URL parameter on the right route and applies it to the
- * connection.
+ * Wire coverage of the browser-only carriers. A browser WebSocket cannot set
+ * {@code X-QWP-Accept-Encoding} or {@code X-QWP-Max-Batch-Rows} on egress, and
+ * cannot read the {@code X-QWP-Max-Batch-Size} response header on ingress, so
+ * the server also reads {@code qwp_accept_encoding}, {@code qwp_max_batch_rows}
+ * and {@code qwp_browser_handshake} from the upgrade URL. Nor can it set
+ * {@code X-QWP-Request-Durable-Ack}, so it opts into durable ACK by offering the
+ * {@code questdb.qwp.durable-ack.v1} subprotocol instead. The unit tests around
+ * {@code negotiateMaxBatchRows}, {@code negotiateAcceptEncoding} and
+ * {@code writeServerInfoFrame} cover the functions in isolation, and the
+ * ingress {@code onHeadersReady} unit tests supply the URL parameter and the
+ * subprotocol through a mock request header; only a real upgrade proves
+ * {@code onHeadersReady} reads the right carrier off the wire on the right
+ * route and applies it to the connection.
  */
 public class QwpBrowserNegotiationWireTest extends AbstractQwpBootstrapTest {
 
@@ -63,6 +66,50 @@ public class QwpBrowserNegotiationWireTest extends AbstractQwpBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    /**
+     * The subprotocol is the only durable-ACK carrier a browser has, and the
+     * {@code onHeadersReady} unit tests offer it through a mock request
+     * header. If anything between the socket and {@code getHeader} dropped the
+     * offer, the 101 would name no subprotocol, the browser would fail the
+     * whole connection, and every mock-backed test would stay green.
+     */
+    @Test
+    public void testBrowserSubprotocolIsEchoedAndPullsIngressServerInfo() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String subprotocol = "questdb.qwp.durable-ack.v1";
+            try (final TestServerMain ignored = startFragmented()) {
+                try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
+                    socket.setSoTimeout(60_000);
+                    String response = QwpWireTestFixtures.performWriteHandshake(
+                            socket,
+                            "",
+                            "Sec-WebSocket-Protocol: " + subprotocol + "\r\n"
+                    );
+                    Assert.assertTrue(
+                            "the 101 must echo the offered subprotocol, got: <<<" + response + ">>>",
+                            response.contains("\r\nSec-WebSocket-Protocol: " + subprotocol + "\r\n")
+                    );
+                    // No qwp_browser_handshake parameter: the offer alone must
+                    // pull the frame that carries the durable-ACK verdict.
+                    assertIngressServerInfoFrame(QwpWireTestFixtures.readServerFrame(socket.getInputStream()));
+                }
+
+                // Control: without the offer the 101 names no subprotocol, so
+                // the echo above pins the carrier rather than an unconditional
+                // header. RFC 6455 s4.1 makes a client fail the connection
+                // when the server names a subprotocol it did not offer.
+                try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
+                    socket.setSoTimeout(60_000);
+                    String response = QwpWireTestFixtures.performWriteHandshake(socket, "", "");
+                    Assert.assertFalse(
+                            "a 101 must not name a subprotocol the client did not offer, got: <<<" + response + ">>>",
+                            response.contains("Sec-WebSocket-Protocol")
+                    );
+                }
+            }
+        });
     }
 
     @Test
@@ -169,7 +216,7 @@ public class QwpBrowserNegotiationWireTest extends AbstractQwpBootstrapTest {
 
     @Test
     public void testBrowserUrlHandshakePushesIngressServerInfo() throws Exception {
-        // The ingress counterpart of the two egress carriers below. The unit
+        // The ingress counterpart of the two egress URL carriers. The unit
         // tests drive qwp_browser_handshake through a mock request header, so
         // only a real upgrade proves the parameter survives route matching on
         // /write/v4 and reaches getUrlParam.
@@ -178,33 +225,7 @@ public class QwpBrowserNegotiationWireTest extends AbstractQwpBootstrapTest {
                 try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
                     socket.setSoTimeout(60_000);
                     QwpWireTestFixtures.performWriteHandshake(socket, "?qwp_browser_handshake=v1");
-                    byte[] frame = QwpWireTestFixtures.readServerFrame(socket.getInputStream());
-                    Assert.assertEquals(
-                            "the browser ingress handshake frame is status + u32 cap + capability mask",
-                            6,
-                            frame.length
-                    );
-                    Assert.assertEquals(
-                            "STATUS_SERVER_INFO must be the first frame after the upgrade",
-                            QwpConstants.STATUS_SERVER_INFO,
-                            frame[0]
-                    );
-                    int maxBatchSize = (frame[1] & 0xFF)
-                            | (frame[2] & 0xFF) << 8
-                            | (frame[3] & 0xFF) << 16
-                            | (frame[4] & 0xFF) << 24;
-                    Assert.assertTrue(
-                            "the advertised batch cap must be usable, got " + maxBatchSize,
-                            maxBatchSize > 0 && maxBatchSize <= QwpConstants.DEFAULT_MAX_BATCH_SIZE
-                    );
-                    // This server has no durable-ack registry, so the verdict
-                    // must read false here rather than being absent: the bit is
-                    // the only durable-ack signal a browser can read.
-                    Assert.assertEquals(
-                            "the capability mask must report durable ACK off",
-                            0,
-                            frame[5] & QwpConstants.SERVER_INFO_CAP_DURABLE_ACK
-                    );
+                    assertIngressServerInfoFrame(QwpWireTestFixtures.readServerFrame(socket.getInputStream()));
                 }
             }
         });
@@ -228,6 +249,54 @@ public class QwpBrowserNegotiationWireTest extends AbstractQwpBootstrapTest {
                 );
             }
         });
+    }
+
+    private static void assertIngressServerInfoFrame(byte[] frame) {
+        Assert.assertEquals(
+                "the browser ingress handshake frame is status + u32 cap + capability mask",
+                6,
+                frame.length
+        );
+        Assert.assertEquals(
+                "STATUS_SERVER_INFO must be the first frame after the upgrade",
+                QwpConstants.STATUS_SERVER_INFO,
+                frame[0]
+        );
+        int maxBatchSize = (frame[1] & 0xFF)
+                | (frame[2] & 0xFF) << 8
+                | (frame[3] & 0xFF) << 16
+                | (frame[4] & 0xFF) << 24;
+        Assert.assertTrue(
+                "the advertised batch cap must be usable, got " + maxBatchSize,
+                maxBatchSize > 0 && maxBatchSize <= QwpConstants.DEFAULT_MAX_BATCH_SIZE
+        );
+        // This server has no durable-ack registry, so the verdict must read
+        // false here rather than being absent: the bit is the only durable-ack
+        // signal a browser can read.
+        Assert.assertEquals(
+                "the capability mask must report durable ACK off",
+                0,
+                frame[5] & QwpConstants.SERVER_INFO_CAP_DURABLE_ACK
+        );
+    }
+
+    private static void assertNegotiatedZstdLevel(int expectedLevel, String query, String headerValue) throws Exception {
+        byte[] info = readServerInfo(query, "X-QWP-Accept-Encoding: " + headerValue + "\r\n");
+        Assert.assertNotEquals(
+                "a URL-carrier request must advertise CAP_COMPRESSION whichever carrier won",
+                0,
+                readCapabilities(info) & QwpEgressMsgKind.CAP_COMPRESSION
+        );
+        Assert.assertEquals(
+                "the trailer must name the negotiated codec",
+                QwpConstants.COMPRESSION_ZSTD,
+                info[info.length - 2]
+        );
+        Assert.assertEquals(
+                "the browser's URL carrier must win over the header a proxy could inject",
+                expectedLevel,
+                info[info.length - 1]
+        );
     }
 
     private static int countResultBatches(String query, String sql) throws Exception {
@@ -267,25 +336,6 @@ public class QwpBrowserNegotiationWireTest extends AbstractQwpBootstrapTest {
                 | (serverInfo[SERVER_INFO_CAPABILITIES_OFFSET + 1] & 0xFF) << 8
                 | (serverInfo[SERVER_INFO_CAPABILITIES_OFFSET + 2] & 0xFF) << 16
                 | (serverInfo[SERVER_INFO_CAPABILITIES_OFFSET + 3] & 0xFF) << 24;
-    }
-
-    private static void assertNegotiatedZstdLevel(int expectedLevel, String query, String headerValue) throws Exception {
-        byte[] info = readServerInfo(query, "X-QWP-Accept-Encoding: " + headerValue + "\r\n");
-        Assert.assertNotEquals(
-                "a URL-carrier request must advertise CAP_COMPRESSION whichever carrier won",
-                0,
-                readCapabilities(info) & QwpEgressMsgKind.CAP_COMPRESSION
-        );
-        Assert.assertEquals(
-                "the trailer must name the negotiated codec",
-                QwpConstants.COMPRESSION_ZSTD,
-                info[info.length - 2]
-        );
-        Assert.assertEquals(
-                "the browser's URL carrier must win over the header a proxy could inject",
-                expectedLevel,
-                info[info.length - 1]
-        );
     }
 
     private static byte[] readServerInfo(String query) throws Exception {

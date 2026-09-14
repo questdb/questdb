@@ -277,7 +277,25 @@ public final class QwpWireTestFixtures {
      * @param query leading {@code ?} included, or empty for none
      */
     public static void performWriteHandshake(Socket socket, String query) throws Exception {
-        performHandshake(socket, "/write/v4", query, "");
+        performWriteHandshake(socket, query, "");
+    }
+
+    /**
+     * Upgrades the write endpoint with an optional query string and optional
+     * extra request headers, and returns the response headers so the caller
+     * can assert what the 101 negotiated. A browser opts into durable ACK only
+     * through {@code Sec-WebSocket-Protocol}, the one upgrade header its
+     * WebSocket API lets it set, and fails the whole connection unless the 101
+     * echoes the token it offered.
+     *
+     * @param query        leading {@code ?} included, or empty for none
+     * @param extraHeaders already-formatted {@code Name: value\r\n} lines, or
+     *                     empty for none
+     * @return the response up to and including the {@code \r\n\r\n} header
+     * boundary; pushed WebSocket frames stay unconsumed in the stream
+     */
+    public static String performWriteHandshake(Socket socket, String query, String extraHeaders) throws Exception {
+        return performHandshake(socket, "/write/v4", query, extraHeaders);
     }
 
     /**
@@ -341,7 +359,7 @@ public final class QwpWireTestFixtures {
         return payload;
     }
 
-    private static void performHandshake(Socket socket, String path, String query, String extraHeaders) throws Exception {
+    private static String performHandshake(Socket socket, String path, String query, String extraHeaders) throws Exception {
         OutputStream out = socket.getOutputStream();
         InputStream in = socket.getInputStream();
 
@@ -361,6 +379,7 @@ public final class QwpWireTestFixtures {
                 "Expected 101 Switching Protocols, got: <<<" + response + ">>>",
                 response.startsWith("HTTP/1.1 101")
         );
+        return response;
     }
 
     private static int readByte(InputStream in) throws Exception {
