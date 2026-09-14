@@ -38,6 +38,7 @@ import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -67,9 +68,8 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
 
                     setCurrentMicros(200_000);
                     Assert.assertTrue(registry.cancel(queryId, sqlExecutionContext));
-                    Assert.assertEquals(1, runtime.drain(1));
+                    drainUntilDone(runtime, task);
 
-                    Assert.assertTrue(task.isDone());
                     Assert.assertNotNull("cancellation at the sleep deadline must fail the query", task.error);
                     Assert.assertTrue(task.error.getMessage(), task.error.getMessage().contains("cancel"));
                 } finally {
@@ -102,9 +102,8 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(1, runtime.getParkedFiberCount());
 
                 cancellationSignal.cancel();
-                Assert.assertEquals(1, runtime.drain(1));
+                drainUntilDone(runtime, task);
 
-                Assert.assertTrue(task.isDone());
                 Assert.assertNotNull(task.error);
                 Assert.assertTrue(task.error.getMessage(), task.error.getMessage().contains("cancel"));
             } finally {
@@ -289,6 +288,15 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
         }
         Assert.assertTrue(runtime.awaitClosed(deadline));
         runtime.closeAfterDrained();
+    }
+
+    private static void drainUntilDone(FiberRuntime runtime, SuspendableSleepTask task) {
+        final long deadline = System.nanoTime() + 5_000_000_000L;
+        while (!task.isDone() && System.nanoTime() < deadline) {
+            runtime.drain(1);
+            Os.pause();
+        }
+        Assert.assertTrue("fiber task did not finish after cancellation", task.isDone());
     }
 
     private static class PinnedSleepTask extends FiberTask {

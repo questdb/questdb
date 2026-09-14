@@ -70,7 +70,9 @@ import java.util.concurrent.locks.ReadWriteLock;
 
 public class LineTcpMeasurementScheduler implements Closeable {
     private static final int DEFAULT_SHARED_JOB_COUNT = 2;
-    private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
     private final ObjList<TableUpdateDetails>[] assignedTables;
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;

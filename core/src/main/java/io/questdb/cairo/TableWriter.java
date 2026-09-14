@@ -185,7 +185,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final long TIMESTAMP_EPOCH = 0L;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final long IGNORE = -1L;
-    private static final Log LOG = LogFactory.getLog(TableWriter.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(TableWriter.class);
     // Test hook: pauses an EXPIRE ROWS metadata rewrite after the change is marked pending but before the
     // _meta/_txn swap, so a compiler on another thread can read the old policy while the change is in flight.
     // Null in production; firing it is one volatile read and a null check.
