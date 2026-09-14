@@ -774,12 +774,24 @@ public class RecoveryCoordinator {
 
     /**
      * fsync the table directory entry so the restored file sizes/names are journaled.
+     * <p>
+     * The re-base of {@code dir} is deliberately OUTSIDE the platform guard, so this method leaves the
+     * caller's buffer in the SAME state on every platform. Guarding it too would make {@code dir} come back
+     * re-based to {@code <dbRoot>/<table>/} on POSIX and untouched on Windows -- a platform-divergent output
+     * buffer, which is the exact defect {@link DurableEpochManifest#fsyncDirectory} carries a javadoc scar
+     * for: there the guarded trim left callers holding a path ending in {@code _epoch.manifest.<generation>},
+     * and every structural DDL then failed opening {@code <table>/_epoch.manifest.1/_meta.swp}.
+     * <p>
+     * Today both call sites happen to re-base {@code dir} themselves before next use, so the divergence is
+     * masked rather than harmless. A platform guard must never wrap a side effect that is not
+     * platform-specific -- the next caller that reads {@code dir} after this returns is the one that pays.
      */
     private void fsyncDir(TableToken token, Path dir) {
+        // Unconditional, and ahead of the guard: this is the method's output-buffer contract, not a fsync step.
+        tablePath(dir, token).slash$();
         if (Os.isWindows()) {
             return; // no directory fsync on Windows (mirrors TableWriter's dir-sync guards)
         }
-        tablePath(dir, token).slash$();
         final long dirFd = TableUtils.openRONoCache(ff, dir.$(), LOG);
         if (dirFd == -1) {
             throw CairoException.critical(ff.errno())
