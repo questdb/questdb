@@ -297,6 +297,50 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testMisdirectedRequestWithRoleSizeMatchesWrittenBytes() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] roleBytes = "replica".getBytes(StandardCharsets.US_ASCII);
+            byte[] cookieValue = "qs1_rotated; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000"
+                    .getBytes(StandardCharsets.US_ASCII);
+            int expectedSize = QwpIngressHttpProcessor.misdirectedRequestWithRoleSize(roleBytes, cookieValue);
+
+            long buf = allocateBuffer(512);
+            try {
+                int written = QwpIngressHttpProcessor.writeMisdirectedRequestWithRole(
+                        buf, 512, roleBytes, cookieValue);
+                Assert.assertEquals(expectedSize, written);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertTrue("expected a 421, got: " + response,
+                        response.startsWith("HTTP/1.1 421 Misdirected Request\r\n"));
+                Assert.assertTrue("expected X-QuestDB-Role header, got: " + response,
+                        response.contains("X-QuestDB-Role: replica\r\n"));
+                Assert.assertTrue("expected rotated session cookie, got: " + response, response.contains(
+                        "Set-Cookie: qdb_session=qs1_rotated; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000\r\n"
+                ));
+                Assert.assertTrue(response.endsWith("\r\n\r\n"));
+
+                // The sizer is the only bound the caller checks before this
+                // writer touches the raw send buffer, so one byte short of it
+                // must refuse rather than write past the end.
+                Assert.assertEquals(-1, QwpIngressHttpProcessor.writeMisdirectedRequestWithRole(
+                        buf, expectedSize - 1, roleBytes, cookieValue));
+
+                // Sessionless reject: sizer and writer must both drop the cookie block.
+                int sizeWithoutCookie = QwpIngressHttpProcessor.misdirectedRequestWithRoleSize(roleBytes, null);
+                Assert.assertEquals(sizeWithoutCookie, QwpIngressHttpProcessor.writeMisdirectedRequestWithRole(
+                        buf, 512, roleBytes, null));
+                String sessionless = new String(readBytes(buf, sizeWithoutCookie), StandardCharsets.US_ASCII);
+                Assert.assertFalse("did not expect Set-Cookie header, got: " + sessionless,
+                        sessionless.contains("Set-Cookie"));
+                Assert.assertTrue(sessionless.endsWith("\r\n\r\n"));
+            } finally {
+                freeBuffer(buf, 512);
+            }
+        });
+    }
+
+    @Test
     public void testResponseSize() throws Exception {
         assertMemoryLeak(() -> {
             byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
