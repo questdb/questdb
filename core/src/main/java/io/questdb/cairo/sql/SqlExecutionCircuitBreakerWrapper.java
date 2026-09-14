@@ -156,8 +156,8 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
 
     public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
         if (atomicBooleanCircuitBreaker != null
-                && executionContextCircuitBreaker instanceof AtomicBooleanCircuitBreaker booleanCircuitBreaker) {
-            atomicBooleanCircuitBreaker.of(booleanCircuitBreaker);
+                && executionContextCircuitBreaker.getClass() == AtomicBooleanCircuitBreaker.class) {
+            atomicBooleanCircuitBreaker.of((AtomicBooleanCircuitBreaker) executionContextCircuitBreaker);
             delegate = atomicBooleanCircuitBreaker;
         } else if (executionContextCircuitBreaker.isThreadSafe()) {
             delegate = executionContextCircuitBreaker;
