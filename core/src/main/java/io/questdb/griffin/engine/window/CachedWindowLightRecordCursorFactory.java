@@ -50,6 +50,9 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+import java.util.function.UnaryOperator;
 
 public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ObjList<WindowFunction> backwardUnorderedFunctions;
@@ -376,6 +379,15 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     @Override
     public boolean usesIndex() {
         return base.usesIndex();
+    }
+
+    /**
+     * Installs a test decorator before the first cursor opens. The decorator must preserve the
+     * base factory's metadata and record-cursor contract and take ownership of it, including close().
+     */
+    @TestOnly
+    public void wrapBaseFactory(UnaryOperator<RecordCursorFactory> decorator) {
+        base = decorator.apply(base);
     }
 
     private void addSortKeys(PlanSink sink, IntList list) {
