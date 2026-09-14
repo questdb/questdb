@@ -2851,7 +2851,12 @@ public final class TableUtils {
 
     public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
-        if (expectedVersion != metaVersion) {
+        // A table that currently holds composite partitions carries ColumnType.MAX_STORAGE_VERSION
+        // rather than ColumnType.VERSION; both are readable by this binary, so accept the whole
+        // [expectedVersion, MAX_STORAGE_VERSION] range. A version below expectedVersion is a table
+        // that predates a migration (migrations bring it up before it is opened), and a version
+        // above MAX_STORAGE_VERSION comes from a newer binary this one cannot read.
+        if (metaVersion < expectedVersion || metaVersion > ColumnType.MAX_STORAGE_VERSION) {
             throw CairoException.metadataVersionMismatch(metaPath, expectedVersion, metaVersion);
         }
     }

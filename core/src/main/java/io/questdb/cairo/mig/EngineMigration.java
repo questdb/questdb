@@ -174,7 +174,13 @@ public class EngineMigration {
                         final long fdMeta = openFileRWOrFail(ff, path.$(), context.getConfiguration().getWriterFileOpenOpts());
                         try {
                             int currentTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
-                            if (currentTableVersion < latestMigrationVersion) {
+                            // A version above latestTableVersion is an elevated storage version (a table
+                            // that currently holds composite partitions carries ColumnType.MAX_STORAGE_VERSION).
+                            // It is not a migration-version number, so migration must leave it alone: the table
+                            // is already current, and re-running backward-compatible migrations against it is
+                            // neither needed nor guaranteed safe. The writer folds such a table back to plain
+                            // and restores latestTableVersion on its own when composite partitions go away.
+                            if (currentTableVersion <= latestTableVersion && currentTableVersion < latestMigrationVersion) {
                                 LOG.info()
                                         .$("upgrading [path=").$(copyPath.$())
                                         .$(", fromVersion=").$(currentTableVersion)

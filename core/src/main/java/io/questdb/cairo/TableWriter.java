@@ -388,6 +388,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long committedMasterRef;
     // Rows partition compaction has copied over this writer's lifetime, isolating what reclamation cost.
     private long compactionWrittenRows;
+    // Live count of composite partitions, tracked in memory so a commit never scans the (potentially many
+    // thousands of) partitions to decide the _meta storage version. Seeded by a single scan whenever the
+    // partition table is (re)loaded and adjusted by +/-1 on the hot paths that flip a partition composite or
+    // remove one; rare partition DDL that rebuilds the table re-seeds it with a scan.
+    private int compositePartitionCount;
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
@@ -564,6 +569,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.partitionBy = metadata.getPartitionBy();
             this.txWriter.initPartitionBy(timestampType, metadata.getPartitionBy());
+            recountCompositePartitions();
 
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
@@ -1258,7 +1264,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     public void bumpPartitionTableVersion() {
         txWriter.bumpPartitionTableVersion();
-        txWriter.commit(denseSymbolMapWriters);
+        commitTxWithStorageVersionSync();
     }
 
     @Override
@@ -2326,7 +2332,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // all good, commit
                 txWriter.beginPartitionSizeUpdate();
-                txWriter.removeAttachedPartitions(timestamp);
+                removeAttachedPartitionsTracked(timestamp);
                 txWriter.setMinTimestamp(nextMinTimestamp);
                 txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
                 txWriter.bumpTruncateVersion();
@@ -2565,7 +2571,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             firstPartitionDropped |= timestamp == txWriter.getPartitionTimestampByIndex(0);
             columnVersionWriter.removePartition(timestamp);
-            txWriter.removeAttachedPartitions(timestamp);
+            removeAttachedPartitionsTracked(timestamp);
             // Add the partition to the partition remove list that can be deleted if there are no open readers
             // after the commit
             partitionRemoveCandidates.add(timestamp, txWriter.getPartitionNameTxn(index));
@@ -2611,6 +2617,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 freeColumns(false);
                 releaseIndexerWriters(true);
                 txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+                compositePartitionCount = 0;
             }
 
             // Call O3 methods to remove check TxnScoreboard and remove partition directly
@@ -3513,6 +3520,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         columnVersionWriter.truncate();
         txWriter.removeAllPartitions();
+        compositePartitionCount = 0;
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriter();
@@ -3810,6 +3818,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 freeColumns(false);
                 txWriter.unsafeLoadAll();
+                recountCompositePartitions();
                 rollbackIndexes();
                 rollbackSymbolTables(true);
                 columnVersionWriter.readUnsafe();
@@ -4092,7 +4101,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, liveRows);
         // The new directory is one piece at row 0, the ordinary shape, so it publishes no geometry record.
-        txWriter.setPartitionGeometryRef(partitionTimestamp, NO_GEOMETRY_REF);
+        setPartitionGeometryRefTracked(partitionTimestamp, NO_GEOMETRY_REF);
 
         ColumnTopSink sink = columnVersionWriter.asColumnTopSink(partitionTimestamp);
         columnTops.pushInto(sink);
@@ -6158,19 +6167,148 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void commitTxWriter() {
+    /**
+     * Commits {@code _txn} and keeps the on-disk {@code _meta} storage version in step with whether the
+     * table holds composite partitions. An upgrade to {@link ColumnType#MAX_STORAGE_VERSION} runs BEFORE
+     * the commit, so a downgrade binary - which rejects an unknown {@code _meta} version - never sees a
+     * composite {@code _txn} and misreads it as flat. A downgrade back to {@link ColumnType#VERSION} runs
+     * AFTER the commit, once the last composite flag has been cleared from {@code _txn}. A crash between
+     * the two writes leaves {@code _meta} conservatively high, which is safe (the table just reads on this
+     * binary and is refused by an older one) and self-heals on the next commit.
+     */
+    private void commitTxWithStorageVersionSync() {
+        assert assertCompositeCountMatchesScan();
+        maybeUpgradeStorageVersion();
         txWriter.commit(denseSymbolMapWriters);
+        maybeDowngradeStorageVersion();
+    }
+
+    private void commitTxWriter() {
+        commitTxWithStorageVersionSync();
         long currentTableTxn = txWriter.getTxn();
         publishDeferredPostingSealPurges(currentTableTxn, false);
         publishRetiredGeometryGenerations(currentTableTxn);
     }
 
     private void commitTxWriterAndPublishPendingPostingSealPurges() {
-        txWriter.commit(denseSymbolMapWriters);
+        commitTxWithStorageVersionSync();
         long currentTableTxn = txWriter.getTxn();
         publishPendingPostingSealPurges(currentTableTxn);
         publishDeferredPostingSealPurges(currentTableTxn, false);
         publishRetiredGeometryGenerations(currentTableTxn);
+    }
+
+    /**
+     * Drops the on-disk {@code _meta} storage version back to {@link ColumnType#VERSION} once the table no
+     * longer holds any composite partition. The caller runs this AFTER the {@code _txn} commit that cleared
+     * the last composite flag, so the version never claims plain data while {@code _txn} still points at a
+     * composite piece. Reads the in-memory count, never scans.
+     */
+    private void maybeDowngradeStorageVersion() {
+        if (compositePartitionCount == 0 && metadata.getStorageVersion() > ColumnType.VERSION) {
+            writeStorageVersionToMeta(ColumnType.VERSION);
+        }
+    }
+
+    /**
+     * Raises the on-disk {@code _meta} storage version to {@link ColumnType#MAX_STORAGE_VERSION} as soon as
+     * the table gains its first composite partition. The caller runs this BEFORE the {@code _txn} commit that
+     * publishes the composite flag. Reads the in-memory count, never scans.
+     */
+    private void maybeUpgradeStorageVersion() {
+        if (compositePartitionCount > 0 && metadata.getStorageVersion() < ColumnType.MAX_STORAGE_VERSION) {
+            writeStorageVersionToMeta(ColumnType.MAX_STORAGE_VERSION);
+        }
+    }
+
+    /**
+     * Debug-only invariant: the incrementally maintained {@link #compositePartitionCount} must always equal a
+     * fresh scan of the partition table. Runs under {@code assert} in tests across every commit, so a missed
+     * mutation point that drifts the count fails the suite; it costs nothing in production.
+     */
+    private boolean assertCompositeCountMatchesScan() {
+        int count = 0;
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.isPartitionComposite(i)) {
+                count++;
+            }
+        }
+        assert count == compositePartitionCount
+                : "composite partition count drift: tracked=" + compositePartitionCount + ", scanned=" + count;
+        return true;
+    }
+
+    /**
+     * Re-seeds {@link #compositePartitionCount} with a single scan of the partition table. Called only when
+     * the table's partition set is (re)built wholesale - writer open, a full {@code _txn} reload or reset -
+     * never on the per-commit ingest path.
+     */
+    private void recountCompositePartitions() {
+        int count = 0;
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.isPartitionComposite(i)) {
+                count++;
+            }
+        }
+        compositePartitionCount = count;
+    }
+
+    /**
+     * Removes a partition from {@code _txn}, keeping {@link #compositePartitionCount} in step: a composite
+     * partition being removed (DROP, DETACH, SQUASH, a REWRITE retiring its source, a replace-commit) drops
+     * the count by one. The O(1) check happens before the removal, while the slot still exists.
+     */
+    private int removeAttachedPartitionsTracked(long partitionTimestamp) {
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex > -1 && txWriter.isPartitionComposite(partitionIndex)) {
+            compositePartitionCount--;
+        }
+        return txWriter.removeAttachedPartitions(partitionTimestamp);
+    }
+
+    /**
+     * Publishes a partition's geometry pointer and keeps {@link #compositePartitionCount} in step. A real
+     * geometry ref carries the composite flag, so a partition flips composite when the ref goes from
+     * {@link #NO_GEOMETRY_REF} to a real one (a merge-append) and flips back when it is cleared (JOIN,
+     * MAKE-PLAIN, fold). The before-state is read while the slot still holds the old ref.
+     */
+    private void setPartitionGeometryRefTracked(long partitionTimestamp, long geometryRef) {
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        final boolean wasComposite = partitionIndex > -1 && txWriter.isPartitionComposite(partitionIndex);
+        txWriter.setPartitionGeometryRef(partitionTimestamp, geometryRef);
+        final boolean isComposite = geometryRef != NO_GEOMETRY_REF;
+        if (wasComposite != isComposite) {
+            compositePartitionCount += isComposite ? 1 : -1;
+        }
+    }
+
+    /**
+     * The storage version that {@code _meta} should carry for the table's current shape:
+     * {@link ColumnType#MAX_STORAGE_VERSION} while it holds composite partitions, otherwise
+     * {@link ColumnType#VERSION}. Used when a full meta rewrite must reproduce the elevated version.
+     */
+    private int storageVersionForCurrentState() {
+        return compositePartitionCount > 0 ? ColumnType.MAX_STORAGE_VERSION : ColumnType.VERSION;
+    }
+
+    /**
+     * Replaces the storage version int in {@code _meta} at {@link TableUtils#META_OFFSET_VERSION} in place and
+     * fsyncs it, then updates the cached {@link TableWriterMetadata#getStorageVersion()}. A direct, single-field
+     * write: the composite/plain transition happens during a data commit or a compaction, not a metadata DDL,
+     * so there is no full meta rewrite to fold this into.
+     */
+    private void writeStorageVersionToMeta(int version) {
+        final long fd = openRW(ff, path.trimTo(pathSize).concat(META_FILE_NAME).$(), LOG, configuration.getWriterFileOpenOpts());
+        try {
+            TableUtils.writeIntOrFail(ff, fd, META_OFFSET_VERSION, version, tempMem16b, path);
+            ff.fsync(fd);
+        } finally {
+            ff.close(fd);
+            path.trimTo(pathSize);
+        }
+        metadata.setStorageVersion(version);
+        LOG.info().$("storage version updated in _meta [table=").$(tableToken)
+                .$(", version=").$(version).I$();
     }
 
     /**
@@ -6252,7 +6390,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, liveRows);
         // The new directory is one piece at row 0, the ordinary shape, so it publishes no geometry record.
-        txWriter.setPartitionGeometryRef(partitionTs, NO_GEOMETRY_REF);
+        setPartitionGeometryRefTracked(partitionTs, NO_GEOMETRY_REF);
         partitionRemoveCandidates.add(partitionTs, srcNameTxn);
 
         try {
@@ -8000,7 +8138,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // NOTE: this method should not commit to _txn file
             // In case multiple partition parts are deleted, they should be deleted atomically
             txWriter.beginPartitionSizeUpdate();
-            txWriter.removeAttachedPartitions(timestamp);
+            removeAttachedPartitionsTracked(timestamp);
             txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
             txWriter.bumpTruncateVersion();
             columnVersionWriter.removePartition(timestamp);
@@ -8041,7 +8179,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // NOTE: this method should not commit to _txn file
             // In case multiple partition parts are deleted, they should be deleted atomically
             txWriter.beginPartitionSizeUpdate();
-            txWriter.removeAttachedPartitions(timestamp);
+            removeAttachedPartitionsTracked(timestamp);
             txWriter.setMinTimestamp(nextMinTimestamp);
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
             txWriter.bumpTruncateVersion();
@@ -9855,7 +9993,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * before the block is applied, on the writer's own thread, and commits its own transactions.
      */
     private void compactAheadOfBlock(long startSeqTxn, long blockMinTimestamp) {
-        if (!PartitionBy.isPartitioned(partitionBy) || !txWriter.hasCompositePartitions() || txWriter.getLagRowCount() > 0) {
+        if (!PartitionBy.isPartitioned(partitionBy) || compositePartitionCount == 0 || txWriter.getLagRowCount() > 0) {
             return;
         }
         // The lowest timestamp any LOADED commit carries, this block's included. Nothing below it will be
@@ -10575,7 +10713,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     .$(", ts=").$ts(timestampDriver, partitionTimestamp)
                                     .I$();
 
-                            txWriter.removeAttachedPartitions(partitionTimestamp);
+                            removeAttachedPartitionsTracked(partitionTimestamp);
                             columnVersionWriter.removePartition(partitionTimestamp);
                             partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
                         } else {
@@ -10628,7 +10766,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // The rewrite lands in a fresh txn-named directory with no _geometry file, so
                             // the old pointer cannot survive it. Clear before the stamp, which is a no-op
                             // while the partition still reads as composite.
-                            txWriter.setPartitionGeometryRef(partitionTimestamp, NO_GEOMETRY_REF);
+                            setPartitionGeometryRefTracked(partitionTimestamp, NO_GEOMETRY_REF);
                             // Native mutate: stamp the apply seqTxn; non-WAL stamps 0 (the cleared
                             // word) so a stale version cannot outlive the bytes it identifies.
                             txWriter.setPartitionSeqTxnByRawIndex(partitionIndexRaw, walApplySeqTxn > 0 ? walApplySeqTxn : 0);
@@ -10690,7 +10828,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // where the pointer lives.
                 if (geometryRef != NO_GEOMETRY_REF) {
                     retireGeometryGenerations(partitionTimestamp, committedGeometryNameTxn, committedGeometryRef, geometryRef);
-                    txWriter.setPartitionGeometryRef(partitionTimestamp, geometryRef);
+                    setPartitionGeometryRefTracked(partitionTimestamp, geometryRef);
                 }
             }
         }
@@ -10753,6 +10891,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 columnVersionWriter.truncate();
                 txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+                compositePartitionCount = 0;
             }
             txWriter.bumpPartitionTableVersion();
         } else {
@@ -10828,7 +10967,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // or the previous partition was just re-created in this commit
                     // in this case we can remove the current partition fully
                     partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
-                    txWriter.removeAttachedPartitions(partitionTimestamp);
+                    removeAttachedPartitionsTracked(partitionTimestamp);
                 } else {
                     try {
                         // The safe way to remove the split is to split one line from the parent partition
@@ -10863,7 +11002,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             if (newPrevPartitionSize == 0) {
                                 // newSplitPartitionTimestamp can be equal to partitionTimestamp
                                 partitionRemoveCandidates.add(prevPartitionTimestamp, prevPartitionNameTxn);
-                                insertPartitionIndex = txWriter.removeAttachedPartitions(prevPartitionTimestamp);
+                                insertPartitionIndex = removeAttachedPartitionsTracked(prevPartitionTimestamp);
                             } else {
                                 txWriter.updatePartitionSizeByTimestamp(prevPartitionTimestamp, newPrevPartitionSize);
                             }
@@ -10883,7 +11022,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         // Now it's safe to remove the empty split partition
                         partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
-                        txWriter.removeAttachedPartitions(partitionTimestamp);
+                        removeAttachedPartitionsTracked(partitionTimestamp);
                     } finally {
                         path.trimTo(pathSize);
                         other.trimTo(pathSize);
@@ -13469,7 +13608,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionTimestampHi = Long.MIN_VALUE;
                 long partitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
                 long partitionNameTxn = txWriter.getPartitionNameTxnByRawIndex(0);
-                txWriter.removeAttachedPartitions(partitionTimestamp);
+                removeAttachedPartitionsTracked(partitionTimestamp);
                 safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
             }
 
@@ -13985,7 +14124,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     newRef
             );
         }
-        txWriter.setPartitionGeometryRef(partitionTimestamp, newRef);
+        setPartitionGeometryRefTracked(partitionTimestamp, newRef);
     }
 
     private void publishRetiredGeometryGenerations(long currentTableTxn) {
@@ -15245,7 +15384,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
                             maxTimestamp = readLongAtOffset(ff, path.$(), tempMem16b, (transientRowCount - 1) * Long.BYTES);
                             fixedRowCount -= transientRowCount;
-                            txWriter.removeAttachedPartitions(txWriter.getMaxTimestamp());
+                            removeAttachedPartitionsTracked(txWriter.getMaxTimestamp());
                             LOG.info()
                                     .$("updated active partition [name=").$(path.trimTo(p).$())
                                     .$(", maxTimestamp=").$ts(timestampDriver, maxTimestamp)
@@ -15312,6 +15451,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path).$();
         scheduleRemoveAllPartitions();
         txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+        compositePartitionCount = 0;
         clearTodoLog();
         processPartitionRemoveCandidates();
     }
@@ -15627,7 +15767,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putInt(metadata.getColumnCount());
             ddlMem.putInt(metadata.getPartitionBy());
             ddlMem.putInt(metadata.getTimestampIndex());
-            ddlMem.putInt(ColumnType.VERSION);
+            // Preserve the elevated storage version of a composite table: a full meta rewrite
+            // (any column DDL) must not silently drop it back to ColumnType.VERSION while the
+            // table still holds composite partitions, or a downgrade binary would then misread it.
+            ddlMem.putInt(storageVersionForCurrentState());
             ddlMem.putInt(metadata.getTableId());
             ddlMem.putInt(metadata.getMaxUncommittedRows());
             ddlMem.putLong(metadata.getO3MaxLag());
@@ -15787,8 +15930,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!PartitionBy.isPartitioned(partitionBy)) {
             return;
         }
-        // housekeep calls this after EVERY commit, on the WAL-apply throughput path.
-        if (!txWriter.hasCompositePartitions()) {
+        // housekeep calls this after EVERY commit, on the WAL-apply throughput path, so it reads the
+        // in-memory composite count rather than scanning the (potentially many thousands of) partitions.
+        if (compositePartitionCount == 0) {
             return;
         }
         if (partitionCompactionPolicy == null) {
@@ -16673,7 +16817,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw th;
                 }
 
-                txWriter.removeAttachedPartitions(sourcePartition);
+                removeAttachedPartitionsTracked(sourcePartition);
                 columnVersionWriter.squashPartition(targetPartition, sourcePartition);
                 partitionRemoveCandidates.add(sourcePartition, sourceNameTxn);
                 if (sourcePartition == minSplitPartitionTimestamp) {
@@ -17125,6 +17269,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.resetTimestamp();
                 columnVersionWriter.truncate();
                 txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+                compositePartitionCount = 0;
             }
             return;
         }
@@ -17155,6 +17300,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.resetTimestamp();
         columnVersionWriter.truncate();
         txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+        compositePartitionCount = 0;
         clearTodoLog();
         this.minSplitPartitionTimestamp = Long.MAX_VALUE;
         processPartitionRemoveCandidates();
@@ -17794,6 +17940,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } else {
                     // we have no partitions, clear partitions in TableWriter
                     txWriter.removeAllPartitions();
+                    compositePartitionCount = 0;
                     rowAction = ROW_ACTION_OPEN_PARTITION;
                 }
 

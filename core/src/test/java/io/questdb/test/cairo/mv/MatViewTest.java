@@ -994,6 +994,11 @@ public class MatViewTest extends AbstractCairoTest {
         // it the view never caches its refresh intervals, so WalPurgeJob keeps every base table WAL
         // segment from the view's last refreshed txn onwards -- unbounded disk growth on the base
         // table, not on the view.
+        //
+        // The assertions below count the base table's transactions and name its WAL segment
+        // directory, neither of which survives the extra transaction and WAL writer the composite
+        // randomiser commits against that table.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
