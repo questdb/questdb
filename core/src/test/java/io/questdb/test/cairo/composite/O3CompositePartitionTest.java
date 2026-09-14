@@ -1668,6 +1668,96 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
     }
 
     /**
+     * A replace commit that empties a split partition cannot just drop it: a reader pinned on an earlier txn
+     * may still be reading the parent's files past the parent's own row count, so the writer cuts the last
+     * equal-timestamp run off the PARENT into a fresh sibling instead, keeping the parent from becoming the
+     * active partition again ({@code o3ConsumePartitionUpdateSink_processSplitPartitionRemoval}).
+     * <p>
+     * When that parent is composite, none of that can be done over raw file rows. Its rows are numbered over
+     * its pieces, its files reach E rather than its live row count, and a merge has parked the piece away
+     * from row 0 - so a backward scan of {@code ts.d} from the live row count reads DEAD bytes, and cuts the
+     * run at a row that is not the partition's last. Its live row count also lives in the geometry, not in
+     * {@code _txn}, so the pieces go on claiming the rows that just moved out.
+     * <p>
+     * Minimised from {@code WalWriterFuzzTest#testWalWriteEqualTimestamp} (fuzz.s0=3526265978591658,
+     * fuzz.s1=1789395916306), which read the last row of the first partition back twice.
+     */
+    @Test
+    public void testSplitPartitionRemovalTrimsCompositeParent() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1000);
+            // OFF first, so the backdated batch below takes the ordinary O3 path and SPLITS 2022-02-24.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+
+            final String base = "SELECT x::INT i, timestamp_sequence('2022-02-24', 1_000_000L) ts FROM long_sequence(1000)";
+            execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // Splits 2022-02-24 at 00:16:00.000001: the prefix keeps rows 1..961, the suffix becomes a
+            // sibling partition of its own.
+            final String splitter = "SELECT (2000 + x)::INT i," +
+                    " timestamp_sequence('2022-02-24T00:16:00.500000', 100_000L) ts FROM long_sequence(3)";
+            execute("INSERT INTO x " + splitter);
+            drainWalQueue();
+
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+
+            // Two backfills well inside the prefix, which is no longer the last partition: each merge-appends
+            // at the tail and leaves what it rewrote behind as dead space.
+            final String backfill1 = "SELECT (3000 + x)::INT i," +
+                    " timestamp_sequence('2022-02-24T00:05:00.000500', 1_000L) ts FROM long_sequence(200)";
+            final String backfill2 = "SELECT (4000 + x)::INT i," +
+                    " timestamp_sequence('2022-02-24T00:09:00.000500', 1_000L) ts FROM long_sequence(200)";
+            execute("INSERT INTO x " + backfill1);
+            drainWalQueue();
+            execute("INSERT INTO x " + backfill2);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("2022-02-24 should have gone composite: " + describePieces(reader, 0),
+                        reader.getTxFile().isPartitionComposite(0));
+                Assert.assertTrue("2022-02-24 should carry dead space: " + describePieces(reader, 0),
+                        reader.getGeometry().getE(0) > reader.getTxFile().getPartitionSize(0));
+                Assert.assertEquals("the split sibling should still be there", 2, reader.getTxFile().getPartitionCount());
+            }
+
+            // Empties the sibling, and nothing else: its whole range is inside [lo, hi), the parent's is
+            // below it, and the commit carries no rows of its own. Removing it makes the writer cut the last
+            // equal-timestamp run off the composite parent so the parent does not become the active one again.
+            try (WalWriter ww = engine.getWalWriter(xt)) {
+                ww.commitWithParams(
+                        MicrosTimestampDriver.floor("2022-02-24T00:16:00.000001Z"),
+                        MicrosTimestampDriver.floor("2022-02-24T00:17:00.000000Z"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            drainWalQueue();
+            Assert.assertFalse("the replace commit suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            execute("CREATE TABLE o AS (" +
+                    "SELECT x::INT i, timestamp_sequence('2022-02-24', 1_000_000L) ts FROM long_sequence(961)" +
+                    " UNION ALL " + backfill1 +
+                    " UNION ALL " + backfill2 +
+                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // The parent's own books first: its pieces must claim exactly the rows _txn says it has. An
+            // untrimmed geometry leaves the rows that moved out claimed here as well, which is how the
+            // fuzz run read its last row back twice.
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("2022-02-24 should still be composite", reader.getTxFile().isPartitionComposite(0));
+                long pieceRows = 0;
+                for (int p = 0, n = reader.getGeometry().getPieceCount(0); p < n; p++) {
+                    pieceRows += reader.getGeometry().getPieceRowCount(0, p);
+                }
+                Assert.assertEquals("pieces claim rows _txn does not: " + describePieces(reader, 0),
+                        reader.getTxFile().getPartitionSize(0), pieceRows);
+            }
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "o", "x", LOG);
+        });
+    }
+
+    /**
      * The .d file's own logical size at the given (0-based) row, read off the .i (aux) vector's own
      * offsets rather than the .d file's raw length - which can be page-rounded larger than what was
      * actually written, and would make an exact-size assertion fragile for reasons that have nothing to
