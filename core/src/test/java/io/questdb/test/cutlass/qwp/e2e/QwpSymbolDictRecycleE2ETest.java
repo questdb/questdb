@@ -305,12 +305,15 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                                 + finalEpochBase + " lastOrganicFsn=" + lastOrganicFsn,
                         finalEpochBase > lastOrganicFsn);
                 // Anchored on the LAST organic batch, not the first: with the first
-                // (FSN 0) every epoch base satisfies the check, and with an epoch-0
-                // anchor a lost SECOND roll (base 3 instead of 30) still passes. The
-                // last organic FSN sits in the epoch before the final one; a correct
-                // base translates it to a negative internal target and short-circuits
-                // true, while any lost roll lands it at or above the final epoch's raw
-                // ack watermark -- which acked a single frame -- and the await fails.
+                // (FSN 0) every epoch base satisfies the check above, and with an
+                // epoch-0 anchor a lost SECOND roll (base 3 instead of 30) still passes.
+                // A lost roll is caught by that base assertion, so this await pins the
+                // accessor's epoch translation rather than the roll: the last organic
+                // FSN sits in the epoch before the final one, a correct base turns it
+                // into a negative internal target, and awaitAckedFsn must answer true
+                // at once via the prior-epoch short-circuit. An accessor that forgot
+                // the base would compare the raw FSN against the final epoch's ack
+                // watermark -- which acked a single frame -- and time the await out.
                 Assert.assertTrue("post-recycle awaitAckedFsn(lastOrganicFsn) must return true via the "
                                 + "prior-epoch short-circuit: base=" + finalEpochBase
                                 + " lastOrganicFsn=" + lastOrganicFsn,
