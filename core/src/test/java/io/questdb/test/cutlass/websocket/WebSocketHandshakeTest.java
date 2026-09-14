@@ -97,8 +97,9 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
                 Assert.assertEquals(QwpConstants.SERVER_INFO_CAP_DURABLE_ACK, frame[7]);
 
                 // The capability byte is the whole point of the frame for a
-                // browser: it is the only carrier that can tell one apart from
-                // the other, since the subprotocol echo is now unconditional.
+                // browser: it is the only carrier that tells durable ACK on
+                // apart from off, because the server echoes the subprotocol
+                // whenever the client offers it.
                 Assert.assertEquals(
                         8,
                         QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 16, 1_048_576, false)

@@ -278,9 +278,7 @@ public class QwpEgressCompressionTest extends AbstractQwpBootstrapTest {
         // client must never see the bit set: it would then read two bytes that
         // the server did not write. Pinned against the real client's decoder.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startQuestDB()) {
-                serverMain.execute("CREATE TABLE k(id LONG, ts TIMESTAMP) "
-                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (final TestServerMain ignored = startQuestDB()) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=zstd;")) {
                     client.connect();

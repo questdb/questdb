@@ -676,9 +676,9 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     /**
      * Drives a handshake through either durable-ack carrier and pins both the
      * negotiated state and whether the 101 confirms the browser subprotocol.
-     * The two are separate expectations on purpose, and no longer track each
-     * other: the confirmation follows the client's offer alone, while
-     * enablement follows the registry. Every caller states both.
+     * The two are separate expectations on purpose: the confirmation follows
+     * the client's offer alone, while enablement follows the registry. Every
+     * caller states both.
      */
     private static void assertDurableAckStateAfterHandshake(
             String protocols,

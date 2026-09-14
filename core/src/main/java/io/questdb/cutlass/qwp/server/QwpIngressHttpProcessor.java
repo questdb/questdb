@@ -71,9 +71,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // Client opt-in for STATUS_DURABLE_ACK frames. Value "true" (case-insensitive) enables.
     // Any other value, or header absent, leaves the feature disabled for this connection.
     public static final Utf8String HEADER_X_QWP_REQUEST_DURABLE_ACK = new Utf8String("X-QWP-Request-Durable-Ack");
-    // Browser-safe durable-ack opt-in and confirmation. Browser JavaScript can
-    // offer and inspect WebSocket subprotocols but cannot set/read X-QWP-* headers.
-    //
     // These values are NOT delivered verbatim like their header counterparts:
     // HttpHeaderParser.urlDecode re-keys a parameter on every unescaped '=', so
     // a value carrying one (qwp_accept_encoding=zstd;level=5) loses its key
@@ -88,6 +85,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * The WebSocket magic GUID used in the Sec-WebSocket-Accept calculation.
      */
     public static final String WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    // Browser-safe durable-ack opt-in and confirmation. Browser JavaScript can
+    // offer and inspect WebSocket subprotocols but cannot set/read X-QWP-* headers.
     public static final Utf8String WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK = new Utf8String("questdb.qwp.durable-ack.v1");
     /**
      * The required WebSocket version (RFC 6455).
