@@ -1,0 +1,6 @@
+cases=27 measured_executions=1360 result_checks=1741
+cases=27 measured_executions=1360 result_checks=1741
+FAIL compressed-groups round=0 ratio=1.1172 limit=1.10
+FAIL concurrent-4 round=0 ratio=1.1439 limit=1.10
+FAIL high-cardinality round=1 ratio=1.1068 limit=1.10
+recovery comparisons=54 failures=3

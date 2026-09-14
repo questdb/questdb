@@ -189,29 +189,31 @@ run was stopped; its partial output is not acceptance evidence.
     controls, every sample, profiles, source hashes and limits are retained in the
     [recovery report](docs/parallel-hash-join-group-by-recovery.md).
 
-**Shared-throttle follow-up** — this commit. Replaces task 9f's local row,
+**Shared-throttle follow-up** — commit `d2e59fc832`. Replaces task 9f's local row,
 duplicate and collision countdowns with `statefulThrowExceptionIfTripped()`.
 Map redistribution and all four map merge implementations also use that API in
 entry loops. The shared post-aggregation channel retains counter-free flag checks.
 The [parallel factory audit and validation](docs/parallel-hash-join-group-by-throttling.md)
-record 2,529 passing tests across 73 suites. Performance and C1 allocation reruns
-are pending explicit user confirmation; earlier measurements describe `4ae9efb0f0`.
+record 2,529 passing tests across 73 suites. The confirmed benchmark run passes
+51/54 recovery bounds, with primary medians 327.088/325.963 ms and 7.080×/7.108× speedup. All 24 C1 allocation cases pass.
+The earlier interrupted run remains excluded; further benchmarks require explicit
+user confirmation.
 
 The branch supports experimental automatic selection for eligible keyed and
-unkeyed queries. Task **9f passed at `4ae9efb0f0`**; its shared-throttle follow-up
-still needs performance/allocation requalification before task 10 and V1 completion. Keep
+unkeyed queries. Task **9f passed at `4ae9efb0f0`**, but the shared-throttle follow-up
+still fails individual recovery bounds and needs performance recovery before task 10. Keep
 `cairo.sql.parallel.hash.join.groupby.enabled=false`, the global parallel GROUP BY
 gate, and the positive-worker requirement. Do not add a build-size threshold,
 runtime fallback or consumed-input replay.
 
-## Next RFC work: requalify task 9f, then task 10 (V1)
+## Next RFC work: recover task 9f, then task 10 (V1)
 
-After explicit user confirmation that the machine is available, repeat the fixed
-27-case recovery matrix and C1 allocation matrix on the shared-throttle code.
-Keep the `58b1dc04cc` reference, two rounds, ten measurements per arm/owner and
-all individual 1.10 bounds. No benchmark has qualified this follow-up yet.
+The confirmed run fails 3 of 54 recovery bounds; see the
+[per-case results](docs/parallel-hash-join-group-by-throttling.md). Preserve the
+standard throttled API and fixed reference while addressing the remaining
+regressions. Further benchmark runs require explicit user confirmation.
 
-After requalification passes, repeat the full 51-case rollout matrix,
+After recovery passes, repeat the full 51-case rollout matrix,
 including small effective inputs, cold data, build footprints/source costs, skew,
 near-limit memory, SYMBOL/cache controls, worker scaling and concurrent load.
 Repeat both the primary 2× gate and task 9f's per-case 1.10 recovery bound. Review
@@ -240,9 +242,11 @@ format guards continue to request normal recompilation; they are not bypassed.
 
 **2,529 tests passed across 73 suites**, with 37 conditional skips and no
 failures/errors (2,566 total). Benchmark packaging and diff checks pass. The
-latency run was interrupted during the primary case because other agents were
-using the host. Performance and allocation benchmarks await explicit user
-confirmation; do not reuse historical results as qualification for the new code.
+initial latency run was interrupted while other agents were using the host.
+After explicit confirmation that the machine was idle, the complete run passed
+51 of 54 recovery bounds and all 24 C1 allocation cases (234 executions,
+405 owner/worker windows, zero unexplained bytes). The initial partial run is
+excluded. Further benchmarks still require explicit user confirmation.
 See the [audit and evidence](docs/parallel-hash-join-group-by-throttling.md).
 
 ## Historical validation for task 9f at `4ae9efb0f0`
