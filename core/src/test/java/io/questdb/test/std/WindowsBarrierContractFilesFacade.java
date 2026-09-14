@@ -40,8 +40,10 @@ import java.util.TreeSet;
  * <p>On Windows {@code fsync} is {@code FlushFileBuffers}, which requires {@code GENERIC_WRITE} on the
  * handle and returns {@code ERROR_ACCESS_DENIED} (errno 5) for the {@code GENERIC_READ}-only handle
  * {@code openRO} produces. On POSIX an {@code O_RDONLY} fd fsyncs perfectly well. A barrier written the
- * wrong way round is therefore GREEN on every Linux leg and DEAD on Windows -- and since OSS PR CI is
- * Linux-only, nothing in this repository notices. That is exactly how the {@code data.parquet} barrier
+ * wrong way round is therefore GREEN on every Linux leg and DEAD on Windows -- and since the DEFAULT OSS PR
+ * CI pipeline is Linux-only, nothing notices there. The Windows legs that do exist
+ * ({@code ci/test-hosted-pipeline.yml}) run only on demand ({@code /azp run macwin}) and in the merge queue,
+ * so they catch such a barrier late rather than never. That is exactly how the {@code data.parquet} barrier
  * shipped broken for two months and took Enterprise cold storage down with it on that platform.
  *
  * <p>DIRECTORIES are exempt, and the exemption is the whole reason this has to be a runtime check rather

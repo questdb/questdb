@@ -25,24 +25,32 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.WindowsBarrierContractFilesFacade;
 import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
  * A tripwire for the whole class of defect, not one instance of it: drive a broad slice of the storage
  * surface and fail if ANY durability barrier is issued through a handle opened without write access.
  * <p>
- * Such a barrier is fine on POSIX and {@code ERROR_ACCESS_DENIED}s on Windows, and OSS PR CI is Linux-only
- * (all 27 jobs), so nothing here notices on its own -- see {@link WindowsBarrierContractFilesFacade}. Four
+ * Such a barrier is fine on POSIX and {@code ERROR_ACCESS_DENIED}s on Windows, and the DEFAULT OSS PR CI
+ * pipeline is Linux-only, so nothing there notices on its own -- see
+ * {@link WindowsBarrierContractFilesFacade}. (Do not read that as "this repository never runs on Windows":
+ * {@code ci/test-hosted-pipeline.yml} runs Windows and macOS legs on demand via {@code /azp run macwin} and
+ * automatically in the GitHub merge queue, and its {@code windows-cairo-1} shard claims this class. An
+ * earlier revision of this javadoc asserted the Linux-only premise flatly and that is precisely why this
+ * test arrived red on a Windows leg -- see {@code setUp}.) Four
  * sites shipped written that way. The first was found only because an Enterprise cold-storage test happened
  * to exercise it on the Windows leg of a different pipeline, two months later; the other three
  * ({@code _meta.swp}, {@code _todo_}, and the O3 rewrite) were found by this sweep, in about a second,
  * having been missed by a careful reading of the same code.
  * <p>
  * <b>Linux is the platform that has to be right</b>, and Linux cannot see this bug by construction, so the
- * guard has to live here rather than in a Windows CI leg that does not exist. That makes this test the only
+ * guard has to live here rather than in a Windows CI leg that does not run on every PR. That makes this test the only
  * thing standing between the next barrier and a platform outage, which is why it sweeps rather than pins.
  * <p>
  * Coverage is honestly bounded by the workloads below: a barrier on a path none of them reach is still
@@ -61,6 +69,36 @@ import org.junit.Test;
  * </ul>
  */
 public class WriteAccessBarrierSweepTest extends AbstractCairoTest {
+
+    /**
+     * POSIX only, and the skip costs no coverage. Three separate reasons, in order of force:
+     * <ol>
+     *   <li>{@link WindowsBarrierContractFilesFacade} MODELS Windows on POSIX -- it says so itself
+     *       ({@code Os.isWindows()} "is a runtime constant a test cannot fake, so this does not pretend to
+     *       be Windows"). On a real Windows agent the model is redundant: {@code FlushFileBuffers} already
+     *       returns {@code ERROR_ACCESS_DENIED} through a handle opened without {@code GENERIC_WRITE}.</li>
+     *   <li>The sites this sweep would lose by not running on Windows are exactly the DIRECTORY fsyncs --
+     *       and the facade already exempts those ({@code isDirOrSoftLinkDir}), so they contribute zero
+     *       findings on Linux too. Lost coverage is the empty set, not a judgement call.</li>
+     *   <li>{@code runStorageWorkloads()} issues {@code CHECKPOINT CREATE}, which the engine refuses on
+     *       Windows by design ({@code DatabaseCheckpointAgent}: "Checkpoint is not supported on Windows").
+     *       That is the failure this skip resolves.</li>
+     * </ol>
+     * An {@code Assume}, never an early {@code return}: a return would leave the test green and lying.
+     * <p>
+     * If you want a REAL Windows assertion, it is a different test from this one: run the workloads on a
+     * Windows agent and assert that every barrier SUCCEEDS (i.e. no handle was opened read-only), rather
+     * than simulating the contract on POSIX. That is genuinely more coverage and is not what this class does.
+     */
+    @Before
+    public void setUp() {
+        Assume.assumeFalse(
+                "sweep models the Windows barrier contract on POSIX; on Windows it is redundant and"
+                        + " CHECKPOINT CREATE is refused by design -- see this class's setUp javadoc",
+                Os.isWindows()
+        );
+        super.setUp();
+    }
 
     @Test
     public void testAdaptiveEpochNeverBarriersThroughAReadOnlyHandle() throws Exception {
