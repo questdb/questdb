@@ -2005,6 +2005,11 @@ public class CheckpointTest extends AbstractCairoTest {
 
     @Test
     public void testCheckpointRecoverClearsStaleAdaptiveEpochAnchor() throws Exception {
+        // Pinned, not inherited: the assertion that recovery PUBLISHES a replacement baseline only holds
+        // under ADAPTIVE -- RecoveryCoordinator skips any table that is neither configured adaptive nor
+        // enrolled adaptive, so under a nosync sweep the fabricated anchor is deleted and never replaced
+        // and marker.tryLoad() fails. Pinned rather than skipped so this keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // A checkpoint/PITR restore-over-existing rewrites _txn/_cv (restoreTableFiles) but the checkpoint
         // does NOT capture the adaptive durable-epoch trio (_snapshot/_txn.epoch/_cv.epoch). Left in place,
         // the destination's stale anchor survives into the RecoveryCoordinator pass that runs next in

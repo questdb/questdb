@@ -7932,6 +7932,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testResumeSuspendMatView() throws Exception {
+        // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) to every
+        // wal_tables() row; this test asserts suspend/resume, which is mode-independent. Same treatment as
+        // WalTableSqlTest#testEmptyTruncate and the other wal_tables() goldens.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -7994,8 +7998,8 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
-                            base_price\tfalse\t2\t0\t2\t\t\t0\t1\t0\t2\t2024-01-01T01:01:01.842000Z
-                            price_1h\ttrue\t1\t0\t3\t\t\t0\t1\t0\t3\t2024-01-01T01:01:01.842000Z
+                            base_price\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t
+                            price_1h\ttrue\t1\t0\t3\t\t\t0\t0\t0\t-1\t
                             """);
 
             // resume mat view
@@ -8019,8 +8023,8 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
-                            base_price\tfalse\t2\t0\t2\t\t\t0\t1\t0\t2\t2024-01-01T01:01:01.842000Z
-                            price_1h\tfalse\t3\t0\t3\t\t\t0\t1\t0\t3\t2024-01-01T01:01:01.842000Z
+                            base_price\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t
+                            price_1h\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
                             """);
 
             // suspend mat view again
@@ -8046,8 +8050,8 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
-                            base_price\tfalse\t3\t0\t3\t\t\t0\t1\t0\t3\t2024-01-01T01:01:01.842000Z
-                            price_1h\ttrue\t3\t0\t5\t\t\t0\t1\t0\t5\t2024-01-01T01:01:01.842000Z
+                            base_price\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
+                            price_1h\ttrue\t3\t0\t5\t\t\t0\t0\t0\t-1\t
                             """);
 
             // resume mat view from txn
@@ -8071,8 +8075,8 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
-                            base_price\tfalse\t3\t0\t3\t\t\t0\t1\t0\t3\t2024-01-01T01:01:01.842000Z
-                            price_1h\tfalse\t5\t0\t5\t\t\t0\t1\t0\t5\t2024-01-01T01:01:01.842000Z
+                            base_price\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
+                            price_1h\tfalse\t5\t0\t5\t\t\t0\t0\t0\t-1\t
                             """);
         });
     }

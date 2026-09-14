@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.str.Path;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -56,6 +57,11 @@ public class AdaptiveMarkerlessTableRestartTest extends AbstractBootstrapTest {
 
     @Before
     public void setUp() {
+        // Both tests assert that a durable epoch ANCHOR exists, and CairoEngine only publishes one under
+        // ADAPTIVE, so under any other mode they fail on an artifact the engine was never asked to write.
+        // Skipped rather than pinned precisely because of the next comment: this class cannot pass the mode
+        // through `extra` without disturbing the port defaults, so the mode must come from the suite.
+        Overrides.assumeAdaptiveCommitMode();
         super.setUp();
         // No commit-mode override: ADAPTIVE is the default on this branch, and passing extra properties
         // here displaces the harness's random-port defaults and collides with whatever holds 9090.
