@@ -33,6 +33,10 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -49,6 +53,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -72,13 +77,32 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
     // First data timestamp (2026-01-01). Data sits well above the pinned test clock,
     // which starts at 0 and only creeps forward 250ms per refresh pass.
     private static final long DATA_EPOCH = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+    private static final String UPDATE_FIXTURE_VIEW_ROWS = """
+            ts\tsym\tx\trn
+            2026-01-01T00:00:01.000000Z\ta\t1.0\t1
+            2026-01-01T00:00:02.000000Z\tb\t2.0\t2
+            """;
     // A test-controlled read-only flip. The OSS engine reads a static isReadOnlyInstance() flag; the
     // injected engine below ORs this in, so a load can run as a read-only node's. Reset before every test.
     private static final AtomicBoolean isReadOnly = new AtomicBoolean();
+    // A test-controlled seam on the live view invalidation an UPDATE makes. The injected engine
+    // hands the real invalidation to the hook instead of running it, so a test can read what the
+    // base holds at that moment and simulate the process dying there. Reset before every test.
+    private static final AtomicReference<UpdateInvalidationHook> updateInvalidationHook = new AtomicReference<>();
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
+            @Override
+            public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
+                final UpdateInvalidationHook hook = updateInvalidationHook.get();
+                if (hook != null && UpdateOperation.MAT_VIEW_INVALIDATION_REASON.equals(reason)) {
+                    hook.run(() -> super.invalidateLiveViewsForBaseTable(baseTableToken, reason));
+                    return;
+                }
+                super.invalidateLiveViewsForBaseTable(baseTableToken, reason);
+            }
+
             @Override
             public boolean isReadOnlyMode() {
                 return isReadOnly.get() || super.isReadOnlyMode();
@@ -95,6 +119,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
     public void pinClockBelowTestData() {
         setCurrentMicros(0L);
         isReadOnly.set(false);
+        updateInvalidationHook.set(null);
     }
 
     @Test
@@ -216,10 +241,17 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
                 assertViewValid();
 
                 final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final AtomicInteger invalidationCalls = new AtomicInteger();
+                updateInvalidationHook.set(realInvalidation -> {
+                    invalidationCalls.incrementAndGet();
+                    realInvalidation.run();
+                });
 
                 // An UPDATE that matches no row rewrites nothing, so it must leave the view
-                // alone - the invalidation hangs off the same rowsAffected > 0 guard mat
-                // views use, and a no-op UPDATE must not kill a healthy view.
+                // alone - the invalidation runs only ahead of a commit that rewrites a row, the
+                // same rowsAffected > 0 rule mat views use, and a no-op UPDATE must not kill a
+                // healthy view. Not reached at all, rather than reached and declined: the seam
+                // counts the calls.
                 execute("UPDATE base SET x = 42.0 WHERE sym = 'nonexistent'");
                 drainWalQueue();
                 drainJob(job);
@@ -227,6 +259,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
                         "an UPDATE affecting no rows must not invalidate the LV",
                         instance.isInvalid()
                 );
+                Assert.assertEquals("an UPDATE affecting no rows must not reach the invalidation", 0, invalidationCalls.get());
 
                 // Rewrite a base row the view has already consumed and emitted.
                 execute("UPDATE base SET x = 999.0 WHERE ts = '2026-01-01T00:00:01.000000Z'");
@@ -238,7 +271,92 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
                         "wrong invalidation reason [reason=" + instance.getInvalidationReason() + ']',
                         Chars.contains(instance.getInvalidationReason(), "update operation")
                 );
+                Assert.assertEquals("a row-rewriting UPDATE must reach the invalidation once", 1, invalidationCalls.get());
             }
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testUpdateInvalidatesTheViewBeforeItsCommit() throws Exception {
+        // ApplyWal2TableJob applied an UPDATE through tableWriter.apply, which commits it, and only
+        // then invalidated the dependent live views. A process dying between the two left the base
+        // rewritten under a view whose _lv.s still recorded it valid, and a committed UPDATE leaves
+        // nothing for the next load to find: the seqTxn is applied, the WAL segment is purgeable and
+        // the base metadata is unchanged. The restart loaded the view valid, its rows derived from
+        // values the base no longer held, and it stayed that way for good - until a recovery
+        // recomputed the same range from the applied base and the rows changed under the reader.
+        //
+        // The seam stands in for the death. It is reached at the invalidation, reads what the base
+        // holds at that moment and throws instead of invalidating. Measured on this fixture before
+        // the fix: the base already held 999.0 there, and after RESUME WAL the view stayed active
+        // holding 1.0 over a base holding 999.0, with nothing to apply and nothing reporting it.
+        // The invalidation now runs before the commit, so the death rolls the UPDATE back, and
+        // RESUME WAL re-applies it over a view it then invalidates.
+        assertMemoryLeak(() -> {
+            createUpdateFixture();
+            final AtomicReference<String> baseAtInvalidation = new AtomicReference<>();
+            updateInvalidationHook.set(realInvalidation -> {
+                baseAtInvalidation.set(readBaseX("2026-01-01T00:00:01.000000Z"));
+                throw CairoException.critical(0).put("simulated process death at the UPDATE's live view invalidation");
+            });
+            applyUpdateThatDiesAtItsInvalidation();
+            Assert.assertEquals("the UPDATE must not commit ahead of the live view invalidation", "1.0", baseAtInvalidation.get());
+            assertBaseHoldsX("1.0");
+
+            // A restart between the death and RESUME WAL: nothing recorded an invalidation, so the
+            // view loads valid - over a base the UPDATE has NOT reached, which is what makes that
+            // right. Before the fix the base already held 999.0 here.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            assertViewValid();
+            assertBaseHoldsX("1.0");
+
+            // The apply resumes, the UPDATE lands, and the view invalidates for it. Before the fix
+            // the UPDATE's seqTxn was already applied, so RESUME WAL had nothing to re-apply and
+            // the view stayed active.
+            updateInvalidationHook.set(null);
+            execute("ALTER TABLE base RESUME WAL");
+            drainWalQueue();
+            assertBaseHoldsX("999.0");
+            assertInvalidatedByUpdate();
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testUpdateWhoseCommitFailsAfterTheInvalidationLeavesTheViewInvalid() throws Exception {
+        // The other half of the same window: the process dies after the invalidation and before the
+        // commit. The invalidation is durable by then, so the view loads invalid from its _lv.s, the
+        // UPDATE is rolled back, and RESUME WAL re-applies it over a view that is already invalid -
+        // the invalidation runs again and changes nothing. A view invalidated for an UPDATE that
+        // then lands anyway is the outcome an uninterrupted UPDATE gives it too. Before the fix the
+        // base already held 999.0 at the seam.
+        assertMemoryLeak(() -> {
+            createUpdateFixture();
+            updateInvalidationHook.set(realInvalidation -> {
+                realInvalidation.run();
+                throw CairoException.critical(0).put("simulated process death after the UPDATE's live view invalidation");
+            });
+            applyUpdateThatDiesAtItsInvalidation();
+            assertBaseHoldsX("1.0");
+            assertInvalidatedByUpdate();
+
+            // Durable ahead of the commit: a restart reads the invalidation back from _lv.s.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            assertBaseHoldsX("1.0");
+            assertInvalidatedByUpdate();
+
+            updateInvalidationHook.set(null);
+            execute("ALTER TABLE base RESUME WAL");
+            drainWalQueue();
+            assertBaseHoldsX("999.0");
+            assertInvalidatedByUpdate();
 
             execute("DROP LIVE VIEW lv");
             execute("DROP TABLE base");
@@ -894,6 +1012,75 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
     // The live view must equal the same window recomputed directly over the base table. (lv) and
     // (viewSql) share a schema (the view stores exactly its projection); ORDER BY 2, 1 (sym, ts) gives
     // both a total order and genericStringMatch tolerates the SYMBOL-vs-STRING passthrough difference.
+    // Drives the UPDATE fixture's row-rewriting UPDATE with updateInvalidationHook armed to throw at
+    // the invalidation, and asserts the apply job suspended the base on it.
+    private void applyUpdateThatDiesAtItsInvalidation() throws Exception {
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            execute("UPDATE base SET x = 999.0 WHERE ts = '2026-01-01T00:00:01.000000Z'");
+            drainWalQueue();
+            capture.drain();
+            capture.assertLogged("job failed, table suspended [table=base");
+        } finally {
+            capture.stop();
+        }
+        assertQuery("SELECT name, suspended FROM wal_tables() WHERE name = 'base'")
+                .noLeakCheck().noRandomAccess().returns("name\tsuspended\nbase\ttrue\n");
+    }
+
+    private void assertBaseHoldsX(String expected) {
+        Assert.assertEquals("base row 2026-01-01T00:00:01", expected, readBaseX("2026-01-01T00:00:01.000000Z"));
+    }
+
+    // The UPDATE's invalidation, as the view and live_views() report it; and the view's rows, which
+    // an invalid view keeps as they were - the pre-update values, the ones its query produced.
+    private void assertInvalidatedByUpdate() throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull("live view 'lv' is not registered", instance);
+        Assert.assertTrue("a base UPDATE must invalidate the LV", instance.isInvalid());
+        TestUtils.assertEquals(UpdateOperation.MAT_VIEW_INVALIDATION_REASON, instance.getInvalidationReason());
+        assertQuery("SELECT view_status, invalidation_reason FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\tinvalidation_reason\ninvalid\tupdate operation\n");
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+        }
+        Assert.assertEquals("an invalid view must not spend refresh cycles", 0, instance.getRefreshFaultCount());
+        assertQuery("SELECT ts, sym, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(UPDATE_FIXTURE_VIEW_ROWS);
+    }
+
+    // A base with two rows the view has consumed and emitted, valid and quiescent.
+    private void createUpdateFixture() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                "SELECT ts, sym, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("""
+                    INSERT INTO base (ts, sym, x, g) VALUES
+                    ('2026-01-01T00:00:01.000000Z', 'a', 1.0, 'g'),
+                    ('2026-01-01T00:00:02.000000Z', 'b', 2.0, 'g')""");
+            driveRefreshToQuiescence(job);
+            assertViewValid();
+            assertQuery("SELECT ts, sym, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(UPDATE_FIXTURE_VIEW_ROWS);
+        }
+    }
+
+    // Reads the base row at ts through a reader of its own, so it sees what the base has committed
+    // and nothing the writer holds uncommitted - including from inside the UPDATE's apply.
+    private String readBaseX(String ts) {
+        try (
+                RecordCursorFactory factory = select("SELECT x FROM base WHERE ts = '" + ts + "'");
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue("base row " + ts + " must exist", cursor.hasNext());
+            return String.valueOf(cursor.getRecord().getDouble(0));
+        } catch (SqlException e) {
+            throw new AssertionError("could not read base row " + ts, e);
+        }
+    }
+
     private void assertViewMatchesRecompute(String viewSql) throws Exception {
         TestUtils.assertSqlCursors(
                 engine,
@@ -1123,4 +1310,10 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
 
     // Pumps the refresh job until no further LV WAL work is produced, advancing the clock each pass so
     // deferred flushes land, and applying the LV's own WAL after each burst. Mirrors the fuzz harness.
+
+    // Receives the real invalidation and decides whether, and when, to run it.
+    @FunctionalInterface
+    private interface UpdateInvalidationHook {
+        void run(Runnable realInvalidation);
+    }
 }

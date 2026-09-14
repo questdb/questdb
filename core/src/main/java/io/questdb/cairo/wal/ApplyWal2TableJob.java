@@ -1004,27 +1004,30 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             }
                             return;
                         case CMD_UPDATE_TABLE:
+                            // Live views are invalidated too, but not here. An UPDATE rewrites base rows
+                            // in place, which the data-removal operations routed through the ALTER
+                            // branch above never do: those only retire settled data below the view's
+                            // replay window, so the view's already-computed rows stay consistent with
+                            // the base rows they came from. An UPDATE instead mutates the very rows a
+                            // live view derives from, and it does so only in the applied partitions -
+                            // the WAL segments the refresh worker drains keep the pre-update values.
+                            // The two sources the view reads then disagree: the forward drain emits
+                            // pre-update rows, while every recovery path (restart, O3 replay, refresh
+                            // failure) recomputes the same range from the applied base and emits
+                            // post-update rows. The view's contents would come to depend on whether a
+                            // recovery happened to run, so the view invalidates instead and the
+                            // operator recreates it.
+                            //
+                            // UpdateOperatorImpl does that BEFORE the UPDATE's commit, because the
+                            // invalidation is a write to the view's _lv.s and a process dying between
+                            // a committed UPDATE and that write would leave the view recorded valid for
+                            // good: a committed UPDATE leaves nothing in the base's metadata or txn log
+                            // for a load-time check to find. Invalidating here, after the apply
+                            // returned, is what left that window open.
                             final long rowsAffected = operationExecutor.executeUpdate(tableWriter, sql, seqTxn);
                             if (rowsAffected > 0) {
                                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                                 mvRefreshTask.invalidationReason = UpdateOperation.MAT_VIEW_INVALIDATION_REASON;
-                                // Live views must be invalidated too. An UPDATE rewrites base rows in
-                                // place, which the data-removal operations routed through the ALTER
-                                // branch above never do: those only retire settled data below the view's
-                                // replay window, so the view's already-computed rows stay consistent with
-                                // the base rows they came from. An UPDATE instead mutates the very rows a
-                                // live view derives from, and it does so only in the applied partitions -
-                                // the WAL segments the refresh worker drains keep the pre-update values.
-                                // The two sources the view reads then disagree: the forward drain emits
-                                // pre-update rows, while every recovery path (restart, O3 replay, refresh
-                                // failure) recomputes the same range from the applied base and emits
-                                // post-update rows. The view's contents would come to depend on whether a
-                                // recovery happened to run, so invalidate instead and let the operator
-                                // recreate it.
-                                engine.invalidateLiveViewsForBaseTable(
-                                        tableWriter.getTableToken(),
-                                        UpdateOperation.MAT_VIEW_INVALIDATION_REASON
-                                );
                             }
                             return;
                         default:
