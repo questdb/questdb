@@ -25,22 +25,31 @@
 package io.questdb.test.griffin.engine;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.QueryRegistry;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlExecutionLease;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.metrics.QueryTrace;
+import io.questdb.metrics.QueryTracingJob;
 import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -320,6 +329,75 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResourceGroupCpuWaitSurvivesCursorCloseAndPersistence() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "SELECT 42 AS answer";
+            try (
+                    LeaseCairoEngine ownerEngine = new LeaseCairoEngine(new DefaultTestCairoConfiguration(
+                            temp.newFolder("cpu-wait-trace").getAbsolutePath()
+                    ) {
+                        @Override
+                        public boolean isQueryTracingEnabled() {
+                            return true;
+                        }
+                    });
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(ownerEngine, 1).with(AllowAllSecurityContext.INSTANCE);
+                    RecordCursorFactory factory = ownerEngine.select(query, ownerContext);
+                    QueryTracingJob job = new QueryTracingJob(ownerEngine)
+            ) {
+                Assert.assertTrue(factory instanceof QueryProgress);
+                final QueryRegistry registry = ownerEngine.getQueryRegistry();
+                final ConcurrentQueue<QueryTrace> queue = ownerEngine.getMessageBus().getQueryTraceQueue();
+                drain(queue);
+                for (long cpuWaitNanos : new long[]{12_345, 67_890}) {
+                    final long ownerId = registry.registerOwner(query, ownerContext);
+                    final TrackingExecutionLease lease = ownerEngine.lease;
+                    try {
+                        lease.cpuWaitNanos = 1001;
+                        try (RecordCursor cursor = factory.getCursor(ownerContext)) {
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertEquals(42, cursor.getRecord().getInt(0));
+                            Assert.assertFalse(cursor.hasNext());
+                            // The trace must sample the total at close, not at cursor open.
+                            lease.cpuWaitNanos = cpuWaitNanos;
+                        }
+                        Assert.assertNotNull(registry.getEntry(ownerId));
+                        Assert.assertEquals(0, lease.closeCount);
+                    } finally {
+                        registry.unregister(ownerId, ownerContext);
+                    }
+                    Assert.assertNull(registry.getEntry(ownerId));
+                    Assert.assertEquals(1, lease.closeCount);
+                    Assert.assertEquals(Numbers.LONG_NULL, registry.getResourceGroupCpuWaitNanos(ownerId));
+
+                    final QueryTrace trace = new QueryTrace();
+                    Assert.assertTrue(queue.tryDequeue(trace));
+                    Assert.assertEquals(query, trace.queryText);
+                    Assert.assertEquals(cpuWaitNanos, trace.resourceGroupCpuWaitNanos);
+                    Assert.assertFalse(queue.tryDequeue(new QueryTrace()));
+                    // Return the production-generated trace unchanged for synchronous persistence.
+                    queue.enqueue(trace);
+                    job.run();
+                }
+                assertQuery("""
+                        SELECT resource_group_cpu_wait_micros
+                        FROM _query_trace
+                        WHERE query_text = 'SELECT 42 AS answer'
+                        ORDER BY resource_group_cpu_wait_micros
+                        """)
+                        .withEngine(ownerEngine)
+                        .withContext(ownerContext)
+                        .noLeakCheck()
+                        .returns("""
+                                resource_group_cpu_wait_micros
+                                12
+                                67
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testSuspendIsIdempotent() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab_idem AS (SELECT x FROM long_sequence(1))");
@@ -410,6 +488,49 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
     private void unregisterIfPresent(QueryRegistry registry, long queryId) {
         if (queryId >= 0 && registry.getEntry(queryId) != null) {
             registry.unregister(queryId, sqlExecutionContext);
+        }
+    }
+
+    private static final class LeaseCairoEngine extends CairoEngine {
+        private TrackingExecutionLease lease;
+
+        private LeaseCairoEngine(CairoConfiguration configuration) {
+            super(configuration);
+        }
+
+        @Override
+        public SqlExecutionLease onSqlExecutionRegistered(
+                long queryId,
+                SqlExecutionContext executionContext,
+                FiberCancellationSignal cancellationSignal,
+                long cancellationGeneration
+        ) {
+            lease = new TrackingExecutionLease();
+            return lease;
+        }
+    }
+
+    private static final class TrackingExecutionLease implements SqlExecutionLease {
+        private int closeCount;
+        private long cpuWaitNanos;
+
+        @Override
+        public void close() {
+            closeCount++;
+            cpuWaitNanos = 0;
+        }
+
+        @Override
+        public long getResourceGroupCpuWaitNanos() {
+            return cpuWaitNanos;
+        }
+
+        @Override
+        public void mount() {
+        }
+
+        @Override
+        public void unmount() {
         }
     }
 }
