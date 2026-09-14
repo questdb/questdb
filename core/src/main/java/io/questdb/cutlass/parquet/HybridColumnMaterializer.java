@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.parquet;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
@@ -251,20 +252,29 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
      */
     @Override
     public void clear() {
-        releasePinnedBuffers();
+        Throwable cleanupFailure = null;
+        try {
+            releasePinnedBuffers();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
         for (int i = 0, n = bufferPool.size(); i < n; i++) {
-            Misc.free(bufferPool.getQuick(i));
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, bufferPool.getQuick(i));
         }
         bufferPool.clear();
         for (int i = 0, n = dataBuffers.size(); i < n; i++) {
-            Misc.free(dataBuffers.getQuick(i));
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, dataBuffers.getQuick(i));
         }
         dataBuffers.clear();
         for (int i = 0, n = auxBuffers.size(); i < n; i++) {
-            Misc.free(auxBuffers.getQuick(i));
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, auxBuffers.getQuick(i));
         }
         auxBuffers.clear();
-        pageFrameMemory.clear();
+        try {
+            pageFrameMemory.clear();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
         baseColumnMap.clear();
         computedBufferIdx.clear();
         computedColumnIndices.clear();
@@ -272,18 +282,43 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         computedIsSymbolToString.clear();
         computedOutputTypes.clear();
         computedSourceTypes.clear();
-        functions = null;
+        try {
+            closeFunctions();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
         functionRecord = null;
         adjustedMetadata.clear();
         computedCount = 0;
         outputColumnCount = 0;
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     @Override
     public void close() {
-        clear();
-        Misc.free(pageFrameMemory);
-        pageFrameRecord.close();
+        Throwable cleanupFailure = Misc.clearBestEffort(null, this);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, pageFrameMemory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, pageFrameRecord);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    public void closeFunctions() {
+        final ObjList<Function> functions = this.functions;
+        this.functions = null;
+        Throwable cleanupFailure = null;
+        if (functions != null) {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                final Function function = functions.getQuick(i);
+                if (function != null) {
+                    try {
+                        function.cursorClosed();
+                    } catch (Throwable th) {
+                        cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+                    }
+                }
+            }
+        }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public GenericRecordMetadata getAdjustedMetadata() {

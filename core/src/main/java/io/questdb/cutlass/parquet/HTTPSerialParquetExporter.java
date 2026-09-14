@@ -73,10 +73,19 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         this.fullCursor = null;
         final PageFrameCursor streamingPfc = this.streamingPfc;
         this.streamingPfc = null;
-        materializer = null;
+        final HybridColumnMaterializer materializer = this.materializer;
+        this.materializer = null;
         materializerColumnData = null;
 
-        Throwable cleanupFailure = Misc.freeBestEffort(null, fullCursor);
+        Throwable cleanupFailure = null;
+        if (materializer != null) {
+            try {
+                materializer.closeFunctions();
+            } catch (Throwable th) {
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+            }
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, fullCursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingPfc);
         try {
             clearMemoryTracker();

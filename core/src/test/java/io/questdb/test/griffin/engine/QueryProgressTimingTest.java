@@ -27,17 +27,27 @@ package io.questdb.test.griffin.engine;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.griffin.QueryRegistry;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.ConcurrentQueue;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -286,6 +296,79 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
                 Assert.assertNull(registry.getEntry(id));
             } finally {
                 registry.setListener(null);
+            }
+        });
+    }
+
+    @Test
+    public void testPageFrameNextFailureReleasesMemoizedFunctionsBeforeTrackerReuse() throws Exception {
+        // Mutation caught: removing the registered page-frame cursor's terminal callback
+        // returns its tracker before the memoized projection dictionary is released.
+        assertMemoryLeak(() -> {
+            final boolean wasFunctionMemoizationAllowed = SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION;
+            SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = true;
+            try {
+                execute("CREATE TABLE tab_page_frame_memoized_failure (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO tab_page_frame_memoized_failure VALUES " +
+                        "('alpha', '2020-01-01T00:00:00.000000Z'), " +
+                        "('beta', '2020-01-02T00:00:00.000000Z')");
+
+                try (RecordCursorFactory factory = select("SELECT s::SYMBOL AS a, a AS b, a AS c FROM tab_page_frame_memoized_failure")) {
+                    Assert.assertTrue(factory instanceof QueryProgress);
+                    final QueryProgress queryProgress = (QueryProgress) factory;
+                    Assert.assertTrue(queryProgress.getBaseFactory() instanceof VirtualRecordCursorFactory);
+                    final VirtualRecordCursorFactory virtualFactory = (VirtualRecordCursorFactory) queryProgress.getBaseFactory();
+                    final HybridColumnMaterializer materializer = new HybridColumnMaterializer();
+                    final DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+                    PageFrameCursor cursor = null;
+                    try {
+                        cursor = queryProgress.getPageFrameCursorFrom(
+                                virtualFactory.getBaseFactory(),
+                                sqlExecutionContext,
+                                PartitionFrameCursorFactory.ORDER_ASC
+                        );
+                        materializer.setUpPageFrameBacked(virtualFactory, cursor, sqlExecutionContext);
+                        queryProgress.setPageFrameCursorCloseCallback(materializer::closeFunctions);
+
+                        final PageFrame firstFrame = cursor.next();
+                        Assert.assertNotNull("first partition must populate the memoized dictionary", firstFrame);
+                        materializer.buildColumnDataFromPageFrame(cursor, firstFrame, columnData);
+
+                        final TableToken tableToken = engine.verifyTableName("tab_page_frame_memoized_failure");
+                        try (Path path = new Path().of(configuration.getDbRoot()).concat(tableToken).concat("2020-01-02")) {
+                            Assert.assertTrue("second partition removal must make the next() call fail", Files.rmdir(path, true));
+                        }
+
+                        try {
+                            cursor.next();
+                            Assert.fail("second partition open must fail");
+                        } catch (CairoException ignored) {
+                        }
+
+                        Assert.assertTrue(engine.getMemoryTrackerProvider() instanceof PerQueryMemoryTrackerProvider);
+                        final PerQueryMemoryTrackerProvider provider = (PerQueryMemoryTrackerProvider) engine.getMemoryTrackerProvider();
+                        final int pooledCount = provider.getPooledCount();
+                        Assert.assertTrue("failed query must return a tracker to the provider", pooledCount > 0);
+                        final ObjList<MemoryTracker> acquiredTrackers = new ObjList<>();
+                        try {
+                            for (int i = 0; i < pooledCount; i++) {
+                                acquiredTrackers.add(provider.acquire(
+                                        sqlExecutionContext.getSecurityContext(),
+                                        -1,
+                                        MemoryTrackerWorkload.QUERY
+                                ));
+                            }
+                        } finally {
+                            Misc.freeObjList(acquiredTrackers);
+                        }
+                    } finally {
+                        Misc.free(cursor);
+                        Misc.free(materializer);
+                        Misc.free(columnData);
+                    }
+                }
+            } finally {
+                SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = wasFunctionMemoizationAllowed;
             }
         });
     }

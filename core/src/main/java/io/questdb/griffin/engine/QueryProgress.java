@@ -392,6 +392,15 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         return pageFrameCursor;
     }
 
+    /**
+     * Registers a callback that runs once before this query's page-frame cursor unregisters.
+     * Callers that retain state charged to the query tracker use it to release that state on both
+     * explicit cursor close and the automatic close after a failed {@code next()}.
+     */
+    public void setPageFrameCursorCloseCallback(Runnable callback) {
+        pageFrameCursor.setCloseCallback(callback);
+    }
+
     @Override
     public int getScanDirection() {
         return base.getScanDirection();
@@ -556,6 +565,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     class RegisteredPageFrameCursor implements PageFrameCursor {
         private PageFrameCursor baseCursor;
+        private Runnable closeCallback;
         private boolean isOpen = false;
 
         private RegisteredPageFrameCursor() {
@@ -620,6 +630,10 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             this.isOpen = true;
         }
 
+        public void setCloseCallback(Runnable callback) {
+            this.closeCallback = callback;
+        }
+
         // Qodana false positive
         @SuppressWarnings("unused")
         @Override
@@ -663,8 +677,18 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             if (!isOpen && th == null) {
                 return;
             }
+            Throwable cleanupFailure = th;
+            isOpen = false;
+            final Runnable closeCallback = this.closeCallback;
+            this.closeCallback = null;
+            if (closeCallback != null) {
+                try {
+                    closeCallback.run();
+                } catch (Throwable th0) {
+                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th0);
+                }
+            }
             try {
-                isOpen = false;
                 baseCursor = Misc.free(baseCursor);
             } catch (Throwable th0) {
                 LOG.critical()
@@ -674,8 +698,9 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                         .$(", error=").$(th0)
                         .I$();
             } finally {
-                unregisterAndCleanup(th);
+                unregisterAndCleanup(cleanupFailure);
             }
+            CairoException.rethrowCleanupFailure(cleanupFailure);
         }
     }
 

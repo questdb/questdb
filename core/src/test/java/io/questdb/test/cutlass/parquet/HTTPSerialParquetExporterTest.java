@@ -24,9 +24,14 @@
 
 package io.questdb.test.cutlass.parquet;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.ColumnMapping;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -36,16 +41,20 @@ import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
 import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LogCapture;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
@@ -138,6 +147,41 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaterializerCloseContinuesAfterCursorClosedFailure() throws Exception {
+        // Mutation caught: returning from the first throwing cursorClosed() callback
+        // strands later projection callbacks and stops the materializer's remaining cleanup.
+        assertMemoryLeak(() -> {
+            final RuntimeException firstFailure = new RuntimeException("first cursor close");
+            final CursorClosedTrackingFunction first = new CursorClosedTrackingFunction(firstFailure);
+            final CursorClosedTrackingFunction second = new CursorClosedTrackingFunction(null);
+            final HybridColumnMaterializer materializer = new HybridColumnMaterializer();
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
+            materializer.setUp(metadata);
+
+            final ObjList<Function> functions = new ObjList<>();
+            functions.add(first);
+            functions.add(second);
+            setFunctions(materializer, functions);
+
+            try {
+                materializer.close();
+                Assert.fail("the first cursorClosed() failure must be preserved");
+            } catch (RuntimeException e) {
+                Assert.assertSame(firstFailure, e);
+            }
+
+            Assert.assertEquals(1, first.cursorClosedCount);
+            Assert.assertEquals("later functions must close after an earlier failure", 1, second.cursorClosedCount);
+            Assert.assertEquals("clear() must finish after the callback failure", 0, materializer.getAdjustedMetadata().getColumnCount());
+
+            materializer.close();
+            Assert.assertEquals("detached callbacks must not run twice", 1, first.cursorClosedCount);
+            Assert.assertEquals("detached callbacks must not run twice", 1, second.cursorClosedCount);
+        });
+    }
+
+    @Test
     public void testTimerForwardingUsesOnlyLiveExportModeOwner() throws Exception {
         assertMemoryLeak(() -> {
             final ProbeTask task = new ProbeTask();
@@ -187,6 +231,33 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
                 task.close();
             }
         });
+    }
+
+    private static void setFunctions(HybridColumnMaterializer materializer, ObjList<Function> functions) throws NoSuchFieldException {
+        final Field field = HybridColumnMaterializer.class.getDeclaredField("functions");
+        Unsafe.putObject(materializer, Unsafe.objectFieldOffset(field), functions);
+    }
+
+    private static final class CursorClosedTrackingFunction extends LongFunction {
+        private final RuntimeException failure;
+        private int cursorClosedCount;
+
+        private CursorClosedTrackingFunction(RuntimeException failure) {
+            this.failure = failure;
+        }
+
+        @Override
+        public void cursorClosed() {
+            cursorClosedCount++;
+            if (failure != null) {
+                throw failure;
+            }
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return 0;
+        }
     }
 
     private static final class ProbeTask extends CopyExportRequestTask {

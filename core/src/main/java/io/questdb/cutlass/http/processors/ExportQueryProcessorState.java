@@ -120,6 +120,11 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
                 cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
             }
         }
+        try {
+            materializer.closeFunctions();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
         final RecordCursor cursor = this.cursor;
         this.cursor = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
@@ -190,6 +195,11 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             } catch (Throwable th) {
                 cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
             }
+        }
+        try {
+            materializer.closeFunctions();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
         }
         final RecordCursor cursor = this.cursor;
         this.cursor = null;
