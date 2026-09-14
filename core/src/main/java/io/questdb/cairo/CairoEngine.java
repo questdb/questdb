@@ -1032,6 +1032,44 @@ public class CairoEngine implements Closeable, WriterSource {
                                             .$(", view=").$(tableToken)
                                             .I$();
                                     instance.markInvalid("base table is not WAL table", nowUs);
+                                } else if (!isReadOnlyMode()) {
+                                    // ApplyWal2TableJob commits a structural change to the base writer
+                                    // and only then invalidates the dependent views, and it can only
+                                    // invalidate views the registry holds. A process that dies between
+                                    // the two, or a change applied while the refresh pool was off and
+                                    // nothing was registered, leaves the base changed under a view _lv.s
+                                    // still records valid - and the refresh worker compiles the
+                                    // view's SQL against the base's CURRENT metadata, so nothing faults
+                                    // on the change and the view goes on emitting rows its query was
+                                    // never created against. Ask the apply side's question here, against
+                                    // the metadata the base has applied.
+                                    //
+                                    // Not on a read-only node: a replica can register a view before its
+                                    // base has applied the changes the primary's CREATE compiled against,
+                                    // so a base BEHIND the definition reads exactly like a base that moved
+                                    // past it, and invalidating is terminal there.
+                                    final String brokenColumn = findBrokenLiveViewDependency(instance, baseTableToken);
+                                    if (brokenColumn != null) {
+                                        final String reason = LiveViewInstance.BROKEN_DEPENDENCY_INVALIDATION_REASON
+                                                + " [column=" + brokenColumn + ']';
+                                        LOG.info().$("base table no longer resolves a column the live view references, invalidating [table=")
+                                                .$safe(definition.getBaseTableName())
+                                                .$(", view=").$(tableToken)
+                                                .$(", column=").$safe(brokenColumn)
+                                                .I$();
+                                        if (tornStateRecovered) {
+                                            // The rewrite below persists the reconstructed state with
+                                            // this invalidation in it; an append into the torn file
+                                            // would only fail first.
+                                            instance.markInvalid(reason, nowUs);
+                                        } else {
+                                            // Durable, like the apply-side invalidation it stands in
+                                            // for: re-deriving it on every load would bring the view
+                                            // back valid once the column is retyped back, over base
+                                            // rows the round trip may have changed.
+                                            invalidateLiveView(instance, reason);
+                                        }
+                                    }
                                 }
                             }
                             if (tornStateRecovered) {
@@ -4359,6 +4397,38 @@ public class CairoEngine implements Closeable, WriterSource {
                 enqueueCompileView(tableToken);
             }
             return tableToken;
+        }
+    }
+
+    /**
+     * Returns the first column {@code instance} references that the base's applied metadata no
+     * longer resolves under the same name and type, or {@code null} when every one resolves or the
+     * metadata could not be read. The load-time counterpart of the check
+     * {@link #invalidateLiveViewsForBaseSchemaChange} runs after each structural apply.
+     * <p>
+     * A read that fails is not a decision: the base can be unreadable for reasons unrelated to the
+     * view, and the view would otherwise invalidate for good over a doubt. The refresh worker opens
+     * the base for real on its first cycle and faults loudly if it truly is unreadable.
+     */
+    private @Nullable String findBrokenLiveViewDependency(LiveViewInstance instance, TableToken baseTableToken) {
+        try (TableReaderMetadata baseMetadata = new TableReaderMetadata(configuration, baseTableToken)) {
+            baseMetadata.loadMetadata();
+            return instance.findFirstMissingOrRetypedColumn(baseMetadata);
+        } catch (Throwable th) {
+            if (th instanceof VirtualMachineError) {
+                throw th;
+            }
+            final LogRecord rec = LOG.error().$("could not read base table metadata to check live view dependencies, proceeding [view=")
+                    .$(instance.getLiveViewToken())
+                    .$(", table=").$(baseTableToken);
+            if (th instanceof CairoException ce) {
+                rec.$(", errno=").$(ce.getErrno())
+                        .$(", msg=").$safe(ce.getFlyweightMessage());
+            } else {
+                rec.$(", msg=").$safe(th.getMessage());
+            }
+            rec.I$();
+            return null;
         }
     }
 

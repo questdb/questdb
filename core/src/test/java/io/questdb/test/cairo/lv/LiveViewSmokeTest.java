@@ -1721,10 +1721,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     //
     // ApplyWal2TableJob applies the metadata change to the writer BEFORE it calls
     // invalidateLiveViewsForBaseSchemaChange, so a refresh worker can reach the re-derive over a
-    // retyped referenced column while the invalidation is still in flight. The registry clear
-    // reproduces that window deterministically: with no registered instance the apply-side
-    // invalidation has nothing to mark, and buildViewGraphs reloads the view - still VALID, still
-    // carrying the dependency types it compiled against.
+    // retyped referenced column while the invalidation is still in flight. The fixture reproduces
+    // that window deterministically: it reloads the view first, as a restart does, so the instance
+    // holds no compiled factory and its first compile reads the base's current metadata - the replay
+    // then raises no drift that could stand in for the entry check - and applies the retype with
+    // that reloaded instance off the fan-out index, so the apply-side invalidation has nothing to
+    // mark. The order matters: a retype applied before the reload is caught by buildViewGraphs' own
+    // load-time dependency check, which invalidates the view before any refresh runs.
     //
     // The WAL loss is the plain one: the applied base TABLE survives, its WAL directory does not,
     // which is what a backup restore leaves behind. That reaches the very same door as the
@@ -1756,12 +1759,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 30, 'a')");
         drainWalQueue();
 
-        // The view is not registered while the retype applies, so the apply-side invalidation
-        // finds nothing to mark and the reloaded view comes back VALID over drifted metadata.
+        // The reloaded view is off the fan-out index while the retype applies, so the apply-side
+        // invalidation finds nothing to mark and the view stays VALID over drifted metadata.
         engine.getLiveViewRegistry().clear();
+        engine.buildViewGraphs();
+        final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(reloaded);
+        Assert.assertSame(reloaded, engine.getLiveViewRegistry().removeView("lv"));
         execute("ALTER TABLE base ALTER COLUMN x TYPE LONG");
         drainWalQueue();
-        engine.buildViewGraphs();
+        engine.getLiveViewRegistry().registerView(reloaded);
 
         // Same restore gap as testRestoredViewRederivesFromAppliedBaseWhenBaseWalIsGone: the
         // applied base table survives, its WAL segments do not. releaseInactive frees the pooled

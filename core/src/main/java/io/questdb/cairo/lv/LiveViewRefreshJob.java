@@ -15333,7 +15333,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (brokenColumn == null) {
             return false;
         }
-        instance.setPendingInvalidationReason("base schema change to a referenced column [column=" + brokenColumn + ']');
+        instance.setPendingInvalidationReason(LiveViewInstance.BROKEN_DEPENDENCY_INVALIDATION_REASON + " [column=" + brokenColumn + ']');
         LOG.critical().$("live view cannot re-derive from the applied base across a base schema change to a referenced column [view=")
                 .$(viewName)
                 .$(", column=").$safe(brokenColumn)
@@ -15467,10 +15467,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * The rebuild refuses outright when the base's applied metadata no longer resolves every column
      * the view REFERENCES under the same name AND type
-     * ({@link #isRederiveRefusedForBrokenDependency}). A restart makes that reachable with no drift
+     * ({@link #isRederiveRefusedForBrokenDependency}). A reload makes that reachable with no drift
      * exception to stop it: a reloaded view has no compiled factory, so
      * {@code ensureCompiledFactory} compiles it against the base's CURRENT metadata and the replay
-     * runs clean.
+     * runs clean. {@code CairoEngine.buildViewGraphs} asks the same question when a writable node
+     * loads the view, so what still arrives here that way is a read-only node's restart, where the
+     * load skips the check, or a structural change landing between the load and the view's first
+     * compile, inside the window the apply side leaves before its own invalidation.
      * <p>
      * That question is asked TWICE, against freshly read metadata each time: once before the replay,
      * and again inside the drift catch below, before the recompile. The second ask earns its keep

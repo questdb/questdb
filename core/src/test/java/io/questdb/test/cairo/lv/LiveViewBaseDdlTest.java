@@ -25,23 +25,31 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * DDL-on-base-table behaviour for live views. Focuses on schema changes that are
@@ -64,6 +72,20 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
     // First data timestamp (2026-01-01). Data sits well above the pinned test clock,
     // which starts at 0 and only creeps forward 250ms per refresh pass.
     private static final long DATA_EPOCH = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+    // A test-controlled read-only flip. The OSS engine reads a static isReadOnlyInstance() flag; the
+    // injected engine below ORs this in, so a load can run as a read-only node's. Reset before every test.
+    private static final AtomicBoolean isReadOnly = new AtomicBoolean();
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
+            @Override
+            public boolean isReadOnlyMode() {
+                return isReadOnly.get() || super.isReadOnlyMode();
+            }
+        };
+        AbstractCairoTest.setUpStatic();
+    }
 
     // Pin the test clock below all test data before each test. A non-SEED view's
     // lower bound is the CREATE wall-clock moment, and the forward-append refresh path
@@ -72,6 +94,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
     @Before
     public void pinClockBelowTestData() {
         setCurrentMicros(0L);
+        isReadOnly.set(false);
     }
 
     @Test
@@ -399,7 +422,12 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
                     instance.isInvalid()
             );
 
+            // The _lv.s on disk still records the view valid, so the restart is what re-derives the
+            // invalidation - through the load-time dependency check, which names the column under
+            // its own reason since it cannot know which operation dropped it. Before that check the
+            // restart loaded the view valid over a base with no price column.
             failLvStateWrite.set(false);
+            restartAndAssertInvalidatedOnLoad("price");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -415,6 +443,228 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
         assertReferencedColumnOpNamesColumn("ALTER TABLE base DROP COLUMN price", "drop column operation", "price");
         assertReferencedColumnOpNamesColumn("ALTER TABLE base RENAME COLUMN price TO cost", "rename column operation", "price");
         assertReferencedColumnOpNamesColumn("ALTER TABLE base ALTER COLUMN price TYPE LONG", "change column type operation", "price");
+    }
+
+    @Test
+    public void testLoadInvalidatesAViewOverARetypeItsInvalidationMissed() throws Exception {
+        // ApplyWal2TableJob commits a structural change to the base writer and only then invalidates
+        // the dependent views, so a process that dies between the two leaves the base retyped and the
+        // view's _lv.s recording it valid. applyAlterMissedByInvalidation reproduces exactly that
+        // on-disk state. A restart then loaded the view valid, and the refresh worker compiled its SQL
+        // against the base's current metadata, where nothing faults on the change.
+        //
+        // Measured on this fixture before the load-time check: the view stayed active with no refresh
+        // fault, and after the restart it served m = 5000000000 for the row it computed over x LONG
+        // and m = 705032704 for a later row with the same x = 5000 - x * 1_000_000 had become INT
+        // arithmetic, and it wrapped. A later out-of-order row rebuilt the whole view through the new
+        // schema, so every x = 5000 row then read 705032704. The apply side, had it run, would have
+        // invalidated the view for a referenced-column retype.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS
+                    SELECT ts, sym, x, x * 1_000_000 AS m,
+                    count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn
+                    FROM base""");
+            final String viewRows = """
+                    ts\tsym\tx\tm\trn
+                    2026-01-01T00:00:01.000000Z\ta\t5000\t5000000000\t1
+                    2026-01-01T00:00:02.000000Z\ta\t3\t3000000\t2
+                    """;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("""
+                        INSERT INTO base VALUES
+                        ('2026-01-01T00:00:01.000000Z', 'a', 5_000),
+                        ('2026-01-01T00:00:02.000000Z', 'a', 3)""");
+                driveRefreshToQuiescence(job);
+                assertViewValid();
+                assertQuery("SELECT ts, sym, x, m, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(viewRows);
+            }
+
+            applyAlterMissedByInvalidation("ALTER TABLE base ALTER COLUMN x TYPE INT");
+            final LiveViewInstance instance = restartAndAssertInvalidatedOnLoad("x");
+
+            // An invalid view never refreshes, so neither a forward row nor an out-of-order one reaches
+            // it: the rows stay the ones the view's own schema produced.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-01-01T00:00:03.000000Z', 'a', 5_000)");
+                driveRefreshToQuiescence(job);
+                execute("INSERT INTO base VALUES ('2026-01-01T00:00:01.500000Z', 'a', 7)");
+                driveRefreshToQuiescence(job);
+            }
+            Assert.assertEquals("the load must invalidate before any refresh faults", 0, instance.getRefreshFaultCount());
+            assertQuery("SELECT ts, sym, x, m, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(viewRows);
+
+            // Durable, like the apply-side invalidation: once x is LONG again the load check passes, so
+            // only the _lv.s the first load wrote keeps the view invalid - over a base whose rows the
+            // round trip could have changed.
+            execute("ALTER TABLE base ALTER COLUMN x TYPE LONG");
+            drainWalQueue();
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                capture.drain();
+                capture.assertNotLogged("base table no longer resolves a column the live view references");
+            } finally {
+                capture.stop();
+            }
+            assertInvalidatedOnLoad("x");
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testLoadKeepsAViewValidOverAnUnreferencedChangeItsInvalidationMissed() throws Exception {
+        // The load-time check asks the apply side's question, not a broader one: a missed retype of a
+        // column the view never reads must leave it valid, restore it from its timeline and let it keep
+        // refreshing to the same rows a recompute gives.
+        final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts "
+                + "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s FROM base";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("""
+                        INSERT INTO base (ts, sym, x, y) VALUES
+                        ('2026-01-01T00:00:01.000000Z', 'a', 1.0, 1),
+                        ('2026-01-01T00:00:02.000000Z', 'b', 2.0, 2)""");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(viewSql);
+            }
+
+            applyAlterMissedByInvalidation("ALTER TABLE base ALTER COLUMN y TYPE LONG");
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                assertViewValid();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    execute("INSERT INTO base (ts, sym, x, y) VALUES ('2026-01-01T00:00:03.000000Z', 'a', 3.0, 3)");
+                    driveRefreshToQuiescence(job);
+                    capture.waitFor("restored live view from checkpoint timeline [view=lv");
+                }
+                capture.assertNotLogged("base table no longer resolves a column the live view references");
+            } finally {
+                capture.stop();
+            }
+            assertViewValid();
+            assertViewMatchesRecompute(viewSql);
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testLoadNamesTheReferencedColumnADropOrRenameMissed() throws Exception {
+        // A dropped or renamed referenced column does not produce wrong rows after such a restart: the
+        // view's SQL no longer compiles. Before the load-time check the restart loaded the view valid,
+        // every refresh cycle faulted on the compile, and the fifth invalidated the view under
+        // "flush retry budget exhausted" - five critical faults and a reason that names nothing an
+        // operator can act on. The load now invalidates it before its first cycle, naming the column.
+        assertLoadNamesMissedColumn("ALTER TABLE base DROP COLUMN price", "price");
+        assertLoadNamesMissedColumn("ALTER TABLE base RENAME COLUMN price TO cost", "price");
+    }
+
+    @Test
+    public void testLoadOnAReadOnlyNodeDoesNotDecideOnAMissedRetype() throws Exception {
+        // A read-only node skips the load-time check. A replica can register a view before its base has
+        // applied the changes the primary's CREATE compiled against, so there a base BEHIND the view's
+        // definition reads exactly like a base that moved past it - and an invalidation on a replica is
+        // terminal, with no DROP and re-CREATE to undo it. The flip is synthetic: the injected engine
+        // reports read-only for the load alone, over the on-disk state a missed retype leaves.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, price INT, size INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, price, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE price > 0");
+            applyAlterMissedByInvalidation("ALTER TABLE base ALTER COLUMN price TYPE LONG");
+
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            isReadOnly.set(true);
+            try {
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                capture.drain();
+                capture.assertNotLogged("base table no longer resolves a column the live view references");
+            } finally {
+                isReadOnly.set(false);
+                capture.stop();
+            }
+            assertViewValid();
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testLoadThatCannotReadTheBaseMetadataKeepsTheViewValid() throws Exception {
+        // A base metadata read that fails is a doubt, not a decision: the base can be unreadable for
+        // reasons that have nothing to do with the view, and an invalidation is terminal. The load logs
+        // it and registers the view as it would have, and the refresh worker, which opens the base for
+        // real, is what faults if the base truly is unreadable. The failure must not escape either -
+        // the load's outer catch would register the view as a state_unreadable stub.
+        final AtomicReference<String> failMetaReadSuffix = new AtomicReference<>();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                final String suffix = failMetaReadSuffix.get();
+                if (suffix != null && Utf8s.endsWithAscii(name, suffix)) {
+                    // An I/O error rather than a missing file: TableReaderMetadata spins on a missing
+                    // _meta until the spin-lock timeout, which these tests raise to a simulated year.
+                    throw CairoException.critical(5).put("test base metadata read fault");
+                }
+                return super.openRO(name);
+            }
+        };
+        final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts "
+                + "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s FROM base";
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-01T00:00:01.000000Z', 'a', 1.0)");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(viewSql);
+            }
+
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            failMetaReadSuffix.set(Files.SEPARATOR + engine.verifyTableName("base").getDirName()
+                    + Files.SEPARATOR + TableUtils.META_FILE_NAME);
+            try {
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                capture.drain();
+                capture.assertLogged("could not read base table metadata to check live view dependencies, proceeding [view=lv");
+            } finally {
+                failMetaReadSuffix.set(null);
+                capture.stop();
+            }
+            assertQuery("SELECT view_status, invalidation_reason FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_status\tinvalidation_reason
+                            active\t
+                            """);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-01T00:00:02.000000Z', 'a', 2.0)");
+                driveRefreshToQuiescence(job);
+            }
+            assertViewValid();
+            assertViewMatchesRecompute(viewSql);
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
     }
 
     @Test
@@ -664,6 +914,79 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
                 "LV must stay valid across the unreferenced change",
                 engine.getLiveViewRegistry().getViewInstance("lv").isInvalid()
         );
+    }
+
+    // Applies a base ALTER with the view off the registry's fan-out index, so the apply-side
+    // invalidation misses it and _lv.s goes on recording the view valid over the changed base. That
+    // is the on-disk state a process dying between the ALTER's commit and the invalidation leaves,
+    // and the one an ALTER applied while the refresh pool was off leaves, with no view registered.
+    private void applyAlterMissedByInvalidation(String alterSql) throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull("live view 'lv' is not registered", instance);
+        Assert.assertSame(instance, engine.getLiveViewRegistry().removeView("lv"));
+        execute(alterSql);
+        drainWalQueue();
+        engine.getLiveViewRegistry().registerView(instance);
+        Assert.assertFalse("the apply-side invalidation must have missed the unregistered view", instance.isInvalid());
+    }
+
+    private void assertInvalidatedOnLoad(String column) throws Exception {
+        // The literal rather than LiveViewInstance.BROKEN_DEPENDENCY_INVALIDATION_REASON: an operator
+        // reads this string in live_views(), so a change to it should fail here.
+        final String reason = "base schema change to a referenced column [column=" + column + ']';
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull("live view 'lv' is not registered", instance);
+        Assert.assertTrue("the load must invalidate a view whose referenced column broke", instance.isInvalid());
+        TestUtils.assertEquals(reason, instance.getInvalidationReason());
+        assertQuery("SELECT view_status, invalidation_reason FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\tinvalidation_reason\ninvalid\t" + reason + '\n');
+    }
+
+    private void assertLoadNamesMissedColumn(String alterSql, String column) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, price INT, size INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS "
+                    + "SELECT ts, price, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE price > 0");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, price, size, g) VALUES ('2026-01-01T00:00:01.000000Z', 10, 1, 'a')");
+                driveRefreshToQuiescence(job);
+                assertViewValid();
+            }
+
+            applyAlterMissedByInvalidation(alterSql);
+            final LiveViewInstance instance = restartAndAssertInvalidatedOnLoad(column);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, size, g) VALUES ('2026-01-01T00:00:02.000000Z', 2, 'a')");
+                driveRefreshToQuiescence(job);
+            }
+            Assert.assertEquals("an invalid view must not spend refresh cycles [" + alterSql + ']',
+                    0, instance.getRefreshFaultCount());
+            // Still the load's reason: no retry budget overwrote it.
+            assertInvalidatedOnLoad(column);
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    // Rebuilds the registry from disk, as a restart does, and asserts the load invalidated the view
+    // for a broken referenced column before any refresh cycle ran.
+    private LiveViewInstance restartAndAssertInvalidatedOnLoad(String column) throws Exception {
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            capture.drain();
+            capture.assertLogged("base table no longer resolves a column the live view references, invalidating [table=base, view=lv");
+            capture.assertLogged(", column=" + column + ']');
+        } finally {
+            capture.stop();
+        }
+        assertInvalidatedOnLoad(column);
+        return engine.getLiveViewRegistry().getViewInstance("lv");
     }
 
     private void assertReferencedColumnOpNamesColumn(String alterSql, String opReason, String columnName) throws Exception {

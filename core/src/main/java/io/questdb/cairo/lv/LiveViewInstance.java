@@ -71,6 +71,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * WAL writer pool per FLUSH cycle rather than being owned by the instance.
  */
 public class LiveViewInstance implements QuietCloseable {
+    // The invalidation reason for a referenced base column that no longer resolves under its name
+    // and type, when the operation that broke it is not known: the refresh worker's rebuilds and the
+    // load-time check both append " [column=<name>]". The apply side names its operation instead.
+    public static final String BROKEN_DEPENDENCY_INVALIDATION_REASON = "base schema change to a referenced column";
     public static final int CHECKPOINT_REPAIR_CORRECTION_TS = 1;
     public static final int CHECKPOINT_REPAIR_HIGH_TS = 3;
     public static final int CHECKPOINT_REPAIR_IN_PROGRESS = 0;

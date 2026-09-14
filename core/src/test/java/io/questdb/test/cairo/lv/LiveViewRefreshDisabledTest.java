@@ -63,6 +63,56 @@ public class LiveViewRefreshDisabledTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testBaseRetypeWhileUnattendedInvalidatesTheViewOnceRefreshReturns() throws Exception {
+        // The apply side invalidates a view over a referenced-column retype by walking the registry,
+        // and an unattended view is not in it. So a retype applied while the refresh pool was off went
+        // unnoticed, and the next start with a worker loaded the view valid and refreshed it over a
+        // schema its SELECT was never created against. The load-time dependency check invalidates it
+        // before the first cycle, naming the column.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = start("1")) {
+                serverMain.execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+                serverMain.execute("""
+                        INSERT INTO base VALUES
+                        (1, '2024-01-01T00:00:00.000000Z'),
+                        (2, '2024-01-01T00:00:01.000000Z'),
+                        (3, '2024-01-01T00:00:02.000000Z')""");
+                TestUtils.assertEventually(
+                        () -> serverMain.assertSql("SELECT count(*) FROM base", "count\n3\n"),
+                        30
+                );
+                serverMain.execute(CREATE_LIVE_VIEW);
+                TestUtils.assertEventually(
+                        () -> serverMain.assertSql("SELECT count(*) FROM lv", "count\n3\n"),
+                        60
+                );
+                serverMain.assertSql("SELECT view_status FROM live_views()", "view_status\nactive\n");
+            }
+
+            try (final TestServerMain serverMain = start("0")) {
+                serverMain.execute("ALTER TABLE base ALTER COLUMN val TYPE LONG");
+                TestUtils.assertEventually(
+                        () -> serverMain.assertSql(
+                                "SELECT \"type\" FROM table_columns('base') WHERE \"column\" = 'val'",
+                                "type\nLONG\n"
+                        ),
+                        30
+                );
+            }
+
+            try (final TestServerMain serverMain = start("1")) {
+                serverMain.assertSql(
+                        "SELECT view_status, invalidation_reason FROM live_views()",
+                        "view_status\tinvalidation_reason\n" +
+                                "invalid\tbase schema change to a referenced column [column=val]\n"
+                );
+                // An invalid view stays queryable, with the rows its own schema produced.
+                serverMain.assertSql("SELECT count(*) FROM lv", "count\n3\n");
+            }
+        });
+    }
+
+    @Test
     public void testCreateLiveViewIsRejectedWithoutARefreshWorker() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = start("0")) {
