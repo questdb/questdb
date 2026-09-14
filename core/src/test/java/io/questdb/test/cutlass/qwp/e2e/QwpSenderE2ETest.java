@@ -1979,27 +1979,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testCoercionToStringAndVarcharFromIPv4() throws Exception {
+    public void testSchemaAwareConversionToStringAndVarcharFromIPv4() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_ipv4_to_string_varchar";
-            // QwpFixedWidthColumnCursor reads TYPE_IPV4 wire data (4-byte
-            // int). When a client targets a pre-existing STRING or VARCHAR
-            // column with ipv4Column(...), appendToWalColumnar dispatches
-            // through the QwpFixedWidthColumnCursor arm of the STRING /
-            // VARCHAR switch. isIntegerWireType(qwpType) returns false for
-            // TYPE_IPV4 (the helper only covers BYTE/SHORT/INT/LONG), so
-            // the cursor falls into putFixedOtherToStringColumn /
-            // putFixedOtherToVarcharColumn, whose per-row formatter
-            // (formatFixedOtherValue) had no TYPE_IPV4 arm and threw
-            // "unsupported wire type for string conversion: 24" mid-row.
-            //
-            // After the fix, TYPE_IPV4 is formatted as a dotted-quad via
-            // Numbers.intToIPv4Sink and round-trips cleanly through both
-            // STRING and VARCHAR target columns. The IPv4 NULL sentinel
-            // (0) also round-trips as SQL NULL: the cursor's sentinel-null
-            // arm (added in the same series of fixes) classifies bit
-            // pattern 0 as null, so the per-row formatter is never called
-            // for that row.
+            // Schema mode formats IPv4 values on the client and sends native
+            // text wire data to pre-existing STRING and VARCHAR columns.
             execute("CREATE TABLE " + table + " ("
                     + "addr_str STRING, addr_vc VARCHAR, ts TIMESTAMP"
                     + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2009,8 +1993,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                         .ipv4Column("addr_str", 0xC0A80101)         // 192.168.1.1
                         .ipv4Column("addr_vc", 0xC0A80101)
                         .at(1_000_000, ChronoUnit.MICROS);
-                // Sentinel row: bit pattern 0 must surface as SQL NULL on
-                // both targets, not as "0.0.0.0".
+                // Packed zero becomes a bitmap NULL for both text targets.
                 sender.table(table)
                         .ipv4Column("addr_str", 0)
                         .ipv4Column("addr_vc", 0)
