@@ -144,6 +144,7 @@ public class Overrides {
     public static void assumeDurableCommitMode() {
         assumeCommitMode(CommitMode.SYNC, CommitMode.ASYNC, CommitMode.ADAPTIVE);
     }
+
     private final Properties defaultProperties = new Properties();
     private final Properties properties = new Properties();
     private boolean changed = true;
