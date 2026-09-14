@@ -41,6 +41,7 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -1224,28 +1225,100 @@ public class FuzzRunner {
                     walWriter.goActive(transaction.structureVersion);
                     if (walWriter.getMetadataVersion() != transaction.structureVersion) {
                         throw CairoException.critical(0)
-                                .put("cannot update wal writer to correct structure version");
+                                .put("cannot update wal writer to correct structure version [table=").put(tableName)
+                                .put(", writerTableName=").put(walWriter.getTableToken().getTableName())
+                                .put(", writerVersion=").put(walWriter.getMetadataVersion())
+                                .put(", expectedVersion=").put(transaction.structureVersion)
+                                .put(", opIndex=").put(opIndex)
+                                .put(']');
                     }
 
                     boolean increment = false;
+                    final String walDirName;
 
                     if (transaction.reopenTable) {
-                        TableToken updatedTableToken = engine.getTableTokenByDirName(walWriter.getTableToken().getDirName());
+                        walDirName = walWriter.getTableToken().getDirName();
+                        TableToken updatedTableToken = engine.getTableTokenByDirName(walDirName);
                         if (updatedTableToken == null) {
                             throw new IllegalStateException("table is missing after reopen [table=" + tableName + "]");
                         }
                         updatedTableName = updatedTableToken.getTableName();
+                    } else {
+                        walDirName = null;
                     }
 
-                    for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
-                        FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                        increment |= operation.apply(tempRnd, engine, walWriter, -1, null);
+                    for (int attempt = 0; ; attempt++) {
+                        try {
+                            increment = false;
+                            for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
+                                FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
+                                increment |= operation.apply(tempRnd, engine, walWriter, -1, null);
+                            }
+
+                            if (!transaction.reopenTable) {
+                                if (transaction.rollback) {
+                                    assert !transaction.hasReplaceRange();
+                                    walWriter.rollback();
+                                } else {
+                                    if (transaction.hasReplaceRange()) {
+                                        walWriter.commitWithParams(
+                                                transaction.getReplaceLoTs(),
+                                                transaction.getReplaceHiTs(),
+                                                WAL_DEDUP_MODE_REPLACE_RANGE
+                                        );
+                                        increment = true;
+                                    } else {
+                                        walWriter.commit();
+                                    }
+                                }
+                            }
+                            break;
+                        } catch (TableReferenceOutOfDateException ex) {
+                            // Product contract on rename races: the writer marks itself distressed and
+                            // the caller re-resolves the table and retries with a fresh writer, same as
+                            // the ILP path does. The commit never allocated a txn, so re-applying the
+                            // operations keeps single application. A concurrently released and reopened
+                            // sequencer can also resurrect with a stale token; resync it like the
+                            // replica rename apply does before retrying.
+                            if (transaction.reopenTable || attempt >= 2) {
+                                throw ex;
+                            }
+                            TableToken currentToken = engine.getTableTokenByDirName(walWriter.getTableToken().getDirName());
+                            if (currentToken == null) {
+                                throw ex;
+                            }
+                            LOG.info().$("retrying transaction after table reference out of date [table=").$(currentToken)
+                                    .$(", opIndex=").$(opIndex)
+                                    .$(", attempt=").$(attempt)
+                                    .I$();
+                            engine.getTableSequencerAPI().applyRename(currentToken);
+                            synchronized (writers) {
+                                writers.get(writerIndex).close();
+                                walWriter = (WalWriter) engine.getTableWriterAPI(currentToken.getTableName(), "apply trans test");
+                                writers.setQuick(writerIndex, walWriter);
+                            }
+                        }
                     }
 
                     if (transaction.reopenTable) {
+                        // The operation may have changed the table identity:
+                        // - drop/create keeps the table name, the dir name changes;
+                        // - rename keeps the dir name, the table name changes.
+                        // Re-resolve by dir name after the operation to pick up renames. When the
+                        // dir is gone, the table was dropped and recreated under the pre-apply name.
+                        TableToken postApplyToken = engine.getTableTokenByDirName(walDirName);
+                        boolean renamed = postApplyToken != null && !postApplyToken.getTableName().equals(updatedTableName);
+                        if (renamed) {
+                            updatedTableName = postApplyToken.getTableName();
+                        }
                         synchronized (writers) {
                             for (int ii = 0; ii < writers.size(); ii++) {
-                                if (writers.get(ii).getTableToken().getTableName().equals(updatedTableName)) {
+                                // After a rename writer tokens are stale, match by dir name; table
+                                // names can be reused, another table may own the old name by now.
+                                boolean match = renamed
+                                        ? writers.get(ii).getTableToken().getDirName().equals(walDirName)
+                                        : writers.get(ii).getTableToken().getTableName().equals(updatedTableName);
+                                if (match) {
                                     writers.get(ii).close();
                                     writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(updatedTableName, "apply trans test"));
                                 }
@@ -1253,22 +1326,6 @@ public class FuzzRunner {
                         }
                         forceReaderReload.incrementAndGet();
                         engine.releaseInactive();
-                    } else {
-                        if (transaction.rollback) {
-                            assert !transaction.hasReplaceRange();
-                            walWriter.rollback();
-                        } else {
-                            if (transaction.hasReplaceRange()) {
-                                walWriter.commitWithParams(
-                                        transaction.getReplaceLoTs(),
-                                        transaction.getReplaceHiTs(),
-                                        WAL_DEDUP_MODE_REPLACE_RANGE
-                                );
-                                increment = true;
-                            } else {
-                                walWriter.commit();
-                            }
-                        }
                     }
                     if (increment || transaction.waitAllDone) {
                         waitBarrierVersion.incrementAndGet();
