@@ -43,6 +43,17 @@ public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testLegacyLong256TextTargetsDependOnNullBitmapPresence() throws Exception {
+        runInContext(port -> {
+            String[] targets = {"STRING", "VARCHAR"};
+            for (String target : targets) {
+                assertLegacyLong256(port, target, false);
+                assertLegacyLong256(port, target, true);
+            }
+        });
+    }
+
+    @Test
     public void testLegacyUuidTextTargetsDependOnNullBitmapPresence() throws Exception {
         runInContext(port -> {
             String[] targets = {"STRING", "VARCHAR"};
@@ -95,6 +106,42 @@ public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
                 ? "case_id\tv\tn\n0\tnull\tfalse\n1\t\ttrue\n"
                 : "case_id\tv\tn\n0\t0\tfalse\n1\t-1\tfalse\n2\t1\tfalse\n"
                 + "3\t-9223372036854775807\tfalse\n4\t9223372036854775807\tfalse\n5\t\ttrue\n";
+        assertQuery("select case_id, v, v is null n from " + tableName + " order by case_id")
+                .noLeakCheck()
+                .returnsOnce(expected);
+    }
+
+    private void assertLegacyLong256(int port, String target, boolean bitmap) throws Exception {
+        String tableName = "legacy_long256_" + target.toLowerCase(Locale.ROOT) + (bitmap ? "_bitmap" : "_plain");
+        execute("create table " + tableName
+                + " (case_id long, v " + target + ", ts timestamp) timestamp(ts) partition by day wal");
+        try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
+             QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            connectLegacy(client, port);
+            for (int row = 0; row < (bitmap ? 2 : 1); row++) {
+                table.getOrCreateColumn("case_id", QwpConstants.TYPE_LONG, false).addLong(row);
+                if (row == 0) {
+                    table.getOrCreateColumn("v", QwpConstants.TYPE_LONG256, true)
+                            .addLong256(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
+                }
+                table.nextRow();
+            }
+            int length = encoder.encode(table);
+            QwpFixedWidthColumnCursor wire = assertFixedWire(
+                    encoder, length, QwpConstants.TYPE_LONG256, bitmap, bitmap ? 2 : 1);
+            Assert.assertEquals(1, wire.getValueCount());
+            Assert.assertEquals(4 * Long.BYTES, wire.getValueSize());
+            for (int i = 0; i < 4; i++) {
+                Assert.assertEquals(Long.MIN_VALUE, Unsafe.getLong(wire.getValuesAddress() + (long) i * Long.BYTES));
+            }
+            client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+            assertOk(client);
+        }
+        drainWalQueue();
+        String expected = bitmap
+                ? "case_id\tv\tn\n0\t\tfalse\n1\t\ttrue\n"
+                : "case_id\tv\tn\n0\t\ttrue\n";
         assertQuery("select case_id, v, v is null n from " + tableName + " order by case_id")
                 .noLeakCheck()
                 .returnsOnce(expected);

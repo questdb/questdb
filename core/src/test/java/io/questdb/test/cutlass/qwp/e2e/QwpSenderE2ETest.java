@@ -2014,22 +2014,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testCoercionToStringPreservesUuidAndLong256NullSentinels() throws Exception {
+    public void testSchemaModePreservesUuidAndLong256NullsForTextTargets() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_uuid_long256_null_to_string";
-            // The cursor's isCurrentValueSentinelNull arms for TYPE_UUID and
-            // TYPE_LONG256 (added alongside the IPv4 sentinel arm) flow
-            // through cursor.isNull() consumed by the per-row loops in
-            // WalColumnarRowAppender.putFixedOtherToStringColumn and
-            // putFixedOtherToVarcharColumn. testCoercionToString /
-            // testCoercionToVarchar already exercise the happy path for
-            // UUID and LONG256 with random non-sentinel values, but neither
-            // pins what happens when the NULL bit pattern reaches the
-            // formatter: it must round-trip as SQL NULL, not as the
-            // literal "00000000-0000-0000-0000-000000000000" /
-            // "0x000...000" hex render. This test pins all four cells of
-            // the {UUID, LONG256} x {STRING, VARCHAR} matrix for the
-            // type-specific NULL sentinel.
+            // In schema mode the client maps each native NULL sentinel to an
+            // explicit wire NULL for STRING and VARCHAR targets. This pins all
+            // four cells of the {UUID, LONG256} x {STRING, VARCHAR} matrix.
             execute("CREATE TABLE " + table + " (" +
                     "uuid_str STRING, uuid_vc VARCHAR, " +
                     "l256_str STRING, l256_vc VARCHAR, " +
