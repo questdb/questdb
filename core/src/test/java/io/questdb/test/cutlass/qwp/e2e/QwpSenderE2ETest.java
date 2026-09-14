@@ -1067,39 +1067,45 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_date_err";
             execute("CREATE TABLE " + table + " (v DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "DATE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
-                    "not supported", "DATE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).decimalColumn("v", Decimal64.fromLong(100, 2)).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DECIMAL64", "DATE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from DOUBLE to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).floatColumn("v", 1.5f).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from FLOAT to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG256 to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "DATE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "DATE");
-            assertCoercionError(port, table,
-                    (s, t) -> {
-                        UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
-                        s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "type coercion from UUID to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).stringColumn("v", "not_a_date").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot parse DATE from string", "not_a_date");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).boolColumn("v", true),
+                        "inputType=BOOLEAN", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).charColumn("v", 'A'),
+                        "inputType=CHAR", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).decimalColumn("v", Decimal64.fromLong(100, 2)),
+                        "inputType=DECIMAL64", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).doubleColumn("v", 3.14),
+                        "inputType=DOUBLE", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).floatColumn("v", 1.5f),
+                        "inputType=FLOAT", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).long256Column("v", 1, 0, 0, 0),
+                        "inputType=LONG256", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).symbol("v", "hello"),
+                        "inputType=SYMBOL", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS),
+                        "inputType=TIMESTAMP", "targetType=DATE");
+                UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).uuidColumn(
+                                "v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()),
+                        "inputType=UUID", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.table(table).stringColumn("v", "not_a_date"),
+                        "inputType=STRING", "targetType=DATE", "invalid DATE text");
+
+                sender.table(table).stringColumn("v", "1970-01-02").at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+            assertQuery("select v from " + table).noLeakCheck().returnsOnce("v\n1970-01-02T00:00:00.000Z\n");
         });
     }
 
