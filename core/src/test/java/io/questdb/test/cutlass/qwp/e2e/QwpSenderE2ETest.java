@@ -1418,24 +1418,23 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testCoercionToDoubleArrayErrors() throws Exception {
         runInContext((port) -> {
             execute("CREATE TABLE test_da_int_err (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertCoercionError(port, "test_da_int_err",
-                    (s, t) -> s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DOUBLE_ARRAY", "INT");
-
             execute("CREATE TABLE test_da_str_err (v STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertCoercionError(port, "test_da_str_err",
-                    (s, t) -> s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DOUBLE_ARRAY", "STRING");
-
             execute("CREATE TABLE test_da_sym_err (v SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertCoercionError(port, "test_da_sym_err",
-                    (s, t) -> s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DOUBLE_ARRAY", "SYMBOL");
-
             execute("CREATE TABLE test_da_ts_err (v TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertCoercionError(port, "test_da_ts_err",
-                    (s, t) -> s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DOUBLE_ARRAY", "TIMESTAMP");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table("test_da_int_err").doubleArray("v", new double[]{1.0, 2.0}),
+                        "table=test_da_int_err", "column=v", "inputType=DOUBLE_ARRAY", "targetType=INT");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table("test_da_str_err").doubleArray("v", new double[]{1.0, 2.0}),
+                        "table=test_da_str_err", "column=v", "inputType=DOUBLE_ARRAY", "targetType=STRING");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table("test_da_sym_err").doubleArray("v", new double[]{1.0, 2.0}),
+                        "table=test_da_sym_err", "column=v", "inputType=DOUBLE_ARRAY", "targetType=SYMBOL");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table("test_da_ts_err").doubleArray("v", new double[]{1.0, 2.0}),
+                        "table=test_da_ts_err", "column=v", "inputType=DOUBLE_ARRAY", "targetType=TIMESTAMP");
+            }
         });
     }
 
@@ -1443,9 +1442,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testCoercionToDoubleArrayFromStringError() throws Exception {
         runInContext((port) -> {
             execute("CREATE TABLE test_da_from_str (v DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertCoercionError(port, "test_da_from_str",
-                    (s, t) -> s.table(t).stringColumn("v", "not an array").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write VARCHAR", "DOUBLE[]");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table("test_da_from_str").stringColumn("v", "not an array"),
+                        "table=test_da_from_str", "column=v", "inputType=STRING", "targetType=DOUBLE[]");
+            }
         });
     }
 
@@ -1454,40 +1455,43 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_arr_dim_err";
             execute("CREATE TABLE " + table + " (v DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // The column is 1-D; a 2-D array is a deterministic dimensionality mismatch.
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleArray("v", new double[][]{{1.0, 2.0}, {3.0, 4.0}}).at(1_000_000, ChronoUnit.MICROS),
-                    "array dimensionality mismatch", "column=v");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).doubleArray("v", new double[][]{{1.0, 2.0}, {3.0, 4.0}}),
+                        "table=" + table, "column=v", "inputType=DOUBLE_ARRAY",
+                        "sourceDims=2", "targetDims=1");
+                sender.doubleArray("v", new double[]{5.0, 6.0}).at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+            assertQuery("select v from " + table).noLeakCheck().returnsOnce("v\n[5.0,6.0]\n");
         });
     }
 
     @Test
     public void testArrayBatchDimensionalityMismatchRejected() throws Exception {
         runInContext((port) -> {
-            // Rows with differing array dimensionality in one flush hit the within-batch
-            // getArrayBatchDimensionality guard, not the single-row validateArrayColumnType
-            // guard that testArrayDimensionalityMismatchRejected covers. The guard lives at
-            // two sites; which one throws depends on whether the target table exists.
-
-            // Existing table: QwpWalAppender scans the batch during WAL append.
             String existing = "test_qwp_arr_batch_dim_existing";
             execute("CREATE TABLE " + existing + " (v DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertCoercionError(port, existing,
-                    (s, t) -> {
-                        s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS);
-                        s.table(t).doubleArray("v", new double[][]{{3.0, 4.0}}).at(2_000_000, ChronoUnit.MICROS);
-                    },
-                    "array dimensionality mismatch in QWP batch", "column=v");
-
-            // Non-existent table: QwpTudCache scans the batch while resolving the
-            // auto-created table structure.
             String autoCreate = "test_qwp_arr_batch_dim_autocreate";
-            assertCoercionError(port, autoCreate,
-                    (s, t) -> {
-                        s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS);
-                        s.table(t).doubleArray("v", new double[][]{{3.0, 4.0}}).at(2_000_000, ChronoUnit.MICROS);
-                    },
-                    "array dimensionality mismatch in QWP batch", "column=v");
+            try (QwpWebSocketSender sender = connectWs(port, 0, 0,
+                    TimeUnit.MILLISECONDS.toNanos(Integer.MAX_VALUE - 1L))) {
+                sender.table(existing).doubleArray("v", new double[]{1.0, 2.0})
+                        .at(1_000_000, ChronoUnit.MICROS);
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(existing).doubleArray("v", new double[][]{{3.0, 4.0}}),
+                        "table=" + existing, "column=v", "sourceDims=2", "targetDims=1");
+
+                sender.table(autoCreate).doubleArray("v", new double[]{5.0, 6.0})
+                        .at(2_000_000, ChronoUnit.MICROS);
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(autoCreate).doubleArray("v", new double[][]{{7.0, 8.0}}),
+                        "table=" + autoCreate, "column=v", "sourceDims=2", "inferredDims=1");
+                sender.flush();
+            }
+            drainWalQueue();
+            assertQuery("select v from " + existing).noLeakCheck().returnsOnce("v\n[1.0,2.0]\n");
+            assertQuery("select v from " + autoCreate).noLeakCheck().returnsOnce("v\n[5.0,6.0]\n");
         });
     }
 
@@ -2363,9 +2367,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testCoercionToVarcharFromArrayError() throws Exception {
         runInContext((port) -> {
             execute("CREATE TABLE test_vc_arr_err (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertCoercionError(port, "test_vc_arr_err",
-                    (s, t) -> s.table(t).doubleArray("v", new double[]{1.0}).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DOUBLE_ARRAY", "VARCHAR");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table("test_vc_arr_err").doubleArray("v", new double[]{1.0}),
+                        "table=test_vc_arr_err", "column=v", "inputType=DOUBLE_ARRAY", "targetType=VARCHAR");
+            }
         });
     }
 
@@ -3580,10 +3586,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testLongArrayRejected() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_long_arr";
-
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).longArray("arr", new long[]{1L, 2L, 3L}).at(1_000_000, ChronoUnit.MICROS),
-                    "long arrays are not supported", "only double arrays");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).longArray("arr", new long[]{1L, 2L, 3L}),
+                        "table=" + table, "column=arr", "inputType=LONG_ARRAY",
+                        "input conversion is not implemented");
+            }
         });
     }
 
