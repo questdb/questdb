@@ -1047,10 +1047,13 @@ public class MatViewTest extends AbstractCairoTest {
 
             // the refresh intervals update timer must have cached the newly inserted intervals.
             // Ordering matters: drainQueues() never runs MatViewTimerJob, so this drain consumes the
-            // task the post-ALTER tick enqueued, by which time the base table sits at txn 4. Draining
-            // right after that tick would consume it at txn 1 and nothing re-enqueues it, so the
-            // assertions below would describe the pre-insert state instead.
-            Assert.assertEquals(4, viewState.getRefreshIntervalsBaseTxn());
+            // task the post-ALTER tick enqueued, by which time the base table sits at txn 4 (plus the
+            // content-neutral transactions the composite randomiser injects, which are subtracted back
+            // out here the way txnColumns() does it for SQL-level assertions). Draining right after that
+            // tick would consume it at txn 1 and nothing re-enqueues it, so the assertions below would
+            // describe the pre-insert state instead.
+            final int injectedTxn = CompositePartitionRandomiser.injectedTxnCount(engine, BASE_TABLE_NAME);
+            Assert.assertEquals(4 + injectedTxn, viewState.getRefreshIntervalsBaseTxn());
             final LongList expectedIntervals = new LongList();
             expectedIntervals.add(timestampType.getDriver().parseFloorLiteral("2024-09-11T12:01"), timestampType.getDriver().parseFloorLiteral("2024-09-11T12:02"));
             expectedIntervals.add(timestampType.getDriver().parseFloorLiteral("2024-09-12T03:01"), timestampType.getDriver().parseFloorLiteral("2024-09-12T23:02"));
@@ -1061,7 +1064,13 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertNotNull(baseTableToken);
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
-                Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
+                // The composite randomiser opens and closes its own WAL writer on the base table, which
+                // releases wal1 to WalPurgeJob earlier than this test does, so with the randomiser on the
+                // segment can already be gone here. With it off the test's own pooled writer still holds
+                // wal1 open, and it has to be present, otherwise the assertion after the purge is vacuous.
+                if (injectedTxn == 0) {
+                    Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
+                }
 
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
