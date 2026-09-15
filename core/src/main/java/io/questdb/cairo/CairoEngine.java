@@ -1812,7 +1812,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // Initialize settings store after checkpoint recovery so it reads the restored file
         settingsStore.init();
         // Migrate database files.
-        EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+        migrateTableFiles();
         tableNameRegistry = createTableNameRegistry(configuration, tableFlagResolver);
         tableNameRegistry.reload();
         this.sqlCompilerPool = new SqlCompilerPool(this);
@@ -4927,6 +4927,11 @@ public class CairoEngine implements Closeable, WriterSource {
             final Rnd rnd = configuration.getRandom();
             this.dataID.initialize(rnd.nextLong(), rnd.nextLong());
         }
+    }
+
+    /** Startup migration hook; dormant engine implementations may defer disk mutations. */
+    protected void migrateTableFiles() {
+        EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
     }
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {
