@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -35,9 +34,9 @@ import org.junit.Test;
  * {@code SqlParser#parseFromClause} collapses back to a plain table reference when the
  * sub-query carries no clauses. The collapse guard must treat SUBSAMPLE like WHERE or
  * ORDER BY: a sub-query that owns a SUBSAMPLE clause must survive, otherwise the clause
- * is discarded silently and the query returns raw rows. Every test here pins the
- * shorthand to a reference spelling that never enters the collapse path, or pins the
- * exact expected output.
+ * is discarded silently and the query returns raw rows. Fluent assertions pin each
+ * successful query's expected output and exercise the standard cursor checks. Supplementary
+ * equivalence checks compare the shorthand with spellings that never enter the collapse path.
  * <p>
  * The data set is deliberately discriminating: 10 rows against target sizes of 2..6, so
  * a dropped clause always changes the result. Avoid shapes where the target size is
@@ -45,11 +44,28 @@ import org.junit.Test;
  */
 public class SubsampleParenShorthandTest extends AbstractCairoTest {
 
-    private static final String PINNED_UNIFORM_4 = "v\tts\n" +
-            "1.0\t1970-01-01T00:00:00.000000Z\n" +
-            "4.0\t1970-01-01T00:00:03.000000Z\n" +
-            "7.0\t1970-01-01T00:00:06.000000Z\n" +
-            "10.0\t1970-01-01T00:00:09.000000Z\n";
+    private static final String PINNED_LTTB_4 = """
+            v\tts
+            1.0\t1970-01-01T00:00:00.000000Z
+            2.0\t1970-01-01T00:00:01.000000Z
+            6.0\t1970-01-01T00:00:05.000000Z
+            10.0\t1970-01-01T00:00:09.000000Z
+            """;
+    private static final String PINNED_UNIFORM_4 = """
+            v\tts
+            1.0\t1970-01-01T00:00:00.000000Z
+            4.0\t1970-01-01T00:00:03.000000Z
+            7.0\t1970-01-01T00:00:06.000000Z
+            10.0\t1970-01-01T00:00:09.000000Z
+            """;
+    private static final String PINNED_UNIFORM_4_PLAN = """
+            SelectedRecord
+                CachedWindowLightSelect
+                  unorderedFunctions: [uniform(4) over (order by [ts])]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: t
+            """;
 
     // -------------------------------------------------------------------------------------------
     // Spelling equivalence: the shorthand must return exactly what the plain spelling returns,
@@ -60,6 +76,9 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testAliasedShorthandMatchesPlainSpelling() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE uniform(4)) x")
+                    .timestamp("ts")
+                    .returns(PINNED_UNIFORM_4);
             assertSqlCursors(
                     "SELECT v, ts FROM t SUBSAMPLE uniform(4)",
                     "SELECT v, ts FROM (t SUBSAMPLE uniform(4)) x"
@@ -71,6 +90,9 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testExplicitSelectSpellingMatchesPlainSpelling() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT v, ts FROM (SELECT * FROM t SUBSAMPLE uniform(4))")
+                    .timestamp("ts")
+                    .returns(PINNED_UNIFORM_4);
             assertSqlCursors(
                     "SELECT v, ts FROM t SUBSAMPLE uniform(4)",
                     "SELECT v, ts FROM (SELECT * FROM t SUBSAMPLE uniform(4))"
@@ -82,6 +104,9 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandCadenceMatchesPlainSpelling() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE cadence(3))")
+                    .timestamp("ts")
+                    .returns(PINNED_UNIFORM_4);
             assertSqlCursors(
                     "SELECT v, ts FROM t SUBSAMPLE cadence(3)",
                     "SELECT v, ts FROM (t SUBSAMPLE cadence(3))"
@@ -93,6 +118,10 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandLttbMatchesPlainSpelling() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            // Collinear points tie, so LTTB keeps the first point in each interior bucket.
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE lttb(v, 4))")
+                    .timestamp("ts")
+                    .returns(PINNED_LTTB_4);
             assertSqlCursors(
                     "SELECT v, ts FROM t SUBSAMPLE lttb(v, 4)",
                     "SELECT v, ts FROM (t SUBSAMPLE lttb(v, 4))"
@@ -104,6 +133,10 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandLttbWithBucketMatchesPlainSpelling() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            // One-second spacing never crosses the two-second gap threshold.
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE lttb(v, 4, '2s'))")
+                    .timestamp("ts")
+                    .returns(PINNED_LTTB_4);
             assertSqlCursors(
                     "SELECT v, ts FROM t SUBSAMPLE lttb(v, 4, '2s')",
                     "SELECT v, ts FROM (t SUBSAMPLE lttb(v, 4, '2s'))"
@@ -115,6 +148,14 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandM4MatchesPlainSpelling() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            // The single bucket's first/min and last/max pairs each collapse to one row.
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE m4(v, 4))")
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts
+                            1.0\t1970-01-01T00:00:00.000000Z
+                            10.0\t1970-01-01T00:00:09.000000Z
+                            """);
             assertSqlCursors(
                     "SELECT v, ts FROM t SUBSAMPLE m4(v, 4)",
                     "SELECT v, ts FROM (t SUBSAMPLE m4(v, 4))"
@@ -126,6 +167,15 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandMinmaxMatchesPlainSpelling() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE minmax(v, 4))")
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts
+                            1.0\t1970-01-01T00:00:00.000000Z
+                            5.0\t1970-01-01T00:00:04.000000Z
+                            6.0\t1970-01-01T00:00:05.000000Z
+                            10.0\t1970-01-01T00:00:09.000000Z
+                            """);
             assertSqlCursors(
                     "SELECT v, ts FROM t SUBSAMPLE minmax(v, 4)",
                     "SELECT v, ts FROM (t SUBSAMPLE minmax(v, 4))"
@@ -137,6 +187,9 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandUniformMatchesPlainSpelling() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE uniform(4))")
+                    .timestamp("ts")
+                    .returns(PINNED_UNIFORM_4);
             assertSqlCursors(
                     "SELECT v, ts FROM t SUBSAMPLE uniform(4)",
                     "SELECT v, ts FROM (t SUBSAMPLE uniform(4))"
@@ -176,22 +229,27 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
             // WHERE + SUBSAMPLE + ORDER BY all inside the shorthand parentheses
             assertQuery("SELECT v, ts FROM (t WHERE v > 0 SUBSAMPLE uniform(2) ORDER BY ts)")
                     .timestamp("ts")
-                    .returns("v\tts\n" +
-                            "1.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "10.0\t1970-01-01T00:00:09.000000Z\n");
+                    .returns("""
+                            v\tts
+                            1.0\t1970-01-01T00:00:00.000000Z
+                            10.0\t1970-01-01T00:00:09.000000Z
+                            """);
         });
     }
 
     // -------------------------------------------------------------------------------------------
     // Follower matrix: every token that stops alias parsing used to trigger the collapse and
-    // silently discard the clause. Each shape is pinned to the explicit-SELECT spelling with
-    // an identical follower.
+    // silently discard the clause. Each shape pins the expected rows and also compares with the
+    // explicit-SELECT spelling with an identical follower.
     // -------------------------------------------------------------------------------------------
 
     @Test
     public void testShorthandDoubleParens() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT v, ts FROM ((t SUBSAMPLE uniform(4)))")
+                    .timestamp("ts")
+                    .returns(PINNED_UNIFORM_4);
             assertSqlCursors(
                     "SELECT v, ts FROM t SUBSAMPLE uniform(4)",
                     "SELECT v, ts FROM ((t SUBSAMPLE uniform(4)))"
@@ -203,6 +261,9 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandInCte() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("WITH q AS (t SUBSAMPLE uniform(4)) SELECT v, ts FROM q")
+                    .timestamp("ts")
+                    .returns(PINNED_UNIFORM_4);
             assertSqlCursors(
                     "SELECT v, ts FROM t SUBSAMPLE uniform(4)",
                     "WITH q AS (t SUBSAMPLE uniform(4)) SELECT v, ts FROM q"
@@ -214,6 +275,9 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandInsideExplicitSubquery() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT * FROM (SELECT v, ts FROM (t SUBSAMPLE uniform(4)))")
+                    .timestamp("ts")
+                    .returns(PINNED_UNIFORM_4);
             assertSqlCursors(
                     "SELECT v, ts FROM t SUBSAMPLE uniform(4)",
                     "SELECT * FROM (SELECT v, ts FROM (t SUBSAMPLE uniform(4)))"
@@ -225,6 +289,16 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandThenAsofJoin() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT * FROM (t SUBSAMPLE uniform(4)) ASOF JOIN u2")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            v\tts\tw\tts1
+                            1.0\t1970-01-01T00:00:00.000000Z\tnull\t
+                            4.0\t1970-01-01T00:00:03.000000Z\t3.0\t1970-01-01T00:00:02.500000Z
+                            7.0\t1970-01-01T00:00:06.000000Z\t6.0\t1970-01-01T00:00:05.500000Z
+                            10.0\t1970-01-01T00:00:09.000000Z\t9.0\t1970-01-01T00:00:08.500000Z
+                            """);
             assertSqlCursors(
                     "SELECT * FROM (SELECT v, ts FROM t SUBSAMPLE uniform(4)) ASOF JOIN u2",
                     "SELECT * FROM (t SUBSAMPLE uniform(4)) ASOF JOIN u2"
@@ -237,16 +311,18 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             // SUBSAMPLE is itself an alias-stop token: 10 rows -> uniform(6) -> uniform(3)
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE uniform(6)) SUBSAMPLE uniform(3)")
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts
+                            1.0\t1970-01-01T00:00:00.000000Z
+                            6.0\t1970-01-01T00:00:05.000000Z
+                            10.0\t1970-01-01T00:00:09.000000Z
+                            """);
             assertSqlCursors(
                     "SELECT v, ts FROM (SELECT v, ts FROM t SUBSAMPLE uniform(6)) SUBSAMPLE uniform(3)",
                     "SELECT v, ts FROM (t SUBSAMPLE uniform(6)) SUBSAMPLE uniform(3)"
             );
-            assertQuery("SELECT v, ts FROM (t SUBSAMPLE uniform(6)) SUBSAMPLE uniform(3)")
-                    .timestamp("ts")
-                    .returns("v\tts\n" +
-                            "1.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "6.0\t1970-01-01T00:00:05.000000Z\n" +
-                            "10.0\t1970-01-01T00:00:09.000000Z\n");
         });
     }
 
@@ -254,6 +330,52 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandThenCrossJoin() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT * FROM (t SUBSAMPLE uniform(4)) CROSS JOIN u2")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            v\tts\tw\tts1
+                            1.0\t1970-01-01T00:00:00.000000Z\t1.0\t1970-01-01T00:00:00.500000Z
+                            1.0\t1970-01-01T00:00:00.000000Z\t2.0\t1970-01-01T00:00:01.500000Z
+                            1.0\t1970-01-01T00:00:00.000000Z\t3.0\t1970-01-01T00:00:02.500000Z
+                            1.0\t1970-01-01T00:00:00.000000Z\t4.0\t1970-01-01T00:00:03.500000Z
+                            1.0\t1970-01-01T00:00:00.000000Z\t5.0\t1970-01-01T00:00:04.500000Z
+                            1.0\t1970-01-01T00:00:00.000000Z\t6.0\t1970-01-01T00:00:05.500000Z
+                            1.0\t1970-01-01T00:00:00.000000Z\t7.0\t1970-01-01T00:00:06.500000Z
+                            1.0\t1970-01-01T00:00:00.000000Z\t8.0\t1970-01-01T00:00:07.500000Z
+                            1.0\t1970-01-01T00:00:00.000000Z\t9.0\t1970-01-01T00:00:08.500000Z
+                            1.0\t1970-01-01T00:00:00.000000Z\t10.0\t1970-01-01T00:00:09.500000Z
+                            4.0\t1970-01-01T00:00:03.000000Z\t1.0\t1970-01-01T00:00:00.500000Z
+                            4.0\t1970-01-01T00:00:03.000000Z\t2.0\t1970-01-01T00:00:01.500000Z
+                            4.0\t1970-01-01T00:00:03.000000Z\t3.0\t1970-01-01T00:00:02.500000Z
+                            4.0\t1970-01-01T00:00:03.000000Z\t4.0\t1970-01-01T00:00:03.500000Z
+                            4.0\t1970-01-01T00:00:03.000000Z\t5.0\t1970-01-01T00:00:04.500000Z
+                            4.0\t1970-01-01T00:00:03.000000Z\t6.0\t1970-01-01T00:00:05.500000Z
+                            4.0\t1970-01-01T00:00:03.000000Z\t7.0\t1970-01-01T00:00:06.500000Z
+                            4.0\t1970-01-01T00:00:03.000000Z\t8.0\t1970-01-01T00:00:07.500000Z
+                            4.0\t1970-01-01T00:00:03.000000Z\t9.0\t1970-01-01T00:00:08.500000Z
+                            4.0\t1970-01-01T00:00:03.000000Z\t10.0\t1970-01-01T00:00:09.500000Z
+                            7.0\t1970-01-01T00:00:06.000000Z\t1.0\t1970-01-01T00:00:00.500000Z
+                            7.0\t1970-01-01T00:00:06.000000Z\t2.0\t1970-01-01T00:00:01.500000Z
+                            7.0\t1970-01-01T00:00:06.000000Z\t3.0\t1970-01-01T00:00:02.500000Z
+                            7.0\t1970-01-01T00:00:06.000000Z\t4.0\t1970-01-01T00:00:03.500000Z
+                            7.0\t1970-01-01T00:00:06.000000Z\t5.0\t1970-01-01T00:00:04.500000Z
+                            7.0\t1970-01-01T00:00:06.000000Z\t6.0\t1970-01-01T00:00:05.500000Z
+                            7.0\t1970-01-01T00:00:06.000000Z\t7.0\t1970-01-01T00:00:06.500000Z
+                            7.0\t1970-01-01T00:00:06.000000Z\t8.0\t1970-01-01T00:00:07.500000Z
+                            7.0\t1970-01-01T00:00:06.000000Z\t9.0\t1970-01-01T00:00:08.500000Z
+                            7.0\t1970-01-01T00:00:06.000000Z\t10.0\t1970-01-01T00:00:09.500000Z
+                            10.0\t1970-01-01T00:00:09.000000Z\t1.0\t1970-01-01T00:00:00.500000Z
+                            10.0\t1970-01-01T00:00:09.000000Z\t2.0\t1970-01-01T00:00:01.500000Z
+                            10.0\t1970-01-01T00:00:09.000000Z\t3.0\t1970-01-01T00:00:02.500000Z
+                            10.0\t1970-01-01T00:00:09.000000Z\t4.0\t1970-01-01T00:00:03.500000Z
+                            10.0\t1970-01-01T00:00:09.000000Z\t5.0\t1970-01-01T00:00:04.500000Z
+                            10.0\t1970-01-01T00:00:09.000000Z\t6.0\t1970-01-01T00:00:05.500000Z
+                            10.0\t1970-01-01T00:00:09.000000Z\t7.0\t1970-01-01T00:00:06.500000Z
+                            10.0\t1970-01-01T00:00:09.000000Z\t8.0\t1970-01-01T00:00:07.500000Z
+                            10.0\t1970-01-01T00:00:09.000000Z\t9.0\t1970-01-01T00:00:08.500000Z
+                            10.0\t1970-01-01T00:00:09.000000Z\t10.0\t1970-01-01T00:00:09.500000Z
+                            """);
             assertSqlCursors(
                     "SELECT * FROM (SELECT v, ts FROM t SUBSAMPLE uniform(4)) CROSS JOIN u2",
                     "SELECT * FROM (t SUBSAMPLE uniform(4)) CROSS JOIN u2"
@@ -265,6 +387,15 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandThenGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT v, count() c FROM (t SUBSAMPLE uniform(4)) GROUP BY v ORDER BY v")
+                    .expectSize()
+                    .returns("""
+                            v\tc
+                            1.0\t1
+                            4.0\t1
+                            7.0\t1
+                            10.0\t1
+                            """);
             assertSqlCursors(
                     "SELECT v, count() c FROM (SELECT v, ts FROM t SUBSAMPLE uniform(4)) GROUP BY v ORDER BY v",
                     "SELECT v, count() c FROM (t SUBSAMPLE uniform(4)) GROUP BY v ORDER BY v"
@@ -276,6 +407,9 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandThenLatestOn() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT * FROM (t SUBSAMPLE uniform(4)) LATEST ON ts PARTITION BY v")
+                    .expectSize()
+                    .returns(PINNED_UNIFORM_4);
             assertSqlCursors(
                     "SELECT * FROM (SELECT v, ts FROM t SUBSAMPLE uniform(4)) LATEST ON ts PARTITION BY v",
                     "SELECT * FROM (t SUBSAMPLE uniform(4)) LATEST ON ts PARTITION BY v"
@@ -287,6 +421,13 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandThenLimit() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE uniform(4)) LIMIT 2")
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts
+                            1.0\t1970-01-01T00:00:00.000000Z
+                            4.0\t1970-01-01T00:00:03.000000Z
+                            """);
             assertSqlCursors(
                     "SELECT v, ts FROM (SELECT v, ts FROM t SUBSAMPLE uniform(4)) LIMIT 2",
                     "SELECT v, ts FROM (t SUBSAMPLE uniform(4)) LIMIT 2"
@@ -298,6 +439,15 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandThenOrderByDesc() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE uniform(4)) ORDER BY ts DESC")
+                    .timestampDesc("ts")
+                    .returns("""
+                            v\tts
+                            10.0\t1970-01-01T00:00:09.000000Z
+                            7.0\t1970-01-01T00:00:06.000000Z
+                            4.0\t1970-01-01T00:00:03.000000Z
+                            1.0\t1970-01-01T00:00:00.000000Z
+                            """);
             assertSqlCursors(
                     "SELECT v, ts FROM (SELECT v, ts FROM t SUBSAMPLE uniform(4)) ORDER BY ts DESC",
                     "SELECT v, ts FROM (t SUBSAMPLE uniform(4)) ORDER BY ts DESC"
@@ -309,6 +459,13 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandThenSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT avg(v) a FROM (t SUBSAMPLE uniform(4)) SAMPLE BY 5s")
+                    .noRandomAccess()
+                    .returns("""
+                            a
+                            2.5
+                            8.5
+                            """);
             assertSqlCursors(
                     "SELECT avg(v) a FROM (SELECT v, ts FROM t SUBSAMPLE uniform(4)) SAMPLE BY 5s",
                     "SELECT avg(v) a FROM (t SUBSAMPLE uniform(4)) SAMPLE BY 5s"
@@ -323,9 +480,18 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
             // "timestamp" never triggered the collapse; pinned as a control. Note: a timestamp()
             // suffix on a sub-query reorders output columns timestamp-first for every spelling,
             // so the reference must carry the same suffix.
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE uniform(4)) TIMESTAMP(ts)")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000000Z\t1.0
+                            1970-01-01T00:00:03.000000Z\t4.0
+                            1970-01-01T00:00:06.000000Z\t7.0
+                            1970-01-01T00:00:09.000000Z\t10.0
+                            """);
             assertSqlCursors(
-                    "SELECT v, ts FROM (SELECT * FROM t SUBSAMPLE uniform(4)) timestamp(ts)",
-                    "SELECT v, ts FROM (t SUBSAMPLE uniform(4)) timestamp(ts)"
+                    "SELECT v, ts FROM (SELECT * FROM t SUBSAMPLE uniform(4)) TIMESTAMP(ts)",
+                    "SELECT v, ts FROM (t SUBSAMPLE uniform(4)) TIMESTAMP(ts)"
             );
         });
     }
@@ -334,6 +500,25 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandThenUnionAll() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE uniform(4)) UNION ALL SELECT v, ts FROM t")
+                    .noRandomAccess()
+                    .returns("""
+                            v\tts
+                            1.0\t1970-01-01T00:00:00.000000Z
+                            4.0\t1970-01-01T00:00:03.000000Z
+                            7.0\t1970-01-01T00:00:06.000000Z
+                            10.0\t1970-01-01T00:00:09.000000Z
+                            1.0\t1970-01-01T00:00:00.000000Z
+                            2.0\t1970-01-01T00:00:01.000000Z
+                            3.0\t1970-01-01T00:00:02.000000Z
+                            4.0\t1970-01-01T00:00:03.000000Z
+                            5.0\t1970-01-01T00:00:04.000000Z
+                            6.0\t1970-01-01T00:00:05.000000Z
+                            7.0\t1970-01-01T00:00:06.000000Z
+                            8.0\t1970-01-01T00:00:07.000000Z
+                            9.0\t1970-01-01T00:00:08.000000Z
+                            10.0\t1970-01-01T00:00:09.000000Z
+                            """);
             assertSqlCursors(
                     "SELECT v, ts FROM (SELECT v, ts FROM t SUBSAMPLE uniform(4)) UNION ALL SELECT v, ts FROM t",
                     "SELECT v, ts FROM (t SUBSAMPLE uniform(4)) UNION ALL SELECT v, ts FROM t"
@@ -346,6 +531,14 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             // the outer WHERE filters rows the sub-query already down-sampled
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE uniform(4)) WHERE v > 2")
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts
+                            4.0\t1970-01-01T00:00:03.000000Z
+                            7.0\t1970-01-01T00:00:06.000000Z
+                            10.0\t1970-01-01T00:00:09.000000Z
+                            """);
             assertSqlCursors(
                     "SELECT v, ts FROM (SELECT v, ts FROM t SUBSAMPLE uniform(4)) WHERE v > 2",
                     "SELECT v, ts FROM (t SUBSAMPLE uniform(4)) WHERE v > 2"
@@ -362,6 +555,8 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testAliasedShorthandPlanMatchesShorthandPlan() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE uniform(4)) x")
+                    .assertsPlan(PINNED_UNIFORM_4_PLAN);
             assertSqlCursors(
                     "EXPLAIN SELECT v, ts FROM (t SUBSAMPLE uniform(4)) x",
                     "EXPLAIN SELECT v, ts FROM (t SUBSAMPLE uniform(4))"
@@ -373,6 +568,8 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandPlanMatchesPlainSpellingPlan() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE uniform(4))")
+                    .assertsPlan(PINNED_UNIFORM_4_PLAN);
             assertSqlCursors(
                     "EXPLAIN SELECT v, ts FROM t SUBSAMPLE uniform(4)",
                     "EXPLAIN SELECT v, ts FROM (t SUBSAMPLE uniform(4))"
@@ -384,10 +581,8 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandPlanUsesWindowPath() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            printSql("EXPLAIN SELECT v, ts FROM (t SUBSAMPLE uniform(4))");
-            final String plan = sink.toString();
-            Assert.assertTrue("shorthand SUBSAMPLE must use the window path: " + plan, plan.contains("CachedWindow"));
-            Assert.assertTrue("shorthand SUBSAMPLE must retain the method call: " + plan, plan.contains("uniform(4)"));
+            assertQuery("SELECT v, ts FROM (t SUBSAMPLE uniform(4))")
+                    .assertsPlanContaining("CachedWindow", "uniform(4)");
         });
     }
 
@@ -400,6 +595,16 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testParenWithWhereStillNotCollapsed() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            assertQuery("SELECT v, ts FROM (t WHERE v > 5)")
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts
+                            6.0\t1970-01-01T00:00:05.000000Z
+                            7.0\t1970-01-01T00:00:06.000000Z
+                            8.0\t1970-01-01T00:00:07.000000Z
+                            9.0\t1970-01-01T00:00:08.000000Z
+                            10.0\t1970-01-01T00:00:09.000000Z
+                            """);
             assertSqlCursors(
                     "SELECT v, ts FROM (SELECT * FROM t WHERE v > 5)",
                     "SELECT v, ts FROM (t WHERE v > 5)"
@@ -412,13 +617,16 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             // no SUBSAMPLE inside: the sub-query must still collapse to a bare table scan
+            assertQuery("SELECT v, ts FROM (t)")
+                    .assertsPlan("""
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: t
+                            """);
             assertSqlCursors(
                     "EXPLAIN SELECT v, ts FROM t",
                     "EXPLAIN SELECT v, ts FROM (t)"
             );
-            printSql("EXPLAIN SELECT v, ts FROM (t)");
-            final String plan = sink.toString();
-            Assert.assertFalse("plain (t) must stay collapsed: " + plan, plan.contains("CachedWindow"));
         });
     }
 
