@@ -71,6 +71,7 @@ import org.jetbrains.annotations.Nullable;
  */
 class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenable {
 
+    private static final int CIRCUIT_BREAKER_CHECK_MASK = 1023;
     private static final long INITIAL_CAPACITY = 64;
     private final SubsampleAlgorithm algorithm;
     private final int functionPosition;
@@ -247,6 +248,9 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
         if (isSelectionAllRows()) {
             // Preserve the enumeration contract for callers that do not use the identity hint.
             for (long row = 0; row < rowCount; row++) {
+                if ((row & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
                 dest.add(row);
             }
             return;
@@ -260,6 +264,9 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
         long nonNullOrdinal = 0;
         final long selSize = selected.size();
         for (long absRow = 0; absRow < rowCount && selIdx < selSize; absRow++) {
+            if ((absRow & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
             if (!nullFlag(absRow)) {
                 if (selected.get(selIdx) == nonNullOrdinal) {
                     dest.add(absRow);
@@ -434,6 +441,9 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
             // rows (e.g. a monotonic run collapses to just {first,last}). Null rows stay dropped
             // because they were never appended to the buffer.
             for (long i = 0; i < count; i++) {
+                if ((i & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
                 selected.add(i);
             }
         } else {

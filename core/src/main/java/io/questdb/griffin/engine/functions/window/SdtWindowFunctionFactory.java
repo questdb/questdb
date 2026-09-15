@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
@@ -193,6 +194,7 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
     // ---- non-partitioned, two-pass ----
     static class SdtOverWholeResultSetFunction extends BaseWindowFunction implements SwingingDoor.Sink, Reopenable {
+        private static final int CIRCUIT_BREAKER_CHECK_MASK = 1023;
         private final double compdev;
         private final Function compdevArg;
         private final int functionPosition;
@@ -201,6 +203,7 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         private final Function tsArg;
         private final SwingingDoor sd = new SwingingDoor();
         private long appendOffset; // pass1 write cursor (bytes)
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private ObjList<ExpressionNode> orderBy;
         private long readOffset;   // pass2 read cursor (bytes)
 
@@ -266,6 +269,9 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
             dest.clear();
             final long rowCount = appendOffset / RECORD_SIZE;
             for (long traversalOrdinal = 0; traversalOrdinal < rowCount; traversalOrdinal++) {
+                if ((traversalOrdinal & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
                 if (mem.getByte(traversalOrdinal * RECORD_SIZE) != 0) {
                     dest.add(traversalOrdinal);
                 }
@@ -277,6 +283,7 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
+            circuitBreaker = executionContext.getCircuitBreaker();
             tsArg.init(symbolTableSource, executionContext);
         }
 
@@ -285,6 +292,7 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.initPartitionBy(symbolTableSource, executionContext);
+            circuitBreaker = executionContext.getCircuitBreaker();
             tsArg.init(symbolTableSource, executionContext);
         }
 

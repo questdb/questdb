@@ -27,9 +27,11 @@ package org.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -81,6 +83,9 @@ public class SubsampleWindowBenchmark {
     @Param({"0.5"})
     public double compdev;
 
+    @Param({"true"})
+    public boolean hasCircuitBreaker;
+
     @Param({"uniform", "cadence", "m4", "minmax", "lttb", "sdt"})
     public String method;
 
@@ -93,6 +98,7 @@ public class SubsampleWindowBenchmark {
     @Param({"500"})
     public int target;
 
+    private NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private SqlCompilerImpl compiler;
     private SqlExecutionContext context;
     private CairoEngine engine;
@@ -119,6 +125,12 @@ public class SubsampleWindowBenchmark {
         tempRoot = java.nio.file.Files.createTempDirectory("subsample-window-bench-");
         final CairoConfiguration configuration = new DefaultCairoConfiguration(tempRoot.toString());
         engine = new CairoEngine(configuration);
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public int getCircuitBreakerThrottle() {
+                return 2_000_000;
+            }
+        });
 
         final int workers = 4;
         workerPool = new WorkerPool(new WorkerPoolConfiguration() {
@@ -141,7 +153,7 @@ public class SubsampleWindowBenchmark {
                         null,
                         null,
                         -1,
-                        null
+                        hasCircuitBreaker ? circuitBreaker : null
                 );
         compiler = new SqlCompilerImpl(engine);
         seedTable();
@@ -156,6 +168,7 @@ public class SubsampleWindowBenchmark {
     public void tearDown() throws Exception {
         factory = Misc.free(factory);
         compiler = Misc.free(compiler);
+        circuitBreaker = Misc.free(circuitBreaker);
         if (workerPool != null) {
             workerPool.halt();
             workerPool = null;
@@ -190,6 +203,7 @@ public class SubsampleWindowBenchmark {
     }
 
     private static DrainResult drain(RecordCursorFactory cursorFactory, SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCircuitBreaker().resetTimer();
         long count = 0;
         long firstTimestamp = Long.MIN_VALUE;
         long lastTimestamp = Long.MIN_VALUE;

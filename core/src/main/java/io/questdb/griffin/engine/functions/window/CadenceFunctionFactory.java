@@ -33,6 +33,7 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.PlanSink;
@@ -191,6 +192,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
     // cadence(stride[, seed]) over (order by xxx) - no partition by, no framing.
     static class CadenceFunction extends BaseWindowFunction implements Reopenable {
 
+        private static final int CIRCUIT_BREAKER_CHECK_MASK = 1023;
         private final DirectLongList selected = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
         private final int functionPosition;
         private final long maxRows;
@@ -203,6 +205,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         // init() (before pass1/preparePass2 need it) rather than frozen at newInstance.
         private final Function strideFunc;
         private final int stridePosition;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private long count;          // running row counter during pass1; becomes totalRows
         private long stride;         // resolved in init() from strideFunc for the current execution
         // Resolved once per execution in init(), before the base cursor is scanned. Random mode uses
@@ -295,10 +298,16 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             dest.clear();
             if (keepAll) {
                 for (long i = 0; i < count; i++) {
+                    if ((i & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    }
                     dest.add(i);
                 }
             } else {
                 for (long i = 0, n = selected.size(); i < n; i++) {
+                    if ((i & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    }
                     dest.add(selected.get(i));
                 }
             }
@@ -317,6 +326,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
+            circuitBreaker = executionContext.getCircuitBreaker();
             strideFunc.init(symbolTableSource, executionContext);
             if (!strideFunc.isConstant()) {
                 // Resolve stride for THIS execution: a bind-variable stride is re-read (and range-checked)
@@ -407,6 +417,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             if (totalRows <= 0) {
                 return;
             }
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             // Always keep the first row.
             selected.add(0);
             if (stride > totalRows) {
@@ -415,7 +426,11 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             }
             // long running index: stride + offset can exceed Integer.MAX_VALUE, which is why this
             // and totalRows/pos are long rather than int.
-            for (long pos = stride + offset; pos < totalRows; pos += stride) {
+            // Count emitted rows, not positions: a seeded stride can skip every masked position.
+            for (long pos = stride + offset, i = 1; pos < totalRows; pos += stride, i++) {
+                if ((i & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
                 selected.add(pos);
             }
             long lastOrdinal = totalRows - 1;

@@ -50,6 +50,7 @@ import io.questdb.std.DirectLongList;
  * @see SubsampleAlgorithm
  */
 abstract class AbstractTimeBucketAlgorithm implements SubsampleAlgorithm {
+    private static final int CIRCUIT_BREAKER_CHECK_MASK = 1023;
 
     @Override
     public final void select(long buffer, int bufferSize, int targetPoints, boolean hasIntegralValues,
@@ -75,8 +76,13 @@ abstract class AbstractTimeBucketAlgorithm implements SubsampleAlgorithm {
         final long bucketRemainder = Long.remainderUnsigned(span, numBuckets);
 
         int dataIdx = 0;
+        // Share a local work counter across buckets and rows. Empty buckets must not skip
+        // cancellation, or turn repeated visits to the same dataIdx into a probe per bucket.
+        int work = 0;
         for (int bucket = 0; bucket < numBuckets; bucket++) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
 
             final long bucketStartTs = minTs + SubsampleAlgorithm.bucketOffset(bucketWidth, bucketRemainder, bucket, numBuckets);
             final long bucketEndTs = (bucket < numBuckets - 1)
@@ -96,8 +102,8 @@ abstract class AbstractTimeBucketAlgorithm implements SubsampleAlgorithm {
             long maxLong = 0;
 
             while (dataIdx < bufferSize) {
-                if ((dataIdx & 0xFFF) == 0) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 }
                 final long ts = SubsampleAlgorithm.getTimestamp(buffer, dataIdx);
                 // Final bucket processes all remaining rows (no end boundary)

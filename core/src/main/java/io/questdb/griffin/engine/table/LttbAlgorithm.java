@@ -76,6 +76,7 @@ import org.jetbrains.annotations.Nullable;
  * @see SubsampleAlgorithm
  */
 public class LttbAlgorithm implements SubsampleAlgorithm {
+    private static final int CIRCUIT_BREAKER_CHECK_MASK = 1023;
     // MinMaxLTTB (Van Der Donckt et al., 2023): preselect ~PRESELECT_RATIO * (m - 2)
     // interior points with a MinMax pass before the triangle stage. The paper
     // evaluates ratios 2..8; 4 is its recommended default, visually
@@ -141,10 +142,11 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
     public void select(long buffer, int bufferSize, int targetPoints, boolean hasIntegralValues,
                        DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
         selectedIndices.clear();
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         if (gapThreshold != 0 && gapThreshold != -1L) {
             selectGapPreserving(buffer, bufferSize, targetPoints, hasIntegralValues, selectedIndices, circuitBreaker);
         } else {
-            selectOnRange(buffer, 0, bufferSize, targetPoints, hasIntegralValues, selectedIndices, circuitBreaker);
+            selectOnRange(buffer, 0, bufferSize, targetPoints, hasIntegralValues, selectedIndices, circuitBreaker, 1);
         }
     }
 
@@ -204,10 +206,13 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
         }
         segments.clear();
 
+        // Carry one invocation-local counter through every phase and nested range. Restarting
+        // a checkpoint interval per bucket/segment would probe on every tiny segment.
+        int work = 1;
         int segStart = 0;
         for (int i = 1; i <= n; i++) {
-            if ((i & 0xFFF) == 0) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+            if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
             boolean isGap = false;
             if (i < n) {
@@ -217,7 +222,6 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                 isGap = Long.compareUnsigned(currTs - prevTs, gapThreshold) > 0;
             }
             if (isGap || i == n) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
                 int segSize = i - segStart;
                 segments.add(segStart);
                 segments.add(segSize);
@@ -231,8 +235,8 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
         // One-row segments only need 1 point, not 2.
         int floorTotal = 0;
         for (int s = 0; s < segCount; s++) {
-            if ((s & 0xFFF) == 0) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+            if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
             int segSize = (int) segments.get(s * 2 + 1);
             floorTotal += Math.min(2, segSize);
@@ -248,6 +252,9 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
         if (floorTotal >= totalPoints) {
             // Soft target exceeded by floor alone. Give each segment its floor.
             for (int s = 0; s < segCount; s++) {
+                if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
                 int segSize = (int) segments.get(s * 2 + 1);
                 targets.add(Math.min(2, segSize));
             }
@@ -256,8 +263,8 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             int budgetAboveFloor = totalPoints - floorTotal;
             int totalAllocated = 0;
             for (int s = 0; s < segCount; s++) {
-                if ((s & 0xFFF) == 0) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 }
                 int segSize = (int) segments.get(s * 2 + 1);
                 int floor = Math.min(2, segSize);
@@ -271,6 +278,9 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             // segments from the last one backward, respecting floor.
             int s = segCount - 1;
             while (totalAllocated > totalPoints && s >= 0) {
+                if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
                 int t = (int) targets.get(s);
                 int floor = Math.min(2, (int) segments.get(s * 2 + 1));
                 if (t > floor) {
@@ -284,18 +294,21 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
 
         // Pass 2: run LTTB per segment with budgeted targets
         for (int s = 0; s < segCount; s++) {
+            if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
             int start = (int) segments.get(s * 2);
             int size = (int) segments.get(s * 2 + 1);
             int segTarget = (int) targets.get(s);
             if (size <= segTarget) {
                 for (int j = start; j < start + size; j++) {
-                    if ((j & 0xFFF) == 0) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                    if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     }
                     selectedIndices.add(j);
                 }
             } else {
-                selectOnRange(buffer, start, start + size, segTarget, hasIntegralValues, selectedIndices, circuitBreaker);
+                work = selectOnRange(buffer, start, start + size, segTarget, hasIntegralValues, selectedIndices, circuitBreaker, work);
             }
         }
     }
@@ -305,8 +318,8 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
      * two-stage MinMaxLTTB variant when the range is large enough for the
      * preselection to pay off (see class doc).
      */
-    private void selectOnRange(long buffer, int start, int end, int m, boolean hasIntegralValues,
-                               DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
+    private int selectOnRange(long buffer, int start, int end, int m, boolean hasIntegralValues,
+                              DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker, int work) {
         // Preselection needs at least one interior LTTB bucket (m > 2) and an
         // interior that outnumbers the worst-case survivor count
         // (PRESELECT_RATIO * (m - 2), i.e. 2 per bin) by PRESELECT_MIN_SHRINK.
@@ -314,10 +327,10 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
         // 2 * PRESELECT_MIN_SHRINK rows, so bins are never empty. Long math:
         // both sides fit comfortably, no overflow for any int n, m.
         if (m > 2 && (long) (end - start) - 2 > (long) PRESELECT_MIN_SHRINK * PRESELECT_RATIO * (m - 2)) {
-            preselectMinMax(buffer, start, end, m, hasIntegralValues, circuitBreaker);
-            lttbCore(buffer, candidates, 0, (int) candidates.size(), m, hasIntegralValues, selectedIndices, circuitBreaker);
+            work = preselectMinMax(buffer, start, end, m, hasIntegralValues, circuitBreaker, work);
+            return lttbCore(buffer, candidates, 0, (int) candidates.size(), m, hasIntegralValues, selectedIndices, circuitBreaker, work);
         } else {
-            lttbCore(buffer, null, start, end, m, hasIntegralValues, selectedIndices, circuitBreaker);
+            return lttbCore(buffer, null, start, end, m, hasIntegralValues, selectedIndices, circuitBreaker, work);
         }
     }
 
@@ -335,7 +348,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
      * the survivor count is at least {@code bins + 2 >= m}: the triangle stage
      * still emits exactly m points, same as the plain path.
      */
-    private void preselectMinMax(long buffer, int start, int end, int m, boolean hasIntegralValues, SqlExecutionCircuitBreaker circuitBreaker) {
+    private int preselectMinMax(long buffer, int start, int end, int m, boolean hasIntegralValues, SqlExecutionCircuitBreaker circuitBreaker, int work) {
         if (candidates == null) {
             candidates = new DirectLongList(64, MemoryTag.NATIVE_FUNC_RSS, true);
             candidates.setMemoryTracker(memoryTracker);
@@ -352,7 +365,9 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
 
         candidates.add(start);
         for (int b = 0; b < bins; b++) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
             // Exact integer boundaries, same reasoning as LTTB's own buckets;
             // b * nInner fits a long for any int inputs.
             final int binStart = interiorStart + (int) ((long) b * nInner / bins);
@@ -369,8 +384,8 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             double minVal = valueAsDouble(buffer, binStart, hasIntegralValues);
             double maxVal = minVal;
             for (int j = binStart + 1; j < binEnd; j++) {
-                if ((j & 0xFFF) == 0) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 }
                 final double v = valueAsDouble(buffer, j, hasIntegralValues);
                 if (v < minVal) {
@@ -388,6 +403,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             SubsampleAlgorithm.emitAscendingPair(candidates, minIdx, maxIdx);
         }
         candidates.add(end - 1);
+        return work;
     }
 
     /**
@@ -396,22 +412,25 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
      * range); otherwise each position maps through the preselected candidate
      * list (MinMaxLTTB stage 2) and [start, end) indexes that list.
      */
-    private static void lttbCore(long buffer, @Nullable DirectLongList candidates, int start, int end, int m, boolean hasIntegralValues,
-                                 DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
+    private static int lttbCore(long buffer, @Nullable DirectLongList candidates, int start, int end, int m, boolean hasIntegralValues,
+                               DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker, int work) {
         int n = end - start;
         if (n < 2) {
             // Single data point or empty range - emit what's there
             for (int j = start; j < end; j++) {
+                if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
                 selectedIndices.add(at(candidates, j));
             }
-            return;
+            return work;
         }
         if (m < 2) {
             // Cannot form LTTB buckets with fewer than 2 target points.
             // This should not happen in normal flow (targetPoints >= 2 is
             // validated at compile time), but guard defensively.
             selectedIndices.add(at(candidates, start));
-            return;
+            return work;
         }
 
         selectedIndices.add(at(candidates, start));
@@ -420,7 +439,9 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
         int prevSelected = start;
 
         for (int bucket = 0; bucket < m - 2; bucket++) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
 
             int bucketStart = start + (int) ((bucket) * bucketSize) + 1;
             int bucketEnd = start + (int) ((bucket + 1) * bucketSize) + 1;
@@ -445,8 +466,8 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             double avgY = 0;
             int nextBucketLen = nextBucketEnd - nextBucketStart;
             for (int j = nextBucketStart; j < nextBucketEnd; j++) {
-                if ((j & 0xFFF) == 0) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 }
                 avgDx += timestampDelta(SubsampleAlgorithm.getTimestamp(buffer, at(candidates, j)), axTs);
                 avgY += valueAsDouble(buffer, at(candidates, j), hasIntegralValues);
@@ -460,8 +481,8 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             int maxAreaIndex = bucketStart;
             boolean sawNonFiniteArea = false;
             for (int j = bucketStart; j < bucketEnd; j++) {
-                if ((j & 0xFFF) == 0) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 }
                 // Triangle area (x2) with vertex A translated to the origin:
                 // the cross product of edges AB and AC. Algebraically equal to
@@ -484,8 +505,10 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                 }
             }
             if (sawNonFiniteArea) {
-                maxAreaIndex = maxAreaIndexRescaled(buffer, candidates, bucketStart, bucketEnd, nextBucketStart,
-                        nextBucketEnd, axTs, ay, avgDx, avgY, hasIntegralValues, circuitBreaker);
+                final long result = maxAreaIndexRescaled(buffer, candidates, bucketStart, bucketEnd, nextBucketStart,
+                        nextBucketEnd, axTs, ay, avgDx, avgY, hasIntegralValues, circuitBreaker, work);
+                maxAreaIndex = Numbers.decodeLowInt(result);
+                work = Numbers.decodeHighInt(result);
             }
 
             selectedIndices.add(at(candidates, maxAreaIndex));
@@ -493,6 +516,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
         }
 
         selectedIndices.add(at(candidates, end - 1));
+        return work;
     }
 
     /**
@@ -507,9 +531,9 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
      * lands here when a competing magnitude is near 2^900+, which dwarfs any
      * such candidate regardless.
      */
-    private static int maxAreaIndexRescaled(long buffer, @Nullable DirectLongList candidates, int bucketStart, int bucketEnd,
-                                            int nextBucketStart, int nextBucketEnd, long axTs, double ay, double avgDx,
-                                            double avgY, boolean hasIntegralValues, SqlExecutionCircuitBreaker circuitBreaker) {
+    private static long maxAreaIndexRescaled(long buffer, @Nullable DirectLongList candidates, int bucketStart, int bucketEnd,
+                                             int nextBucketStart, int nextBucketEnd, long axTs, double ay, double avgDx,
+                                             double avgY, boolean hasIntegralValues, SqlExecutionCircuitBreaker circuitBreaker, int work) {
         double avgYRescaled;
         if (Numbers.isFinite(avgY)) {
             avgYRescaled = Math.scalb(avgY, AREA_RESCALE_EXP);
@@ -520,8 +544,8 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             // Integer.MAX_VALUE addends can overflow.
             avgYRescaled = 0;
             for (int j = nextBucketStart; j < nextBucketEnd; j++) {
-                if ((j & 0xFFF) == 0) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 }
                 avgYRescaled += Math.scalb(valueAsDouble(buffer, at(candidates, j), hasIntegralValues), AREA_RESCALE_EXP);
             }
@@ -535,8 +559,8 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
         double maxArea = -1;
         int maxAreaIndex = bucketStart;
         for (int j = bucketStart; j < bucketEnd; j++) {
-            if ((j & 0xFFF) == 0) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+            if ((work++ & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
             final double dbx = timestampDelta(SubsampleAlgorithm.getTimestamp(buffer, at(candidates, j)), axTs);
             final double dby = Math.scalb(valueAsDouble(buffer, at(candidates, j), hasIntegralValues), AREA_RESCALE_EXP) - ayRescaled;
@@ -546,6 +570,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                 maxAreaIndex = j;
             }
         }
-        return maxAreaIndex;
+        // Return both values without allocating a result object on the selection path.
+        return Numbers.encodeLowHighInts(maxAreaIndex, work);
     }
 }
