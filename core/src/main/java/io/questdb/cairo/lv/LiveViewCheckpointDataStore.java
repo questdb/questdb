@@ -38,9 +38,9 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.HashMap;
 
 /**
  * Owns the immutable data-segment lifecycle. Compaction candidates protect all
@@ -58,11 +58,18 @@ public class LiveViewCheckpointDataStore implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(LiveViewCheckpointDataStore.class);
     private final LongIntHashMap candidateOwnershipCounts = new LongIntHashMap();
+    private final CatalogueRecoveryVisitor catalogueRecoveryVisitor = new CatalogueRecoveryVisitor();
     private final Path checkpointsDir = new Path();
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final LiveViewCheckpointSegmentDirectoryEntry lookupEntry = new LiveViewCheckpointSegmentDirectoryEntry();
     private final LiveViewCheckpointMetaStore metaStore;
+    private final LongList retirementEntries = new LongList();
+    private final LiveViewCheckpointRetirementQueueScratch retirementQueueScratch =
+            new LiveViewCheckpointRetirementQueueScratch();
+    private final LongList retirementRemaining = new LongList();
+    private final LiveViewCheckpointRetirementQueue.State retirementState =
+            new LiveViewCheckpointRetirementQueue.State();
     private final LiveViewCheckpointSegmentDirectoryReader segmentDirectory;
     private final PurgeSweep sweep = new PurgeSweep();
     private boolean isOpen;
@@ -79,7 +86,12 @@ public class LiveViewCheckpointDataStore implements Closeable {
 
     public Candidate beginCandidate() {
         ensureOpen();
-        return new Candidate(this);
+        return new Candidate(configuration).of(this);
+    }
+
+    Candidate beginCandidate(@NotNull LiveViewCheckpointCompactionScratch scratch) {
+        ensureOpen();
+        return scratch.acquireCandidate(this);
     }
 
     @Override
@@ -87,8 +99,21 @@ public class LiveViewCheckpointDataStore implements Closeable {
         assert candidateOwnershipCounts.size() == 0
                 : "live view checkpoint compaction candidates leaked: " + candidateOwnershipCounts.size();
         candidateOwnershipCounts.clear();
+        Misc.free(retirementQueueScratch);
         Misc.free(segmentDirectory);
         Misc.free(checkpointsDir);
+        isOpen = false;
+    }
+
+    /**
+     * Closes this binding and releases the catalogue mapping, keeping every shell
+     * so the store can be re-opened against the next view. A retained store must
+     * not hold a mapping into a file a later retire or compaction unlinks.
+     */
+    public void detach() {
+        segmentDirectory.detach();
+        retirementEntries.clear();
+        retirementRemaining.clear();
         isOpen = false;
     }
 
@@ -108,22 +133,110 @@ public class LiveViewCheckpointDataStore implements Closeable {
         ensureOpen();
         try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
             segmentDirectory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
+            final boolean queueMatchesGeneration = LiveViewCheckpointRetirementQueue.read(
+                    configuration,
+                    retirementQueueScratch,
+                    checkpointsDir,
+                    retirementEntries,
+                    retirementState
+            ) && retirementState.generation == pin.getGeneration();
+            final boolean requiresPhysicalOrphanScan = !queueMatchesGeneration;
+            int catalogueEntriesVisited = 0;
+            if (!queueMatchesGeneration) {
+                // Upgrade/corruption recovery is deliberately the one full scan:
+                // rebuild the durable work set from the selected catalogue, then
+                // every steady sweep point-looks only these zero-reference ids.
+                retirementEntries.clear();
+                retirementState.generation = pin.getGeneration();
+                retirementState.liveDataSegmentCount = 0;
+                catalogueRecoveryVisitor.reset();
+                try {
+                    segmentDirectory.iterateAll(catalogueRecoveryVisitor);
+                    catalogueEntriesVisited = catalogueRecoveryVisitor.catalogueEntriesVisited;
+                } finally {
+                    catalogueRecoveryVisitor.clear();
+                }
+            }
             sweep.of(
                     metaStore.getOldestValidSuperblockGeneration(),
                     metaStore.getMinPinnedGeneration()
             );
-            // Walking the catalogue costs the segment count, not the timeline
-            // length: the tree carries one entry per segment however many logical
-            // checkpoints reference it.
-            segmentDirectory.iterateAll(sweep);
+            sweep.liveSegments = retirementState.liveDataSegmentCount > Integer.MAX_VALUE
+                    ? Integer.MAX_VALUE
+                    : (int) retirementState.liveDataSegmentCount;
+            retirementRemaining.clear();
+            for (int i = 0, n = retirementEntries.size(); i < n; i += LiveViewCheckpointRetirementQueue.ENTRY_STRIDE) {
+                final long segmentId = retirementEntries.getQuick(i);
+                if (!segmentDirectory.find(segmentId, lookupEntry)) {
+                    // The normal publication after a successful unlink pruned
+                    // the catalogue entry. Only then can the durable work item go.
+                    continue;
+                }
+                if (lookupEntry.referenceCount != 0) {
+                    // A failed publication can queue a false retirement, and a
+                    // later generation can revive a zero-reference segment. The
+                    // selected catalogue is authoritative in both cases.
+                    continue;
+                }
+                sweep.onEntry(lookupEntry);
+                retirementRemaining.add(
+                        lookupEntry.segmentId,
+                        lookupEntry.fileLength,
+                        lookupEntry.retireGeneration,
+                        lookupEntry.kind
+                );
+            }
+            LiveViewCheckpointRetirementQueue.write(
+                    configuration,
+                    retirementQueueScratch,
+                    checkpointsDir,
+                    retirementRemaining,
+                    pin.getGeneration(),
+                    retirementState.liveDataSegmentCount
+            );
             return new PurgeResult(
                     sweep.purgedSegments,
                     sweep.failedSegments,
                     sweep.purgedBytes,
                     sweep.liveSegments,
                     sweep.obsoleteBytes,
-                    sweep.retirableSegments
+                    sweep.retirableSegments,
+                    requiresPhysicalOrphanScan,
+                    retirementEntries.size() / LiveViewCheckpointRetirementQueue.ENTRY_STRIDE,
+                    catalogueEntriesVisited
             );
+        }
+    }
+
+    @TestOnly
+    public int getPurgeVisitorShellIdentityForTest() {
+        return System.identityHashCode(catalogueRecoveryVisitor);
+    }
+
+    @TestOnly
+    public boolean isPurgeVisitorShellStateClearForTest() {
+        return catalogueRecoveryVisitor.catalogueEntriesVisited == 0;
+    }
+
+    private final class CatalogueRecoveryVisitor implements LiveViewCheckpointSegmentDirectoryReader.Visitor {
+        private int catalogueEntriesVisited;
+
+        private void clear() {
+            catalogueEntriesVisited = 0;
+        }
+
+        private void reset() {
+            catalogueEntriesVisited = 0;
+        }
+
+        @Override
+        public void onEntry(@NotNull LiveViewCheckpointSegmentDirectoryEntry entry) {
+            catalogueEntriesVisited++;
+            if (entry.referenceCount == 0) {
+                retirementEntries.add(entry.segmentId, entry.fileLength, entry.retireGeneration, entry.kind);
+            } else if (!entry.isMetadata()) {
+                retirementState.liveDataSegmentCount++;
+            }
         }
     }
 
@@ -278,13 +391,9 @@ public class LiveViewCheckpointDataStore implements Closeable {
     private synchronized long repack(
             @NotNull Candidate candidate,
             long targetSegmentId,
-            @NotNull ObjList<LiveViewCheckpointStatePageRef> sourceRefs,
-            @NotNull ObjList<LiveViewCheckpointStatePageRef> targetRefs
+            @NotNull LiveViewCheckpointCompactionScratch scratch
     ) {
         ensureOpen();
-        if (sourceRefs.size() == 0) {
-            throw CairoException.critical(0).put("cannot repack an empty live view checkpoint page set");
-        }
         if (candidate.targetSegmentIds.contains(targetSegmentId)) {
             throw CairoException.critical(0)
                     .put("duplicate live view checkpoint compaction target, segmentId=")
@@ -298,21 +407,16 @@ public class LiveViewCheckpointDataStore implements Closeable {
                         .put("live view checkpoint compaction target id must be monotonic, segmentId=")
                         .put(targetSegmentId);
             }
-            candidate.redirects.clear();
-            candidate.stagedRefs.clear();
             try (LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration)) {
                 writer.of(checkpointsDir, targetSegmentId);
                 candidate.targetSegmentIds.add(targetSegmentId);
                 own(candidate, targetSegmentId);
-                final HashMap<Long, LiveViewCheckpointDataSegmentReader> readers = new HashMap<>();
+                boolean hasSourcePage = false;
+                scratch.startSelectedPageIteration();
                 try {
-                    for (int i = 0, n = sourceRefs.size(); i < n; i++) {
-                        final LiveViewCheckpointStatePageRef sourceRef = sourceRefs.getQuick(i);
-                        if (sourceRef == null || sourceRef.isNull()) {
-                            throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                                    .put("live view checkpoint compaction source reference is null");
-                        }
-                        final long sourceSegmentId = sourceRef.getSegmentId();
+                    while (scratch.nextSelectedPage(candidate.sourceRef)) {
+                        hasSourcePage = true;
+                        final long sourceSegmentId = candidate.sourceRef.getSegmentId();
                         if (sourceSegmentId == targetSegmentId) {
                             throw CairoException.critical(0)
                                     .put("live view checkpoint compaction target aliases a source segment, segmentId=")
@@ -324,65 +428,35 @@ public class LiveViewCheckpointDataStore implements Closeable {
                                     .put(sourceSegmentId);
                         }
                         own(candidate, sourceSegmentId);
-                        final PhysicalPageKey key = new PhysicalPageKey(sourceRef);
-                        final Redirect old = candidate.redirects.get(key);
-                        if (old != null) {
-                            if (!sameMetadata(old.sourceRef, sourceRef)) {
-                                throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                                        .put("live view checkpoint shared data page metadata mismatch")
-                                        .put(" [segmentId=").put(sourceSegmentId)
-                                        .put(", offset=").put(sourceRef.getOffset()).put(']');
-                            }
-                            final LiveViewCheckpointStatePageRef copy = new LiveViewCheckpointStatePageRef();
-                            copyRef(old.targetRef, copy);
-                            candidate.stagedRefs.add(copy);
-                            continue;
-                        }
-
-                        LiveViewCheckpointDataSegmentReader reader = readers.get(sourceSegmentId);
-                        if (reader == null) {
-                            reader = new LiveViewCheckpointDataSegmentReader(configuration);
-                            reader.of(checkpointsDir, sourceSegmentId, segmentDirectory.getFileLength(sourceSegmentId));
-                            readers.put(sourceSegmentId, reader);
-                        }
-                        reader.openPage(
-                                sourceRef,
-                                sourceRef.getPageKind(),
-                                sourceRef.getCodec(),
-                                sourceRef.getFlags(),
-                                sourceRef.getRowCount(),
-                                sourceRef.getDecodedLength()
+                        final LiveViewCheckpointDataSegmentReader reader = scratch.openReader(
+                                checkpointsDir, sourceSegmentId, segmentDirectory.getFileLength(sourceSegmentId)
                         );
-                        final LiveViewCheckpointStatePageRef targetRef = new LiveViewCheckpointStatePageRef();
+                        reader.openPage(
+                                candidate.sourceRef,
+                                candidate.sourceRef.getPageKind(),
+                                candidate.sourceRef.getCodec(),
+                                candidate.sourceRef.getFlags(),
+                                candidate.sourceRef.getRowCount(),
+                                candidate.sourceRef.getDecodedLength()
+                        );
                         final MemoryA mem = writer.beginPage();
                         mem.putBlockOfBytes(reader.getPageAddress(), reader.getPageStoredLength());
                         writer.endPage(
-                                targetRef,
-                                sourceRef.getDecodedLength(),
-                                sourceRef.getPageKind(),
-                                sourceRef.getCodec(),
-                                sourceRef.getRowCount(),
-                                sourceRef.getFlags()
+                                candidate.targetRef,
+                                candidate.sourceRef.getDecodedLength(),
+                                candidate.sourceRef.getPageKind(),
+                                candidate.sourceRef.getCodec(),
+                                candidate.sourceRef.getRowCount(),
+                                candidate.sourceRef.getFlags()
                         );
-                        final LiveViewCheckpointStatePageRef sourceCopy = new LiveViewCheckpointStatePageRef();
-                        copyRef(sourceRef, sourceCopy);
-                        candidate.redirects.put(key, new Redirect(sourceCopy, targetRef));
-                        final LiveViewCheckpointStatePageRef targetCopy = new LiveViewCheckpointStatePageRef();
-                        copyRef(targetRef, targetCopy);
-                        candidate.stagedRefs.add(targetCopy);
+                        scratch.recordTarget(candidate.targetRef);
                     }
-                    final long fileLength = writer.commit();
-                    targetRefs.clear();
-                    for (int i = 0, n = candidate.stagedRefs.size(); i < n; i++) {
-                        final LiveViewCheckpointStatePageRef copy = new LiveViewCheckpointStatePageRef();
-                        copyRef(candidate.stagedRefs.getQuick(i), copy);
-                        targetRefs.add(copy);
+                    if (!hasSourcePage) {
+                        throw CairoException.critical(0).put("cannot repack an empty live view checkpoint page set");
                     }
-                    return fileLength;
+                    return writer.commit();
                 } finally {
-                    for (LiveViewCheckpointDataSegmentReader reader : readers.values()) {
-                        Misc.free(reader);
-                    }
+                    scratch.finishRepack();
                 }
             }
         }
@@ -403,32 +477,21 @@ public class LiveViewCheckpointDataStore implements Closeable {
         candidate.targetSegmentIds.clear();
     }
 
-    private static boolean sameMetadata(
-            @NotNull LiveViewCheckpointStatePageRef left,
-            @NotNull LiveViewCheckpointStatePageRef right
-    ) {
-        return left.getSegmentId() == right.getSegmentId()
-                && left.getOffset() == right.getOffset()
-                && left.getStoredLength() == right.getStoredLength()
-                && left.getDecodedLength() == right.getDecodedLength()
-                && left.getPageKind() == right.getPageKind()
-                && left.getCodec() == right.getCodec()
-                && left.getRowCount() == right.getRowCount()
-                && left.getFlags() == right.getFlags();
-    }
-
     public static final class Candidate implements Closeable {
 
+        private final LiveViewCheckpointCompactionScratch compatibilityScratch;
         private final LongHashSet ownedSegmentIds = new LongHashSet();
-        private final HashMap<PhysicalPageKey, Redirect> redirects = new HashMap<>();
-        private final ObjList<LiveViewCheckpointStatePageRef> stagedRefs = new ObjList<>();
+        private final ObjList<LiveViewCheckpointStatePageRef> outputRefPool = new ObjList<>();
+        private final LiveViewCheckpointStatePageRef sourceRef = new LiveViewCheckpointStatePageRef();
+        private final LiveViewCheckpointStatePageRef targetFlyweight = new LiveViewCheckpointStatePageRef();
+        private final LiveViewCheckpointStatePageRef targetRef = new LiveViewCheckpointStatePageRef();
         private final LongHashSet targetSegmentIds = new LongHashSet();
         private boolean failed;
         private LiveViewCheckpointDataStore owner;
         private boolean published;
 
-        private Candidate(@NotNull LiveViewCheckpointDataStore owner) {
-            this.owner = owner;
+        Candidate(@NotNull CairoConfiguration configuration) {
+            compatibilityScratch = new LiveViewCheckpointCompactionScratch(configuration, false);
         }
 
         @Override
@@ -443,8 +506,6 @@ public class LiveViewCheckpointDataStore implements Closeable {
             } else {
                 o.abortCandidate(this);
             }
-            redirects.clear();
-            stagedRefs.clear();
         }
 
         /**
@@ -461,12 +522,69 @@ public class LiveViewCheckpointDataStore implements Closeable {
                 @NotNull ObjList<LiveViewCheckpointStatePageRef> targetRefs
         ) {
             ensureOpen();
+            compatibilityScratch.begin(null);
             try {
-                return owner.repack(this, targetSegmentId, sourceRefs, targetRefs);
+                for (int i = 0, n = sourceRefs.size(); i < n; i++) {
+                    final LiveViewCheckpointStatePageRef source = sourceRefs.getQuick(i);
+                    if (source == null || source.isNull()) {
+                        throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                                .put("live view checkpoint compaction source reference is null");
+                    }
+                    compatibilityScratch.addLivePage(source);
+                    compatibilityScratch.addSelectedSegment(source.getSegmentId());
+                }
+                final long bytes = repack(targetSegmentId, compatibilityScratch);
+                targetRefs.clear();
+                for (int i = 0, n = sourceRefs.size(); i < n; i++) {
+                    final LiveViewCheckpointStatePageRef target = compatibilityScratch.redirect(
+                            sourceRefs.getQuick(i), targetFlyweight
+                    );
+                    if (target == null) {
+                        throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                                .put("live view checkpoint compaction compatibility redirect missing");
+                    }
+                    final LiveViewCheckpointStatePageRef copy;
+                    if (i < outputRefPool.size()) {
+                        copy = outputRefPool.getQuick(i);
+                    } else {
+                        copy = new LiveViewCheckpointStatePageRef();
+                        outputRefPool.add(copy);
+                    }
+                    copyRef(target, copy);
+                    targetRefs.add(copy);
+                }
+                return bytes;
+            } finally {
+                compatibilityScratch.end();
+            }
+        }
+
+        long repack(long targetSegmentId, @NotNull LiveViewCheckpointCompactionScratch scratch) {
+            ensureOpen();
+            try {
+                return owner.repack(this, targetSegmentId, scratch);
             } catch (RuntimeException | Error th) {
                 failed = true;
                 throw th;
             }
+        }
+
+        Candidate of(@NotNull LiveViewCheckpointDataStore owner) {
+            if (this.owner != null) {
+                throw CairoException.critical(0).put("live view checkpoint compaction candidate already active");
+            }
+            this.owner = owner;
+            failed = false;
+            published = false;
+            return this;
+        }
+
+        void closeReusableResources() {
+            if (owner != null) {
+                throw CairoException.critical(0).put("cannot close an active live view checkpoint compaction candidate");
+            }
+            compatibilityScratch.close();
+            outputRefPool.clear();
         }
 
         private void ensureOpen() {
@@ -484,10 +602,13 @@ public class LiveViewCheckpointDataStore implements Closeable {
 
     public static final class PurgeResult {
         private final int failedSegmentCount;
+        private final int catalogueEntriesVisited;
         private final int liveSegmentCount;
         private final long obsoleteBytes;
         private final long purgedBytes;
         private final int purgedSegmentCount;
+        private final int queueEntriesVisited;
+        private final boolean requiresPhysicalOrphanScan;
         private final LongList retirableSegmentIds;
 
         private PurgeResult(
@@ -496,7 +617,10 @@ public class LiveViewCheckpointDataStore implements Closeable {
                 long purgedBytes,
                 int liveSegmentCount,
                 long obsoleteBytes,
-                @NotNull LongList retirableSegmentIds
+                @NotNull LongList retirableSegmentIds,
+                boolean requiresPhysicalOrphanScan,
+                int queueEntriesVisited,
+                int catalogueEntriesVisited
         ) {
             this.purgedSegmentCount = purgedSegmentCount;
             this.failedSegmentCount = failedSegmentCount;
@@ -504,6 +628,13 @@ public class LiveViewCheckpointDataStore implements Closeable {
             this.liveSegmentCount = liveSegmentCount;
             this.obsoleteBytes = obsoleteBytes;
             this.retirableSegmentIds = new LongList(retirableSegmentIds);
+            this.requiresPhysicalOrphanScan = requiresPhysicalOrphanScan;
+            this.queueEntriesVisited = queueEntriesVisited;
+            this.catalogueEntriesVisited = catalogueEntriesVisited;
+        }
+
+        public int getCatalogueEntriesVisited() {
+            return catalogueEntriesVisited;
         }
 
         public int getFailedSegmentCount() {
@@ -536,6 +667,10 @@ public class LiveViewCheckpointDataStore implements Closeable {
             return purgedSegmentCount;
         }
 
+        public int getQueueEntriesVisited() {
+            return queueEntriesVisited;
+        }
+
         /**
          * @return ascending ids of the catalogued segments this sweep left with no
          * file - the ones it unlinked, plus the ones an earlier sweep unlinked and
@@ -546,49 +681,15 @@ public class LiveViewCheckpointDataStore implements Closeable {
         public LongList getRetirableSegmentIds() {
             return retirableSegmentIds;
         }
-    }
 
-    private static final class PhysicalPageKey {
-        private final long offset;
-        private final long segmentId;
-        private final int storedLength;
-
-        private PhysicalPageKey(@NotNull LiveViewCheckpointStatePageRef ref) {
-            segmentId = ref.getSegmentId();
-            offset = ref.getOffset();
-            storedLength = ref.getStoredLength();
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (this == obj) {
-                return true;
-            }
-            if (!(obj instanceof PhysicalPageKey)) {
-                return false;
-            }
-            final PhysicalPageKey that = (PhysicalPageKey) obj;
-            return segmentId == that.segmentId && offset == that.offset && storedLength == that.storedLength;
-        }
-
-        @Override
-        public int hashCode() {
-            long hash = segmentId * 31 + offset;
-            hash = hash * 31 + storedLength;
-            return (int) (hash ^ (hash >>> 32));
-        }
-    }
-
-    private static final class Redirect {
-        private final LiveViewCheckpointStatePageRef sourceRef;
-        private final LiveViewCheckpointStatePageRef targetRef;
-
-        private Redirect(
-                @NotNull LiveViewCheckpointStatePageRef sourceRef,
-                @NotNull LiveViewCheckpointStatePageRef targetRef
-        ) {
-            this.sourceRef = sourceRef;
-            this.targetRef = targetRef;
+        /**
+         * Returns whether purge had to rebuild its work set because the durable
+         * queue was absent, invalid, or named another generation. A queue from a
+         * future generation is the durable trace of a pre-superblock publication
+         * failure, so the caller must run one physical orphan scan as well.
+         */
+        public boolean requiresPhysicalOrphanScan() {
+            return requiresPhysicalOrphanScan;
         }
     }
 

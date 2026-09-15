@@ -25,12 +25,14 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -53,7 +55,8 @@ import org.jetbrains.annotations.Nullable;
  * this session holds, and no timeline generation names the staged roots.
  *
  * <h2>What the session owns, and when</h2>
- * The overlay, the descriptor, the boundary schedule and the plan belong to the
+ * The overlay, the descriptor, the boundary schedule, the plan and - for a repair that is
+ * one segment of a multi-segment loop - the loop position belong to the
  * session for the whole repair - the executing turn reaches them through it. The
  * three resources a turn actively uses - the pinned base reader, the live-view
  * {@link WalWriter} carrying the uncommitted replacement, and the staged
@@ -81,9 +84,20 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LiveViewCheckpointRepairSession.class);
     private final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
     private final LiveViewCheckpointRepairState descriptor;
+    // Whether the qualifying output this repair has emitted so far holds two rows with
+    // the same (timestamp, projected key) pair. It travels with the loop position for the
+    // reason the domain does: a duplicate whose two rows sit on either side of a park is
+    // still a duplicate, and the worker's own detector is re-armed by the next repair it
+    // classifies.
+    private final LiveViewCheckpointOutputUniqueness outputUniqueness = new LiveViewCheckpointOutputUniqueness();
     private final LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay();
+    private final LiveViewCheckpointSealCarryover sealCarryover = new LiveViewCheckpointSealCarryover();
+    private final LongList keyedBoundaryPositions = new LongList();
     private final LiveViewRefreshJob owner;
     private final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+    // Where the multi-segment loop that started this repair had got to, for a repair that
+    // is one segment of one. Empty for a repair that stands on its own.
+    private final LiveViewCheckpointSegmentLoop segmentLoop = new LiveViewCheckpointSegmentLoop();
     // The compiled factory whose window functions the replay is standing part-way
     // through. Identity only - the session never calls it - so a later turn can refuse
     // a runtime that drifted out from under the candidate. See getWindowFactory().
@@ -97,6 +111,15 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private long durableRowsBelowFloor;
     private long durableRowsReplaced;
     private ObjList<WindowFunction> functions;
+    private long keyedInsertedRowDelta;
+    private LiveViewCheckpointKeyedReplay keyedReplay;
+    private boolean isColdKeyedReplayRoute;
+    private boolean isKeyedReplayRoute;
+    // Whether this repair has a durable LiveViewCheckpointRepairMarker on disk that the
+    // turn finishing it owes a clear. It lives here rather than in the executing turn
+    // because it outlives one: a repair that parks on its budget leaves the marker
+    // behind, and the turn that resumes it is a different call with its own locals.
+    private boolean isRepairMarkerLive;
     private boolean isSuspended;
     // Set when close() abandoned the repair but could not put the overlay back, leaving the
     // compiled factory holding neither the pre-repair state nor a settled one. Read by
@@ -135,6 +158,12 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      * The durable descriptor is discarded rather than left behind: the candidate
      * it describes is gone with the session, so an intact record of it would read
      * as a crashed repair to the next startup sweep.
+     * <p>
+     * close() attempts every release whatever the ones ahead of it raised. This is
+     * the last chance any of them gets: the callers that reach here have already detached
+     * the session, so a handle left behind is held by nothing and reclaimed only by a
+     * restart. The first failure still propagates, carrying the later ones as
+     * suppressed exceptions.
      */
     @Override
     public void close() {
@@ -160,14 +189,52 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         }
         functions = null;
         anchorWindow = null;
-        capture = Misc.free(capture);
-        walWriter = Misc.free(walWriter);
-        baseReader = Misc.free(baseReader);
-        descriptor.discard();
-        Misc.free(descriptor);
-        Misc.free(overlay);
+        // Best-effort, in the codebase's own cleanup idiom: every handle below gets its
+        // close attempt whatever the ones ahead of it raised, the first failure carries
+        // the rest as suppressed, and CairoException.rethrowCleanupFailure hands it on at
+        // the end. A plain chain strands everything under the first throw, and the two
+        // statements most able to throw are at its head: closing the live-view WalWriter
+        // rolls the uncommitted replacement back through real file IO and
+        // WalWriterPool.WalWriterTenant.close() deliberately rethrows what that raises,
+        // while AbstractMultiTenantPool answers a second return of either the writer or
+        // the pinned reader with "double close". Everything that releases memory sits
+        // below them - the pinned base snapshot, the descriptor's mapping and its three
+        // Paths, the overlay's window-state copy charged to the view's MemoryTracker, and
+        // the carryover's state buffers - and a strand there is permanent: close() runs
+        // from paths that have already detached the session, so nothing in the process
+        // still holds it and only a restart reclaims what it kept. discard() is in the
+        // chain for the same reason: a descriptor left on disk reads as a crashed repair
+        // to the next startup sweep.
+        Throwable failure = Misc.freeBestEffort(null, keyedReplay);
+        keyedReplay = null;
+        failure = Misc.freeBestEffort(failure, capture);
+        capture = null;
+        failure = Misc.freeBestEffort(failure, walWriter);
+        walWriter = null;
+        failure = Misc.freeBestEffort(failure, baseReader);
+        baseReader = null;
+        try {
+            descriptor.discard();
+        } catch (Throwable t) {
+            failure = Misc.foldCleanupFailure(failure, t);
+        }
+        failure = Misc.freeBestEffort(failure, descriptor);
+        failure = Misc.freeBestEffort(failure, overlay);
+        // Abandoned rather than settled, so nothing published a generation the parked
+        // baselines could name. Dropping them leaves every target on the complete freeze
+        // the wipe left it owing, which is the safe direction.
+        failure = Misc.freeBestEffort(failure, sealCarryover);
         boundaries.clear();
+        keyedBoundaryPositions.clear();
+        segmentLoop.clear();
+        outputUniqueness.clear();
+        isRepairMarkerLive = false;
         isSuspended = false;
+        // close() rethrows rather than swallows, which keeps the contract it already had:
+        // a caller that sees a failure today still sees it, and a genuine IO fault does
+        // not become a silent one. What changes is only what it costs - every release
+        // above has already run by the time it propagates.
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     /**
@@ -212,6 +279,10 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         functions = null;
         anchorWindow = null;
         overlay.clear();
+        // The dirty sets name keys of partition maps a recompile has already freed, and
+        // the baseline names a root the rebuilt factory never froze. Both go with the
+        // state they describe.
+        sealCarryover.clear();
     }
 
     /**
@@ -272,8 +343,42 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      * @return the in-RAM copy of the window state the repair took aside before
      * replaying over it
      */
+    /**
+     * @return the {@code (timestamp, projected key)} uniqueness of the output emitted
+     * across every turn of this repair so far, for the turn that resumes it to continue
+     * checking against
+     */
+    public LiveViewCheckpointOutputUniqueness getOutputUniqueness() {
+        return outputUniqueness;
+    }
+
     public LiveViewCheckpointScratchOverlay getOverlay() {
         return overlay;
+    }
+
+    public LongList getKeyedBoundaryPositions() {
+        return keyedBoundaryPositions;
+    }
+
+    public long getKeyedInsertedRowDelta() {
+        return keyedInsertedRowDelta;
+    }
+
+    public LiveViewCheckpointKeyedReplay getKeyedReplay() {
+        return keyedReplay;
+    }
+
+    public boolean isColdKeyedReplayRoute() {
+        return isColdKeyedReplayRoute;
+    }
+
+    public boolean isKeyedReplayRoute() {
+        return isKeyedReplayRoute;
+    }
+
+    public void ownKeyedReplay(@NotNull LiveViewCheckpointKeyedReplay keyedReplay) {
+        assert this.keyedReplay == null || this.keyedReplay == keyedReplay;
+        this.keyedReplay = keyedReplay;
     }
 
     /**
@@ -337,6 +442,28 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     }
 
     /**
+     * @return where the multi-segment loop that started this repair had got to: the
+     * segments it has not reached, the coordinates they are planned against, and the
+     * residual it still owes once they are done. The loop owns one pinned base snapshot
+     * across every segment it takes, so a replay that parks parks the rest of the loop with
+     * it, and the turn that resumes the replay is the turn that finishes the loop.
+     * {@link LiveViewCheckpointSegmentLoop#isOpen()} is false for a repair that is not part
+     * of one
+     */
+    public LiveViewCheckpointSegmentLoop getSegmentLoop() {
+        return segmentLoop;
+    }
+
+    /**
+     * @return the incremental-seal bookkeeping this repair holds aside while its replay
+     * runs through the compiled factory. Captured before the retire that resets the
+     * batch-minimum window, and handed back in the repair's single runtime exchange
+     */
+    public LiveViewCheckpointSealCarryover getSealCarryover() {
+        return sealCarryover;
+    }
+
+    /**
      * @return how many turns this repair has spent; 1 for a repair that never
      * yielded
      */
@@ -345,12 +472,23 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     }
 
     /**
-     * @return the compiled factory the replay is standing part-way through. A turn that
-     * finds the view holding a different one is looking at a runtime rebuilt since the
-     * capture, and must abandon the candidate rather than continue in it.
+     * @return the compiled factory the replay is standing part-way through - the isolated
+     * repair runtime's for a converging repair, the primary one for a repair that replays
+     * through it. A turn that would replay through a different one is looking at a runtime
+     * rebuilt since the capture, or at an operator who declined the isolated runtime
+     * mid-repair, and must abandon the candidate rather than continue in it.
      */
     public WindowRecordCursorFactory getWindowFactory() {
         return windowFactory;
+    }
+
+    /**
+     * @return true when a durable {@code LiveViewCheckpointRepairMarker} written for this
+     * repair is still on disk, so the turn that finishes the repair owes either a clear
+     * or a retire. See {@link #setRepairMarkerLive(boolean)}
+     */
+    public boolean isRepairMarkerLive() {
+        return isRepairMarkerLive;
     }
 
     /**
@@ -378,6 +516,21 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      */
     public void of(@NotNull LiveViewCheckpointRepairPlan plan) {
         this.plan.copyFrom(plan);
+    }
+
+    public void prepareKeyedReplay(
+            boolean isKeyedReplayRoute,
+            boolean isColdKeyedReplayRoute,
+            long keyedInsertedRowDelta,
+            @Nullable LongList keyedBoundaryPositions
+    ) {
+        this.isKeyedReplayRoute = isKeyedReplayRoute;
+        this.isColdKeyedReplayRoute = isColdKeyedReplayRoute;
+        this.keyedInsertedRowDelta = keyedInsertedRowDelta;
+        this.keyedBoundaryPositions.clear();
+        if (keyedBoundaryPositions != null) {
+            this.keyedBoundaryPositions.addAll(keyedBoundaryPositions);
+        }
     }
 
     /**
@@ -408,9 +561,26 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     }
 
     /**
+     * Records whether this repair has a live durable repair marker: one is written before
+     * a prefix truncate or a timeline splice, and cleared once the post-replay seal - or
+     * the splice itself - has made the timeline consistent again. A repair that parks on
+     * its turn budget leaves the marker on disk, so the flag travels with the session and
+     * the turn that finishes the repair is the one that resolves it.
+     */
+    public void setRepairMarkerLive(boolean live) {
+        this.isRepairMarkerLive = live;
+    }
+
+    /**
      * Parks a repair whose replay has spent its turn budget, taking ownership of
      * everything the next turn continues from. The caller has committed nothing,
      * so the durable state a reader sees is still the pre-repair one.
+     * <p>
+     * All three handles move or none of them do: the only statement here that can
+     * fail runs before the first handover, so a throw leaves the reader, the writer
+     * and the capture with the caller. A caller whose park failed therefore did not
+     * park, and owes all three the cleanup a turn that never parked gets - see the
+     * catch around this call in {@link LiveViewRefreshJob}.
      *
      * @param baseReader         the pinned base snapshot {@code E}, which must stay
      *                           open: no as-of reader could reopen it
@@ -426,6 +596,9 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      * @param scanRows           base rows read so far
      * @param replayMinTs        lowest output timestamp so far, or {@link Numbers#LONG_NULL}
      * @param replayMaxTs        highest output timestamp so far, or {@link Numbers#LONG_NULL}
+     * @param outputUniqueness   the pairs the replay has emitted so far, copied aside so
+     *                           the turn that resumes compares against them rather than
+     *                           starting the check over
      */
     public void suspend(
             @NotNull TableReader baseReader,
@@ -437,8 +610,16 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
             long appendedRows,
             long scanRows,
             long replayMinTs,
-            long replayMaxTs
+            long replayMaxTs,
+            @NotNull LiveViewCheckpointOutputUniqueness outputUniqueness
     ) {
+        // Ahead of the three handovers below, because it is the only statement here that can
+        // fail: its key-set copy allocates. The caller owns the reader, the writer and the
+        // capture until this method returns - LiveViewRefreshJob raises walWriterRetained
+        // after the call and its finally closes the writer while that flag is down - so a
+        // throw that came after the handover would have close() return the writer to the pool
+        // a second time, which the pool answers with "double close".
+        this.outputUniqueness.copyFrom(outputUniqueness);
         this.baseReader = baseReader;
         this.walWriter = walWriter;
         this.capture = capture;
