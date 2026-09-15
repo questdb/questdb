@@ -71,12 +71,14 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
         return true;
     }
 
-    // TODO(nw): audited as FALSE — this factory does not emit in designated-timestamp
-    // order. Corrected in a follow-up commit on this branch; declared here only to keep
-    // this change behaviour-preserving.
+    // This factory exists to serve "ORDER BY symbol[, timestamp]". It walks the symbol
+    // keys in sorted symbol order and, for each key, emits that symbol's entire index
+    // row range before moving on to the next key. Timestamps therefore restart at every
+    // symbol boundary, so the cursor is ordered by symbol, not by designated timestamp,
+    // and neither FORWARD nor BACKWARD can be claimed.
     @Override
     public int getScanDirection() {
-        return SCAN_DIRECTION_FORWARD;
+        return SCAN_DIRECTION_OTHER;
     }
 
     @Override
