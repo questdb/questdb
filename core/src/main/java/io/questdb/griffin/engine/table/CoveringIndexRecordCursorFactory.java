@@ -293,6 +293,26 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         return hasAnyColumnTop(reader, writerIndex, null);
     }
 
+    /**
+     * Test-only count of {@code resumeKeyDrain()} calls since the last reset: how
+     * many times a (key, partition) drain was continued because the preceding
+     * frame hit {@code maxRowsPerFrame} rather than exhausting the key. Zero means
+     * every key fit in a single frame and the multi-chunk resume branch never ran
+     * -- which is the default for realistic row counts against the 1,000,000-row
+     * frame cap, and is exactly what a test using
+     * {@link #setMaxRowsPerFrameForTesting(int)} must rule out. Reset with
+     * {@link #resetKeyDrainResumesForTesting()}.
+     */
+    @TestOnly
+    public static long getKeyDrainResumesForTesting() {
+        return CoveringPageFrameCursor.keyDrainResumesForTesting;
+    }
+
+    @TestOnly
+    public static void resetKeyDrainResumesForTesting() {
+        CoveringPageFrameCursor.keyDrainResumesForTesting = 0;
+    }
+
     @TestOnly
     public static void clearMergeObserverForTesting() {
         TEST_MERGE_OBSERVER.remove();
@@ -1228,6 +1248,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // there. See setMaxRowsPerFrameForTesting for the override convention.
         @TestOnly
         static volatile long coveredRowsWrittenForTesting;
+        // Test-only count of resumeKeyDrain() calls, i.e. the number of times a
+        // (key, partition) drain was picked up mid-way because the previous frame
+        // hit the row cap. It is the ONLY observable that distinguishes "this key
+        // fit in one frame" from "this key spanned many frames": nothing in the
+        // query plan, the result rows or the per-key frame stream says how many
+        // frames a key produced. Tests that shrink maxRowsPerFrame to reach the
+        // resume branch assert on it so they cannot pass vacuously. Reset with
+        // resetKeyDrainResumesForTesting().
+        @TestOnly
+        static volatile long keyDrainResumesForTesting;
         private static int maxRowsPerFrameOverride = -1;
         protected int maxRowsPerFrame;
         // Tracks all native allocations as (addr, size) pairs for bulk cleanup.
@@ -1664,6 +1694,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          */
         protected final @Nullable PageFrame resumeKeyDrain() {
             assert isKeyMidDrain();
+            // Test-only: one mid-drain resume. Unconditional (not folded into an
+            // assert) so the count stays correct with -ea off. See
+            // getKeyDrainResumesForTesting -- a test that shrinks the frame cap to
+            // reach this branch has no other way to prove it got here.
+            keyDrainResumesForTesting++;
             final long resumeRowLo = cheapChunkActive ? cheapRowLo : 0L;
             return fillFrameForKey(
                     pendingSymbolKey, pendingPartitionIndex,

@@ -231,6 +231,13 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
      * {@code Memory usage by tag: NATIVE_ND_ARRAY, difference: 24 expected:<0> but was:<24>} --
      * eight bytes per element of the three-element literal, and on the leak check rather than on
      * the exception, which still throws exactly as asserted.
+     * <p>
+     * <b>The refusal itself is DISPUTED and the decision is still pending.</b> Stock master
+     * answers this query correctly; the throw pinned here is a deliberate fail-closed trade
+     * taken because {@code AdaptiveSymbolPatternRecordCursorFactory} answers
+     * {@code SCAN_DIRECTION_OTHER} conservatively at compile time, before it knows which
+     * delegate it will open. Narrowing the guard so these queries keep working is a live
+     * option; if it is taken, this assertion is expected to change.
      */
     @Test
     public void testAsyncKeyedGuardRejectionFreesAssembledFunctions() throws Exception {
@@ -245,13 +252,20 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
     }
 
     /**
-     * The async NOT-KEYED twin of
+     * The async KEYED twin of
      * {@link #testAsyncKeyedGuardRejectionFreesAssembledFunctions()}: same transfer/guard ordering
      * hazard, same native-array detector, same code site, different position for the array: here
      * it is the grouping key rather than an extra projection column, so the key-rewrite loop
      * replaces the outer entry and the parsed original becomes reachable only through its paired
      * inner slot. That is the one branch of
      * {@code GroupByUtils.freeAssembledProjectionFunctions} that the sibling test does not walk.
+     * <p>
+     * <b>The refusal itself is DISPUTED and the decision is still pending.</b> Stock master
+     * answers this query correctly; the throw pinned here is a deliberate fail-closed trade
+     * taken because {@code AdaptiveSymbolPatternRecordCursorFactory} answers
+     * {@code SCAN_DIRECTION_OTHER} conservatively at compile time, before it knows which
+     * delegate it will open. Narrowing the guard so these queries keep working is a live
+     * option; if it is taken, this assertion is expected to change.
      */
     @Test
     public void testAsyncKeyedGuardRejectionFreesAssembledFunctionsWithArrayKey() throws Exception {
@@ -281,6 +295,13 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
      * constant folding removes the array before codegen. So this site's ordering is currently
      * unobservable, and would become observable the moment a not-keyed projection function owns
      * native memory.
+     * <p>
+     * <b>The refusal itself is DISPUTED and the decision is still pending.</b> Stock master
+     * answers this query correctly; the throw pinned here is a deliberate fail-closed trade
+     * taken because {@code AdaptiveSymbolPatternRecordCursorFactory} answers
+     * {@code SCAN_DIRECTION_OTHER} conservatively at compile time, before it knows which
+     * delegate it will open. Narrowing the guard so these queries keep working is a live
+     * option; if it is taken, this assertion is expected to change.
      */
     @Test
     public void testAsyncNotKeyedGuardRejectionIsReachableWithoutAKey() throws Exception {

@@ -24,7 +24,9 @@
 
 package io.questdb.test.cairo.covering;
 
-import io.questdb.PropertyKey;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
+import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -47,21 +49,60 @@ import org.junit.Test;
  * This suite shrinks the frame cap to 100 rows so each of the four keys spans
  * roughly 100 chunks per partition, forcing {@code resumeKeyDrain()} to run
  * many times per key instead of zero.
+ * <p>
+ * The cap is forced through
+ * {@link CoveringIndexRecordCursorFactory#setMaxRowsPerFrameForTesting(int)}, NOT
+ * through {@code cairo.sql.page.frame.max.rows}. That property cannot reach this
+ * scan from an instance {@code @Before}: the covering cursor reads its cap from
+ * {@code SqlExecutionContext.getPageFrameMaxRows()}, which
+ * {@code SqlExecutionContextImpl} captures into a FINAL field in its constructor,
+ * and that constructor runs once in {@code AbstractCairoTest.setUpStatic()} -- a
+ * {@code @BeforeClass}, before any {@code @Before} can override the property.
+ * (The sibling {@code CAIRO_SQL_PARALLEL_GROUPBY_ENABLED} override works only
+ * because {@code AbstractCairoTest.setUp()} explicitly re-pushes the parallel
+ * flags into the live context; there is no such push for page-frame sizes.) An
+ * earlier revision of this suite set the property and silently ran the whole test
+ * at the 1,000,000-row default, where every key fits in ONE frame and the resume
+ * branch never executes -- see {@code assertDrainSpannedFrames} for the guard
+ * that now makes that failure loud.
+ * {@code sqlExecutionContext.changePageFrameSizes(1, 100)} would also work, but
+ * the {@code @TestOnly} setter is the convention already used by the sibling
+ * resume tests in {@code CoveringIndexTest} and
+ * {@code CoveringIndexMultiKeyOrderingTest}, and it cannot be undone mid-query by
+ * {@code restoreToDefaultPageFrameSizes()}.
  */
 public class CoveringIndexPerKeyResumeTest extends AbstractCoveringIndexQueryTest {
+
+    // 40 000 rows over 4 keys in ONE partition = 10 000 rows per key. At
+    // MAX_ROWS_PER_FRAME = 100 a key needs 100 chunks, so it is resumed 99 times;
+    // four keys per execution => 396 resumes. Assert a lower bound rather than the
+    // exact figure so partition/chunk arithmetic changes do not make the guard
+    // brittle -- any value at or above this is unreachable at the default cap,
+    // where the correct answer is exactly 0.
+    private static final long MIN_EXPECTED_RESUMES = 300;
+    private static final int MAX_ROWS_PER_FRAME = 100;
+
+    @After
+    public void resetFrameCap() {
+        // Static override: MUST be cleared or it leaks into every later test class
+        // in the same JVM fork.
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
+    }
 
     @Override
     @Before
     public void setUp() {
-        // Must be set BEFORE super.setUp(), which builds the configuration from the
-        // property overrides. The fixture's setUp enables parallel group by and then
-        // calls AbstractCairoTest.setUp, which reads this property into the engine
-        // configuration.
-        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         super.setUp();
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(MAX_ROWS_PER_FRAME);
     }
 
-    @Test
+    // Bounded so the regression this pins fails FAST. Per isKeyMidDrain()'s
+    // contract a per-key loop that advances on a null frame instead of on
+    // !isKeyMidDrain() re-opens a single-frame key and emits it forever: the
+    // cursor never terminates, so without a timeout the failure mode is a stalled
+    // fork that only the surefire timeout ends, minutes later and with no useful
+    // message.
+    @Test(timeout = 120_000)
     public void testPerKeySpansManyFramesPerPartition() throws Exception {
         assertMemoryLeak(() -> {
             // 10 000 rows per key in one partition against a 100-row frame cap: ~100
@@ -69,27 +110,57 @@ public class CoveringIndexPerKeyResumeTest extends AbstractCoveringIndexQueryTes
             // runs repeatedly instead of never.
             createTelemetryLarge();
             final String where = " WHERE param_id IN ('SFID','HOTMIC','KCAS','CALT') ORDER BY param_id";
-            // Vacuity guard: confirm the query actually routes through the per-key
-            // (unordered) scan before trusting the comparisons below -- otherwise a
-            // regression that silently fell back to the merge would pass this test
-            // having exercised nothing it claims to.
+            // Vacuity guard 1 (routing): confirm the query actually routes through the
+            // per-key (unordered) scan before trusting the comparisons below -- otherwise
+            // a regression that silently fell back to the merge would pass this test
+            // having exercised nothing it claims to. Note this guard holds at ANY frame
+            // size, so it does NOT on its own prove the resume branch ran; that is what
+            // vacuity guard 2 is for.
             assertQuery("SELECT param_id, max(value), count() FROM telemetry" + where)
                     .noLeakCheck()
                     .assertsPlanContaining("frames: per-key (unordered)");
             // count() is the arm that catches the original bug: if the per-key loop
-            // re-opens a drained key instead of advancing past it, the key emits its
-            // rows forever, count() diverges (grows unbounded) instead of hanging outright
-            // for a bounded row cap, and this assertSameResult catches the inflated total
-            // immediately rather than timing out.
+            // re-opens a drained key instead of advancing past it, the key emits its rows
+            // forever and the cursor never terminates -- the @Test timeout above, not a
+            // row mismatch, is what reports that. max()/first()/last() catch the weaker
+            // failure where a chunk boundary drops or duplicates a bounded number of rows.
+            CoveringIndexRecordCursorFactory.resetKeyDrainResumesForTesting();
             assertSameResult(
                     "SELECT param_id, max(value), count() FROM telemetry" + where,
                     "SELECT /*+ no_index */ param_id, max(value), count() FROM telemetry" + where
             );
+            // Vacuity guard 2 (the drain really spanned frames).
+            assertDrainSpannedFrames();
+
+            CoveringIndexRecordCursorFactory.resetKeyDrainResumesForTesting();
             assertSameResult(
                     "SELECT param_id, first(value), last(value) FROM telemetry" + where,
                     "SELECT /*+ no_index */ param_id, first(value), last(value) FROM telemetry" + where
             );
+            assertDrainSpannedFrames();
         });
+    }
+
+    /**
+     * Non-vacuity guard: prove the per-key drain actually crossed frame boundaries.
+     * <p>
+     * Nothing user-visible distinguishes "this key fit in one frame" from "this key
+     * spanned 100" -- not the plan text, not the result rows, not the row count. The
+     * only observable is {@code resumeKeyDrain()}'s own call count, which is why this
+     * branch carries a {@code @TestOnly} counter
+     * ({@link CoveringIndexRecordCursorFactory#getKeyDrainResumesForTesting()}).
+     * Without this assertion a frame cap that silently failed to land -- exactly what
+     * happened here once already -- leaves every assertion in this class still
+     * passing while the branch under test never executes.
+     */
+    private static void assertDrainSpannedFrames() {
+        final long resumes = CoveringIndexRecordCursorFactory.getKeyDrainResumesForTesting();
+        Assert.assertTrue(
+                "per-key drain never resumed mid-key: the " + MAX_ROWS_PER_FRAME + "-row frame cap did not"
+                        + " reach the covering scan, so this test proved nothing about the resume branch."
+                        + " Expected at least " + MIN_EXPECTED_RESUMES + " resumeKeyDrain() calls, got " + resumes,
+                resumes >= MIN_EXPECTED_RESUMES
+        );
     }
 
     /**

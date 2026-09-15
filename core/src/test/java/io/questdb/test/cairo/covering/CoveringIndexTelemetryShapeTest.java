@@ -79,6 +79,15 @@ public class CoveringIndexTelemetryShapeTest extends AbstractCoveringIndexQueryT
             // ORDER BY is required to make the raw-text comparison meaningful -- without
             // it the two arms can (and do) disagree on row order while agreeing on rows.
             final String orderedSql = FLIGHT_QUERY + " ORDER BY param_id";
+            // The plan above was asserted on FLIGHT_QUERY; the comparison below runs the
+            // ORDERED variant, which is a different SQL text and therefore a different
+            // sub-model. Re-assert per-key on the SQL actually being compared: if the outer
+            // ORDER BY changed the sub-model's order mnemonic and the offer were declined,
+            // both arms would be merge-based and this test would compare the merge against
+            // the merge while still passing under a name that claims per-key.
+            assertQuery(orderedSql)
+                    .noLeakCheck()
+                    .assertsPlanContaining("frames: per-key (unordered)");
             assertSameResult(orderedSql,
                     orderedSql.replace("SELECT ts,", "SELECT /*+ no_index */ ts,"));
         });
@@ -121,6 +130,13 @@ public class CoveringIndexTelemetryShapeTest extends AbstractCoveringIndexQueryT
             // testFlightShapeTakesPerKeyAndMatchesFullScan: order by param_id to make the
             // comparison deterministic.
             final String orderedSql = sql + " ORDER BY param_id";
+            // Same reason as testFlightShapeTakesPerKeyAndMatchesFullScan: pin per-key on
+            // the ORDERED SQL too. It matters more here -- this test's entire claim is that
+            // first() over a per-key (unordered) stream is correct, and that claim is empty
+            // if the compared query quietly took the merge.
+            assertQuery(orderedSql)
+                    .noLeakCheck()
+                    .assertsPlanContaining("frames: per-key (unordered)");
             assertSameResult(orderedSql, orderedSql.replace("SELECT ts,", "SELECT /*+ no_index */ ts,"));
         });
     }
