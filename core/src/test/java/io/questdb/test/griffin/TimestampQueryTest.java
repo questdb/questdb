@@ -735,6 +735,44 @@ public class TimestampQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMicrosecondVsNanosecondTimestampAsOfJoinSaturatesOverflow() throws Exception {
+        // A micros timestamp past ~year 2262 overflows Long when scaled to nanos in a mixed-resolution
+        // ASOF join (AbstractAsOfJoinFastRecordCursor.scaleTimestamp, applied at ~270 join call sites).
+        // It must saturate towards +infinity (Long.MAX_VALUE) so the row stays LATER than any in-range
+        // master row, rather than wrapping or saturating the other way - which would invert the ASOF
+        // ordering and wrongly match it as a predecessor. ScaleTimestampTest pins the helper directly;
+        // this exercises the same saturation through the actual fast ASOF join cursor. The negative arm
+        // (a pre-1677 timestamp overflowing towards -infinity) is unreachable here: a designated
+        // timestamp cannot be stored before 1970, so it stays pinned only at the helper level.
+        assertMemoryLeak(() -> {
+            execute("create table master_nanos (mid int, ts timestamp_ns) timestamp(ts)");
+            execute("insert into master_nanos values (10, 1577836800000000000)"); // 2020
+
+            // The slave's only row is past 2262: scaled micros->nanos it overflows and saturates to
+            // Long.MAX_VALUE (latest), so it is NOT an ASOF predecessor of the 2020 master row and the
+            // slave columns are NULL. The wrong saturation direction (MIN) would make it earliest and
+            // wrongly match it.
+            execute("create table slave_over (sid int, ts timestamp) timestamp(ts)");
+            execute("insert into slave_over values (1, 9300000000000000)"); // ~year 2264 micros
+            assertQuery("select mid, sid from master_nanos m asof join slave_over s")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("mid\tsid\n10\tnull\n");
+
+            // Control: an in-range 2019 slave scales without overflow and IS the ASOF predecessor,
+            // confirming the NULL above is the saturation excluding the row, not a broken join.
+            execute("create table slave_ok (sid int, ts timestamp) timestamp(ts)");
+            execute("insert into slave_ok values (2, 1546300800000000)"); // 2019
+            assertQuery("select mid, sid from master_nanos m asof join slave_ok s")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("mid\tsid\n10\t2\n");
+        });
+    }
+
+    @Test
     public void testMicrosecondVsNanosecondTimestampJoin() throws Exception {
         assertMemoryLeak(() -> {
             // Create tables for JOIN test

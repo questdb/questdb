@@ -2330,6 +2330,28 @@ public final class Numbers {
         return (a ^ b) >= 0;
     }
 
+    /**
+     * Returns the distance between two longs, saturated at {@link Long#MAX_VALUE}.
+     * <p>
+     * {@code Math.abs(a - b)} is wrong whenever {@code a} and {@code b} straddle zero far
+     * enough apart: the subtraction wraps, and {@code Math.abs(Long.MIN_VALUE)} is itself
+     * negative, so a caller comparing the result against a non-negative width reads the two
+     * furthest-apart values as the closest possible pair. This computes the subtraction in the
+     * direction that cannot produce a negative result and reports the sign bit - set only when
+     * the true distance needs the 64th bit, and so exceeds every representable width - as
+     * {@code Long.MAX_VALUE}.
+     *
+     * @param a first value
+     * @param b second value
+     * @return {@code |a - b|}, or {@code Long.MAX_VALUE} when that does not fit in a long
+     */
+    public static long saturatedAbsDiff(long a, long b) {
+        final long diff = a >= b ? a - b : b - a;
+        // The operands are ordered, so the subtraction can only wrap upwards: a negative result
+        // means the true distance is at least 2^63.
+        return diff < 0 ? Long.MAX_VALUE : diff;
+    }
+
     public static int sinkSizeIPv4(int value) {
         // NULL handling should be done outside
         int sz = sinkSizeInt((value >> 24) & 0xff);

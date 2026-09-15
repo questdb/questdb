@@ -114,9 +114,10 @@ public class NthValueDateWindowFunctionFactory extends AbstractWindowFunctionFac
                 int timestampIdx,
                 int n,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
-            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx, n, partitionByKeyTypes, liveView);
+            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx, n, partitionByKeyTypes, liveView, configuration);
         }
 
         @Override

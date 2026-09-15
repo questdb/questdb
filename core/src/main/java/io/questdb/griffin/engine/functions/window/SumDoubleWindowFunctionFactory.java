@@ -47,6 +47,8 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -166,7 +168,8 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 partitionByKeyTypes,
-                                liveView
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -331,8 +334,18 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return NAME;
         }
 
+        /**
+         * Writes the partition's sum back over itself, which is what this family's
+         * finalization amounts to. It stays an override rather than being dropped because
+         * inheriting {@code avg}'s would replace the sum with the average; and it stays
+         * skipped when bound for the same reason every bound function's does - the group
+         * keeps the raw pair and there is no map of this function's own to walk.
+         */
         @Override
         public void preparePass2() {
+            if (isWindowStateOwned()) {
+                return;
+            }
             RecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
@@ -343,6 +356,18 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     value.putDouble(0, sum);
                 }
             }
+        }
+
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            windowStateResult = value.getLong(windowStateNonNullCountSlot) != 0
+                    ? value.getDouble(windowStateSumSlot)
+                    : Double.NaN;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_SUM;
         }
     }
 
@@ -363,10 +388,11 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx,
-                    partitionByKeyTypes, liveView);
+                    partitionByKeyTypes, liveView, configuration);
         }
 
         @Override
@@ -377,6 +403,29 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public String getName() {
             return NAME;
+        }
+
+        /**
+         * The total rather than the average, which the inherited {@code pass1} writes. Its
+         * counterpart on the ROWS spelling below has always been here; this one was missing, so
+         * the cached cursors - the only callers of {@code pass1} - answered a bounded-RANGE
+         * {@code sum} with the {@code avg} of the same frame. Bound or not: a bound function's
+         * {@code computeNext} returns at once and {@code sum} is what
+         * {@code projectWindowState} has just materialized.
+         */
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+        }
+
+        /**
+         * The total rather than the average, off the component the superclass declares and
+         * maintains - the bounded-RANGE counterpart of the ROWS pair below.
+         */
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_SUM;
         }
     }
 
@@ -412,6 +461,17 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+        }
+
+        /**
+         * The total rather than the average, off the component the superclass declares and
+         * maintains. The one thing this output does not share with the {@code avg} beside it: a
+         * bounded frame's {@code (sum, count)} pair is one state and two readings of it, exactly
+         * as the cumulative pair is.
+         */
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_SUM;
         }
     }
 
@@ -449,6 +509,18 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public String getName() {
             return NAME;
+        }
+
+        /**
+         * The total rather than the average, which the inherited {@code pass1} writes. Its
+         * counterpart on the ROWS spelling below has always been here; this one was missing, so
+         * the cached cursors - the only callers of {@code pass1} - answered a bounded-RANGE
+         * {@code sum} with the {@code avg} of the same frame.
+         */
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
         }
     }
 
@@ -535,7 +607,21 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final double d = arg.getDouble(record);
+            if (Numbers.isFinite(d)) {
+                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + d);
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+            }
+        }
+
+        @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The window absorbed this row into the group's one accumulator and
+                // materialized the projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -582,6 +668,13 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public void projectWindowState(Record record, MapValue value) {
+            sum = value.getLong(windowStateNonNullCountSlot) != 0
+                    ? value.getDouble(windowStateSumSlot)
+                    : Double.NaN;
+        }
+
+        @Override
         public Map getPartitionMap() {
             return map;
         }
@@ -618,6 +711,11 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void resetPartition(Record record) {
+            if (isWindowStateOwned()) {
+                // The window zeroes the component in the fused value it has already
+                // loaded, so the crossing costs no probe of this function's own.
+                return;
+            }
             // ANCHOR-driven reset. Zero the [sum, count] slots; next
             // computeNext re-anchors on the post-reset row.
             partitionByRecord.of(record);
@@ -644,6 +742,26 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The running {@code (sum, nonNullCount)} pair, which is the same accumulator a
+         * DOUBLE {@code avg} over the same window and argument maintains. The state is the
+         * component; this call is the projection that reads its sum.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_SUM;
         }
 
         @Override

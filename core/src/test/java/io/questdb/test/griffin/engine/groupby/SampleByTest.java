@@ -64,6 +64,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
@@ -6127,7 +6128,7 @@ public class SampleByTest extends AbstractCairoTest {
                         rnd_decimal(16, 0, 0) dec64,
                         rnd_decimal(32, 0, 0) dec128,
                         rnd_decimal(64, 0, 0) dec256,
-                        timestamp_sequence(0, 2 * 24 * 3600 * 1_000_000) ts
+                        timestamp_sequence(0, 2 * 24 * 3600 * 1_000_000L) ts
                     from long_sequence(5)
                     ) timestamp(ts) partition by day
                     """);
@@ -17838,7 +17839,7 @@ public class SampleByTest extends AbstractCairoTest {
         final int threadCount = 4;
         final int workerCount = 2;
 
-        try (WorkerPool pool = new WorkerPool(() -> workerCount)) {
+        try (WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             assertMemoryLeak(() -> TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {

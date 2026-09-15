@@ -61,6 +61,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -210,7 +211,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     }
                     try {
                         return new Decimal128LastNotNullValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -337,7 +338,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     }
                     try {
                         return new Decimal128LastValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -460,7 +461,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     }
                     try {
                         return new Decimal16LastNotNullValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -587,7 +588,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     }
                     try {
                         return new Decimal16LastValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -710,7 +711,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     }
                     try {
                         return new Decimal256LastNotNullValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -837,7 +838,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     }
                     try {
                         return new Decimal256LastValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -960,7 +961,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     }
                     try {
                         return new Decimal32LastNotNullValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -1087,7 +1088,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     }
                     try {
                         return new Decimal32LastValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -1210,7 +1211,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     }
                     try {
                         return new Decimal64LastNotNullValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -1337,7 +1338,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     }
                     try {
                         return new Decimal64LastValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -1460,7 +1461,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     }
                     try {
                         return new Decimal8LastNotNullValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -1587,7 +1588,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     }
                     try {
                         return new Decimal8LastValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView);
+                                rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -1870,10 +1871,11 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 int timestampIdx,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx, type,
-                    partitionByKeyTypes, liveView);
+                    partitionByKeyTypes, liveView, configuration);
             frameIncludesCurrentValue = rangeHi == 0;
         }
 
@@ -1921,7 +1923,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -1948,7 +1950,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -2303,7 +2305,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -2337,7 +2339,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -2900,6 +2902,9 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
     public static class Decimal128LastValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + 16;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameLoBounded;
         protected final LongList freeList = new LongList();
         protected final int initialBufferSize;
@@ -2930,7 +2935,8 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 int timestampIdx,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -2939,6 +2945,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             this.memory = memory;
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
+            this.configuration = configuration;
             this.type = type;
             lastValue.ofRawNull();
             this.liveView = liveView;
@@ -2966,6 +2973,44 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 0 is the ring's start offset,
+         * slot 2 its capacity. The IGNORE NULLS subclass keeps every slot where this class puts
+         * it - unlike {@code first_value}, {@code last_value} carries no frame-size slot for
+         * IGNORE NULLS to drop - so it inherits this pair rather than declaring its own.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 0, 2, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -3004,7 +3049,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -3018,7 +3063,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -3622,7 +3667,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -3636,7 +3681,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -4114,10 +4159,11 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 int timestampIdx,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx, type,
-                    partitionByKeyTypes, liveView);
+                    partitionByKeyTypes, liveView, configuration);
             frameIncludesCurrentValue = rangeHi == 0;
         }
 
@@ -4161,7 +4207,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -4188,7 +4234,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -4528,7 +4574,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -4562,7 +4608,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -5099,6 +5145,9 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
     public static class Decimal16LastValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameLoBounded;
         protected final LongList freeList = new LongList();
         protected final int initialBufferSize;
@@ -5128,7 +5177,8 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 int timestampIdx,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -5137,6 +5187,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             this.memory = memory;
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
+            this.configuration = configuration;
             this.type = type;
             this.liveView = liveView;
             if (liveView) {
@@ -5163,6 +5214,44 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 0 is the ring's start offset,
+         * slot 2 its capacity. The IGNORE NULLS subclass keeps every slot where this class puts
+         * it - unlike {@code first_value}, {@code last_value} carries no frame-size slot for
+         * IGNORE NULLS to drop - so it inherits this pair rather than declaring its own.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 0, 2, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -5201,7 +5290,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -5215,7 +5304,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -5800,7 +5889,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -5814,7 +5903,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -6300,10 +6389,11 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 int timestampIdx,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx, type,
-                    partitionByKeyTypes, liveView);
+                    partitionByKeyTypes, liveView, configuration);
             frameIncludesCurrentValue = rangeHi == 0;
         }
 
@@ -6351,7 +6441,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -6378,7 +6468,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -6739,7 +6829,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -6773,7 +6863,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -7352,6 +7442,9 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
     public static class Decimal256LastValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + 32;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameLoBounded;
         protected final LongList freeList = new LongList();
         protected final int initialBufferSize;
@@ -7382,7 +7475,8 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 int timestampIdx,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -7391,6 +7485,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             this.memory = memory;
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
+            this.configuration = configuration;
             this.type = type;
             lastValue.ofRawNull();
             this.liveView = liveView;
@@ -7418,6 +7513,44 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 0 is the ring's start offset,
+         * slot 2 its capacity. The IGNORE NULLS subclass keeps every slot where this class puts
+         * it - unlike {@code first_value}, {@code last_value} carries no frame-size slot for
+         * IGNORE NULLS to drop - so it inherits this pair rather than declaring its own.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 0, 2, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -7456,7 +7589,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -7470,7 +7603,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -8080,7 +8213,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -8094,7 +8227,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -8578,10 +8711,11 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 int timestampIdx,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx, type,
-                    partitionByKeyTypes, liveView);
+                    partitionByKeyTypes, liveView, configuration);
             frameIncludesCurrentValue = rangeHi == 0;
         }
 
@@ -8625,7 +8759,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long j = 0, n = size; j < n; j++) {
                         long idx = (firstIdx + j) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -8652,7 +8786,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long j = 0, n = size; j < n; j++) {
                     long idx = (firstIdx + j) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -8992,7 +9126,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long j = 0, n = size; j < n; j++) {
                     long idx = (firstIdx + j) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -9026,7 +9160,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long j = 0, n = size; j < n; j++) {
                 long idx = (firstIdx + j) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -9563,6 +9697,9 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
     public static class Decimal32LastValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameLoBounded;
         protected final LongList freeList = new LongList();
         protected final int initialBufferSize;
@@ -9592,7 +9729,8 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 int timestampIdx,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -9601,6 +9739,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             this.memory = memory;
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
+            this.configuration = configuration;
             this.type = type;
             this.liveView = liveView;
             if (liveView) {
@@ -9627,6 +9766,44 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 0 is the ring's start offset,
+         * slot 2 its capacity. The IGNORE NULLS subclass keeps every slot where this class puts
+         * it - unlike {@code first_value}, {@code last_value} carries no frame-size slot for
+         * IGNORE NULLS to drop - so it inherits this pair rather than declaring its own.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 0, 2, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -9665,7 +9842,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long j = 0, n = size; j < n; j++) {
                         long idx = (firstIdx + j) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -9679,7 +9856,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long j = 0, n = size; j < n; j++) {
                     long idx = (firstIdx + j) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -10264,7 +10441,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long j = 0, n = size; j < n; j++) {
                     long idx = (firstIdx + j) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -10278,7 +10455,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long j = 0, n = size; j < n; j++) {
                 long idx = (firstIdx + j) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -10741,10 +10918,11 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 int timestampIdx,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx, type,
-                    partitionByKeyTypes, liveView);
+                    partitionByKeyTypes, liveView, configuration);
             frameIncludesCurrentValue = rangeHi == 0;
         }
 
@@ -10788,7 +10966,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -10815,7 +10993,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -11155,7 +11333,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -11189,7 +11367,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -11721,6 +11899,9 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
     public static class Decimal64LastValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameLoBounded;
         protected final LongList freeList = new LongList();
         protected final int initialBufferSize;
@@ -11750,7 +11931,8 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 int timestampIdx,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -11759,6 +11941,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             this.memory = memory;
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
+            this.configuration = configuration;
             this.type = type;
             this.liveView = liveView;
             if (liveView) {
@@ -11785,6 +11968,44 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 0 is the ring's start offset,
+         * slot 2 its capacity. The IGNORE NULLS subclass keeps every slot where this class puts
+         * it - unlike {@code first_value}, {@code last_value} carries no frame-size slot for
+         * IGNORE NULLS to drop - so it inherits this pair rather than declaring its own.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 0, 2, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -11823,7 +12044,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -11837,7 +12058,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -12422,7 +12643,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -12436,7 +12657,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -12894,10 +13115,11 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 int timestampIdx,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx, type,
-                    partitionByKeyTypes, liveView);
+                    partitionByKeyTypes, liveView, configuration);
             frameIncludesCurrentValue = rangeHi == 0;
         }
 
@@ -12941,7 +13163,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -12968,7 +13190,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -13308,7 +13530,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -13342,7 +13564,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -13879,6 +14101,9 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
     public static class Decimal8LastValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Byte.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameLoBounded;
         protected final LongList freeList = new LongList();
         protected final int initialBufferSize;
@@ -13908,7 +14133,8 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 int timestampIdx,
                 int type,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -13917,6 +14143,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             this.memory = memory;
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
+            this.configuration = configuration;
             this.type = type;
             this.liveView = liveView;
             if (liveView) {
@@ -13943,6 +14170,44 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 0 is the ring's start offset,
+         * slot 2 its capacity. The IGNORE NULLS subclass keeps every slot where this class puts
+         * it - unlike {@code first_value}, {@code last_value} carries no frame-size slot for
+         * IGNORE NULLS to drop - so it inherits this pair rather than declaring its own.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 0, 2, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -13981,7 +14246,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -13995,7 +14260,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -14580,7 +14845,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -14594,7 +14859,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {

@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursor
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -97,7 +98,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // first of() runs reopen() (the lazy allocators need it); close() must therefore free those
         // constructor-scoped resources regardless of isOpen, or this assertMemoryLeak catches it.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -138,7 +139,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // the combined per-worker reduce growth, far above the first chunk malloc.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -174,7 +175,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // per-query tracker, so nothing per-query-tracked allocates at open); the loop verifies reuse.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -214,7 +215,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // release every byte on close. Repeated getCursor/close cycles on the same factory, wrapped
         // by assertMemoryLeak, would expose a malloc/free asymmetry or a tracker imbalance.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -257,7 +258,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // the combined per-worker reduce growth, far above the first chunk malloc.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -297,7 +298,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // cache, and once all of them have leaked every worker spins for a slot nobody will release.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -338,7 +339,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // byte on close. Repeated getCursor/close cycles, wrapped by assertMemoryLeak, would expose
         // a malloc/free asymmetry in the multi-slave atom's flat per-worker x per-slave indexing.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -373,7 +374,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // one ConcurrentTimeFrameState per slave at construction, so a never-opened multi factory
         // must free them all on close() regardless of isOpen.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -409,7 +410,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // the combined per-worker reduce growth, far above the first chunk malloc.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -444,7 +445,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // Non-keyed variant of testKeyedHorizonJoinOpenFailureReleasesAllocations.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -484,7 +485,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // close. Repeated getCursor/close cycles on the same factory, wrapped by assertMemoryLeak,
         // would expose a malloc/free asymmetry or a tracker imbalance from the close()-time unbinding.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -527,7 +528,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // the combined per-worker reduce growth, far above the first chunk malloc.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -566,7 +567,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // must hand every slot back - see testKeyedMultiHorizonJoinOpenFailureReleasesAllocations.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -607,7 +608,7 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // Repeated getCursor/close cycles, wrapped by assertMemoryLeak, would expose a malloc/free asymmetry
         // in the non-keyed multi-slave atom (the variant the multi-horizon leak loop previously skipped).
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {

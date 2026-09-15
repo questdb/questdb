@@ -46,7 +46,9 @@ import org.junit.Test;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Lock;
 
 /**
  * Verifies the HTTP /exec CTAS/CREATE/DROP/CREATE MAT VIEW/CREATE VIEW demote write-fence, the twin of
@@ -86,6 +88,34 @@ import java.util.concurrent.atomic.AtomicInteger;
  * require a full HTTP pipeline and a live JsonQueryProcessorState to drive.
  */
 public class HttpExecDdlDemoteFenceTest extends AbstractCairoTest {
+
+    /**
+     * CREATE/DROP arm on a read-only node: a genuine client DROP (NOT the exempted export-temp-table
+     * drop) must refuse with the standard authorization error and never call operation.execute(). Drives
+     * a real GenericDropOperation targeting an ordinary table name so the gate predicate's exemption
+     * check runs and correctly does NOT exempt it.
+     */
+    @Test
+    public void testCreateDropRefusedOnReadOnlyReplica() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger executeCalled = new AtomicInteger(0);
+            try (CairoEngine readOnlyEngine = buildReadOnlyEngine()) {
+                JsonQueryProcessor processor = newProcessor(readOnlyEngine);
+                try {
+                    SqlExecutionContextImpl ctx = TestUtils.createSqlExecutionCtx(readOnlyEngine, 1);
+                    try {
+                        callExecuteDdlFenced(processor, ctx, CompiledQuery.DROP, recordingDropOperation("ordinary_client_table", executeCalled));
+                        Assert.fail("executeDdlFenced must throw CairoException.authorization on a read-only node");
+                    } catch (CairoException e) {
+                        assertReadOnlyRefusal(e);
+                    }
+                    Assert.assertEquals("operation.execute() must not be called on a read-only node", 0, executeCalled.get());
+                } finally {
+                    processor.close();
+                }
+            }
+        });
+    }
 
     /**
      * CTAS arm: the in-lock re-check catches a flip that lands after the early-out passes but before the
@@ -139,27 +169,25 @@ public class HttpExecDdlDemoteFenceTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * CREATE/DROP arm on a read-only node: a genuine client DROP (NOT the exempted export-temp-table
-     * drop) must refuse with the standard authorization error and never call operation.execute(). Drives
-     * a real GenericDropOperation targeting an ordinary table name so the gate predicate's exemption
-     * check runs and correctly does NOT exempt it.
-     */
     @Test
-    public void testCreateDropRefusedOnReadOnlyReplica() throws Exception {
+    public void testCtasReleasesFenceBeforeAwait() throws Exception {
         assertMemoryLeak(() -> {
-            AtomicInteger executeCalled = new AtomicInteger(0);
-            try (CairoEngine readOnlyEngine = buildReadOnlyEngine()) {
-                JsonQueryProcessor processor = newProcessor(readOnlyEngine);
+            final AtomicBoolean isWriteLockAvailable = new AtomicBoolean();
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final JsonQueryProcessor processor = newProcessor(primaryEngine);
                 try {
-                    SqlExecutionContextImpl ctx = TestUtils.createSqlExecutionCtx(readOnlyEngine, 1);
-                    try {
-                        callExecuteDdlFenced(processor, ctx, CompiledQuery.DROP, recordingDropOperation("ordinary_client_table", executeCalled));
-                        Assert.fail("executeDdlFenced must throw CairoException.authorization on a read-only node");
-                    } catch (CairoException e) {
-                        assertReadOnlyRefusal(e);
-                    }
-                    Assert.assertEquals("operation.execute() must not be called on a read-only node", 0, executeCalled.get());
+                    final SqlExecutionContextImpl ctx = TestUtils.createSqlExecutionCtx(primaryEngine, 1);
+                    callExecuteDdlFenced(
+                            processor,
+                            ctx,
+                            CompiledQuery.CREATE_TABLE_AS_SELECT,
+                            operationReturning(futureProbingWriteLock(writeLock, isWriteLockAvailable))
+                    );
+                    Assert.assertTrue(
+                            "executeDdlFenced must release the read fence before waiting",
+                            isWriteLockAvailable.get()
+                    );
                 } finally {
                     processor.close();
                 }
@@ -255,6 +283,26 @@ public class HttpExecDdlDemoteFenceTest extends AbstractCairoTest {
         );
     }
 
+    private static OperationFuture futureProbingWriteLock(Lock writeLock, AtomicBoolean isWriteLockAvailable) {
+        return (OperationFuture) Proxy.newProxyInstance(
+                OperationFuture.class.getClassLoader(),
+                new Class[]{OperationFuture.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "await" -> {
+                        final boolean isLocked = writeLock.tryLock();
+                        isWriteLockAvailable.set(isLocked);
+                        if (isLocked) {
+                            writeLock.unlock();
+                        }
+                        yield OperationFuture.QUERY_COMPLETE;
+                    }
+                    case "getAffectedRowsCount" -> 0L;
+                    case "close" -> null;
+                    default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
+                }
+        );
+    }
+
     private static JsonQueryProcessor newProcessor(CairoEngine engine) {
         DefaultHttpServerConfiguration httpConfig = new HttpServerConfigurationBuilder()
                 .withPort(0)
@@ -269,6 +317,18 @@ public class HttpExecDdlDemoteFenceTest extends AbstractCairoTest {
                 (proxy, method, args) -> switch (method.getName()) {
                     case "await" -> OperationFuture.QUERY_COMPLETE;
                     case "getAffectedRowsCount" -> 0L;
+                    case "close" -> null;
+                    default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
+                }
+        );
+    }
+
+    private static Operation operationReturning(OperationFuture future) {
+        return (Operation) Proxy.newProxyInstance(
+                Operation.class.getClassLoader(),
+                new Class[]{Operation.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "execute" -> future;
                     case "close" -> null;
                     default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
                 }

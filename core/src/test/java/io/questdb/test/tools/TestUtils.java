@@ -80,11 +80,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -104,7 +106,6 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -163,6 +164,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
+import java.util.function.IntConsumer;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.test.AbstractTest.CLOSEABLE;
@@ -172,6 +174,8 @@ public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
+    private static final long THREAD_JOIN_CLEANUP_TIMEOUT_MILLIS = 1_000;
+    private static final long THREAD_JOIN_TIMEOUT_MILLIS = 20_000;
     private static final Object threadAllocationLock = new Object();
     private static final Object threadCpuTimeLock = new Object();
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
@@ -937,14 +941,12 @@ public final class TestUtils {
         }
     }
 
+    // When the runnable throws, LeakCheck.close() still runs and try-with-resources
+    // attaches any leak assertion to the original exception as suppressed (JLS 14.20.3),
+    // so a failing test surfaces failure-path leaks without masking the original error.
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
-        try (LeakCheck ignore = new LeakCheck()) {
-            try {
-                runnable.run();
-            } catch (Throwable e) {
-                ignore.skipChecks();
-                throw e;
-            }
+        try (LeakCheck check = new LeakCheck()) {
+            runnable.run();
         }
     }
 
@@ -1897,6 +1899,10 @@ public final class TestUtils {
         return rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
     }
 
+    public static WorkerPoolMode getWorkerPoolMode(Rnd rnd) {
+        return rnd.nextBoolean() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY;
+    }
+
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
         return getWriter(engine, engine.verifyTableName(tableName));
     }
@@ -2188,22 +2194,6 @@ public final class TestUtils {
         return sink.toString();
     }
 
-    public static String readStringFromFile(File file) {
-        try {
-            try (FileInputStream fis = new FileInputStream(file)) {
-                byte[] buffer = new byte[(int) fis.getChannel().size()];
-                int totalRead = 0;
-                int read;
-                while (totalRead < buffer.length && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
-                    totalRead += read;
-                }
-                return new String(buffer, Files.UTF_8);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Cannot read from " + file.getAbsolutePath(), e);
-        }
-    }
-
     /**
      * Reads the {@code seqTxn} stamped into the footer of the {@code _pm}
      * snapshot identified by {@code parquetFileSize} (the MVCC version token
@@ -2232,6 +2222,22 @@ public final class TestUtils {
             if (addr != 0) {
                 ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
+        }
+    }
+
+    public static String readStringFromFile(File file) {
+        try {
+            try (FileInputStream fis = new FileInputStream(file)) {
+                byte[] buffer = new byte[(int) fis.getChannel().size()];
+                int totalRead = 0;
+                int read;
+                while (totalRead < buffer.length && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
+                    totalRead += read;
+                }
+                return new String(buffer, Files.UTF_8);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Cannot read from " + file.getAbsolutePath(), e);
         }
     }
 
@@ -2317,6 +2323,21 @@ public final class TestUtils {
         return sink.toString();
     }
 
+    /**
+     * Rethrows the first worker failure collected by {@link #runConcurrently}, preserving its message and
+     * stack trace.
+     * <p>
+     * Exposed for the shape {@code runConcurrently} cannot express: readers that spin until told to stop while
+     * the calling thread drives a disturbance. Collect into an {@link AtomicReference} with
+     * {@code compareAndSet(null, th)}, join the workers with {@link #joinThreads}, then call this.
+     */
+    public static void rethrowFirst(AtomicReference<Throwable> firstError) {
+        final Throwable error = firstError.get();
+        if (error != null) {
+            throw new AssertionError("a worker thread failed: " + error, error);
+        }
+    }
+
     // Useful for debugging
     @SuppressWarnings("unused")
     public static String reverseBeHex(String hex) {
@@ -2328,8 +2349,90 @@ public final class TestUtils {
         return new String(sb);
     }
 
+    /**
+     * Runs {@code worker} on {@code threadCount} threads released together by a barrier, joins them, and
+     * rethrows the first failure any of them hit. Workers use ordinary JUnit assertions.
+     * <p>
+     * The rethrow is the point. An AssertionError thrown on a spawned thread is otherwise swallowed, and
+     * counting failures instead reports them as "expected:&lt;0&gt; but was:&lt;3&gt;" -- no message, no stack
+     * trace, no failing value.
+     */
+    public static void runConcurrently(int threadCount, IntConsumer worker) throws Exception {
+        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+        final AtomicReference<Throwable> firstError = new AtomicReference<>();
+        final Thread[] threads = new Thread[threadCount];
+        for (int t = 0; t < threadCount; t++) {
+            final int index = t;
+            final Thread thread = new Thread(() -> {
+                try {
+                    barrier.await();
+                    worker.accept(index);
+                } catch (Throwable th) {
+                    firstError.compareAndSet(null, th);
+                }
+            }, "concurrent-test-worker-" + t);
+            thread.setDaemon(true);
+            threads[t] = thread;
+            thread.start();
+        }
+        joinThreads(threads);
+        rethrowFirst(firstError);
+    }
+
+    /**
+     * Joins all workers against one bounded deadline. Workers still alive at the deadline are interrupted and
+     * given a short bounded cleanup window before the method fails.
+     */
+    public static void joinThreads(Thread... threads) throws InterruptedException {
+        joinThreads(THREAD_JOIN_TIMEOUT_MILLIS, threads);
+    }
+
+    static void joinThreads(long timeoutMillis, Thread... threads) throws InterruptedException {
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        boolean timedOut = false;
+        try {
+            for (int i = 0, n = threads.length; i < n; i++) {
+                final Thread thread = threads[i];
+                final long remainingNanos = deadline - System.nanoTime();
+                if (thread.isAlive() && remainingNanos > 0) {
+                    joinNanos(thread, remainingNanos);
+                }
+                timedOut |= thread.isAlive();
+            }
+        } finally {
+            for (int i = 0, n = threads.length; i < n; i++) {
+                final Thread thread = threads[i];
+                if (thread.isAlive()) {
+                    thread.interrupt();
+                }
+            }
+
+            final long cleanupDeadline = System.nanoTime()
+                    + TimeUnit.MILLISECONDS.toNanos(THREAD_JOIN_CLEANUP_TIMEOUT_MILLIS);
+            for (int i = 0, n = threads.length; i < n; i++) {
+                final Thread thread = threads[i];
+                final long remainingNanos = cleanupDeadline - System.nanoTime();
+                if (thread.isAlive() && remainingNanos > 0) {
+                    joinNanos(thread, remainingNanos);
+                }
+            }
+        }
+
+        for (int i = 0, n = threads.length; i < n; i++) {
+            final Thread thread = threads[i];
+            Assert.assertFalse("worker thread did not terminate after interruption: " + thread.getName(), thread.isAlive());
+        }
+        Assert.assertFalse("worker threads did not finish within " + timeoutMillis + "ms", timedOut);
+    }
+
+    private static void joinNanos(Thread thread, long timeoutNanos) throws InterruptedException {
+        final long timeoutMillis = TimeUnit.NANOSECONDS.toMillis(timeoutNanos);
+        final int remainderNanos = (int) (timeoutNanos - TimeUnit.MILLISECONDS.toNanos(timeoutMillis));
+        thread.join(timeoutMillis, remainderNanos);
+    }
+
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine);
+        WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine, true);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
     }
 
@@ -3146,7 +3249,6 @@ public final class TestUtils {
         private final long mem;
         private final long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         private final int sockAddrCount;
-        private boolean skipChecksOnClose;
 
         public LeakCheck() {
             Files.getMmapCache().asyncMunmap();
@@ -3173,10 +3275,6 @@ public final class TestUtils {
 
         @Override
         public void close() {
-            if (skipChecksOnClose) {
-                return;
-            }
-
             Path.clearThreadLocals();
             Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
             CLOSEABLE.forEach(Misc::free);
@@ -3242,10 +3340,6 @@ public final class TestUtils {
                 Assert.fail("SockAddr allocation count before the test: " + sockAddrCount
                         + ", after the test: " + sockAddrCountAfter);
             }
-        }
-
-        public void skipChecks() {
-            skipChecksOnClose = true;
         }
     }
 

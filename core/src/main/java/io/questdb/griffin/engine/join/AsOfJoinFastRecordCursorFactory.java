@@ -79,10 +79,12 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
                 masterFactory.getMetadata().getTimestampType(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
+                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
                 slaveFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampType(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
+                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
         this.symbolShortCircuit = symbolShortCircuit;

@@ -68,10 +68,11 @@ public class CastIntToIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public int getIPv4(Record rec) {
-            if (arg.getInt(rec) == Numbers.INT_NULL) {
-                return Numbers.IPv4_NULL;
-            }
-            return arg.getInt(rec);
+            // Read once: a non-deterministic argument returns a different value on every call, so
+            // testing one draw and returning another let a NULL draw surface as an address and a
+            // non-NULL draw surface as NULL.
+            final int value = arg.getInt(rec);
+            return value == Numbers.INT_NULL ? Numbers.IPv4_NULL : value;
         }
     }
 }

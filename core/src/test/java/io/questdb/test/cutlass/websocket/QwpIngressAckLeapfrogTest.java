@@ -33,6 +33,7 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
@@ -315,6 +316,89 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         return frame;
     }
 
+    /**
+     * A cumulative OK ack must not cover a rowless deferred frame, even once a
+     * LATER deferred frame's own rows have become durable.
+     * <p>
+     * This drives the real {@code handleBinaryMessage} and reads the acks off
+     * the wire, so it covers the processor's wiring -- the state-level test can
+     * only call the decision by hand. Deleting the processor's
+     * {@code withholdDeferredFrame} call leaves every state-level test green.
+     */
+    @Test
+    public void testCumulativeAckMustNotCoverRowlessDeferredFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            // Cap 1 so the row-bearing deferred frame's rows are force-committed
+            // during the append, making that frame ack-coverable on its own
+            // merits. Without that the clamp would hold for the ordinary reason
+            // and the test would say nothing about the rowless one.
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+                @Override
+                public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+                    final LineHttpProcessorConfiguration delegate = super.getLineHttpProcessorConfiguration();
+                    return new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+                        @Override
+                        public long getQwpMaxUncommittedRows() {
+                            return 1;
+                        }
+                    };
+                }
+            };
+
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine engine2 = new CairoEngine(new DefaultTestCairoConfiguration(root))) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine2, httpConfig);
+
+                byte[] chunk = createMaskedFrame(WebSocketOpcode.BINARY, rowlessDeferredMessage());
+                byte[] data = createMaskedFrame(WebSocketOpcode.BINARY, deferred(oneRowMessage(100L, 1_000_000L)));
+                byte[] commit = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L));
+                byte[] wire = concat(chunk, data, commit);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = new QwpIngressProcessorState(
+                            RECV_BUFFER_SIZE,
+                            httpConfig.getSendBufferSize(),
+                            engine2,
+                            httpConfig.getLineHttpProcessorConfiguration()
+                    );
+                    state.of(-1, AllowAllSecurityContext.INSTANCE);
+                    getLV().set(context, state);
+
+                    // seq=0: rowless deferred -- withheld, and its sequence must
+                    // stay uncovered until the group commits.
+                    drive(processor, context, nf, chunk.length);
+                    Assert.assertEquals("a rowless deferred frame must not be acked",
+                            -1, maxCumulativeOkAck(rawSocket.sentFrames));
+
+                    // seq=1: deferred, but the cap force-commits its row, so it
+                    // is ack-coverable on its own. Covering it would also cover
+                    // seq=0, which the client needs retained.
+                    drive(processor, context, nf, data.length);
+                    Assert.assertEquals(
+                            "a cumulative ack must not reach the rowless frame at seq=0, even though"
+                                    + " seq=1's own rows are durable -- the client trims on the cumulative"
+                                    + " ack and its data frames reference what seq=0 registered",
+                            -1,
+                            maxCumulativeOkAck(rawSocket.sentFrames)
+                    );
+
+                    // seq=2: the group-closing commit covers everything.
+                    drive(processor, context, nf, commit.length);
+                    Assert.assertEquals("the group-closing commit must cover the whole group",
+                            2, maxCumulativeOkAck(rawSocket.sentFrames));
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
     private static void drive(
             QwpIngressUpgradeProcessor processor,
             HttpConnectionContext context,
@@ -385,6 +469,35 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
      * QWP v1 message: table "tab", one row, schema
      * [{@code v} LONG, {@code ""} TIMESTAMP (designated)].
      */
+    /// A frame carrying no table blocks at all, with FLAG_DEFER_COMMIT. The
+    /// client emits exactly this shape for its symbol-dictionary chunks and its
+    /// reconnect catch-up, and the data frames after them reference the ids
+    /// those frames register.
+    private static byte[] rowlessDeferredMessage() {
+        byte[] payload = new byte[2];
+        payload[0] = 0; // delta_start (varint)
+        payload[1] = 0; // new_symbols count (varint)
+
+        byte[] message = new byte[QwpConstants.HEADER_SIZE + payload.length];
+        message[0] = 'Q';
+        message[1] = 'W';
+        message[2] = 'P';
+        message[3] = '1';
+        message[4] = QwpConstants.VERSION;
+        message[5] = QwpConstants.FLAG_DEFER_COMMIT;
+        message[6] = 0; // tableCount lo
+        message[7] = 0; // tableCount hi
+        message[8] = (byte) payload.length;
+        System.arraycopy(payload, 0, message, QwpConstants.HEADER_SIZE, payload.length);
+        return message;
+    }
+
+    private static byte[] deferred(byte[] message) {
+        byte[] copy = message.clone();
+        copy[5] |= QwpConstants.FLAG_DEFER_COMMIT;
+        return copy;
+    }
+
     private static byte[] oneRowMessage(long value, long tsMicros) {
         byte[] payload = new byte[29];
         int i = 0;

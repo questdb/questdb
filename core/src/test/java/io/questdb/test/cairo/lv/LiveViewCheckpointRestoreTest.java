@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableSnapshotRestore;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -36,6 +37,7 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -90,6 +92,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     private static Path checkpointPath;
     private static Path triggerFilePath;
     private int checkpointRootLen;
+    private boolean hasLoggersToRestore;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -130,6 +133,9 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     public void setUp() {
         // CHECKPOINT relies on the sync() syscall, unavailable on Windows; skip the whole suite there.
         Assume.assumeTrue(Os.type != Os.WINDOWS);
+        // Track the attempt so teardown also restores a partial class swap if setup fails.
+        hasLoggersToRestore = true;
+        LogFactory.enableGuaranteedLogging(TableWriter.class, TableSnapshotRestore.class);
         super.setUp();
         ff = testFilesFacade;
         testFilesFacade.reset();
@@ -148,12 +154,19 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
 
     @After
     public void tearDown() throws Exception {
-        super.tearDown();
-        // Reset the checkpoint in-progress flag in case a test failed before its own RELEASE, and
-        // wipe the checkpoint dir so it does not leak into the next test.
-        execute("CHECKPOINT RELEASE");
-        checkpointPath.trimTo(checkpointRootLen);
-        configuration.getFilesFacade().rmdir(checkpointPath.slash());
+        try {
+            super.tearDown();
+            // Reset the checkpoint in-progress flag in case a test failed before its own RELEASE, and
+            // wipe the checkpoint dir so it does not leak into the next test.
+            execute("CHECKPOINT RELEASE");
+            checkpointPath.trimTo(checkpointRootLen);
+            configuration.getFilesFacade().rmdir(checkpointPath.slash());
+        } finally {
+            if (hasLoggersToRestore) {
+                LogFactory.disableGuaranteedLogging(TableWriter.class, TableSnapshotRestore.class);
+                hasLoggersToRestore = false;
+            }
+        }
     }
 
     @Test
@@ -307,9 +320,9 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 assertViewMatchesRecompute(viewSql);
                 assertCheckpointsDirExists("lv");
 
-                // Flush barrier on the same async log path: once this sentinel reaches the captured
-                // sink, any earlier ERROR (FIFO) is already present, so assertNotLogged is reliable.
-                LOG.info().$("live view checkpoints purge test flush barrier").$();
+                // Both emitters use guaranteed logging and share the console queue with this non-dropping
+                // ADVISORY barrier. Once capture observes it, their earlier ERRORs have reached the sink.
+                LOG.advisory().$("live view checkpoints purge test flush barrier").$();
                 capture.waitForRegex("live view checkpoints purge test flush barrier");
                 capture.assertNotLogged("invalid partition directory");
             } finally {
@@ -1221,18 +1234,6 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         Files.touch(triggerFilePath.$());
     }
 
-    // Drives the named view's seed sweep to completion across however many turns the configured
-    // budget needs, re-fetching the instance each pass so it survives the registry rebuild a restore
-    // performs, and applying the LV WAL at the end. Mirrors the helper in LiveViewSmokeTest.
-
-    // Pumps the refresh job until no further LV WAL work is produced, advancing the clock each pass
-    // so deferred flushes land, and applying the LV's own WAL after each burst. Mirrors the helper
-    // in LiveViewFuzzTest.
-
-    // Simulates a restore-from-checkpoint restart in-process: releases all readers/writers, drops
-    // the _restore trigger file, runs checkpoint recovery (which copies the snapshot metadata back
-    // over the db root), then re-hydrates the name registry, metadata cache and view graphs. Mirrors
-    // the in-process restore sequence in CheckpointTest#testCheckpointRestoresLiveView.
     // Unlinks the view's _lv.s, leaving its _lv (the CREATE commit marker) in place. That is the
     // on-disk shape the loader reports as state_unreadable: a committed definition with no state to
     // resume from.
@@ -1247,6 +1248,10 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         }
     }
 
+    // Simulates a restore-from-checkpoint restart in-process: releases all readers/writers, drops
+    // the _restore trigger file, runs checkpoint recovery (which copies the snapshot metadata back
+    // over the db root), then re-hydrates the name registry, metadata cache and view graphs. Mirrors
+    // the in-process restore sequence in CheckpointTest#testCheckpointRestoresLiveView.
     private void restoreFromCheckpoint() {
         engine.clear();
         engine.closeNameRegistry();

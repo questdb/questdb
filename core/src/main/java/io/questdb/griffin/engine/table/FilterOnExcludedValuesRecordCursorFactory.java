@@ -212,12 +212,22 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         return true;
     }
 
+    /**
+     * Orders two per-symbol cursor factories by their symbol value.
+     * <p>
+     * The two sides must come from {@code valueOf} and {@code valueBOf}: an
+     * uncached symbol map answers {@code valueOf} with a single flyweight bound to
+     * its char memory, so reading both sides through it hands the comparator the
+     * same object twice, which compares equal for every pair and leaves the
+     * factories in symbol-key order. {@code valueBOf} is the second flyweight that
+     * exists for exactly this.
+     */
     private int compareStrFunctions(SymbolFunctionRowCursorFactory a, SymbolFunctionRowCursorFactory b) {
-        return Chars.compare(symbolMapReader.valueOf(a.getSymbolKey()), symbolMapReader.valueOf(b.getSymbolKey()));
+        return Chars.compare(symbolMapReader.valueOf(a.getSymbolKey()), symbolMapReader.valueBOf(b.getSymbolKey()));
     }
 
     private int compareStrFunctionsDesc(SymbolFunctionRowCursorFactory a, SymbolFunctionRowCursorFactory b) {
-        return Chars.compareDescending(symbolMapReader.valueOf(a.getSymbolKey()), symbolMapReader.valueOf(b.getSymbolKey()));
+        return Chars.compareDescending(symbolMapReader.valueOf(a.getSymbolKey()), symbolMapReader.valueBOf(b.getSymbolKey()));
     }
 
     private void upsertRowCursorFactory(int symbolKey) {

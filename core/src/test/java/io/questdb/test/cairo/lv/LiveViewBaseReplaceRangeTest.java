@@ -58,8 +58,6 @@ import org.junit.Test;
  */
 public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
 
-    // > FLUSH EVERY 100ms so a per-cycle clock bump never defers a flush.
-
     // Pin the test clock below all test data before each test. A non-SEED view's
     // lower bound is the CREATE wall-clock moment, and the forward-append refresh path
     // drops rows below it. The test data is timestamped in the past, so without a
@@ -484,10 +482,6 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
         Assert.assertNotNull(instance);
         Assert.assertFalse("LV must stay valid after a base replace-range commit", instance.isInvalid());
     }
-
-    // Pumps the refresh job until no further LV WAL work is produced, advancing
-    // the clock each pass so deferred flushes land, and applying the LV's own
-    // WAL after each burst.
 
     // One refresh cycle past the FLUSH EVERY rate-limit: advances the clock so
     // the commit is not deferred, runs the job, and applies the LV WAL.

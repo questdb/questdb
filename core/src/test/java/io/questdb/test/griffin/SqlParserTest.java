@@ -10012,6 +10012,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPipeConcatWithSingleArgFunctionConcatOnLeft() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, concat((x + 1)::string, '3') concat from (select [x] from tab)",
+                "select 1, x, concat(cast(x + 1 as string)) || '3' from tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPipeConcatWithSingleArgFunctionConcatOnRight() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, concat('2', (x + 1)::string) concat from (select [x] from tab)",
+                "select 1, x, '2' || concat(cast(x + 1 as string)) from tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPipeConcatWithSingleArgFunctionConcatOnRightNested() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, concat('2', (x + 1)::string, '3') concat from (select [x] from tab)",
+                "select 1, x, '2' || concat(cast(x + 1 as string)) || '3' from tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testPivotAggregateNameNoParam() throws Exception {
         assertSyntaxError(
                 "cities PIVOT (sum", 14, "expected aggregate function [col=sum]", getCitiesModel()

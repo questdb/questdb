@@ -48,6 +48,10 @@ import java.io.Closeable;
  */
 public class PostingGenLookup implements Closeable {
     static final long CACHE_NOT_PRESENT = -1L;
+    static final int SNAPSHOT_CORRUPTION_ALL_ZERO_SLOT = 1;
+    static final int SNAPSHOT_CORRUPTION_INVALID_SLOT = 2;
+    static final int SNAPSHOT_CORRUPTION_NONE = 0;
+    static final int SNAPSHOT_CORRUPTION_TXN_REGRESSION = 3;
     private static final long CACHE_ENTRIES_INITIAL_CAPACITY = 16;
     private static final long DEFAULT_CACHE_BUDGET = 16L * 1024 * 1024;
     private static final int KEY_TO_SLOT_INITIAL_CAPACITY = 16;
@@ -207,6 +211,10 @@ public class PostingGenLookup implements Closeable {
         return active.genTxnAtSeals.getQuick(gen);
     }
 
+    public int getSnapshotCorruptionKind() {
+        return staging.corruptionKind;
+    }
+
     public void invalidateCache() {
         keyToCacheSlot.clear();
         cacheEntries.clear();
@@ -297,12 +305,28 @@ public class PostingGenLookup implements Closeable {
      * marker: {@link PostingIndexWriter#publishToChain} writes it LAST, after a
      * {@code storeFence} that orders it behind the slot's payload fields, and
      * only then does {@code extendHead} bump the entry's {@code GEN_COUNT}.
-     * Because the writer only ever tags slots with a non-decreasing table txn,
-     * the validly-published gens are exactly the longest non-decreasing prefix
-     * of the gen-dir. Anything after the first drop never completed its publish
-     * (a stale tail slot left behind by an entry whose GEN_COUNT shrank, or a
-     * slot observed mid-write), so this method STOPS at that point and reports
-     * the truncated count rather than surfacing an unpublished gen.
+     * <p>
+     * Because the writer only ever tags slots with a non-decreasing table txn
+     * ({@code publishToChain} clamps a regressing slot up to its predecessor's
+     * tag), a slot tagged BELOW its predecessor never completed its publish, so
+     * this method STOPS there and reports the truncated count.
+     * <p>
+     * That tag check alone is not sufficient, because an unpublished slot reads
+     * back as {@code TXN_AT_SEAL = 0} and 0 is also a tag
+     * {@link PostingIndexWriter#publishToChain} legitimately writes -- its
+     * {@code pendingTxnAtSeal < 0} fallback. A zeroed slot 0 ({@code prevTxnAtSeal}
+     * starts at {@code Long.MIN_VALUE}) and a zeroed slot behind a 0-tagged
+     * predecessor ({@code 0 < 0} is false) therefore both slipped through as
+     * published gens carrying SIZE=0 / KEY_COUNT=0, and the reader served that
+     * generation as EMPTY with no signal -- fewer rows than the base column
+     * holds, no error.
+     * <p>
+     * Two structural checks close that gap without reinterpreting what a zero
+     * TAG means: an exact all-zero declared slot is rejected, and so is
+     * structurally impossible metadata of the shape the known old
+     * {@code close()} truncation produced when it cut through a slot at an
+     * aligned boundary, leaving the prefix intact and the suffix zero. A slot
+     * legitimately tagged 0 but carrying real data still reads as published.
      * <p>
      * Note this deliberately does NOT assert: this method runs inside the
      * window the caller is allowed to read torn (it re-validates the chain
@@ -315,30 +339,53 @@ public class PostingGenLookup implements Closeable {
      *                    the gen-dir starts at
      *                    {@code entryOffset + V2_ENTRY_HEADER_SIZE}.
      * @return the number of gens actually snapshotted; less than {@code genCount}
-     * when the gen-dir's TXN_AT_SEAL sequence dropped part-way.
+     * when the snapshot detects corruption.
      */
     public int snapshotMetadata(MemoryMR keyMem, int genCount, long entryOffset, int coveringFormat, int coverCount) {
         Snapshot s = staging;
         s.clear();
         long prevTxnAtSeal = Long.MIN_VALUE;
+        long previousMaxValue = -1L;
         for (int i = 0; i < genCount; i++) {
             long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryOffset, i, coveringFormat, coverCount);
+            long fileOffset = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
+            long dataSize = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
+            int keyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            int minKey = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
+            int maxKey = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
             long txnAtSeal = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+            long maxValue = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE);
+            if (fileOffset == 0 && dataSize == 0 && keyCount == 0 && minKey == 0
+                    && maxKey == 0 && txnAtSeal == 0 && maxValue == 0) {
+                s.corruptionKind = SNAPSHOT_CORRUPTION_ALL_ZERO_SLOT;
+                return i;
+            }
+            // A declared generation always has encoded bytes and at least one key.
+            // Dense gens store a positive key count; sparse gens store its negative.
+            // Every writer source also publishes a non-negative, ordered key range.
+            // MAX_VALUE is the cumulative row-id high-water and cannot decrease.
+            if (fileOffset < 0 || dataSize <= 0 || keyCount == 0
+                    || minKey < 0 || maxKey < minKey
+                    || maxValue < previousMaxValue) {
+                s.corruptionKind = SNAPSHOT_CORRUPTION_INVALID_SLOT;
+                return i;
+            }
             if (txnAtSeal < prevTxnAtSeal) {
                 // Slot i was never validly published -- and neither was anything
                 // beyond it, since the writer appends gens in order. Truncate.
+                s.corruptionKind = SNAPSHOT_CORRUPTION_TXN_REGRESSION;
                 return i;
             }
-            s.genFileOffsets.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
-            s.genDataSizes.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE));
-            int kc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            s.genKeyCounts.add(kc);
-            if (kc < 0) {
+            s.genFileOffsets.add(fileOffset);
+            s.genDataSizes.add(dataSize);
+            s.genKeyCounts.add(keyCount);
+            if (keyCount < 0) {
                 s.anySparseGen = true;
             }
-            s.genMinKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY));
-            s.genMaxKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY));
-            s.genMaxValues.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE));
+            s.genMinKeys.add(minKey);
+            s.genMaxKeys.add(maxKey);
+            s.genMaxValues.add(maxValue);
+            previousMaxValue = maxValue;
             prevTxnAtSeal = txnAtSeal;
             s.genTxnAtSeals.add(txnAtSeal);
         }
@@ -375,6 +422,7 @@ public class PostingGenLookup implements Closeable {
         final IntList genMinKeys = new IntList();
         final LongList genTxnAtSeals = new LongList();
         boolean anySparseGen;
+        int corruptionKind;
 
         void clear() {
             genFileOffsets.clear();
@@ -385,6 +433,7 @@ public class PostingGenLookup implements Closeable {
             genMaxValues.clear();
             genTxnAtSeals.clear();
             anySparseGen = false;
+            corruptionKind = SNAPSHOT_CORRUPTION_NONE;
         }
     }
 }

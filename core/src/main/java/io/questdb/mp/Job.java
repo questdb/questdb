@@ -36,40 +36,27 @@ public interface Job {
 
     /**
      * Produces a Job instance safe to use concurrently with the receiver on a
-     * different OS thread. The framework calls this on each Job in a worker's
-     * current generation when a continuation suspends mid-iteration, so the
-     * fresh generation that A's next continuation runs shares no mutable state
-     * with the parked generation that may later resume on a peer carrier.
+     * different OS thread. The worker pool calls this once per additional
+     * worker assigned the job.
      * <p>
      * Default returns {@code this}. Correct only for stateless Jobs whose
      * mutable state is limited to engine-level shared collaborators
      * (e.g., {@code CairoEngine}, {@code MessageBus}, {@code CairoConfiguration})
      * that are themselves concurrency-safe.
      * <p>
-     * Contract for overrides:
-     * <ul>
-     *   <li>MUST allocate a brand new instance (or return one previously
-     *       released via {@link #recycleInstance()}). MUST NOT alias any
-     *       mutable field of the receiver.</li>
-     *   <li>MAY reuse references to engine-level shared collaborators.</li>
-     *   <li>A pooled instance must be indistinguishable from a freshly
-     *       constructed one; {@code recycleInstance()} is responsible for
-     *       the reset before the instance returns to the pool.</li>
-     * </ul>
+     * An override must return a new instance that does not alias mutable
+     * per-worker state. It may reuse concurrency-safe shared collaborators.
      */
     default Job cloneInstance() {
         return this;
     }
 
     /**
-     * Frees per-continuation resources this job owns. The framework calls it at
-     * shutdown on jobs attached to a continuation still parked when the pool
-     * halts -- in the resume queue or in a TimerShards waiter -- which never
-     * complete, so {@link #recycleInstance()} never runs and any native handle
-     * (e.g. a selector) would leak.
+     * Frees resources owned by a per-worker clone. The pool calls this at
+     * shutdown for instances created through {@link #cloneInstance()}.
      * <p>
      * Override only on jobs whose {@link #cloneInstance()} mints a fresh instance
-     * per generation. A job that returns {@code this} is a caller-owned shared
+     * per worker. A job that returns {@code this} is a caller-owned shared
      * singleton (e.g. an IODispatcher freed by its server) and MUST keep the
      * no-op default. Must be idempotent and must not throw.
      */
@@ -84,26 +71,6 @@ public interface Job {
     }
 
     /**
-     * Per-iteration scratch reset hook. The framework calls this when a
-     * continuation snapshot containing this instance completes, before the
-     * snapshot is returned to the worker's snapshot pool for reuse.
-     * <p>
-     * Default is a no-op. Correct for stateless Jobs and for Jobs whose
-     * per-iteration state is fully reinitialized on entry to {@link #run}.
-     * <p>
-     * Contract for overrides:
-     * <ul>
-     *   <li>MUST clear every per-iteration mutable field so the next reuse
-     *       starts clean.</li>
-     *   <li>MUST NOT close or release engine-level shared collaborators.</li>
-     *   <li>MUST be safe to call from any worker's outer driver.</li>
-     *   <li>MUST NOT throw; the framework drops misbehaving snapshots silently.</li>
-     * </ul>
-     */
-    default void recycleInstance() {
-    }
-
-    /**
      * Runs and returns true if it should be rescheduled ASAP.
      * <p>
      * The job pulls its pool-local worker id from {@link WorkerContext#carrierId()}
@@ -115,14 +82,9 @@ public interface Job {
      * size per-pool arrays by the pool's worker count and index them by this id,
      * so a globally-unique value would be out of range.
      * <p>
-     * The {@link Worker} backs {@code carrierId()} with {@code Worker.WORKER_ID} (the
-     * pool-local {@link io.questdb.std.CarrierLocal} holding the carrier's worker
-     * index) on continuation-aware pools, so each call returns the id of the carrier
-     * actually running now -- correct even after a continuation remounts on a peer
-     * carrier. On legacy pools, which never migrate, it returns the stable worker
-     * field directly and pays no carrier-local read. It is NOT
-     * {@link CarrierIdentity#current()}; that globally-unique carrier id is a
-     * separate concept used only to index {@code CarrierLocal} rows.
+     * A Worker always returns its stable pool-local worker index. It is not
+     * {@link CarrierIdentity#current()}; that globally unique carrier id indexes
+     * {@code CarrierLocal} rows.
      *
      * @param workerContext provides the caller's pool-local worker index (lazily,
      *                      via {@link WorkerContext#carrierId()}) and the lifecycle
@@ -176,8 +138,7 @@ public interface Job {
     interface WorkerContext {
         /**
          * The pool-local worker index of the carrier executing the current tick.
-         * Resolved on each call so it tracks continuation remounts; see
-         * {@link #run(WorkerContext)}.
+         * See {@link #run(WorkerContext)}.
          */
         int carrierId();
 

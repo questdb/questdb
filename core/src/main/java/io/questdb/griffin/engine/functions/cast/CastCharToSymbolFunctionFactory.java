@@ -79,11 +79,6 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected AbstractCastToSymbolFunction newFunc() {
-            return new Func(arg);
-        }
-
-        @Override
         protected String symbolOf(int key) {
             // The shortcut keys on the code point, so render the character it stands for.
             return Chars.toString((char) key);

@@ -154,6 +154,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private static final int MATCH_NO_MATCH = 0;
     private static final int MATCH_PARTIAL_MATCH = 2;
     private final CairoConfiguration configuration;
+    private final SqlExecutionRequirements executionRequirements = new SqlExecutionRequirements();
     private final FunctionFactoryCache functionFactoryCache;
     private final ArrayDeque<Function> functionStack = new ArrayDeque<>();
     private final Long256Impl long256Sink = new Long256Impl();
@@ -164,6 +165,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntList undefinedVariables = new IntList();
     private boolean cursorFunctionInstantiated;
+    private int executionRequirementPosition = -1;
     private String lastFunctionFactorySignature;
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
@@ -228,6 +230,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     @Override
     public void clear() {
+        this.executionRequirements.clear();
+        this.executionRequirementPosition = -1;
         this.positionStack.clear();
         this.functionStack.clear();
         this.lastFunctionFactorySignature = null;
@@ -285,6 +289,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
         return false;
+    }
+
+    public SqlExecutionRequirements getExecutionRequirements() {
+        return executionRequirements;
     }
 
     public FunctionFactoryCache getFunctionFactoryCache() {
@@ -486,6 +494,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
         }
         positionStack.push(node.position);
+    }
+
+    int enterExecutionRequirementPosition(int position) {
+        final int previousPosition = executionRequirementPosition;
+        if (previousPosition < 0) {
+            executionRequirementPosition = position;
+        }
+        return previousPosition;
+    }
+
+    void restoreExecutionRequirementPosition(int position) {
+        executionRequirementPosition = position;
     }
 
     private static int countWindowOverloads(ObjList<FunctionFactoryDescriptor> overload) {
@@ -717,16 +737,21 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     node.token,
                     sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view"
             );
+            // Construction succeeded, so the function has taken ownership of args (see the args.clear()
+            // below on the success path). Close the function itself - not just its argument list - so
+            // any native resource it allocated beyond its arguments (e.g. an IN-value set) is released
+            // instead of leaked. Closing the function also frees the args it owns, so do not free them
+            // separately. Preserve the rejection exception if close() were to throw.
             if (args != null) {
                 args.clear(); // newInstance() transferred argument ownership to function
             }
-            try {
-                function.close();
-            } catch (Throwable cleanupFailure) {
-                exception.addSuppressed(cleanupFailure);
-            }
+            Misc.free(function, exception);
             throw exception;
         }
+        executionRequirements.add(
+                factory.getExecutionRequirements(),
+                executionRequirementPosition > -1 ? executionRequirementPosition : position
+        );
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
         }
@@ -1555,13 +1580,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof IntConstant) {
                     return function;
                 } else {
-                    int intConst = function.getInt(null);
-                    long longConst = function.getLong(null);
-                    if (intConst == Numbers.INT_NULL || intConst == longConst) {
-                        return IntConstant.newInstance(intConst);
-                    } else {
-                        return new LongConstant(longConst);
-                    }
+                    final int intConst = function.getInt(null);
+                    return intConst == Numbers.INT_NULL ? IntConstant.NULL : IntConstant.newInstance(intConst);
                 }
             case ColumnType.BOOLEAN:
                 if (function instanceof BooleanConstant) {

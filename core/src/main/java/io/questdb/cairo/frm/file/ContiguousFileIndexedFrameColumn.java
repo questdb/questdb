@@ -58,10 +58,19 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
         if (size > 0) {
             long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, (appendOffsetRowCount - getColumnTop()) << shl, size << shl, false, MEMORY_TAG);
             try {
-                indexWriter.rollbackConditionally(appendOffsetRowCount);
+                // Must come BEFORE rollbackConditionally: that call publishes
+                // when the index still holds rowids at or above the append
+                // offset (an O3 split shrank the partition without resealing
+                // the parent), and ofRW's of() has just reset pendingTxnAtSeal
+                // to -1. Armed after it, the republished entry would take
+                // publishToChain's pendingTxnAtSeal<0 fallback and land tagged
+                // TXN_AT_SEAL=0 -- visible to every pinned reader and
+                // undroppable by the writer-open recovery walk, whose predicate
+                // (txnAtSeal > committedTxn) can never fire on 0.
                 if (upcomingTableTxn >= 0) {
                     indexWriter.setNextTxnAtSeal(upcomingTableTxn);
                 }
+                indexWriter.rollbackConditionally(appendOffsetRowCount);
                 for (long i = 0; i < size; i++) {
                     indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(mappedAddress + (i << shl))), appendOffsetRowCount + i);
                 }
@@ -76,10 +85,11 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
     @Override
     public void appendNulls(long rowCount, long sourceColumnTop, int commitMode) {
         super.appendNulls(rowCount, sourceColumnTop, commitMode);
-        indexWriter.rollbackConditionally(rowCount);
+        // Must come BEFORE rollbackConditionally, which can publish. See append().
         if (upcomingTableTxn >= 0) {
             indexWriter.setNextTxnAtSeal(upcomingTableTxn);
         }
+        indexWriter.rollbackConditionally(rowCount);
         for (long i = 0; i < sourceColumnTop; i++) {
             indexWriter.add(0, rowCount + i);
         }

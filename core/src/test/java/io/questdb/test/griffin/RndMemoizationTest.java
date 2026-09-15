@@ -318,6 +318,46 @@ public class RndMemoizationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRndIntBinaryAliasReadAtBothWidths() throws Exception {
+        allowFunctionMemoization();
+        // The alias is read at INT width by its own column and at 64 bits by the sibling cast.
+        // Both come from one draw, and the INT expression carries one value, so k is i
+        // sign-extended: the memoizer is what keeps the two reads on the same draw, and the
+        // one-value rule is what keeps them equal.
+        // assertQuery does not reset rnd between SQL executions - using returnsOnce
+        assertQuery("select rnd_int() * 2 i, i::long k from long_sequence(5)")
+                .noLeakCheck()
+                .returnsOnce("""
+                        i\tk
+                        1998007456\t1998007456
+                        631030236\t631030236
+                        -1197365630\t-1197365630
+                        -1455449542\t-1455449542
+                        147151402\t147151402
+                        """);
+    }
+
+    @Test
+    public void testRndIntDivisionAliasReadAtBothWidths() throws Exception {
+        allowFunctionMemoization();
+        // Division was the operator whose two widths did not agree on their low 32 bits, so a
+        // memoizer serving two widths from one draw had to choose which one was authoritative.
+        // With one value per expression there is nothing to choose: the quotient is computed at
+        // INT width and k is that value sign-extended.
+        // assertQuery does not reset rnd between SQL executions - using returnsOnce
+        assertQuery("select (rnd_int() * 1000000) / 7 i, i::long k from long_sequence(5)")
+                .noLeakCheck()
+                .returnsOnce("""
+                        i\tk
+                        -195726043\t-195726043
+                        -252785536\t-252785536
+                        180903433\t180903433
+                        228961764\t228961764
+                        -197678253\t-197678253
+                        """);
+    }
+
+    @Test
     public void testRndIntUnary() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql

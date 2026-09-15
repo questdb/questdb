@@ -257,12 +257,13 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
                 slaveSources.setQuick(s, slaveFrameCursors.getQuick(s));
             }
             symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveSources);
+            // Bind the owner functions (this cursor's groupByFunctions) here, and only here: a
+            // parent projection or sort over a SYMBOL aggregate resolves the output column's static
+            // symbol table at getCursor() time, which is before the slave time-frame cache is built
+            // on the first read. The atom donates the owner state to the per-worker clones when it
+            // binds those in initGroupByFunctions().
+            atom.initOwnerFunctions(executionContext);
 
-            // The atom initializes the group by functions (this cursor's groupByFunctions) in
-            // initGroupByFunctions(), before any frame is dispatched, and donates the owner state
-            // to the per-worker clones. Re-initializing them here would re-run stateful
-            // initialization, such as a cursor comparison re-executing its scalar sub-query, and
-            // could diverge from the state the workers observe.
             recordA.of(atom.getOwnerMapValue());
         } catch (Throwable th) {
             Misc.freeObjList(slaveFrameCursors);

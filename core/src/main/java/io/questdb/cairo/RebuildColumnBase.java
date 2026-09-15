@@ -99,8 +99,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             lock(ff);
             path.concat(TableUtils.COLUMN_VERSION_FILE_NAME);
             try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path.$())) {
-                final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
-                columnVersionReader.readSafe(clock, deadline);
+                columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout());
                 path.trimTo(rootLen);
                 reindex0(ff, columnVersionReader, partitionName, columnName);
             }

@@ -211,6 +211,22 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
         );
     }
 
+    /**
+     * Drops one entry the predecessor map holds. A forward freeze needs this because its
+     * puts are not the whole truth: the frontier sweep takes keys out of the anchor map
+     * without the seal walking what remains, so the removals arrive named rather than by
+     * omission. A key the tree does not hold is a no-op, which is what a key created and
+     * evicted inside one cadence lands on.
+     * <p>
+     * A complete snapshot removes by omission in {@link #build}, so pairing that mode
+     * with this call risks two mutations naming one key, which the partition-map writer
+     * rejects.
+     */
+    public void removePartition(@NotNull byte[] key) {
+        ensureInitialized();
+        mutationAt(mutationCount++).remove(key);
+    }
+
     private void ensureInitialized() {
         if (!isInitialized) {
             throw CairoException.critical(0).put("live view checkpoint anchor root builder is not initialized");

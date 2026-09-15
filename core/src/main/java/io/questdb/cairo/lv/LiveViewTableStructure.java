@@ -28,7 +28,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableStructure;
+import io.questdb.std.BoolList;
 import io.questdb.std.Numbers;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Adapts a live view's metadata to {@link TableStructure} so the engine can
@@ -39,12 +41,21 @@ import io.questdb.std.Numbers;
  * and per-segment {@code wal<n>/} directories. The default partition scheme is
  * inherited from the base table at CREATE time; an explicit {@code PARTITION BY}
  * clause overrides.
+ * <p>
+ * A SYMBOL column the view projects straight out of the base table inherits the
+ * base column's cache flag, which the caller resolves and hands to the
+ * constructor. Everything else - a computed SYMBOL, or a projection whose alias
+ * no longer names a base column - falls back to the server default.
  */
 public class LiveViewTableStructure implements TableStructure {
     private final CairoConfiguration configuration;
     private final LiveViewDefinition definition;
     private final GenericRecordMetadata metadata;
     private final int partitionBy;
+    // Per output column, the base SYMBOL column's cache flag, or the server
+    // default where the column does not come from one. Parallel to metadata's
+    // columns; null when the caller resolved nothing.
+    private final BoolList symbolCacheFlags;
     private final String viewName;
 
     public LiveViewTableStructure(
@@ -52,13 +63,15 @@ public class LiveViewTableStructure implements TableStructure {
             String viewName,
             int partitionBy,
             GenericRecordMetadata metadata,
-            LiveViewDefinition definition
+            LiveViewDefinition definition,
+            @Nullable BoolList symbolCacheFlags
     ) {
         this.configuration = configuration;
         this.viewName = viewName;
         this.partitionBy = partitionBy;
         this.metadata = metadata;
         this.definition = definition;
+        this.symbolCacheFlags = symbolCacheFlags;
     }
 
     @Override
@@ -106,11 +119,41 @@ public class LiveViewTableStructure implements TableStructure {
         return partitionBy;
     }
 
+    /**
+     * The base column's cache flag when this column projects a base SYMBOL
+     * column, else the server default.
+     * <p>
+     * CACHE enables a native writer value-to-key map and lets each reader lazily
+     * retain the values it resolves on the heap. A view over a high-cardinality
+     * base column that says NOCACHE must not turn
+     * those caches back on through its own output column.
+     */
     @Override
     public boolean getSymbolCacheFlag(int columnIndex) {
+        if (symbolCacheFlags != null && columnIndex < symbolCacheFlags.size()) {
+            return symbolCacheFlags.get(columnIndex);
+        }
         return configuration.getDefaultSymbolCacheFlag();
     }
 
+    /**
+     * The server default, deliberately: the base column's capacity is NOT
+     * inherited.
+     * <p>
+     * Inheriting it looks right - it would stop the view's dictionary doubling
+     * its way up from 256 - and it does shrink the view's symbol files by about
+     * 14%. But it makes refresh 5 to 7 times slower. The view resolves every
+     * output value against its own committed dictionary
+     * ({@code LiveViewSymbolCache.intern} -> {@code SymbolMapReader.keyOf}), once
+     * per row, and that probe is markedly slower against an index that was
+     * pre-sized than against one of the same final capacity that grew into it.
+     * The end state is identical - both reach the same capacity - so this is
+     * about the path, not the size.
+     * <p>
+     * Note this is specific to the read-back the live view does. Pre-sizing is a
+     * large win for plain ingestion, where nothing probes the dictionary per row.
+     * Revisit once the per-row committed probe is gone.
+     */
     @Override
     public int getSymbolCapacity(int columnIndex) {
         return configuration.getDefaultSymbolCapacity();

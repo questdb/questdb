@@ -110,9 +110,11 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
                 columnSplit,
                 slaveNullRecord,
                 masterFactory.getMetadata().getTimestampIndex(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
+                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
                 slaveTimestampIndex,
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
+                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
                 masterFactory.getMetadata().getTimestampType(),
                 slaveFactory.getMetadata().getTimestampType(),
                 configuration.getSqlAsOfJoinLookAhead()

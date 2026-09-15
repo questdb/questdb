@@ -1177,6 +1177,19 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testLossyScaleReductionToZero() throws NumericException {
+        // A non-zero literal whose significant digits are all truncated by a lossy scale reduction
+        // becomes a genuine zero. The isZero detection must run over the POST-truncation digits, not
+        // the original ones, or the dropped significant digits would inflate the reported precision
+        // and a value that is really zero would look like it needs more precision than it does.
+        assertParsedZero("0.001", -1, 0, false, true, "0", 1, 0);
+        assertParsedZero("0.001", -1, 2, false, true, "0.00", 2, 2);
+        assertParsedZero("-0.001", -1, 0, false, true, "0", 1, 0);
+        assertParsedZero("0.00123", -1, 2, false, true, "0.00", 2, 2);
+        assertParsedZero("0.0099", -1, 1, false, true, "0.0", 1, 1);
+    }
+
+    @Test
     public void testLossyScientificNotation() throws NumericException {
         final String value = "9.8765432e4";
         Decimal256 decimal = new Decimal256();
@@ -2050,7 +2063,7 @@ public class Decimal256Test {
         Assert.assertEquals(6, p3);
 
         int p4 = Numbers.decodeLowInt(d.ofString("00.001"));
-        Assert.assertEquals(3, p4); // Leading zeros don't count toward precision
+        Assert.assertEquals(3, p4); // Leading zeros don't count toward precision; 0.001 needs 3 fractional digits
     }
 
     @Test(expected = NumericException.class)
@@ -2636,6 +2649,20 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testScientificZeroForms() throws NumericException {
+        // Scientific-notation zero and exponent forms of zero parse to a zero value. The scale is the
+        // one the exponent implies, and the precision floor is 1 (a zero carries no significant digits,
+        // so it must not inflate precision regardless of how the literal is written).
+        assertParsedZero("0e3", -1, -1, false, false, "0", 1, 0);
+        assertParsedZero("0E3", -1, -1, false, false, "0", 1, 0);
+        assertParsedZero("+0e3", -1, -1, false, false, "0", 1, 0);
+        assertParsedZero("-0e3", -1, -1, false, false, "0", 1, 0);
+        assertParsedZero("0e-3", -1, -1, false, false, "0.000", 3, 3);
+        assertParsedZero("0.0e5", -1, -1, false, false, "0", 1, 0);
+        assertParsedZero("0.00e2", -1, -1, false, false, "0", 1, 0);
+    }
+
+    @Test
     public void testSetScale() {
         Decimal256 a = new Decimal256(0, 0, 0, 12345, 2);
         a.setScale(1);
@@ -3154,6 +3181,24 @@ public class Decimal256Test {
         Assert.assertEquals(-1L, result.getHl());
         Assert.assertEquals(0L, result.getLh());
         Assert.assertEquals(0L, result.getLl());
+    }
+
+    private static void assertParsedZero(
+            String value,
+            int precision,
+            int scale,
+            boolean strict,
+            boolean lossy,
+            String expectedString,
+            int expectedPrecision,
+            int expectedScale
+    ) throws NumericException {
+        Decimal256 decimal = new Decimal256();
+        long metadata = DecimalParser.parse(decimal, value, 0, value.length(), precision, scale, strict, lossy);
+        Assert.assertTrue(value + " should parse to zero, got " + decimal, decimal.isZero());
+        Assert.assertEquals(value, expectedString, decimal.toString());
+        Assert.assertEquals(value + " precision", expectedPrecision, Numbers.decodeLowInt(metadata));
+        Assert.assertEquals(value + " scale", expectedScale, Numbers.decodeHighInt(metadata));
     }
 
     // Reconstructs the unsigned 256-bit value the four raw limbs encode, so a BigInteger oracle can

@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -69,7 +70,7 @@ public class ArgMaxVarcharIntGroupByFunctionFactoryTest extends AbstractCairoTes
                 "rnd_int() key " +
                 "FROM long_sequence(10000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
 
@@ -98,7 +99,7 @@ public class ArgMaxVarcharIntGroupByFunctionFactoryTest extends AbstractCairoTes
     @Test
     public void testArgMaxParallelAllNullKeys() throws Exception {
         execute("CREATE TABLE tab AS (SELECT rnd_symbol('A','B','C','D','E') sym, rnd_varchar('foo','bar','baz','qux') value, CAST(null AS int) key FROM long_sequence(100000))");
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
                 assertQuery(sql)
@@ -114,7 +115,7 @@ public class ArgMaxVarcharIntGroupByFunctionFactoryTest extends AbstractCairoTes
     @Test
     public void testArgMaxParallelChunky() throws Exception {
         execute("CREATE TABLE tab AS (SELECT rnd_symbol('A','B','C','D','E') sym, rnd_varchar('foo','bar','baz','qux') value, rnd_int() key FROM long_sequence(2000000))");
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
@@ -125,7 +126,7 @@ public class ArgMaxVarcharIntGroupByFunctionFactoryTest extends AbstractCairoTes
     @Test
     public void testArgMaxParallelMergeNullDestValidSrc() throws Exception {
         execute("CREATE TABLE tab AS (SELECT rnd_symbol('A','B','C','D','E') sym, rnd_varchar('foo','bar','baz','qux') value, CASE WHEN x <= 1000000 THEN CAST(null AS int) ELSE rnd_int(1, 1000000, 0) END key FROM long_sequence(2000000))");
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
@@ -136,7 +137,7 @@ public class ArgMaxVarcharIntGroupByFunctionFactoryTest extends AbstractCairoTes
     @Test
     public void testArgMaxParallelWithNullKeys() throws Exception {
         execute("CREATE TABLE tab AS (SELECT rnd_symbol('A','B','C','D','E') sym, rnd_varchar('foo','bar','baz','qux') value, CASE WHEN x % 2 = 0 THEN CAST(null AS int) ELSE rnd_int() END key FROM long_sequence(2000000))");
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);

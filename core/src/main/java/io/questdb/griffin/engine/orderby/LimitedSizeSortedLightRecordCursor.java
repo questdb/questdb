@@ -163,7 +163,9 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     }
 
     @Override
-    public void updateLimits(long limit, long skipFirst, long skipLast) {
+    public void updateLimits(boolean isFirstN, long limit, long skipFirst, long skipLast) {
+        // This cursor drains the whole base cursor either way, so isFirstN only steers the
+        // chain's eviction end, which the factory sets on the chain directly.
         this.limit = limit;
         this.skipFirst = skipFirst;
         this.skipLast = skipLast;

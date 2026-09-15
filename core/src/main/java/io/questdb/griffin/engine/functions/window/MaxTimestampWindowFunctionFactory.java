@@ -37,6 +37,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.window.MaxMinWindowFunctionFactoryHelper.TimestampComparator;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -74,6 +75,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                 supportNullsDesc(),
                 GREATER_THAN,
                 NAME,
+                WindowAccumulatorDescriptor.FAMILY_LONG_MAX,
                 CurrentRowTimestamp::new,
                 PartitionTimestamp::new,
                 PartitionRangeTimestamp::new,
@@ -280,8 +282,9 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                                         String name,
                                         ColumnTypes partitionByKeyTypes,
                                         boolean liveView,
-                                        CairoConfiguration configuration) {
-            super(map, partitionByRecord, partitionBySink, arg, comparator, name, partitionByKeyTypes, liveView, configuration);
+                                        CairoConfiguration configuration,
+                                        int accumulatorFamily) {
+            super(map, partitionByRecord, partitionBySink, arg, comparator, name, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
             this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
         }
 

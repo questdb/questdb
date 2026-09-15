@@ -76,10 +76,5 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
             }
             return getSymbol0(value);
         }
-
-        @Override
-        protected AbstractCastToSymbolFunction newFunc() {
-            return new Func(arg);
-        }
     }
 }

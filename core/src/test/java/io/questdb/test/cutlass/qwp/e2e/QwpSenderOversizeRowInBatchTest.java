@@ -43,7 +43,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.net.ServerSocket;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
@@ -93,7 +92,7 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
     @Test
     public void testOversizeBatchFlushTripsProducerGuard() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int port = pickFreePort();
+            int port = RestartableQwpServer.pickFreePort();
             QwpSidecar server = new QwpSidecar(port, RECV_BUFFER_SMALL_BYTES);
             try {
                 server.start();
@@ -215,7 +214,7 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
     @Test
     public void testOversizeRowInsideBatchTripsProducerGuard() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int port = pickFreePort();
+            int port = RestartableQwpServer.pickFreePort();
             QwpSidecar server = new QwpSidecar(port, RECV_BUFFER_SMALL_BYTES);
             try {
                 server.start();
@@ -291,13 +290,6 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("count\n" + expectedRowCount + "\n");
         });
-    }
-
-    private static int pickFreePort() throws Exception {
-        try (ServerSocket s = new ServerSocket(0)) {
-            s.setReuseAddress(true);
-            return s.getLocalPort();
-        }
     }
 
     /**

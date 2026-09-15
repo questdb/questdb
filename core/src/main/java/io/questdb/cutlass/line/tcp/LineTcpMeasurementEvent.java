@@ -54,12 +54,15 @@ import io.questdb.std.str.Utf8s;
 import java.io.Closeable;
 
 import static io.questdb.cutlass.line.LineUtils.from;
+import static io.questdb.cutlass.line.LineUtils.fromDesignatedTimestamp;
 import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 
 public class LineTcpMeasurementEvent implements Closeable {
-    private static final Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
+    // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
     private final boolean autoCreateNewColumns;
     private final LineTcpEventBuffer buffer;
     private final Decimal256 decimal256 = new Decimal256();
@@ -322,7 +325,12 @@ public class LineTcpMeasurementEvent implements Closeable {
         securityContext.authorizeInsert(tud.getTableToken());
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
-            timestamp = from(tud.getTimestampDriver(), timestamp, getOverloadTimestampUnit(parser.getTimestampUnit()));
+            timestamp = fromDesignatedTimestamp(
+                    tud.getTimestampDriver(),
+                    timestamp,
+                    getOverloadTimestampUnit(parser.getTimestampUnit()),
+                    tud.getTableNameUtf16()
+            );
         }
         buffer.addStructureVersion(buffer.getAddress(), localDetails.getMetadataVersion());
         // timestamp, entitiesWritten are written to the buffer after saving all fields
@@ -337,7 +345,13 @@ public class LineTcpMeasurementEvent implements Closeable {
             if (columnWriterIndex > -1) {
                 // column index found, processing column by index
                 if (columnWriterIndex == tud.getTimestampIndex()) {
-                    timestamp = from(tud.getTimestampDriver(), entity.getLongValue(), entity.getUnit());
+                    // the designated timestamp arrives as a named field, overriding the line timestamp
+                    timestamp = fromDesignatedTimestamp(
+                            tud.getTimestampDriver(),
+                            entity.getLongValue(),
+                            entity.getUnit(),
+                            tud.getTableNameUtf16()
+                    );
                     continue;
                 }
 
@@ -348,7 +362,12 @@ public class LineTcpMeasurementEvent implements Closeable {
                 final String colNameUtf16 = localDetails.getColNameUtf16();
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameUtf16, maxColumnNameLength)) {
                     securityContext.authorizeAlterTableAddColumn(tud.getTableToken());
-                    offset = buffer.addColumnName(offset, colNameUtf16, securityContext.getPrincipal());
+                    // Serialize the owner-grant principal, NOT getPrincipal(): the column is added later on
+                    // the writer thread, where the originating context is gone and only this string survives.
+                    // getAutoCreateOwner() is null for the identity-less ILP line-ACL bypass, so DdlListener
+                    // does not grant ownership of an auto-created column to a real ACL user that happens to
+                    // share the bypass's default principal name (see SecurityContext.getAutoCreateOwner).
+                    offset = buffer.addColumnName(offset, colNameUtf16, securityContext.getAutoCreateOwner());
                     colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entity);
                     if (colType == ColumnType.DECIMAL) {
                         // the surrogate DECIMAL carries no precision or scale, so it cannot back a column

@@ -34,8 +34,13 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     private Rnd rnd;
 
     @Before
+    @Override
     public void setUp() {
         super.setUp();
+        // A projection suite compiles what production compiles: memoization is on by default in a
+        // server and off by default in the corpus, and a memoizer changes the plan shape a
+        // projection reference resolves against, not just its speed.
+        allowFunctionMemoization();
         rnd = new Rnd();
     }
 
@@ -465,20 +470,24 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
     @Test
     public void testProjectionSymbolAccess() throws Exception {
+        // `a` is referenced twice, so the production plan wraps it in a memoizer and the
+        // concatenation reads the value the row already produced. That is what makes the two
+        // columns agree per row: without memoization - the corpus default this suite overrides
+        // in setUp() - rnd_symbol() is called a second time and the two disagree on most rows.
         assertQuery("select rnd_symbol('abc', 'fgk') a, a || '--', x p, p + 2.0 b from long_sequence(10);")
                 .noLeakCheck()
                 .returnsOnce("""
                         a\tconcat\tp\tb
                         abc\tabc--\t1\t3.0
-                        fgk\tfgk--\t2\t4.0
+                        abc\tabc--\t2\t4.0
                         fgk\tfgk--\t3\t5.0
-                        abc\tfgk--\t4\t6.0
-                        abc\tabc--\t5\t7.0
-                        abc\tabc--\t6\t8.0
-                        abc\tfgk--\t7\t9.0
-                        fgk\tabc--\t8\t10.0
-                        abc\tfgk--\t9\t11.0
-                        fgk\tabc--\t10\t12.0
+                        fgk\tfgk--\t4\t6.0
+                        fgk\tfgk--\t5\t7.0
+                        fgk\tfgk--\t6\t8.0
+                        abc\tabc--\t7\t9.0
+                        fgk\tfgk--\t8\t10.0
+                        abc\tabc--\t9\t11.0
+                        abc\tabc--\t10\t12.0
                         """);
     }
 
@@ -831,20 +840,25 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
     @Test
     public void testVirtualFunctionAsColumnReference() throws Exception {
+        // The reference resolves to the projected column rather than to a second evaluation:
+        // `k` is referenced twice, so the production plan memoizes it and both columns carry the
+        // one value the row produced. Without memoization rnd_int() runs twice per row and the
+        // two columns disagree, which is the shape this test recorded before the suite compiled
+        // what a server compiles.
         assertQuery("select rnd_int() + 1 k, k from long_sequence(10)")
                 .noLeakCheck()
                 .returnsOnce("""
                         k\tk1
-                        -1148479919\t315515119
-                        1548800834\t-727724770
-                        73575702\t-948263338
-                        1326447243\t592859672
-                        1868723707\t-847531047
-                        -1191262515\t-2041844971
-                        -1436881713\t-1575378702
-                        806715482\t1545253513
-                        1569490117\t1573662098
-                        -409854404\t339631475
+                        -1148479919\t-1148479919
+                        315515119\t315515119
+                        1548800834\t1548800834
+                        -727724770\t-727724770
+                        73575702\t73575702
+                        -948263338\t-948263338
+                        1326447243\t1326447243
+                        592859672\t592859672
+                        1868723707\t1868723707
+                        -847531047\t-847531047
                         """);
     }
 

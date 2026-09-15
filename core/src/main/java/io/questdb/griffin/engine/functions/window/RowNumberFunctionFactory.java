@@ -49,6 +49,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
@@ -148,6 +150,10 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         private long rowNumber;
         // Single-writer (refresh worker), not volatile.
         private long tombstoneCount;
+        // The row counter's slot in LiveViewWindow's fused map value, or -1 when this
+        // function owns its state in the map above as it always has. Installed and
+        // cleared by the window-state plan, both on the refresh worker.
+        private int windowStateRowCountSlot = -1;
 
         public RowNumberFunction(
                 Map map,
@@ -172,11 +178,50 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             this.map.close();
         }
 
+        /**
+         * Counts the row into the window's fused value. Identical arithmetic to
+         * {@link #computeNext(Record)}'s, against a slot the window has already loaded
+         * rather than a map entry this function has to find.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            value.putLong(windowStateRowCountSlot, value.getLong(windowStateRowCountSlot) + 1);
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            windowStateRowCountSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT);
+        }
+
         @Override
         public void close() {
             Misc.free(map);
             Misc.free(compactionScratch);
             Misc.freeObjList(partitionByRecord.getFunctions());
+        }
+
+        /**
+         * The running count of rows since the partition's last anchor crossing, which is
+         * exactly what {@code count(*)} over the same window keeps. Sharing it is what
+         * makes the pair cost one counter rather than two.
+         * <p>
+         * The two agree because
+         * {@code CountFunctionFactoryHelper.CountOverUnboundedPartitionRowsFrameFunction}
+         * stops at the current row even under RANGE framing, where a peer-inclusive count
+         * would run ahead of the row number on tied timestamps. That is a deliberate
+         * property of the count implementation rather than an accident of this one, and a
+         * change to it has to withdraw this declaration with it.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_COUNT;
         }
 
         @Override
@@ -191,6 +236,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
+            if (isWindowStateOwned()) {
+                // The sweep rebuilt the window's fused map and the counter rode across
+                // inside the entries it kept. There is no second map to prune.
+                return;
+            }
             // RowNumber implements WindowFunction directly (no BasePartitionedWindowFunction),
             // so it overrides retainPartitions itself. The reusable scratch ping-pongs
             // with map; only the first sweep allocates.
@@ -217,6 +267,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The window counted this row into the group's one accumulator and
+                // materialized the projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -236,6 +291,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void resetPartition(Record record) {
+            if (isWindowStateOwned()) {
+                // The window zeroes the component in the fused value it has already
+                // loaded, so the crossing costs no probe of this function's own.
+                return;
+            }
             // ANCHOR-driven reset. Drop the partition's row counter back to
             // zero so the next computeNext sees x=0 and emits 1.
             partitionByRecord.of(record);
@@ -264,6 +324,20 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public Map getPartitionMap() {
             return map;
+        }
+
+        @Override
+        public boolean isWindowStateOwned() {
+            return windowStateRowCountSlot >= 0;
+        }
+
+        /**
+         * Reads the counter the window keeps. It is this function's own component unless
+         * the plan bound it to a {@code count(*)}'s, which reads the same rows.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            rowNumber = value.getLong(windowStateRowCountSlot);
         }
 
         @Override
@@ -299,6 +373,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void markPartitionAlive(Record record) {
+            if (isWindowStateOwned()) {
+                // Nothing of this function's is tombstoned any more: the window keeps the
+                // one value this row touches alive, for the whole group.
+                return;
+            }
             if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
                 return;
             }
@@ -332,7 +411,12 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void reopen() {
             rowNumber = 0;
             tombstoneCount = 0;
-            map.reopen();
+            // A fused function's map stays closed: the window allocated one value layout
+            // for the whole group, and reopening this one would charge the per-view
+            // tracker for a map no row ever writes to.
+            if (!isWindowStateOwned()) {
+                map.reopen();
+            }
         }
 
         @Override
@@ -411,7 +495,12 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void toTop() {
             rowNumber = 0;
             tombstoneCount = 0;
-            map.clear();
+            // isOpen() rather than an unconditional clear: a fused function's map is
+            // closed for the whole of its life, and clearing a closed map would walk
+            // backing it no longer holds.
+            if (map.isOpen()) {
+                map.clear();
+            }
         }
     }
 

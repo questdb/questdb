@@ -69,7 +69,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Quantifies the in-memory tier read benefit for a live view, gating the "keep
- * the tier on by default?" decision (RFC v2, open question 3) and reporting the
+ * the tier on by default?" decision and reporting the
  * Mode A (lead-from-RAM) vs Mode B (disk subset) vs disk-only net.
  * <p>
  * A SYMBOL-free bounded {@code count(*)} window view (so {@code SELECT * FROM lv} routes

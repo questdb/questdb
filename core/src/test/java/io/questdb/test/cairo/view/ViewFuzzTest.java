@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
@@ -237,6 +238,14 @@ public class ViewFuzzTest extends AbstractFuzzTest {
     }
 
     private void testViewFuzz(RandomSelectGenerator selectGenerator, Rnd rnd, String tableName, String... viewNames) throws Exception {
+        // The final correctness check below orders each view by ALL non-binary columns to make the
+        // cursor comparison deterministic. RandomSelectGenerator can chain self-joins whose
+        // many-to-many key matches inflate the row count enough that ordering the result overruns
+        // the 128-page (16 MB) sort-key budget the fuzz test config imposes (Overrides sets
+        // cairo.sql.sort.key.max.pages=128), throwing a spurious LimitOverflowException on an
+        // otherwise legal query. Production leaves the sort-key budget unbounded (Long.MAX_VALUE);
+        // mirror that here, since this test exercises view correctness, not sort memory limits.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, Long.MAX_VALUE);
         long start = MicrosTimestampDriver.floor("2022-02-24T17");
         assertMemoryLeak(() -> {
             fuzzer.createInitialTableWal(tableName, timestampTypes[rnd.nextInt(10) % 2]);

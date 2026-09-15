@@ -190,9 +190,7 @@ public class ColumnTypeConverter {
             srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
-            if (!ff.truncate(dstFixFd, dstMapBytes)) {
-                throw CairoException.critical(ff.errno()).put("Cannot allocate fd: ").put(dstFixFd).put(", size: ").put(dstMapBytes);
-            }
+            TableUtils.allocateDiskSpace(ff, dstFixFd, dstMapBytes);
             dstMapAddress = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, 0, dstMapBytes, true, memoryTag);
             columnSizesSink.setDestSizes(dstMapBytes, -1);
 

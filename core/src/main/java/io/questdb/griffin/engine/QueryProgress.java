@@ -46,6 +46,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.griffin.ExecutionState;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlException;
@@ -289,6 +290,10 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             sqlId = registry.register(sqlText, executionContext);
             beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
             logStart(sqlId, sqlText, executionContext, jit);
+            final ExecutionState executionState = executionContext.getExecutionState();
+            if (executionState != null) {
+                executionState.onExecutionStart(executionContext);
+            }
             // Install this factory as the reader-pool supervisor for the duration of cursor
             // open, so every table reader the query borrows while building the cursor is
             // attributed to it for leak detection. The supervisor lives on the
@@ -335,6 +340,10 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             sqlId = registry.register(sqlText, executionContext);
             beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
             logStart(sqlId, sqlText, executionContext, jit);
+            final ExecutionState executionState = executionContext.getExecutionState();
+            if (executionState != null) {
+                executionState.onExecutionStart(executionContext);
+            }
             // See getCursor: supervise only the synchronous cursor-open window, on the
             // context so it survives a cont park/resume, and restore on return.
             final ResourcePoolSupervisor<TableReader> prevSupervisor = executionContext.getReaderPoolSupervisor();

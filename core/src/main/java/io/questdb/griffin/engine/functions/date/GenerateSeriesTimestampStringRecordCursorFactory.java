@@ -105,7 +105,21 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         public int stride;
         private TimestampDriver.TimestampAddMethod adder;
         private long end;
+        // Whether the step has a constant tick width. A calendar step does not, so the
+        // series it names is not an arithmetic progression: it has no closed form for a
+        // row's value, and the walk below keeps the comparison this one replaces.
+        private boolean isRandomAccess;
+        // Rows already handed out, on the arithmetic arm. That walk counts rather than
+        // comparing curr against end: neither end of the series is bounds-checked, so
+        // every arithmetic position - toTop()'s start - stepTicks included - can run off
+        // the end of the long range, and a comparison cannot tell a wrapped value from an
+        // in-range one.
+        private long rowIndex;
+        private long size;
         private long start;
+        // The step's width in the driver's ticks, on the arithmetic arm. Read once in of()
+        // rather than re-derived per row from the unit.
+        private long stepTicks;
         private char unit;
 
         public GenerateSeriesTimestampStringRecordCursor(TimestampDriver driver, Function startFunc, Function endFunc, Function stepFunc) {
@@ -142,12 +156,35 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         @Override
         public boolean hasNext() {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            recordA.of(adder.add(recordA.curr, stride));
-            if (stride >= 0) {
-                return recordA.curr <= end;
-            } else {
-                return recordA.curr >= end;
+            if (isRandomAccess) {
+                if (rowIndex >= size) {
+                    return false;
+                }
+                rowIndex++;
+                // start + stepTicks * (rowIndex - 1) is the row's definition, and every row
+                // of the series fits in a long even when the span between the ends does not.
+                // The multiply may wrap on the way there; two's complement carries it back,
+                // so the sum is exact for every row the count admits.
+                recordA.of(start + stepTicks * (rowIndex - 1));
+                return true;
             }
+            final long next = adder.add(recordA.curr, stride);
+            if (rowIndex > 0 && (stride >= 0 ? next <= recordA.curr : next >= recordA.curr)) {
+                // A calendar step moves strictly in its own direction whenever it lands
+                // inside the long range, and the calendar addition does not clamp - so a
+                // step that failed to move ran off the end and wrapped. Every position
+                // after that is inside the series by comparison and outside it in fact,
+                // which is what used to carry this walk through the whole far half of the
+                // range. Skipped on the first advance because toTop()'s sentinel is itself
+                // one step outside the series and may have wrapped to get there.
+                return false;
+            }
+            recordA.of(next);
+            if (stride >= 0 ? recordA.curr > end : recordA.curr < end) {
+                return false;
+            }
+            rowIndex++;
+            return true;
         }
 
         public void of(SqlExecutionContext executionContext, int stepPosition) throws SqlException {
@@ -168,6 +205,11 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
             }
 
             stride = sbu.stride;
+            isRandomAccess = switch (unit) {
+                case 'M', 'y' -> false;
+                default -> true;
+            };
+            stepTicks = isRandomAccess ? adjustStride() : 0;
 
             // swap args round transparently if needed
             // so from/to are really a range
@@ -176,6 +218,33 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
                 final long temp = start;
                 start = end;
                 end = temp;
+            }
+            if (isRandomAccess) {
+                // The span between the ends can need the 64th bit, so subtract in the
+                // direction that cannot go negative and divide the result as unsigned.
+                // Math.abs(stepTicks) is likewise the step's magnitude read unsigned.
+                // Saturate on the +1 rather than wrapping: a count no long can hold must
+                // not come back as a negative row count.
+                final long steps = Long.divideUnsigned(
+                        end >= start ? end - start : start - end,
+                        Math.abs(stepTicks)
+                );
+                size = steps < 0 || steps == Long.MAX_VALUE ? Long.MAX_VALUE : steps + 1;
+            } else {
+                // A calendar step has no constant tick width, so nothing here can turn the
+                // span into an exact count: repeated addition clamps the day of month, which
+                // makes the walk's length a property of the walk rather than of the span.
+                // This stays the estimate it has always been, and the walk stays the
+                // comparison it has always been. What it must not do is come back negative,
+                // so read the span unsigned exactly as the arm above does - Math.abs is
+                // negative for a span that needs the 64th bit, and so is the step's own
+                // width for a stride that overflowed the range - and saturate on the +1.
+                final long stepEstimate = adder.add(0, Math.abs(stride));
+                final long steps = Long.divideUnsigned(
+                        end >= start ? end - start : start - end,
+                        stepEstimate < 0 ? -stepEstimate : stepEstimate
+                );
+                size = steps < 0 || steps == Long.MAX_VALUE ? Long.MAX_VALUE : steps + 1;
             }
             toTop();
         }
@@ -187,9 +256,8 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
 
         @Override
         public void recordAt(Record record, long atRowId) {
-            if (supportsRandomAccess()) {
-                long micros = adjustStride();
-                ((GenerateSeriesTimestampStringRecord) record).of(start + micros * (atRowId - 1));
+            if (isRandomAccess) {
+                ((GenerateSeriesTimestampStringRecord) record).of(start + stepTicks * (atRowId - 1));
                 return;
             }
             throw new UnsupportedOperationException();
@@ -197,17 +265,17 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
 
         @Override
         public long size() {
-            return Math.abs(end - start) / adder.add(0, Math.abs(stride)) + 1;
+            return size;
         }
 
         @Override
         public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
-            if (supportsRandomAccess()) {
-                // curr is always on-grid at start + stride * (rowId - 1), so the signed offset
-                // maps the top sentinel to rowId 0 and makes skip-of-0 a positional no-op.
-                long currentRowId = (recordA.curr - start) / adjustStride() + 1;
-                long rowsToSkip = Math.max(0, Math.min(rowCount.get(), size() - currentRowId));
-                recordAt(recordA, currentRowId + rowsToSkip);
+            if (isRandomAccess) {
+                final long rowsToSkip = Math.max(0, Math.min(rowCount.get(), size - rowIndex));
+                rowIndex += rowsToSkip;
+                // Leaves the record on the last row skipped over, or on toTop()'s sentinel
+                // when nothing was skipped, so a skip of 0 stays a positional no-op.
+                recordAt(recordA, rowIndex);
                 rowCount.dec(rowsToSkip);
             } else {
                 super.skipRows(rowCount, maxRowsAfterSkip);
@@ -215,22 +283,23 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         }
 
         public boolean supportsRandomAccess() {
-            return switch (unit) {
-                case 'M', 'y' -> false;
-                default -> true;
-            };
+            return isRandomAccess;
         }
 
         @Override
         public void toTop() {
-            recordA.of(adder.add(start, -stride));
+            rowIndex = 0;
+            recordA.of(isRandomAccess ? start - stepTicks : adder.add(start, -stride));
         }
 
         private long adjustStride() {
             return switch (unit) {
                 case 'w' -> timestampDriver.fromWeeks(stride);
                 case 'd' -> timestampDriver.fromDays(stride);
-                case 'h' -> timestampDriver.fromHours(stride);
+                // 'H' alongside 'h' for the same reason getAddMethod takes both: SAMPLE BY
+                // spells hours with a capital, and a step this switch does not name is one
+                // every random-access path - a sorted read, a LIMIT with an offset - raises on.
+                case 'h', 'H' -> timestampDriver.fromHours(stride);
                 case 'm' -> timestampDriver.fromMinutes(stride);
                 case 's' -> timestampDriver.fromSeconds(stride);
                 case 'T' -> timestampDriver.fromMillis(stride);
@@ -310,8 +379,19 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
 
             @Override
             public long getRowId() {
-                if (supportsRandomAccess()) {
-                    return Math.abs(start - curr) / Math.abs(adjustStride()) + 1;
+                if (isRandomAccess) {
+                    // Derived rather than read off the cursor, because recordB is positioned
+                    // by recordAt() and carries no index of its own. curr is on-grid at
+                    // start + stepTicks * (rowId - 1), so measuring the offset as an unsigned
+                    // magnitude keeps a span that overflows a signed long dividing correctly.
+                    // toTop()'s sentinel is the one position that is not a row, and it can
+                    // wrap to the far side of start - so recognise it by its exact value
+                    // rather than by which side of start it appears to fall on.
+                    if (curr == start - stepTicks) {
+                        return 0;
+                    }
+                    final long offset = curr - start;
+                    return Long.divideUnsigned(stepTicks > 0 ? offset : -offset, Math.abs(stepTicks)) + 1;
                 }
                 throw new UnsupportedOperationException();
             }

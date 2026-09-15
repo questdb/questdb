@@ -88,11 +88,10 @@ public final class LiveViewCheckpointLifecycle {
     /**
      * Reconciles one node-owned timeline before recovery or a retrying
      * publication. {@code primaryOwner} false is a strict no-op that does not
-     * even create/open {@code _timeline}; under symmetric local refresh
-     * (questdb-enterprise:docs/live_view_replication.md) every node owns the timeline
-     * it sealed, so every live-view caller passes {@code true} regardless of
-     * role and the flag survives only as the ownership assertion this class
-     * refuses to write without.
+     * even create/open {@code _timeline}; under symmetric local refresh every
+     * node owns the timeline it sealed, so every live-view caller passes
+     * {@code true} regardless of role and the flag survives only as the
+     * ownership assertion this class refuses to write without.
      * <p>
      * A directory written under a foreign layout short-circuits every other
      * rule: it is removed whole and the result reports

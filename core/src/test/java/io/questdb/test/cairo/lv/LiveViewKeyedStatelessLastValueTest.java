@@ -160,14 +160,14 @@ public class LiveViewKeyedStatelessLastValueTest extends AbstractLiveViewTest {
             assertBareUnboundedRejected(
                     "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts) + 1 AS s FROM base"
             );
-            // The stateless call in that position clears this rule and then meets the
-            // separate live-view limit on nested window calls: the arithmetic compiles to
-            // a virtual column over the window factory, which the factory-shape gate does
-            // not recognize as a window query at all.
-            assertLiveViewRejected(
-                    "SELECT ts, sym, " + FN + " OVER (" + FRAME + ") + 1 AS l FROM base",
-                    "live view select must contain at least one window function"
-            );
+            // The stateless call in that position clears this rule, and the arithmetic
+            // around it is no obstacle either: it compiles to a projection over the window
+            // factory, which the refresh path evaluates per row on the way out. The
+            // carve-out is about what the window function keeps across rows, and wrapping
+            // its result changes none of that.
+            execute("CREATE LIVE VIEW lv_wrapped FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, " + FN + " OVER (" + FRAME + ") + 1 AS l FROM base");
+            execute("DROP LIVE VIEW lv_wrapped");
         });
     }
 

@@ -25,6 +25,7 @@
 package io.questdb.test.std;
 
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ex.FatalError;
 import org.junit.Assert;
@@ -34,6 +35,106 @@ import java.io.Closeable;
 import java.io.IOException;
 
 public class MiscTest {
+
+    @Test
+    public void testClearBestEffortFoldsClearFailures() {
+        // a null object leaves the chain untouched
+        Assert.assertNull(Misc.clearBestEffort(null, null));
+        final RuntimeException existingPrimary = new RuntimeException("existing");
+        Assert.assertSame(existingPrimary, Misc.clearBestEffort(existingPrimary, null));
+
+        // a successful clear() leaves the chain untouched
+        final TestMutable successful = new TestMutable(null);
+        Assert.assertNull(Misc.clearBestEffort(null, successful));
+        Assert.assertEquals(1, successful.clearCount);
+        Assert.assertSame(existingPrimary, Misc.clearBestEffort(existingPrimary, successful));
+        Assert.assertEquals(2, successful.clearCount);
+        Assert.assertEquals(0, existingPrimary.getSuppressed().length);
+
+        // a clear() failure folds into the chain instead of propagating and becomes the primary
+        final RuntimeException runtimeFailure = new RuntimeException("runtime");
+        final TestMutable runtimeThrowing = new TestMutable(runtimeFailure);
+        Assert.assertSame(runtimeFailure, Misc.clearBestEffort(null, runtimeThrowing));
+        Assert.assertEquals(1, runtimeThrowing.clearCount);
+        Assert.assertEquals(0, runtimeFailure.getSuppressed().length);
+
+        // a later failure attaches to the existing primary as suppressed; Errors count too
+        final Error errorFailure = new AssertionError("error");
+        final TestMutable errorThrowing = new TestMutable(errorFailure);
+        Assert.assertSame(existingPrimary, Misc.clearBestEffort(existingPrimary, errorThrowing));
+        Assert.assertEquals(1, errorThrowing.clearCount);
+        Assert.assertArrayEquals(new Throwable[]{errorFailure}, existingPrimary.getSuppressed());
+
+        // clear() rethrowing the primary itself must not self-suppress
+        final RuntimeException selfPrimary = new RuntimeException("self");
+        final TestMutable selfThrowing = new TestMutable(selfPrimary);
+        Assert.assertSame(selfPrimary, Misc.clearBestEffort(selfPrimary, selfThrowing));
+        Assert.assertEquals(1, selfThrowing.clearCount);
+        Assert.assertEquals(0, selfPrimary.getSuppressed().length);
+    }
+
+    @Test
+    public void testClearObjListBestEffortContinuesAfterFailures() {
+        Assert.assertNull(Misc.clearObjListBestEffort(null, null));
+        final RuntimeException existingPrimary = new RuntimeException("existing");
+        Assert.assertSame(existingPrimary, Misc.clearObjListBestEffort(existingPrimary, null));
+
+        final ObjList<Mutable> mutables = new ObjList<>();
+        final RuntimeException firstFailure = new RuntimeException("first");
+        final Error secondFailure = new AssertionError("second");
+        final RuntimeException thirdFailure = new RuntimeException("third");
+        final TestMutable first = new TestMutable(firstFailure);
+        final TestMutable second = new TestMutable(secondFailure);
+        final TestMutable third = new TestMutable(thirdFailure);
+        final TestMutable last = new TestMutable(null);
+        mutables.add(null);
+        mutables.add(first);
+        mutables.add(second);
+        mutables.add(third);
+        mutables.add(last);
+
+        final Throwable result = Misc.clearObjListBestEffort(null, mutables);
+
+        // the loop clears every remaining entry after the first failure, throwing or not
+        Assert.assertEquals(1, first.clearCount);
+        Assert.assertEquals(1, second.clearCount);
+        Assert.assertEquals(1, third.clearCount);
+        Assert.assertEquals(1, last.clearCount);
+        Assert.assertSame(firstFailure, result);
+        Assert.assertArrayEquals(new Throwable[]{secondFailure, thirdFailure}, firstFailure.getSuppressed());
+
+        // the list retains its entries, so a second pass clears them again and folds into the same
+        // chain; the entry rethrowing the primary does not self-suppress
+        Assert.assertSame(result, Misc.clearObjListBestEffort(result, mutables));
+        Assert.assertEquals(2, first.clearCount);
+        Assert.assertEquals(2, second.clearCount);
+        Assert.assertEquals(2, third.clearCount);
+        Assert.assertEquals(2, last.clearCount);
+        Assert.assertArrayEquals(
+                new Throwable[]{secondFailure, thirdFailure, secondFailure, thirdFailure},
+                firstFailure.getSuppressed()
+        );
+    }
+
+    @Test
+    public void testFoldCleanupFailureChainsAndRejectsSelfSuppression() {
+        // with no primary yet the failure becomes the primary
+        final RuntimeException failure = new RuntimeException("failure");
+        Assert.assertSame(failure, Misc.foldCleanupFailure(null, failure));
+        Assert.assertEquals(0, failure.getSuppressed().length);
+
+        // later failures attach to the primary in arrival order
+        final RuntimeException primary = new RuntimeException("primary");
+        final Error errorFailure = new AssertionError("error");
+        Assert.assertSame(primary, Misc.foldCleanupFailure(primary, failure));
+        Assert.assertSame(primary, Misc.foldCleanupFailure(primary, errorFailure));
+        Assert.assertArrayEquals(new Throwable[]{failure, errorFailure}, primary.getSuppressed());
+
+        // folding the primary into itself is a no-op: Throwable.addSuppressed(this) throws
+        // IllegalArgumentException("Self-suppression not permitted")
+        Assert.assertSame(primary, Misc.foldCleanupFailure(primary, primary));
+        Assert.assertArrayEquals(new Throwable[]{failure, errorFailure}, primary.getSuppressed());
+    }
 
     @Test
     public void testFreeBestEffortHandlesNullAndExistingPrimary() {
@@ -176,6 +277,26 @@ public class MiscTest {
             if (closeAction != null) {
                 closeAction.run();
             }
+            if (failure instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (failure instanceof Error error) {
+                throw error;
+            }
+        }
+    }
+
+    private static class TestMutable implements Mutable {
+        private final Throwable failure;
+        private int clearCount;
+
+        private TestMutable(Throwable failure) {
+            this.failure = failure;
+        }
+
+        @Override
+        public void clear() {
+            clearCount++;
             if (failure instanceof RuntimeException runtimeException) {
                 throw runtimeException;
             }

@@ -67,10 +67,5 @@ public class CastByteToSymbolFunctionFactory implements FunctionFactory {
         public CharSequence getSymbol(Record rec) {
             return getSymbol0(arg.getByte(rec));
         }
-
-        @Override
-        protected AbstractCastToSymbolFunction newFunc() {
-            return new Func(arg);
-        }
     }
 }

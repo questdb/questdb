@@ -31,6 +31,7 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -66,8 +67,21 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     // the functions of its own kind - and the repair takes their union. This factory owns
     // the plan, because an expression-keyed projector holds compiled key functions.
     private final LiveViewCheckpointRowsPlan checkpointRowsPlan;
+    // One entry per window Map group this factory's functions form: the components the
+    // group's map value would be made of, and the outputs that read them. Null when the
+    // factory is a live-view compile, or when no group forms that removes anything. Holds
+    // only non-owning references into this factory's own functions, so it needs no cleanup.
+    // A plan is compiled whether or not a runtime binds it - see windowMapStates.
+    private final ObjList<WindowAccumulatorPlan> windowAccumulatorPlans;
     private final ObjList<WindowFunction> windowFunctions;
     private final int windowFunctionsCount;
+    // The runtime owners of the groups above: one map and one lookup per group, with every
+    // member's private map left closed. One per compiled plan, or null when
+    // cairo.sql.window.map.fusion.enabled is off - the kill switch is what stands between the
+    // two lists. Owned by this factory, which frees them; the functions they bind are owned as
+    // they always were.
+    private final ObjList<WindowMapState> windowMapStates;
+    private final int windowMapStatesCount;
     private RecordCursorFactory base;
     private boolean closed = false;
     private WindowRecordCursor cursor;
@@ -78,7 +92,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             GenericRecordMetadata metadata,
             ObjList<Function> functions
     ) {
-        this(base, metadata, functions, null, null, null);
+        this(base, metadata, functions, null, null, null, null, null);
     }
 
     public WindowRecordCursorFactory(
@@ -87,7 +101,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             ObjList<Function> functions,
             ObjList<WindowFunction> anchorableWindowFunctions
     ) {
-        this(base, metadata, functions, anchorableWindowFunctions, null, null);
+        this(base, metadata, functions, anchorableWindowFunctions, null, null, null, null);
     }
 
     public WindowRecordCursorFactory(
@@ -96,7 +110,9 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             ObjList<Function> functions,
             ObjList<WindowFunction> anchorableWindowFunctions,
             LiveViewCheckpointRangePlan checkpointRangePlan,
-            LiveViewCheckpointRowsPlan checkpointRowsPlan
+            LiveViewCheckpointRowsPlan checkpointRowsPlan,
+            ObjList<WindowAccumulatorPlan> windowAccumulatorPlans,
+            ObjList<WindowMapState> windowMapStates
     ) {
         super(metadata);
         this.base = base;
@@ -104,6 +120,9 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         this.anchorableWindowFunctions = anchorableWindowFunctions;
         this.checkpointRangePlan = checkpointRangePlan;
         this.checkpointRowsPlan = checkpointRowsPlan;
+        this.windowAccumulatorPlans = windowAccumulatorPlans;
+        this.windowMapStates = windowMapStates;
+        this.windowMapStatesCount = windowMapStates == null ? 0 : windowMapStates.size();
 
         windowFunctions = new ObjList<>();
         for (int i = 0, n = functions.size(); i < n; i++) {
@@ -197,6 +216,33 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         return cursor;
     }
 
+    /**
+     * Returns the window Map groups this factory's functions form, or null when none does.
+     * <p>
+     * A compiled group is not necessarily a bound one: {@link #getWindowMapStates()} is the
+     * subset this build gives a runtime, and a plan the kill switch or the
+     * Map-implementation rule turned away stays compiled - which is what lets a test assert
+     * that such a group was worked out and simply given to nobody, rather than assert an
+     * absence. A live-view compile never produces one at all: a live-view function keeps its
+     * accumulator in the private partition map that {@code LiveViewWindow} and the checkpoint
+     * framework drive, so the compiler forms no group for it.
+     */
+    public @Nullable ObjList<WindowAccumulatorPlan> getWindowAccumulatorPlans() {
+        return windowAccumulatorPlans;
+    }
+
+    /**
+     * Returns the bound window Map groups - the ones that own a map and make the row's one
+     * lookup - or null when this factory binds none.
+     * <p>
+     * Their members' {@code computeNext} is a no-op and their private partition maps stay
+     * closed, so the second dispatch in {@link WindowRecordCursor#hasNext()} reaches only
+     * the residual functions in practice while still being written over all of them.
+     */
+    public @Nullable ObjList<WindowMapState> getWindowMapStates() {
+        return windowMapStates;
+    }
+
     public ObjList<WindowFunction> getWindowFunctions() {
         return windowFunctions;
     }
@@ -243,6 +289,10 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         this.functions = null;
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, cursor);
+        // Before the functions rather than after: a group owns only its own map and its key
+        // projection over base columns, so freeing it touches nothing a function owns - but
+        // ordering it first keeps that independence obvious rather than incidental.
+        failure = Misc.freeObjListBestEffort(failure, windowMapStates);
         failure = Misc.freeObjListBestEffort(failure, functions);
         failure = Misc.freeBestEffort(failure, checkpointRowsPlan);
         CairoException.rethrowCleanupFailure(failure);
@@ -280,6 +330,13 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
                     for (int i = 0, n = windowFunctions.size(); i < n; i++) {
                         windowFunctions.getQuick(i).reset();
                     }
+                    // Symmetric with openWindowMapStates: each group hands its map backing
+                    // back to the tracker that was bound when it was allocated. Reached on a
+                    // failed partial open too - getCursor closes the cursor - where a group
+                    // that never got as far as reopen() frees a map that is already closed.
+                    for (int i = 0; i < windowMapStatesCount; i++) {
+                        windowMapStates.getQuick(i).reset();
+                    }
                     isOpen = false;
                 }
             }
@@ -290,8 +347,15 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             circuitBreaker.statefulThrowExceptionIfTripped();
             boolean hasNext = super.hasNext();
             if (hasNext) {
+                final Record record = baseCursor.getRecord();
+                // Groups first, and the whole of a group before any of it is read: a bound
+                // function's computeNext below is a no-op, and its getters answer with
+                // whatever the group's projection loop just materialized.
+                for (int i = 0; i < windowMapStatesCount; i++) {
+                    windowMapStates.getQuick(i).computeNext(record);
+                }
                 for (int i = 0; i < windowFunctionsCount; i++) {
-                    windowFunctions.getQuick(i).computeNext(baseCursor.getRecord());
+                    windowFunctions.getQuick(i).computeNext(record);
                 }
             }
             return hasNext;
@@ -314,6 +378,13 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             for (int i = 0, n = functions.size(); i < n; i++) {
                 functions.getQuick(i).toTop();
             }
+            // Exactly once per group, not once per bound member: several functions read one
+            // shared key domain, and a bound function's own toTop deliberately leaves it
+            // alone (its private map is closed, and clearing a closed map would walk backing
+            // it no longer holds).
+            for (int i = 0; i < windowMapStatesCount; i++) {
+                windowMapStates.getQuick(i).clear();
+            }
             baseCursor.toTop();
         }
 
@@ -331,8 +402,32 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
                     windowFunctions.getQuick(i).setMemoryTracker(memoryTracker);
                 }
                 reopen(functions);
+                openWindowMapStates(memoryTracker);
             }
             Function.init(functions, baseCursor, executionContext, null);
+        }
+
+        /**
+         * Binds the per-query tracker on every bound group's map and allocates its backing,
+         * in that order, so the malloc and the free that {@link #close()} performs land on the
+         * same counter.
+         * <p>
+         * It runs after {@code reopen(functions)} and needs nothing from {@link Function#init}:
+         * what it allocates is map backing, and nothing here evaluates a key.
+         * <p>
+         * A group whose key is an expression does read through compiled PARTITION BY functions,
+         * and they are bound to the symbol source by the {@code Function.init} below - they are
+         * a member function's own terms, borrowed, so initializing that function initializes
+         * them. That ordering holds for {@code of}, which inits every row's worth of function
+         * before the first {@code hasNext}; {@code ofIncremental} is a live-view entry point
+         * and no live-view compile produces a group at all.
+         */
+        private void openWindowMapStates(MemoryTracker memoryTracker) {
+            for (int i = 0; i < windowMapStatesCount; i++) {
+                final WindowMapState state = windowMapStates.getQuick(i);
+                state.setMemoryTracker(memoryTracker);
+                state.reopen();
+            }
         }
 
         /**
@@ -353,6 +448,10 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
                 try {
                     reopen(functions);
+                    // A live-view compile binds no group, so this is a no-op today. It is
+                    // written all the same, because the day one is bound here the omission
+                    // would show up as a cursor driving computeNext over a closed map.
+                    openWindowMapStates(memoryTracker);
                 } catch (Throwable th) {
                     // Same transactional first-open guarantee as ofIncremental(): a partial
                     // reopen must not leave a half-open cursor whose next getIncrementalCursor()
@@ -395,6 +494,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
                 try {
                     reopen(functions);
+                    openWindowMapStates(memoryTracker);
                     Function.init(functions, baseCursor, executionContext, null);
                 } catch (Throwable th) {
                     // First open doubles as the bootstrap: there is no accumulated window

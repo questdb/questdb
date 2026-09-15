@@ -152,11 +152,17 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     @Override
     public void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
         if (compactionScratch == null) {
-            compactionScratch = newCompactionScratch();
-            if (compactionScratch == null) {
+            // Into a local, and published only once bindScratchTracker has it open, for
+            // the reason BasePartitionedWindowFunction.retainPartitions spells out: the
+            // rebind reopens through the per-view tracker and raises on a breach of
+            // cairo.live.view.refresh.memory.limit.bytes, and a field assigned first
+            // would name a closed map the next sweep clears and rebuilds into.
+            final Map scratch = newCompactionScratch();
+            if (scratch == null) {
                 return;
             }
-            bindScratchTracker();
+            bindScratchTracker(scratch);
+            compactionScratch = scratch;
         } else {
             compactionScratch.clear();
         }
@@ -187,18 +193,27 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
 
     /**
      * Charges the freshly created compaction scratch to the per-query tracker.
-     * Mirrors {@link BasePartitionedWindowFunction#bindScratchTracker()}: free the
+     * Mirrors {@link BasePartitionedWindowFunction#bindScratchTracker(Map)}: free the
      * untracked open backing, bind the tracker, then reopen so the scratch's malloc
      * and free stay symmetric on the per-query counter after the ping-pong swap. A
      * no-op when no tracker is bound.
+     * <p>
+     * Takes {@code scratch} as an argument, and frees it when the reopen raises,
+     * because the caller has not published it yet - see the sibling for why the field
+     * must not name a map this method has closed but not reopened.
      */
-    private void bindScratchTracker() {
-        if (memoryTracker == null || compactionScratch == null) {
+    private void bindScratchTracker(Map scratch) {
+        if (memoryTracker == null) {
             return;
         }
-        compactionScratch.close();
-        compactionScratch.setMemoryTracker(memoryTracker);
-        compactionScratch.reopen();
+        try {
+            scratch.close();
+            scratch.setMemoryTracker(memoryTracker);
+            scratch.reopen();
+        } catch (Throwable th) {
+            Misc.free(scratch);
+            throw th;
+        }
     }
 
     /**

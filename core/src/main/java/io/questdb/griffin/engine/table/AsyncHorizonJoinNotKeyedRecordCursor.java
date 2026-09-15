@@ -225,12 +225,14 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
         // (master or slave) based on column mappings
         final HorizonJoinSymbolTableSource symbolTableSource = atom.getSymbolTableSource();
         symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveFrameCursor);
+        // Bind the group by functions (this cursor's groupByFunctions) here, and only here: a
+        // parent projection or sort over a SYMBOL aggregate resolves the output column's static
+        // symbol table at getCursor() time, which is before the slave time-frame cache is built on
+        // the first read. The atom donates the owner state to the per-worker clones when it binds
+        // those in initTimeFrameCursors().
+        atom.initOwnerGroupByFunctions(executionContext);
 
-        // Initialize record with the owner's map value. The atom initializes the group by
-        // functions (this cursor's groupByFunctions) in initTimeFrameCursors(), before any frame
-        // is dispatched, and donates the owner state to the per-worker clones. Re-initializing
-        // them here would re-run stateful initialization, such as a cursor comparison re-executing
-        // its scalar sub-query, and could diverge from the state the workers observe.
+        // Initialize record with the owner's map value.
         recordA.of(atom.getOwnerMapValue());
 
         isValueBuilt = false;

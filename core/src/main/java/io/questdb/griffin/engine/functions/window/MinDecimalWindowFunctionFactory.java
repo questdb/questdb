@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -53,6 +54,7 @@ public class MinDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 MaxDecimalWindowFunctionFactory.LESS_THAN_64,
                 MaxDecimalWindowFunctionFactory.LESS_THAN_128,
                 MaxDecimalWindowFunctionFactory.LESS_THAN_256,
-                NAME);
+                NAME,
+                WindowAccumulatorDescriptor.FAMILY_DECIMAL_MIN);
     }
 }

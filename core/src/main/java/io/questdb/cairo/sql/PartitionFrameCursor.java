@@ -46,6 +46,18 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
     TableReader getTableReader();
 
     /**
+     * An upper bound on the number of partition frames this cursor can produce, when one is
+     * cheap to derive from metadata the cursor has already resolved, or -1 when unknown. An
+     * implementation that answers must never under-count: the walk may produce fewer frames
+     * than the bound (it skips intersections that hold no rows) but never more. Callers may
+     * therefore use the bound to reject frame-proportional work eagerly, but not to size
+     * anything exactly.
+     */
+    default long getFrameCountUpperBound() {
+        return -1;
+    }
+
+    /**
      * The designated-timestamp intervals this cursor confines its frames to, or null when
      * it applies no interval filter or cannot describe the one it applies. Flat (lo, hi)
      * pairs in the timestamp column's own units, CLOSED at both ends, ascending and

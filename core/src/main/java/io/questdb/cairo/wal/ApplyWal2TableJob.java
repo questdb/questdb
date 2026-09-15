@@ -141,17 +141,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
     @Override
     public void closeInstance() {
-        // cloneInstance() mints a fresh job per generation, so the pool frees
-        // each instance's native resources through this hook at halt. Misc.free
-        // nulls the fields, keeping the call idempotent.
+        // cloneInstance() mints a fresh job per worker, so the pool frees each
+        // instance's native resources through this hook at halt.
         close();
-    }
-
-    @Override
-    public void recycleInstance() {
-        mvRefreshTask.clear();
-        lastAttemptSeqTxn = 0L;
-        lastCommittedRows = 0L;
     }
 
     private static long calculateSkipTransactionCount(TableToken tableToken, long initialSeqTxn, WalTxnDetails walTxnDetails) {
@@ -280,7 +272,21 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         tempPath.trimTo(rootLen);
                         tempPath.concat(pUtf8NameZ);
 
-                        if (CairoKeywords.isTxn(pUtf8NameZ) || CairoKeywords.isMeta(pUtf8NameZ) || matchesWalLock(tempPath)) {
+                        // `_rebase_new` / `_rebase_source` must survive this sweep. The replication
+                        // uploader stats `_rebase_source` on the OLD dir of an ALTER TABLE ... REBASE WAL
+                        // to record it in the index as a rebase SOURCE (high bit on last_txn) rather than
+                        // a plain drop, which is what keeps the object-store baseline for the rebased
+                        // table. This sweep can get there first: the drop is applied a whole boot later
+                        // whenever the rebase itself could not tombstone the dir (its
+                        // `removeQuiet(_txn/_meta)` is best-effort and loses to open handles on Windows),
+                        // and deleting the marker turns the source into a drop that wipes the replica.
+                        // Skipping the entry (rather than bailing out of the sweep) keeps `allClean`
+                        // true, so `_txn`/`_meta` are still removed below - WalPurgeJob reclaims the dir,
+                        // markers included, only once the table no longer looks like it exists.
+                        if (CairoKeywords.isTxn(pUtf8NameZ)
+                                || CairoKeywords.isMeta(pUtf8NameZ)
+                                || CairoKeywords.isRebaseMarker(pUtf8NameZ)
+                                || matchesWalLock(tempPath)) {
                             continue;
                         }
 
@@ -650,6 +656,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 if (initialSeqTxn < writer.getSeqTxn()) {
+                    if (mvRefreshTask.operation == MatViewRefreshTask.INVALIDATE) {
+                        // One INVALIDATE notification replaces every incremental notification in this
+                        // apply batch. Treat the batch end as the covered frontier so a full snapshot may
+                        // consume it only when it also includes later transactions that got no notification.
+                        mvRefreshTask.invalidationBaseTableToken = mvRefreshTask.baseTableToken;
+                        mvRefreshTask.invalidationBaseTxn = writer.getSeqTxn();
+                    }
                     engine.notifyMatViewBaseTableCommit(mvRefreshTask, writer.getSeqTxn());
                 }
             } catch (Throwable th) {
@@ -1121,6 +1134,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      * pool worker never races the LV's own refresh worker.
      */
     public void applyWalDirect(@NotNull TableToken tableToken, WorkerContext runStatus) {
+        // WAL apply must never fiber-suspend, or an applied UPDATE that waits on WAL progress
+        // would park the apply it depends on; generateUpdate rejects such statements at compile
+        // time, and no caller reaches applyWal from a mounted fiber.
         applyWal(tableToken, engine, operationExecutor, runStatus);
     }
 

@@ -44,12 +44,9 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -1964,21 +1961,6 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     // enters the picture.
     private static String timestamp(int secondOfDay) {
         return String.format("2026-01-01T00:%02d:%02d.000000Z", secondOfDay / 60, secondOfDay % 60);
-    }
-
-    private static ObjList<WindowFunction> unwrapWindowFunctions(LiveViewInstance instance) {
-        RecordCursorFactory factory = instance.getCompiledFactory();
-        while (factory != null) {
-            if (factory instanceof WindowRecordCursorFactory windowFactory) {
-                return windowFactory.getWindowFunctions();
-            }
-            if (factory instanceof QueryProgress) {
-                factory = factory.getBaseFactory();
-                continue;
-            }
-            break;
-        }
-        throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
     }
 
     private void appendAndRefresh(LiveViewRefreshJob job, int second, long value) throws Exception {

@@ -74,7 +74,6 @@ import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
-import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -294,14 +293,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // One-shot (self-clears on fire); always null in production.
     @TestOnly
     private Runnable simulateBaseApplyDuringRederiveForTest;
-    // Test-only: when armed, the fallback scan runs this action BETWEEN the ahead guard's two
-    // reads - after the view watermark read, before the base sequencer head read. That interval
-    // is the contract, not a convenience: it is the window a concurrent refresh worker used to
-    // race, so a test can publish and refresh the next base commit there instead of relying on
-    // thread timing. Keep the call between the two reads. Moving it outside them, or reordering
-    // the reads across it, makes the guard sample a coherent pair either way and silently strips
-    // testConcurrentRefreshCannotInvalidateFromStaleBaseHead of its power to tell the two orders
-    // apart.
+    // Test-only: when armed, the fallback scan runs this action inside the ahead guard - after
+    // the view watermark read, before the two base head reads (cached sequencer head and tracker
+    // writerTxn). That interval is the contract, not a convenience: it is the window a concurrent
+    // refresh worker used to race, so a test can publish and refresh the next base commit there
+    // instead of relying on thread timing. Keep the call between the watermark read and the base
+    // reads. Moving it outside them, or reordering the reads across it, makes the guard sample a
+    // coherent set either way and silently strips
+    // testConcurrentRefreshCannotInvalidateFromStaleBaseHead of its power to tell the orders apart.
     // One-shot (self-clears on fire); always null in production.
     @TestOnly
     private Runnable simulateBaseCommitBetweenAheadGuardReadsForTest;
@@ -513,9 +512,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        // workerId is the fixed per-worker identity captured at assign(int, job)
-        // time. The continuation framework may remount this job on a peer carrier,
-        // so workerContext.carrierId() is not asserted against it here.
         return processNotifications();
     }
 
@@ -564,12 +560,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test-only: arms a one-shot action that the fallback scan runs BETWEEN the two reads feeding
-     * the live-view-ahead guard - after the view watermark read, after which it blocks the scan,
-     * and before the base sequencer head read. The interval is what the arming test asserts on:
-     * a commit published there is visible to the base-head read but not to the already-captured
-     * watermark, which is exactly the asymmetry that distinguishes the correct read order from
-     * the racy one. Relocating this call outside the two reads leaves
+     * Test-only: arms a one-shot action that the fallback scan runs inside the live-view-ahead
+     * guard - after the view watermark read, after which it blocks the scan, and before the two
+     * base head reads (cached sequencer head and tracker writerTxn). The interval is what the
+     * arming test asserts on: a commit published there is visible to the base reads but not to
+     * the already-captured watermark, which is exactly the asymmetry that distinguishes the
+     * correct read order from the racy one. Relocating this call outside the reads leaves
      * {@code testConcurrentRefreshCannotInvalidateFromStaleBaseHead} green under a read-order
      * swap that fully restores the race.
      * <p>
@@ -646,8 +642,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * ({@link #drainBaseWal}) is the fresh, settled source. A read-only replica overrides this to
      * {@code true}: it downloads and applies its base WAL asynchronously, so the raw segments can still
      * be settling (mid-download / post-apply purge) when the sequencer head already advertises the
-     * commit -- a raw read would transiently miss applied rows. Under symmetric local refresh
-     * (questdb-enterprise:docs/live_view_replication.md) the replica runs the full refresh + flush locally, so
+     * commit -- a raw read would transiently miss applied rows. Under symmetric local refresh the
+     * replica runs the full refresh + flush locally, so
      * {@link #refreshInstance} routes it through the coupled applied-base drain
      * ({@link #drainAppliedBase}), which pins the applied base reader behind the cooperative apply-lag
      * gate and routes any timestamp overlap through {@code o3Replay} -- the same well-tested path a
@@ -1098,6 +1094,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 } finally {
                     executionContext.setLiveViewCompile(false);
                 }
+                // Decompose once, here, and hand the same plan to everything below: the
+                // anchor build, the repair planner and every refresh cycle read the
+                // window factory, the two projections and the base scan off it rather
+                // than re-walking the tree and risking a different answer. CREATE already
+                // accepted this shape, so a reject here means the recompile after a base
+                // DDL produced a shape the refresh path cannot drive - which must fail
+                // loudly rather than run on a mismatched chain.
+                final LiveViewCompiledPlan plan = LiveViewCompiledPlan.of(factory, 0);
                 // Build the anchor machinery (anchor Function + LiveViewWindow)
                 // BEFORE caching the factory. Those are what dispatch the per-row
                 // resetPartition; without them an anchored view cannot produce
@@ -1120,15 +1124,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             MemoryTrackerWorkload.LIVE_VIEW_REFRESH
                     ));
                 }
-                ensureAnchorFunction(instance, factory);
+                ensureAnchorFunction(instance, plan);
                 // Which plans bound this view's repair follows from the factory alone, so
                 // it settles here rather than at the first out-of-order row. That is what
                 // lets live_views() report the answer for a view no late row has reached
                 // yet, which is the one whose latency cliff is still invisible.
                 instance.setCheckpointRepairDependencyPlans(
-                        repairDependencyPlans(instance, unwrapWindowFactory(factory))
+                        repairDependencyPlans(instance, plan.getWindowFactory())
                 );
-                instance.setCompiledFactory(factory);
+                instance.setCompiledFactory(factory, plan);
                 committed = true;
             } finally {
                 if (!committed) {
@@ -1151,7 +1155,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@link LiveViewInstance}; consumed by the runtime hookup that wraps the
      * source cursor with {@link LiveViewWindow#processRow(Record)}.
      */
-    private void ensureAnchorFunction(LiveViewInstance instance, RecordCursorFactory compiledFactory) throws SqlException {
+    private void ensureAnchorFunction(LiveViewInstance instance, LiveViewCompiledPlan plan) throws SqlException {
         if (instance.getAnchorFunction() != null) {
             return;
         }
@@ -1176,10 +1180,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .put(", sql=").put(spec.anchorExpressionSql)
                         .put(']');
             }
-            // Resolve against the LV's projected metadata (the page-frame factory's
-            // metadata at the leaf of the compiled tree). That matches the records
-            // WalSegmentRecordCursor emits at runtime.
-            RecordMetadata projectedMeta = findLeafProjectedMetadata(compiledFactory);
+            // Resolve against the window's input metadata. That is what the window
+            // functions and their PARTITION BY keys resolve against, and it is the shape
+            // of the records reaching the anchor dispatch at runtime - which sits above
+            // any alias or pre-window projection, precisely so a window partitioned by
+            // `sym AS s` finds `s` here. With no projection in the tree it is the leaf
+            // scan's metadata, which is what WalSegmentRecordCursor emits directly.
+            RecordMetadata projectedMeta = plan.getWindowInputMetadata();
             if (projectedMeta == null) {
                 throw CairoException.critical(0)
                         .put("live view anchor compile could not resolve projected metadata [view=")
@@ -1193,7 +1200,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             } finally {
                 executionContext.setLiveViewCompile(false);
             }
-            WindowRecordCursorFactory wf = unwrapWindowFactory(compiledFactory);
+            WindowRecordCursorFactory wf = plan.getWindowFactory();
             // Reset only the anchored WINDOW's functions (UNBOUNDED PRECEDING ... CURRENT
             // ROW frames). A bounded ROWS/RANGE window declared alongside the anchored one
             // must keep sliding across anchor crossings -- dispatching resetPartition to it
@@ -1294,15 +1301,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * runtime, so an anchor {@code Function} compiled against it will produce
      * correct results when invoked on the LV's source rows.
      */
-    private static RecordMetadata findLeafProjectedMetadata(RecordCursorFactory factory) {
-        WindowRecordCursorFactory wf = unwrapWindowFactory(factory);
-        RecordCursorFactory base = wf.getBaseFactory();
-        if (base.getFilter() != null) {
-            base = base.getBaseFactory();
-        }
-        return base.getMetadata();
-    }
-
     /**
      * Determines whether the anchor expression is provably monotone non-decreasing
      * with the base scan order, which is the enabling condition for frontier-gated
@@ -1551,17 +1549,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     private RecordToRowCopier ensureCopier(
             LiveViewInstance instance,
-            WindowRecordCursorFactory windowFactory,
             WalWriter walWriter
     ) throws SqlException {
         long metadataVersion = walWriter.getMetadata().getMetadataVersion();
         RecordToRowCopier copier = instance.getRecordToRowCopier();
         if (copier == null || instance.getRecordRowCopierMetadataVersion() != metadataVersion) {
+            // The view's own schema, which is the output projection's when the SELECT
+            // wraps a window function in an expression and the window factory's when it
+            // does not. Reading the window factory's here instead would generate a copier
+            // for the wrong column count and mis-write every row.
+            final RecordMetadata outMetadata = instance.getCompiledPlan().getOutputMetadata();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                columnFilter.of(windowFactory.getMetadata().getColumnCount());
+                columnFilter.of(outMetadata.getColumnCount());
                 copier = RecordToRowCopierUtils.generateCopier(
                         compiler.getAsm(),
-                        windowFactory.getMetadata(),
+                        outMetadata,
                         walWriter.getMetadata(),
                         columnFilter,
                         engine.getConfiguration()
@@ -1572,9 +1574,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return copier;
     }
 
+    /**
+     * The decomposed plan for {@code instance}, compiling the view's SELECT first when no
+     * factory is cached. Every refresh path reads the window factory, the projections, the
+     * filter and the base scan off this rather than re-walking the factory tree.
+     */
+    private LiveViewCompiledPlan getPlan(LiveViewInstance instance) throws SqlException {
+        ensureCompiledFactory(instance);
+        return instance.getCompiledPlan();
+    }
+
     private WindowRecordCursorFactory getWindowFactory(LiveViewInstance instance) throws SqlException {
-        RecordCursorFactory factory = ensureCompiledFactory(instance);
-        return unwrapWindowFactory(factory);
+        return getPlan(instance).getWindowFactory();
     }
 
     /**
@@ -1585,12 +1596,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code appliedWatermark} on the instance and rewrites {@code _lv.s}.
      */
     private void incrementalRefresh(LiveViewInstance instance, long fromSeqTxn, long toSeqTxn, boolean leadMode) throws SqlException {
-        WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
-        RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-        final Function filter = filterFactory.getFilter();
-        RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
+        final LiveViewCompiledPlan compiledPlan = getPlan(instance);
+        WindowRecordCursorFactory windowFactory = compiledPlan.getWindowFactory();
+        final Function filter = compiledPlan.getFilter();
         TableToken baseToken = instance.getDefinition().getBaseTableToken();
-        RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
+        RecordMetadata baseMetadata = compiledPlan.getBaseScanMetadata();
         final int baseTimestampIndex = baseMetadata.getTimestampIndex();
         buildColumnMappings(baseMetadata, baseToken);
 
@@ -1608,7 +1618,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // STRING, BINARY, VARCHAR, ARRAY); an unsupported type (a non-persisted type
         // such as INTERVAL) falls back to disk-only. The staging buffer is reshaped on schema-mismatch;
         // the LV's tier is lazily allocated on first use.
-        RecordMetadata outMetadata = windowFactory.getMetadata();
+        RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
         int cursorTimestampIndex = outMetadata.getTimestampIndex();
         if (cursorTimestampIndex < 0) {
             throw CairoException.nonCritical()
@@ -1650,7 +1660,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
 
         try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
-            RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+            RecordToRowCopier copier = ensureCopier(instance, walWriter);
             int lvTimestampIndex = walWriter.getMetadata().getTimestampIndex();
             if (lvTimestampIndex < 0) {
                 throw CairoException.nonCritical()
@@ -1854,10 +1864,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final String viewName = instance.getDefinition().getViewName();
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
 
-        final RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-        final Function filter = filterFactory.getFilter();
-        final PageFrameRecordCursorFactory pageFrameFactory = (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
-        final RecordMetadata outMetadata = windowFactory.getMetadata();
+        final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+        final Function filter = compiledPlan.getFilter();
+        final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
+        final RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
         final int cursorTimestampIndex = outMetadata.getTimestampIndex();
         if (cursorTimestampIndex < 0) {
             throw CairoException.nonCritical()
@@ -2028,7 +2038,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
                 }
                 try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
-                    final RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+                    final RecordToRowCopier copier = ensureCopier(instance, walWriter);
                     try (RecordCursor pageCursor = emptyForwardRange
                             ? EmptyTableRecordCursor.INSTANCE
                             : pageFrameFactory.getCursorFromTimestamp(executionContext, scanLowTs)) {
@@ -2037,14 +2047,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             filteringCursor.of(source, filter, executionContext);
                             source = filteringCursor;
                         }
+                        // Rebuild the compiled nodes between the base scan and the window -
+                        // an alias, a column drop, a pre-window scalar - so the window
+                        // functions see the shape they were compiled against. Above the
+                        // filter, which resolves against the base scan, and below the anchor
+                        // dispatch, which resolves against the window's input.
+                        source = compiledPlan.wrapWindowInput(source, executionContext);
                         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
                         if (anchorWindow != null) {
                             anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                             source = anchorDispatchingCursor;
                         }
                         try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
-                            final Record outRecord = windowCursor.getRecord();
-                            while (windowCursor.hasNext()) {
+                            // Rows leave the window in the window factory's shape; the output
+                            // projection turns them into the view's own schema, which is what
+                            // the copier writes and the tier stores. Drive the projected
+                            // cursor rather than the window one - it is what advances the
+                            // projection's per-row memoization before the record is read.
+                            final RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
+                            final Record outRecord = outCursor.getRecord();
+                            while (outCursor.hasNext()) {
                                 // Accumulators advanced for this row; a failure before commit
                                 // triggers a window-state rebuild (see handleRefreshFailure).
                                 // The coupled forward scan feeds the same incremental cursor
@@ -2488,19 +2510,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     filteringCursor.of(source, filter, executionContext);
                     source = filteringCursor;
                 }
+                final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+                source = compiledPlan.wrapWindowInput(source, executionContext);
                 LiveViewWindow anchorWindow = instance.getAnchorWindow();
                 if (anchorWindow != null) {
-                    // Anchor dispatch sits between the filter (or lower-bound
-                    // cursor) and the window cursor so window functions see
-                    // resetPartition before pass1 evaluates the row.
+                    // Anchor dispatch sits between the window's input projection (or the
+                    // filter, or the lower-bound cursor) and the window cursor so window
+                    // functions see resetPartition before pass1 evaluates the row.
                     anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                     source = anchorDispatchingCursor;
                 }
 
                 RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext);
                 try {
-                    Record outRecord = windowCursor.getRecord();
-                    while (windowCursor.hasNext()) {
+                    RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
+                    Record outRecord = outCursor.getRecord();
+                    while (outCursor.hasNext()) {
                         // Accumulators advanced for this row; a failure before commit
                         // triggers a window-state rebuild (see handleRefreshFailure).
                         windowStateDirty = true;
@@ -2680,7 +2705,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return Math.max(deleteLo, Numbers.LONG_NULL + 1);
     }
 
-    // Under symmetric local refresh (questdb-enterprise:docs/live_view_replication.md) the live-view table is
+    // Under symmetric local refresh the live-view table is
     // node-local derived data: every node -- primary AND replica -- refreshes and flushes its own LV
     // table locally, and LV WAL is never uploaded or downloaded. So the read-only fence this method once
     // held (refuse an LV mint on a read-only node, to stop a demoting primary externalizing a local-only
@@ -2857,7 +2882,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
 
-        final RecordMetadata outMetadata = windowFactory.getMetadata();
+        final RecordMetadata outMetadata = instance.getCompiledPlan().getOutputMetadata();
         final int tsColIdx = outMetadata.getTimestampIndex();
         final int publishedIdx = tier.getPublishedIdx();
         final LiveViewInMemoryBuffer pubSlot = tier.getSlot(publishedIdx);
@@ -2875,7 +2900,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (hasSymbols) {
                 bufferRecord.setSymbolResolvers(buildFlushSymbolResolvers(outMetadata, symbolReader, tier.getSymbolCache()));
             }
-            RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+            RecordToRowCopier copier = ensureCopier(instance, walWriter);
             int lvTimestampIndex = walWriter.getMetadata().getTimestampIndex();
             if (lvTimestampIndex < 0) {
                 throw CairoException.nonCritical()
@@ -3619,43 +3644,38 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 persistState(instance);
             }
-            // instance.leadRowCount is 0 on entry to o3Replay: finishLeadRefresh (the
-            // lead path) and drainAppliedBase's overlap branch (the coupled dedup path,
-            // where an ALTER ... DEDUP ENABLE flip can leave a pre-dedup RAM lead) zero
-            // it explicitly first, and the remaining coupled-forward and replay-to-applied
-            // callers carry no un-flushed lead so it is already 0. The capable path
+            // instance.leadRowCount is 0 on entry to o3Replay: finishLeadRefresh and
+            // drainAppliedBase's overlap branch (where an ALTER ... DEDUP ENABLE flip can
+            // leave a pre-dedup RAM lead) zero it explicitly, and the coupled-forward and
+            // replay-to-applied callers carry no un-flushed lead. The capable path
             // rebuilds the tier as a pure disk subset (leadRowCount 0).
-            // This branch rewrote nothing on disk and left the published slot
-            // untouched, so a slot that is STILL a current un-flushed lead keeps its
-            // stamped leadRowCount as the true lead. Resync instance.leadRowCount to it:
-            // leaving it at 0 desyncs the two, so the next publish would reclassify those
-            // L never-flushed rows as overlap (size() under-reports, iteration serves
-            // them as phantoms) and flushLead's overlapCount would skip them entirely.
+            // This branch rewrote nothing on disk and left the published slot untouched,
+            // so a slot that is STILL a current un-flushed lead keeps its stamped
+            // leadRowCount as the true lead. Resync instance.leadRowCount to it: leaving
+            // it at 0 would reclassify those never-flushed rows as overlap, so size()
+            // under-reports, iteration serves them as phantoms, and flushLead's
+            // overlapCount skips them entirely.
             //
             // But re-arm ONLY from a slot whose stamped LV-table seqTxn still matches the
             // applied disk seqTxn. A slot whose stamp has fallen behind disk holds rows
-            // that are already durable, so its leadRowCount is NOT an un-flushed lead and
-            // the correct value is the 0 the caller left. Two paths leave such a
-            // stale-stamped slot, and both must be excluded:
-            //   - an emergency flush wrote the lead to disk, set tierStale, and left the
-            //     slot's now-durable leadRowCount stamped (isTierStale() would catch it); and
-            //   - a normal flush wrote the lead to disk but its restampSlot 0 -> -1 CAS
-            //     lost to a reader pin, so the slot kept its now-durable stamp while
-            //     tierStale stayed FALSE (restampSlotAfterFlush ignores the CAS result) --
-            //     an isTierStale() guard MISSES this one.
-            // Re-arming from either would make the finishLeadRefresh flush path trust a
-            // stale non-zero leadRowCount and re-flush the already-durable rows as on-disk
+            // that are already durable, so the 0 the caller left is correct. Two paths
+            // leave such a stale stamp: an emergency flush that set tierStale
+            // (isTierStale() would catch it), and a normal flush whose restampSlot
+            // 0 -> -1 CAS lost to a reader pin, leaving tierStale FALSE because
+            // restampSlotAfterFlush ignores the CAS result -- an isTierStale() guard
+            // MISSES that one. Re-arming from either would make finishLeadRefresh trust a
+            // stale non-zero leadRowCount and re-flush already-durable rows as on-disk
             // duplicates. The seqTxn-match check below subsumes both (both leave
             // slot.lvSeqTxn() != applied) and needs no reader open: the applied seqTxn is
             // the same coordinate flushLead / publishToInMemoryTier stamp the slot from,
             // and nothing has applied to the LV table since (this branch does not commit).
             //
             // Defensive: CREATE rejects every non-snapshot-capable window shape (each
-            // WindowFunction.supportsCheckpointState() folds in the anchor key type check),
-            // and o3Replay recomputes capability above, so a freshly-validated view
-            // never reaches this branch. It fires only for a view that is
-            // non-capable at runtime (e.g. a restored view whose function lost
-            // snapshot support); the resync keeps its bookkeeping correct if so.
+            // WindowFunction.supportsCheckpointState() folds in the anchor key type check)
+            // and o3Replay recomputes capability above, so a freshly-validated view never
+            // reaches this branch. It fires only for a view that is non-capable at runtime
+            // (e.g. a restored view whose function lost snapshot support); the resync
+            // keeps its bookkeeping correct if so.
             final LiveViewInMemoryTier ncTier = instance.getInMemoryTier();
             if (ncTier != null) {
                 final LiveViewInMemoryBuffer ncSlot = ncTier.getSlot(ncTier.getPublishedIdx());
@@ -3768,7 +3788,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void resumeSuspendedRepair(LiveViewInstance instance, LiveViewCheckpointRepairSession session)
             throws SqlException {
         final RecordCursorFactory compiledFactory = instance.getCompiledFactory();
-        if (compiledFactory == null || unwrapWindowFactory(compiledFactory) != session.getWindowFactory()) {
+        final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+        if (compiledFactory == null || compiledPlan == null || compiledPlan.getWindowFactory() != session.getWindowFactory()) {
             LOG.info().$("live view runtime changed under a parked O3 repair, discarding the candidate [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", turns=").$(session.getTurns())
@@ -3938,7 +3959,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 rangeFrameWidth = rangePlan.getMaxFrameWidth();
             }
             if (rowsPlan != null) {
-                rowsBoundDiscovery.of(rowsPlan, windowFactory, reader);
+                rowsBoundDiscovery.of(rowsPlan, instance.getCompiledPlan(), reader);
                 rowsBoundSource = rowsBoundDiscovery;
             }
             // The segment bounds the repair from both sides without reading a base row, so
@@ -4117,15 +4138,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             executionContext.of(reader);
             readerAttached = true;
 
-            RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-            final Function filter = filterFactory.getFilter();
-            final PageFrameRecordCursorFactory pageFrameFactory =
-                    (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
-            RecordMetadata outMetadata = windowFactory.getMetadata();
+            final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+            final Function filter = compiledPlan.getFilter();
+            final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
+            RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
             final int cursorTimestampIndex = outMetadata.getTimestampIndex();
 
             try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
-                RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+                RecordToRowCopier copier = ensureCopier(instance, walWriter);
                 // Open the snapshot AT replayLowTs rather than scanning up to it: the
                 // inclusive-lower-bound cursor culls whole partitions and binary-searches
                 // into the first one. Head-hit exists to re-evaluate only the tail above
@@ -4148,6 +4168,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         filteringCursor.of(source, filter, executionContext);
                         source = filteringCursor;
                     }
+                    source = compiledPlan.wrapWindowInput(source, executionContext);
                     final LiveViewWindow anchorWindow = instance.getAnchorWindow();
                     if (anchorWindow != null) {
                         anchorDispatchingCursor.of(source, anchorWindow, executionContext);
@@ -4173,10 +4194,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // inside LiveViewWindow.restore() (it clears before
                             // reinserting), so no explicit wipe is needed here.
                             // Order matters: function maps clear -> restore root.
+                            // isOpen() rather than a null test: a function whose state the
+                            // window owns keeps a closed map, and its accumulator is
+                            // cleared with the anchor map's own entry instead.
                             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
                             for (int i = 0, n = functions.size(); i < n; i++) {
                                 Map m = functions.getQuick(i).getPartitionMap();
-                                if (m != null) {
+                                if (m != null && m.isOpen()) {
                                     m.clear();
                                 }
                             }
@@ -4216,8 +4240,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // logically truncates rows above replayLowTs, so the
                         // counter rewinds in step with the table.
                         instance.setLvRowsTotal(anchorLvRowPosition);
-                        Record outRecord = windowCursor.getRecord();
-                        while (windowCursor.hasNext()) {
+                        // Rows leave the window in the window factory's shape; the
+                        // output projection turns them into the view's own schema,
+                        // which is what the copier was generated for. Drive the
+                        // projected cursor rather than the window one - it is what
+                        // advances the projection's per-row memoization before the
+                        // record is read. Without the wrap the copier reads the
+                        // window's own columns positionally, so a projected view
+                        // silently stores a different window column in each of its
+                        // computed columns. wrapWindowOutput does not rewind and
+                        // returns windowCursor itself when the view has no
+                        // projection, so the unprojected replay is unchanged.
+                        final RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
+                        Record outRecord = outCursor.getRecord();
+                        while (outCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
                             if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
                                 replayMaxTs = ts;
@@ -4658,11 +4694,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             executionContext.of(reader);
             readerAttached = true;
 
-            RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-            final Function filter = filterFactory.getFilter();
-            final PageFrameRecordCursorFactory pageFrameFactory =
-                    (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
-            RecordMetadata outMetadata = windowFactory.getMetadata();
+            final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+            final Function filter = compiledPlan.getFilter();
+            final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
+            RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
             final int cursorTimestampIndex = outMetadata.getTimestampIndex();
 
             // Both scans below open the snapshot AT the scan floor rather than scanning up
@@ -4769,7 +4804,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 WalWriter walWriter = resuming ? resumed.takeWalWriter() : engine.getWalWriter(instance.getLiveViewToken());
                 boolean walWriterRetained = false;
                 try {
-                    RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+                    RecordToRowCopier copier = ensureCopier(instance, walWriter);
                     try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
                             executionContext,
                             turnLowTs,
@@ -4798,12 +4833,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             boundaryFreezingCursor.setRowPosition(durableRowsBelowFloor + appendedRows);
                             source = boundaryFreezingCursor;
                         }
+                        source = compiledPlan.wrapWindowInput(source, executionContext);
                         if (anchorWindow != null) {
                             anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                             source = anchorDispatchingCursor;
                         }
                         try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
-                            Record outRecord = windowCursor.getRecord();
+                            RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
+                            Record outRecord = outCursor.getRecord();
                             // Designated timestamp of the group the replay is inside, and
                             // how many of its rows are already folded into the window
                             // state. A turn may stop anywhere, including mid-group, so this
@@ -4823,7 +4860,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         .skipRows(repairSkipCounter, RecordCursor.UNBOUNDED_ROW_COUNT);
                             }
                             final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-                            while (windowCursor.hasNext()) {
+                            // Drive the projected cursor rather than the window one - it is
+                            // what advances the projection's per-row memoization before the
+                            // record is read. Nothing else invalidates a memoizer's cache:
+                            // wrapWindowOutput's of() re-inits the functions but leaves the
+                            // cached value valid, so the replay would emit the value the
+                            // preceding drain left behind for every row it re-emits.
+                            while (outCursor.hasNext()) {
                                 // The turn budget below ends a localized repair, but only a
                                 // localized one: an unlocalized rebuild recomputes the whole
                                 // view in this loop and may not yield, so the breaker is the
@@ -5192,39 +5235,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
                 repairPublication.watermarkAdvanced();
                 if (lvConsumedPersisted && (appendedRows > 0 || repairPublication.isKeepPrimaryRuntime())) {
-                    // Post-replay head: retireCheckpointStateOnO3 cleared the head
-                    // metadata above, so force seals a fresh boundary reflecting the
-                    // post-replay state (firstCp is already true here; force keeps the
-                    // intent explicit and robust). A subsequent O3 above it can then
-                    // resume from it instead of paying for another full rebuild.
+                    // Post-replay head: retireCheckpointStateOnO3 cleared the head metadata
+                    // above, so force seals a fresh boundary reflecting the post-replay state
+                    // (firstCp is already true here; force keeps the intent explicit). A
+                    // subsequent O3 above it resumes from there instead of rebuilding in full.
                     //
                     // The head's maxTs has to describe the state the checkpoint is about to
-                    // serialise. That is replayMaxTs for a rebuild that ran to the end of the
-                    // base table, but the runtime frontier for one that stopped at a finite H
-                    // and put its own state back - the restore just rewound the functions past
+                    // serialise: replayMaxTs for a rebuild that ran to the end of the base
+                    // table, but the runtime frontier for one that stopped at a finite H and
+                    // put its own state back - the restore just rewound the functions past
                     // replayMaxTs, so sealing them under it would claim a boundary the state
                     // does not sit at, and the next O3 would resume from it and re-read rows
                     // the state already holds. The frontier is a real timestamp whenever the
                     // plan tagged a finite H (it had to be at or above H to do so), so this
-                    // seals even when the replacement emitted nothing at all - the retire above
+                    // seals even when the replacement emitted nothing at all - the retire
                     // dropped every boundary, and a view left with none rebuilds from scratch
                     // on the next restart.
                     //
-                    // Pass 0 appendedRows: lvRowsTotal already includes them (sourced
-                    // from the on-disk size above), so adding them again would
-                    // double-count lvRowPosition. Mirrors the seed-completion path.
+                    // Pass 0 appendedRows: lvRowsTotal already includes them (sourced from the
+                    // on-disk size above), so adding them again would double-count
+                    // lvRowPosition. Mirrors the seed-completion path.
                     //
-                    // A published splice already IS this repair's timeline publication,
-                    // and it appended no root. That is enough only while the newest
-                    // root it kept still sits at the frontier: the splice moved the
-                    // generation's normalizedBaseSeqTxn up to E, and restart replays
-                    // (E, durableBase] alone, so any row above that root came from a
-                    // base transaction the replay will not walk and the restored state
-                    // would never see it. Seal the frontier as a root of its own
-                    // whenever it has run past the splice's head key - the convergence
-                    // that let the repair keep the primary runtime is exactly what
-                    // makes that runtime the correct state there - and leave the seal
-                    // to re-stamp the head metadata alone when the two already agree.
+                    // A published splice already IS this repair's timeline publication and
+                    // appended no root, which is enough only while the newest root it kept
+                    // still sits at the frontier: the splice moved the generation's
+                    // normalizedBaseSeqTxn up to E, and restart replays (E, durableBase]
+                    // alone, so any row above that root came from a base transaction the
+                    // replay will not walk and the restored state would never see it. Seal
+                    // the frontier as a root of its own whenever it has run past the splice's
+                    // head key - the convergence that let the repair keep the primary runtime
+                    // is exactly what makes that runtime the correct state there - and leave
+                    // the seal to re-stamp the head metadata alone when the two agree.
                     final long headMaxTs = repairPublication.isKeepPrimaryRuntime()
                             ? instance.getLatestSeenTs()
                             : replayMaxTs;
@@ -5676,11 +5717,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             executionContext.of(reader);
             readerBound = true;
 
-            RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-            final Function filter = filterFactory.getFilter();
-            final PageFrameRecordCursorFactory pageFrameFactory =
-                    (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
-            RecordMetadata outMetadata = windowFactory.getMetadata();
+            final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+            final Function filter = compiledPlan.getFilter();
+            final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
+            RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
             final int cursorTimestampIndex = outMetadata.getTimestampIndex();
             if (cursorTimestampIndex < 0) {
                 throw CairoException.nonCritical()
@@ -5689,7 +5729,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
-                RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+                RecordToRowCopier copier = ensureCopier(instance, walWriter);
                 // Open the snapshot AT the START FROM boundary rather than scanning up to it:
                 // the same inclusive-lower-bound cursor the forward path takes, which culls
                 // whole partitions and binary-searches into the first one instead of walking
@@ -5708,6 +5748,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         filteringCursor.of(source, filter, executionContext);
                         source = filteringCursor;
                     }
+                    source = compiledPlan.wrapWindowInput(source, executionContext);
                     if (anchorWindow != null) {
                         anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                         source = anchorDispatchingCursor;
@@ -5721,8 +5762,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             seedSkipCounter.set(dataOffset);
                             pageCursor.skipRows(seedSkipCounter, RecordCursor.UNBOUNDED_ROW_COUNT);
                         }
-                        Record outRecord = windowCursor.getRecord();
-                        while (windowCursor.hasNext()) {
+                        // Bound after the skip above, not before: wrapWindowOutput does not
+                        // rewind, so it neither undoes the skip nor cares that it happened.
+                        RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
+                        Record outRecord = outCursor.getRecord();
+                        while (outCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
                             if (batchMaxTs == Numbers.LONG_NULL || ts > batchMaxTs) {
                                 batchMaxTs = ts;
@@ -6063,7 +6107,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean force,
             boolean appendTimelineRoot
     ) {
-        // Under symmetric local refresh (questdb-enterprise:docs/live_view_replication.md) every node --
+        // Under symmetric local refresh every node --
         // primary or replica -- owns and seals its own node-local checkpoint timeline for restart
         // recovery; nothing replicates. So this seal runs on every role.
         if (!instance.isSnapshotCapabilityComputed()) {
@@ -6310,7 +6354,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
             for (int i = 0, n = functions.size(); i < n; i++) {
                 final Map map = functions.getQuick(i).getPartitionMap();
-                if (map != null) {
+                if (map != null && map.isOpen()) {
                     map.clear();
                 }
             }
@@ -6321,10 +6365,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             engine.detachReader(baseReader);
             executionContext.of(baseReader);
             readerAttached = true;
-            final RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-            final Function filter = filterFactory.getFilter();
-            final PageFrameRecordCursorFactory pageFrameFactory =
-                    (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
+            final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+            final Function filter = compiledPlan.getFilter();
+            final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
             // Start strictly above the predecessor: its restored state already covers
             // every row at or below its timestamp, so the frame it holds is the warm-up
             // the replay resumes from. Stop at the ceiling - every corrupt boundary is
@@ -6355,10 +6398,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         pageFrameFactory.getMetadata().getTimestampIndex()
                 );
                 source = boundaryFreezingCursor;
+                source = compiledPlan.wrapWindowInput(source, executionContext);
                 if (anchorWindow != null) {
                     anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                     source = anchorDispatchingCursor;
                 }
+                // No output projection here: the heal emits nothing, so no row is ever read
+                // out of this cursor and there is nothing for a projection to compute.
                 try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
                     while (windowCursor.hasNext()) {
                         // The heal emits nothing - the live-view table is already
@@ -6471,14 +6517,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long lowTimestampInclusive,
             long highTimestampInclusive
     ) throws SqlException {
-        RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-        final Function filter = filterFactory.getFilter();
-        RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
+        final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+        final Function filter = compiledPlan.getFilter();
         final TableToken baseToken = instance.getDefinition().getBaseTableToken();
-        final RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
+        final RecordMetadata baseMetadata = compiledPlan.getBaseScanMetadata();
         final int baseTimestampIndex = baseMetadata.getTimestampIndex();
         buildColumnMappings(baseMetadata, baseToken);
-        final RecordMetadata outMetadata = windowFactory.getMetadata();
+        final RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
         final int cursorTimestampIndex = outMetadata.getTimestampIndex();
 
         long replayedRows = 0;
@@ -7117,8 +7162,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (instance.isLeadEligibilityComputed()) {
             return instance.isLeadEligible();
         }
-        WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
-        RecordMetadata outMetadata = windowFactory.getMetadata();
+        RecordMetadata outMetadata = getPlan(instance).getOutputMetadata();
         boolean eligible = outMetadata.getTimestampIndex() >= 0;
         for (int i = 0, n = outMetadata.getColumnCount(); eligible && i < n; i++) {
             if (!LiveViewInMemoryBuffer.isColumnTypeSupported(outMetadata.getColumnType(i))) {
@@ -7579,9 +7623,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setTierStale(true);
             return;
         }
-        // unwrapWindowFactory is total here: ensureCompiledFactory unwraps the same object
-        // before caching it, so a non-null compiled factory has already survived this call.
-        final RecordMetadata outMetadata = unwrapWindowFactory(compiledFactory).getMetadata();
+        // The plan is total here: ensureCompiledFactory decomposes the same object before
+        // caching it, so a non-null compiled factory has already survived that walk.
+        final RecordMetadata outMetadata = instance.getCompiledPlan().getOutputMetadata();
         final int tsColIdx = outMetadata.getTimestampIndex();
         if (tsColIdx < 0 || !ensureStagingAndTier(instance, outMetadata, tsColIdx)) {
             // An output column type the tier cannot store: this view never populates the
@@ -7654,15 +7698,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * read). The retry would re-drain and double-advance them; rebuild from the
      * applied base so it starts clean. Returns {@code null} on success/re-arm, else
      * the rebuild error.
+     * <p>
+     * The two states recover differently, and only one of them repairs anything: the ACTIVE
+     * branch recomputes the view and rewrites the durable output, while the SEEDING branch
+     * only re-arms the next sweep turn. {@link #handleRefreshFailure} charges the flush-retry
+     * budget for the re-arm precisely because it is a retry rather than a repair, so a seed
+     * fault that never clears invalidates instead of sweeping forever.
      */
     private Throwable rebuildWindowStateAfterMidDrainFailure(LiveViewInstance instance) {
         if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
             // Mid-seed: re-arm the sweep resume, which rebuilds from the surviving
             // timeline (or re-sweeps from 0 behind the skip-write floor). Idempotent.
             // Deliberately KEEP the pinned base snapshot (do not freeSeedBaseReader):
-            // the fault is transient (map/staging OOM, bad read), the snapshot is intact,
+            // a transient fault (map/staging OOM, bad read) leaves the snapshot intact,
             // and resuming the sealed data offset against the SAME snapshot stays sound. A
             // fresh snapshot would reintroduce the positional-resume hazard this fix closes.
+            // A fault that outlives the retry budget takes the view invalid, and the
+            // invalidation frees the snapshot with the rest of the runtime state.
             instance.resetSeedResumeAttempted();
             LOG.info().$("live view mid-seed refresh failure, sweep will resume [view=")
                     .$(instance.getDefinition().getViewName()).I$();
@@ -8223,12 +8275,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 simulateBaseCommitBetweenAheadGuardReadsForTest = null;
                 aheadGuardAction.run();
             }
+            // Compare against the higher of the two base heads. On a primary the cached
+            // sequencer head is authoritative: the sole appender keeps it current, and the
+            // watermark can sit above writerTxn because the notification-driven refresh
+            // consumes a commit before the apply job lands it. On an enterprise replica the
+            // downloader appends the on-disk txnlog behind the cached sequencer and reconciles
+            // it later, while WAL apply and this refresh consume the new txns from the file;
+            // there writerTxn covers the stale window. writerTxn is not monotonic
+            // (notifyWalTxnRepublisher resets it to -1; a late apply can publish an older head),
+            // so the max never drops below the cached head. Neither head can exceed the durable
+            // txnlog, so a hydrate-restored watermark past it still trips the guard.
             final long baseSeqLastTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
-            if (lastProcessedSeqTxn > baseSeqLastTxn) {
+            final long baseWriterTxn = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+            if (lastProcessedSeqTxn > Math.max(baseSeqLastTxn, baseWriterTxn)) {
                 LOG.error().$("live view is ahead of base table and cannot be synchronized [view=")
                         .$(instance.getLiveViewToken())
                         .$(", lastProcessedSeqTxn=").$(lastProcessedSeqTxn)
                         .$(", baseTableTxn=").$(baseSeqLastTxn)
+                        .$(", baseWriterTxn=").$(baseWriterTxn)
                         .I$();
                 engine.invalidateLiveView(instance, "live view is ahead of base table and cannot be synchronized");
                 didWork = true;
@@ -8968,7 +9032,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
                     attempted = true;
                     runSeedSweep(instance);
-                    instance.recordRefreshSuccess();
+                    // Clear the flush-retry budget only when the turn proved the sweep got past
+                    // whatever last faulted: it completed, or it committed output past the skip-write
+                    // floor, the LV row count that was on disk when the resume derived it. A mid-seed
+                    // fault that struck after the turn fed a row re-arms the resume,
+                    // which rewinds the sweep to its newest sealed root, and that root can sit
+                    // well below the on-disk output: turns that end on the same max
+                    // timestamp seal no new root, so recovery rewinds and replays rows already on
+                    // disk. A replay turn re-feeds those rows to rebuild the window state and appends
+                    // nothing, so it is no evidence that the faulting row cleared. Recording a success
+                    // for it zeroed the count and the streak clock on every rewind, and a permanent
+                    // fault - a row the LV writer refuses, a base column that no longer reads - then
+                    // re-faulted forever with neither budget able to expire. The resume-attempted
+                    // check covers a turn that left the resume block before sweeping (the LV apply
+                    // lag return): its lvRowsTotal and floor are the stale values a re-arm leaves
+                    // behind, not a measurement of this turn.
+                    if (instance.getStateReader().getSeedState() != LiveViewState.SEED_STATE_SEEDING
+                            || (instance.isSeedResumeAttempted()
+                            && instance.getLvRowsTotal() > instance.getSeedSkipWriteFloor())) {
+                        instance.recordRefreshSuccess();
+                    }
                     return attempted;
                 }
                 // A previous turn wiped or half-advanced the accumulators and its own
@@ -9094,12 +9177,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Cooperative apply-lag handoff: this cycle's O3 replay needs the
                 // base applied to a seqTxn ApplyWal2TableJob has not reached yet.
                 // ensureBaseApplied threw before any destructive replay work, so
-                // the view is untouched - no watermark advance, no failure
-                // accounting, no invalidation. Leave invalidationReason null and
+                // the view's DURABLE output is untouched - no watermark advance, no
+                // failure accounting, no invalidation. Leave invalidationReason null and
                 // return through the finally; the next fallback scan retries this
                 // view (head > processedTo still holds) once the apply catches up.
                 // Not counting this toward the flush-retry budget is deliberate:
                 // apply lag is transient and self-heals, unlike a refresh fault.
+                //
+                // The compiled factory's accumulators are NOT untouched. The drain that
+                // raised this had already fed every commit below the offending one through
+                // the window cursor, and its O3 detect rolled back only the WAL draft and
+                // latestSeenTs - the accumulators keep every row they counted. So carry the
+                // debt onto the instance: windowStateDirty is a per-turn field that
+                // refreshInstance re-seeds from the instance at every entry, so without this
+                // the next turn starts from a clean slate and drains those same commits
+                // again over accumulators that already counted them. The re-fed rows then
+                // carry cumulative values continuing from the abandoned cycle - a running
+                // count(*) emits N+1.. for what is the view's FIRST row - and the lead
+                // publish makes them reader-visible without any commit at all. The
+                // instance.isWindowStateDirty() gate rebuilds from the applied base before
+                // that drain instead. Gated on the flag rather than raised unconditionally:
+                // a cycle that deferred before feeding a single row owes no rebuild.
+                // See LiveViewConcurrencyTest.testApplyLagDeferralRebuildsAdvancedWindowState.
+                if (windowStateDirty) {
+                    markWindowStateDirty(instance);
+                }
                 // Arm a short back-off so the next scans skip this view instead of
                 // re-draining the whole window every tick until apply lands. Record the
                 // target seqTxn first so the pre-latch guard, which reads it once it sees
@@ -9242,26 +9344,44 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (windowStateDirty
                 && !wasMetadataDrift
                 && !(t instanceof CairoException dce && dce.isTableDoesNotExist())) {
+            // Which of the two recoveries below ran decides whether this cycle still owes the
+            // budget a failure. Read the state before the call, which only re-arms or replays and
+            // never flips it, so the decision and the recovery agree on the same view.
+            final boolean seeding = instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING;
             Throwable rebuildErr = rebuildWindowStateAfterMidDrainFailure(instance);
-            if (rebuildErr == null) {
+            if (rebuildErr == null && !seeding) {
+                // The ACTIVE recovery recomputed the window state from the applied base and
+                // rewrote the durable output to match, so this cycle produced the right answer by
+                // a slower route and already recorded a refresh success. Nothing left to charge.
                 return null;
             }
-            // The rebuild replay itself failed, so the runtime is still wiped or
-            // half-advanced. Carry the debt onto the instance: this turn's field is about
-            // to go out of scope and the next turn's entry would read a clean slate,
-            // which is what lets a drain start over durable output with cold accumulators.
-            instance.setWindowStateDirty(true);
-            // The rebuild replay itself failed; account for THAT error below.
-            t = rebuildErr;
-            if (t instanceof CairoException rebuildCancelled && rebuildCancelled.isCancellation()) {
-                // Re-test after the reassignment. The replay consults the same breaker, so
-                // a shutdown or a DROP that arrived mid-rebuild surfaces here rather than at
-                // the guard above - and counting it toward the flush-retry budget is exactly
-                // what that guard exists to prevent.
-                LOG.info().$("live view refresh cancelled during mid-drain rebuild [view=")
-                        .$(instance.getDefinition().getViewName()).I$();
-                return null;
+            if (rebuildErr != null) {
+                // The rebuild replay itself failed, so the runtime is still wiped or
+                // half-advanced. Carry the debt onto the instance: this turn's field is about
+                // to go out of scope and the next turn's entry would read a clean slate,
+                // which is what lets a drain start over durable output with cold accumulators.
+                instance.setWindowStateDirty(true);
+                // The rebuild replay itself failed; account for THAT error below.
+                t = rebuildErr;
+                if (t instanceof CairoException rebuildCancelled && rebuildCancelled.isCancellation()) {
+                    // Re-test after the reassignment. The replay consults the same breaker, so
+                    // a shutdown or a DROP that arrived mid-rebuild surfaces here rather than at
+                    // the guard above - and counting it toward the flush-retry budget is exactly
+                    // what that guard exists to prevent.
+                    LOG.info().$("live view refresh cancelled during mid-drain rebuild [view=")
+                            .$(instance.getDefinition().getViewName()).I$();
+                    return null;
+                }
             }
+            // A SEEDING view falls through to the budget below. Its recovery only re-arms the
+            // sweep resume: it recomputes nothing, commits nothing, and leaves the sweep facing
+            // the very row it faulted on, so it is a retry rather than a repair. Returning here
+            // would leave a permanent seed fault - a row the LV writer refuses, a base column that
+            // no longer reads, an always-throwing projection - re-faulting every cycle forever
+            // with neither budget armed: the view pinned at 'seeding' with no invalidation reason,
+            // and refreshInstance reporting work on every call so the worker never backs off. A
+            // transient fault keeps its retries, because the sweep turn that finally succeeds
+            // calls recordRefreshSuccess, which zeroes the streak the budget measures.
         }
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         instance.recordRefreshFailure(nowUs);
@@ -9376,21 +9496,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 refreshInstance(instance, seqTxn);
             }
         }
-    }
-
-    private static WindowRecordCursorFactory unwrapWindowFactory(RecordCursorFactory factory) {
-        RecordCursorFactory f = factory;
-        while (f != null) {
-            if (f instanceof WindowRecordCursorFactory wf) {
-                return wf;
-            }
-            if (f instanceof QueryProgress) {
-                f = f.getBaseFactory();
-                continue;
-            }
-            break;
-        }
-        throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
     }
 
     /**
@@ -9541,13 +9646,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return discovered;
         }
 
-        void of(LiveViewCheckpointRowsPlan plan, WindowRecordCursorFactory windowFactory, TableReader reader) {
+        void of(LiveViewCheckpointRowsPlan plan, LiveViewCompiledPlan compiledPlan, TableReader reader) {
             this.discovered = false;
             this.plan = plan;
             this.reader = reader;
-            final RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-            this.filter = filterFactory.getFilter();
-            this.pageFrameFactory = (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
+            this.filter = compiledPlan.getFilter();
+            this.pageFrameFactory = compiledPlan.getPageFrameFactory();
         }
     }
 

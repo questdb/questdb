@@ -64,7 +64,10 @@ public class NullIfIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public int getIPv4(Record rec) {
-            return arg1.getIPv4(rec) == arg2.getIPv4(rec) ? Numbers.IPv4_NULL : arg1.getIPv4(rec);
+            // Read once: a second read of a non-deterministic argument is a fresh draw, and
+            // returning that draw hands back the very value the comparison just excluded.
+            final int value = arg1.getIPv4(rec);
+            return value == arg2.getIPv4(rec) ? Numbers.IPv4_NULL : value;
         }
 
         @Override
