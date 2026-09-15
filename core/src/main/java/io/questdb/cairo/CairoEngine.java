@@ -3029,17 +3029,40 @@ public class CairoEngine implements Closeable, WriterSource {
             io.questdb.cairo.sql.RecordMetadata postChangeMetadata,
             String reason
     ) {
-        invalidateLiveViewsForBaseTable0(baseTableToken, reason, postChangeMetadata);
+        invalidateLiveViewsForBaseTable0(baseTableToken, reason, postChangeMetadata, false);
     }
 
+    /**
+     * Invalidates every live view whose base is {@code baseTableToken}, best-effort on disk: a view
+     * whose {@code _lv.s} write fails still flips invalid in memory, and the call returns normally.
+     * For callers whose operation has already committed: a dropped or renamed base, which the next load
+     * finds missing by name and invalidates again. A table created under the base's name before that
+     * load is what this leaves open, since the load then binds the view to it.
+     */
     public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
-        invalidateLiveViewsForBaseTable0(baseTableToken, reason, null);
+        invalidateLiveViewsForBaseTable0(baseTableToken, reason, null, false);
+    }
+
+    /**
+     * Invalidates every live view whose base is {@code baseTableToken}, and returns only once each
+     * invalidation is on disk. A view whose {@code _lv.s} write fails is left valid, in memory as on
+     * disk, and the call throws, so the caller refuses the operation it was about to commit.
+     * <p>
+     * For callers that invalidate ahead of a commit that leaves nothing for the next load to find: an
+     * UPDATE, a REBASE WAL, a TRUNCATE of a base materialized view. The best-effort variant flipped such
+     * a view in memory only and let the commit go ahead, so a restart loaded it valid over a base the
+     * operation had changed. Views ahead of the failing one in the fan-out stay invalidated, the outcome
+     * a commit failing after the invalidation already has.
+     */
+    public void invalidateLiveViewsForBaseTableDurably(TableToken baseTableToken, String reason) {
+        invalidateLiveViewsForBaseTable0(baseTableToken, reason, null, true);
     }
 
     private void invalidateLiveViewsForBaseTable0(
             TableToken baseTableToken,
             String reason,
-            @Nullable io.questdb.cairo.sql.RecordMetadata postChangeMetadata
+            @Nullable io.questdb.cairo.sql.RecordMetadata postChangeMetadata,
+            boolean isPersistRequired
     ) {
         final long invalidationTimestampUs = configuration.getMicrosecondClock().getTicks();
         // Persist each affected view's _lv.s before flipping its in-memory invalid
@@ -3085,9 +3108,12 @@ public class CairoEngine implements Closeable, WriterSource {
                     // Persist _lv.s before flipping the in-memory invalid bit, matching
                     // invalidateLiveView: WalPurgeJob releases the floor on the in-memory bit, so
                     // writing the durable state first keeps a concurrent purge from releasing the
-                    // floor while _lv.s still records the view as valid. On persist failure the view
-                    // still flips invalid in-memory (best-effort, terminal) and re-derives the same
-                    // state on restart.
+                    // floor while _lv.s still records the view as valid. On persist failure the
+                    // best-effort variant still flips the view invalid in-memory (terminal), and its
+                    // callers leave the load something to re-derive the state from. The durable
+                    // variant refuses instead, ahead of the flip: its caller's operation has not
+                    // committed, so the view is still right about the base, and a flip would release
+                    // the purge floor over a view _lv.s records valid.
                     path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
                     try {
                         blockFileWriter.of(path.$());
@@ -3104,9 +3130,23 @@ public class CairoEngine implements Closeable, WriterSource {
                                 blockFileWriter
                         );
                     } catch (Throwable t) {
-                        LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
+                        LOG.error().$(isPersistRequired
+                                        ? "could not persist live view invalidation, refusing the operation [view="
+                                        : "could not persist live view invalidation [view=")
+                                .$(instance.getLiveViewToken())
                                 .$(", reason=").$safe(viewReason)
                                 .$(", error=").$(t).I$();
+                        if (isPersistRequired) {
+                            if (t instanceof CairoException e) {
+                                throw CairoException.critical(e.getErrno())
+                                        .put("could not persist live view invalidation [view=").put(instance.getLiveViewToken().getTableName())
+                                        .put(", reason=").put(viewReason)
+                                        .put(", error=").put(e.getFlyweightMessage())
+                                        .put(']')
+                                        .setOutOfMemory(e.isOutOfMemory());
+                            }
+                            throw t;
+                        }
                     }
                     instance.markInvalid(viewReason, invalidationTimestampUs);
                 }
@@ -4784,15 +4824,18 @@ public class CairoEngine implements Closeable, WriterSource {
                 // no fault.
                 //
                 // A throw refuses the rebase - the catch below discards the clone while the old table
-                // is intact - rather than committing one no view was told about. The other way round,
-                // a view invalidated for a rebase that then fails, is the cost: the next REBASE WAL
+                // is intact - rather than committing one no view was told about. That includes a view
+                // whose _lv.s cannot be written: the durable variant throws for it, where the
+                // best-effort one flipped it in memory only and let the rebase commit, which a restart
+                // then loaded valid over the rebased base. The other way round, a view invalidated
+                // for a rebase that then fails, is the cost: the next REBASE WAL
                 // would have invalidated it anyway, and only a rebase abandoned for RESUME WAL leaves a
                 // view invalidated for nothing. Ahead of the move below, not just ahead of the registry
                 // drop, so the _lv.s writes do not lengthen the window between the two, whose startup
-                // recovery the rebase does not have yet. invalidateLiveViewsForBaseTable resolves
+                // recovery the rebase does not have yet. invalidateLiveViewsForBaseTableDurably resolves
                 // dependents by base table name, which the rebase preserves. Mat views keep their
                 // refresh-queue invalidation past the commit, below.
-                invalidateLiveViewsForBaseTable(oldToken, "base table rebase");
+                invalidateLiveViewsForBaseTableDurably(oldToken, "base table rebase");
 
                 // Atomically move the completed clone into its final location.
                 if (ff.rename(src.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken).$(), dst.of(root).concat(newToken).$()) != Files.FILES_RENAME_OK) {

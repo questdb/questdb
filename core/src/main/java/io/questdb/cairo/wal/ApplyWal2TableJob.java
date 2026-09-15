@@ -887,8 +887,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // truncate that then fails is harmless, whereas a throw after removeAllPartitions()
                 // would commit the seqTxn, never re-enter this arm, and leave the view active over a
                 // rebuilt base.
+                //
+                // Durably, for the same reason: a committed TRUNCATE leaves nothing for the next
+                // load to find, so a view whose _lv.s cannot be written refuses the TRUNCATE and
+                // suspends the mat view's table, rather than flipping invalid in memory only. A
+                // view flipped that way loaded valid on restart, and its drain then stopped at the
+                // TRUNCATE on every cycle, holding the pre-rebuild rows for good.
                 if (writer.getTableToken().isMatView()) {
-                    engine.invalidateLiveViewsForBaseTable(
+                    engine.invalidateLiveViewsForBaseTableDurably(
                             writer.getTableToken(),
                             "base materialized view was rebuilt"
                     );

@@ -246,11 +246,16 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     // uncommitted, rolls the UPDATE back and re-applies it later, over a view that
                     // is already invalid: conservative, and the outcome a real UPDATE has anyway.
                     //
+                    // The same reasoning makes the write itself a precondition of the commit: a view
+                    // whose _lv.s cannot be written throws here, and the rollback below refuses the
+                    // UPDATE, where flipping the view in memory only and committing anyway leaves
+                    // the crash window's state behind for the next restart to load.
+                    //
                     // ApplyWal2TableJob relies on this ordering and does not invalidate again after
                     // the apply. Only a row-rewriting UPDATE reaches here (partitionIndex > -1 iff
                     // rowsUpdated > 0), so an UPDATE that matches no row leaves a healthy view alone.
                     // A table with no dependent live view answers with one registry lookup.
-                    sqlExecutionContext.getCairoEngine().invalidateLiveViewsForBaseTable(
+                    sqlExecutionContext.getCairoEngine().invalidateLiveViewsForBaseTableDurably(
                             tableToken,
                             UpdateOperation.MAT_VIEW_INVALIDATION_REASON
                     );
