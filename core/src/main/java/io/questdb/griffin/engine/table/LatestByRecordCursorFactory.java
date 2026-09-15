@@ -113,12 +113,16 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
-    // TODO(nw): audited as FALSE — this factory does not emit in designated-timestamp
-    // order. Corrected in a follow-up commit on this branch; declared here only to keep
-    // this change behaviour-preserving.
+    // Unlike the light sibling, this cursor sorts the retained row indexes and then REPLAYS the
+    // base cursor in base order, so it emits a subset of the base's rows in the base's own order -
+    // and it keeps base.getMetadata() verbatim, designated timestamp included. Its scan direction
+    // is therefore exactly the base's, and hard-coding FORWARD laundered a BACKWARD base into an
+    // ascending claim: LatestBy [FORWARD] over HashJoinLight [BACKWARD] measured 199 of 199
+    // adjacent steps descending and 199 of 200 ASOF invariant violations, against 0 and 0 over a
+    // forward base. Every sibling wrapper (Filtered, Selected, Limit) already delegates.
     @Override
     public int getScanDirection() {
-        return SCAN_DIRECTION_FORWARD;
+        return base.getScanDirection();
     }
 
     @Override

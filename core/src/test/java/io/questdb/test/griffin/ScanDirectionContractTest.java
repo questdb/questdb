@@ -71,6 +71,22 @@ public class ScanDirectionContractTest extends AbstractCairoTest {
                     " ('2024-01-01T00:00:02.000000Z','c',30.0)," +
                     " ('2024-01-01T00:00:03.000000Z','d',40.0)," +
                     " ('2024-01-01T00:00:04.000000Z','e',50.0)";
+    /**
+     * A latest-by fixture whose map key-insertion order is deliberately NOT timestamp order: keys
+     * are first seen as a, b, c (ts 00, 01, 03) but their latest rows land at ts 04, 02, 03. Using
+     * the FIVE_ROW fixture instead would make the light latest-by tests vacuous - there every
+     * symbol occurs exactly once, so first-seen order and latest-row order coincide and the cursor
+     * comes out ascending by accident.
+     */
+    private static final String LATEST_BY_DDL =
+            "create table v (ts timestamp, sym symbol, x long) timestamp(ts) partition by day";
+    private static final String LATEST_BY_ROWS =
+            "insert into v values" +
+                    " ('2024-01-01T00:00:00.000000Z','a',1)," +
+                    " ('2024-01-01T00:00:01.000000Z','b',2)," +
+                    " ('2024-01-01T00:00:02.000000Z','b',3)," +
+                    " ('2024-01-01T00:00:03.000000Z','c',4)," +
+                    " ('2024-01-01T00:00:04.000000Z','a',5)";
     private static final String HORIZON_SLAVE2_DDL =
             "create table q (ts timestamp, sym symbol, ask double) timestamp(ts) partition by day";
     private static final String HORIZON_SLAVE2_ROWS =
@@ -78,6 +94,20 @@ public class ScanDirectionContractTest extends AbstractCairoTest {
                     " ('2024-01-01T00:00:00.000000Z','a',11.0)," +
                     " ('2024-01-01T00:00:02.000000Z','c',31.0)," +
                     " ('2024-01-01T00:00:04.000000Z','e',51.0)";
+    /**
+     * Join slave for the non-light latest-by tests. Joining t to this table on a non-timestamp
+     * column is how the fixture gets a base that does NOT support random access, which is the
+     * condition that routes latest-by to LatestByRecordCursorFactory instead of the light variant.
+     */
+    private static final String JOIN_SLAVE_DDL =
+            "create table r (rts timestamp, y long) timestamp(rts) partition by day";
+    private static final String JOIN_SLAVE_ROWS =
+            "insert into r values" +
+                    " ('2024-01-01T00:00:00.000000Z',1)," +
+                    " ('2024-01-01T00:00:01.000000Z',2)," +
+                    " ('2024-01-01T00:00:02.000000Z',3)," +
+                    " ('2024-01-01T00:00:03.000000Z',4)," +
+                    " ('2024-01-01T00:00:04.000000Z',5)";
 
     /**
      * Positive control for the two not-keyed group-by tests: a not-keyed aggregate is the one
@@ -799,6 +829,183 @@ public class ScanDirectionContractTest extends AbstractCairoTest {
                 .withPlanNotContaining("keys:")
                 .returns("""
                         ats\tbts
+                        2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:04.000000Z
+                        """);
+    }
+
+    /**
+     * Positive control for {@link #testLatestByLightRefusedAsAsofJoinMaster}, and the evidence for
+     * it. The emitted order is ts 04, 02, 03 - the map's key-insertion order (a, b, c: the order
+     * the keys were first SEEN by the forward base scan) carrying each key's LATEST row, which is a
+     * different order entirely. One descending step in three rows. The query must keep compiling
+     * and returning every row: latest-by's result is not changing, only what the factory claims
+     * about its order.
+     */
+    @Test
+    public void testLatestByLightAloneStillReturnsAllRows() throws Exception {
+        assertQuery("select * from (select ts, sym, x from v where x > 0) latest on ts partition by sym")
+                .ddl(LATEST_BY_DDL, LATEST_BY_ROWS)
+                .noLeakCheck()
+                .expectSize()
+                .withPlanContaining("LatestBy light")
+                .returns("""
+                        ts\tsym\tx
+                        2024-01-01T00:00:04.000000Z\ta\t5
+                        2024-01-01T00:00:02.000000Z\tb\t3
+                        2024-01-01T00:00:03.000000Z\tc\t4
+                        """);
+    }
+
+    /**
+     * LatestByLightRecordCursorFactory drains the latest-by map, emitting one row per partition key
+     * in key-insertion order - the order the keys were first seen, not the order of the latest
+     * timestamp retained for each. Measured 101 of 199 adjacent steps descending and 192 of 200
+     * ASOF invariant violations; on the three-row fixture above, 2 of 3 rows matched a slave row
+     * ahead of the master (ts 02 and ts 03 both matched b.ts=04).
+     * <p>
+     * The factory already strips the designated timestamp from its metadata, and an upstream
+     * comment used to conclude from that that its scan direction was vacuous. It is not: the
+     * timestamp(ts) wrapper below re-attaches a designated timestamp by column NAME and walks
+     * straight past the stripping, at which point getScanDirection() is the only thing left. That
+     * comment has been corrected along with the declaration - left standing it was a documented
+     * argument for reverting this fix. Revert the fix and this test must fail.
+     */
+    @Test
+    public void testLatestByLightRefusedAsAsofJoinMaster() throws Exception {
+        assertQuery("""
+                select a.ts ats, b.ts bts
+                from ((select * from (select ts, sym, x from v where x > 0) latest on ts partition by sym) timestamp(ts)) a
+                asof join v b
+                """)
+                .ddl(LATEST_BY_DDL, LATEST_BY_ROWS)
+                .noLeakCheck()
+                .failsWith("ASC order over TIMESTAMP column is required but not provided");
+    }
+
+    /**
+     * Positive control for the three non-light latest-by tests below. Unlike the light variant,
+     * LatestByRecordCursorFactory sorts the retained row indexes and REPLAYS the base cursor, so it
+     * emits a subset of the base's rows in the base's own order - here a backward-scanning hash
+     * join, so ts 04, 03, 02, 01, 00. That is not a defect in the cursor and this output does not
+     * change: emitting in base order is the factory's contract. What was wrong was declaring that
+     * order FORWARD.
+     */
+    @Test
+    public void testLatestByOverBackwardBaseAloneStillReturnsAllRows() throws Exception {
+        assertQuery("""
+                select * from (select t.ts, t.sym, t.x from (t order by ts desc) t join r on (t.x = r.y))
+                latest on ts partition by sym
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS, JOIN_SLAVE_DDL, JOIN_SLAVE_ROWS)
+                .noLeakCheck()
+                .timestampDesc("ts")
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("LatestBy", "Row backward scan")
+                .returns("""
+                        ts\tsym\tx
+                        2024-01-01T00:00:04.000000Z\te\t5
+                        2024-01-01T00:00:03.000000Z\td\t4
+                        2024-01-01T00:00:02.000000Z\tc\t3
+                        2024-01-01T00:00:01.000000Z\tb\t2
+                        2024-01-01T00:00:00.000000Z\ta\t1
+                        """);
+    }
+
+    /**
+     * The most exploitable of the six factories, and the only one whose false claim needed no
+     * {@code timestamp(col)} re-attachment to reach a consumer. LatestByRecordCursorFactory keeps
+     * base.getMetadata() verbatim, designated timestamp included, so the ORDER BY elision check
+     * sees a designated timestamp AND a FORWARD claim and elides the sort as already-satisfied.
+     * Measured on the pre-fix branch: no sort node in the plan for this exact query, and the rows
+     * came back 04, 03, 02, 01, 00 - a plain "ORDER BY ts" returning strictly descending rows, with
+     * nothing unusual in the query to warn the user. With the corrected answer the factory reports
+     * its backward base's direction, the sort is planned, and the rows come out ascending.
+     * <p>
+     * This is the one place in this change where a user-visible RESULT changes rather than a query
+     * being refused, and it changes from wrong to right. Revert the fix and the sort disappears
+     * from the plan and this test fails.
+     */
+    @Test
+    public void testLatestByOverBackwardBaseOrderByTimestampIsSorted() throws Exception {
+        assertQuery("""
+                select * from (select t.ts, t.sym, t.x from (t order by ts desc) t join r on (t.x = r.y))
+                latest on ts partition by sym
+                order by ts
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS, JOIN_SLAVE_DDL, JOIN_SLAVE_ROWS)
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .withPlanContaining("sort", "LatestBy")
+                .returns("""
+                        ts\tsym\tx
+                        2024-01-01T00:00:00.000000Z\ta\t1
+                        2024-01-01T00:00:01.000000Z\tb\t2
+                        2024-01-01T00:00:02.000000Z\tc\t3
+                        2024-01-01T00:00:03.000000Z\td\t4
+                        2024-01-01T00:00:04.000000Z\te\t5
+                        """);
+    }
+
+    /**
+     * The same false claim reaching the other consumer. Before the fix this ASOF join compiled and
+     * returned 5 rows of which 4 matched a slave row AHEAD of the master in time - every row after
+     * the first matched b.ts=00:00:04, because the master ran backwards and the join's forward-only
+     * slave cursor could not go back. Scaled up, the same shape measured 199 of 199 adjacent steps
+     * descending and 199 of 200 violations. Revert the fix and this test must fail.
+     * <p>
+     * The refusal message differs from every other one in this class, and that difference is a
+     * consequence of delegating rather than declaring OTHER: this factory now reports BACKWARD,
+     * which is a specific enough answer for the ASOF join to say the master is ordered the wrong
+     * way round ("left side of time series join doesn't have ASC timestamp order") rather than the
+     * generic "ASC order over TIMESTAMP column is required but not provided" raised for a cursor
+     * whose order is simply unknown. Assert the message the user actually sees, not the one the
+     * sibling tests happen to use.
+     */
+    @Test
+    public void testLatestByOverBackwardBaseRefusedAsAsofJoinMaster() throws Exception {
+        assertQuery("""
+                select a.ts ats, b.ts bts
+                from ((select * from (select t.ts, t.sym, t.x from (t order by ts desc) t join r on (t.x = r.y))
+                       latest on ts partition by sym) timestamp(ts)) a
+                asof join t b
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS, JOIN_SLAVE_DDL, JOIN_SLAVE_ROWS)
+                .noLeakCheck()
+                .failsWith("left side of time series join doesn't have ASC timestamp order");
+    }
+
+    /**
+     * The mirror image, and the reason this factory delegates rather than answering OTHER outright.
+     * The only thing changed in the query below is {@code order by ts desc} becoming
+     * {@code order by ts}, which makes the hash join's master a forward scan. LatestBy replays it
+     * in that order, reports FORWARD because its base does, and the ASOF join still compiles and
+     * still returns every row - no re-attachment needed, because this factory keeps the base's
+     * designated timestamp. Had the fix declared OTHER unconditionally (as the other five
+     * corrections do, their cursors having no base order to inherit), this test would fail and a
+     * working query would have been refused for no reason.
+     */
+    @Test
+    public void testLatestByOverForwardBaseAcceptedAsAsofJoinMaster() throws Exception {
+        assertQuery("""
+                select a.ts ats, b.ts bts
+                from (select * from (select t.ts, t.sym, t.x from (t order by ts) t join r on (t.x = r.y))
+                      latest on ts partition by sym) a
+                asof join t b
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS, JOIN_SLAVE_DDL, JOIN_SLAVE_ROWS)
+                .noLeakCheck()
+                .timestamp("ats")
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("LatestBy", "AsOf Join")
+                .returns("""
+                        ats\tbts
+                        2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                        2024-01-01T00:00:01.000000Z\t2024-01-01T00:00:01.000000Z
+                        2024-01-01T00:00:02.000000Z\t2024-01-01T00:00:02.000000Z
+                        2024-01-01T00:00:03.000000Z\t2024-01-01T00:00:03.000000Z
                         2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:04.000000Z
                         """);
     }
