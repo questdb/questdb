@@ -10421,12 +10421,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     sharedOuterProjectionFunctions = null;
 
                     // An order-sensitive aggregate (first/last) is only correct over a
-                    // base that delivers designated-timestamp order. A base advertising
-                    // SCAN_DIRECTION_OTHER -- e.g. a multi-key covering scan emitting one
-                    // frame per key -- would silently return "whichever key was scanned
-                    // first" instead of the earliest row. Fail closed, matching how
+                    // base that delivers designated-timestamp order, OR over a base that
+                    // accepted the offer below and thereby owns the claim that its
+                    // arrangement is legal for these aggregates and these grouping columns
+                    // -- a covering scan grouped by its own index column, say. Everything
+                    // else advertising SCAN_DIRECTION_OTHER -- e.g. a multi-key covering
+                    // latestBy -- would silently return "whichever key was scanned first"
+                    // instead of the earliest row, so it fails closed, matching how
                     // SAMPLE BY ALIGN TO FIRST OBSERVATION already rejects such a base.
-                    final boolean accepted = offerUnorderedScan(factory, groupByFunctions0, listColumnFilterA);
+                    //
+                    // Pass listColumnFilterCopy, NOT the live listColumnFilterA: the calls
+                    // above (compilePerWorkerInnerProjectionFunctions,
+                    // compileWorkerFiltersConditionally) re-enter function parsing and may
+                    // clear and repopulate listColumnFilterA -- that is exactly why the copy
+                    // was taken. The copy is also what the factory below adopts as its key
+                    // filter, so the offer reads the same grouping the factory will execute.
+                    final boolean accepted = offerUnorderedScan(factory, groupByFunctions0, listColumnFilterCopy);
                     validateOrderSensitiveAggregates(factory, groupByFunctions0, accepted);
                     return generateFill(
                             model,

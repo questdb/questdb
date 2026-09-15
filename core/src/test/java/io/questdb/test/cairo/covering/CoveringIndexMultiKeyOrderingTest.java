@@ -186,19 +186,19 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
             // test passes vacuously (this happened with `SELECT sym, sum(price) ...
             // ORDER BY sym`).
             //
-            // Grouping by sym with first()/last() avoids that TODAY (an order-sensitive
-            // aggregate makes offerUnorderedScan bail out before calling
-            // tryDisableTimestampOrdering()) but is fragile: a future change may -- as
-            // flagged in SqlCodeGenerator's "Deliberately over-conservative" comment --
-            // start offering the per-key path to an order-sensitive aggregate when it is
-            // grouped BY THE INDEX KEY ITSELF, since each group would then draw from one
-            // key's own ascending posting list and first()/last() would stay correct. That
-            // would silently make a `GROUP BY sym` shape vacuous again.
+            // Grouping by sym with first()/last() does NOT avoid it either. offerUnorderedScan
+            // always calls tryDisableTimestampOrdering(), passing the order-sensitivity flag
+            // and the consumer's grouping columns; CoveringIndexRecordCursorFactory accepts an
+            // order-sensitive aggregate when the grouping is exactly the index key, because
+            // each group then draws from that one key's own ascending posting list. So a
+            // `SELECT sym, first(price) ... GROUP BY sym` shape goes per-key today and would
+            // be vacuous here.
             //
-            // SAMPLE BY on a TIME BUCKET sidesteps that permanently: each bucket spans rows
-            // from potentially all 8 keys, so a per-key frame layout can never satisfy it --
-            // the per-key opt-out is not just declined, it is structurally never a candidate
-            // for this shape, independent of how the aggregate-sensitivity offer evolves.
+            // SAMPLE BY on a TIME BUCKET sidesteps that permanently: the grouping column is a
+            // time bucket, never the index key, so groupsByIndexKeyOnly() can never hold and
+            // the offer is declined for first()/last(). And it is not merely declined -- each
+            // bucket spans rows from potentially all 8 keys, so a per-key frame layout could
+            // never satisfy this shape however the acceptance rule evolves.
             final String q = "SELECT ts, first(price) FROM t_pf_heap WHERE sym IN ('a','b','c','d','e','f','g','h') SAMPLE BY 500U";
 
             // Guard: the aggregate query must actually route through the covering page-frame cursor.

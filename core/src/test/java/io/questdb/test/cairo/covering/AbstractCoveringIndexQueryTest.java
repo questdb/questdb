@@ -69,6 +69,37 @@ public abstract class AbstractCoveringIndexQueryTest extends AbstractCairoTest {
                 " FROM long_sequence(10000)");
     }
 
+    /**
+     * Same four keys and the same NULL pattern as {@link #createTelemetryWithNulls()}, but
+     * 600 s apart instead of 1 s, so the 10 000 rows span ~69 days and land in ~70 daily
+     * partitions instead of one.
+     * <p>
+     * The single-partition fixtures cannot exercise the invariant that per-key acceptance
+     * rests on: "per-key mode iterates partitions OUTER, so one key's frames still arrive in
+     * ascending partition order, hence frame-sequence order within a key IS timestamp order".
+     * With one partition that claim holds vacuously -- those tests would pass identically if
+     * per-key emitted a key's partitions in arbitrary order. Use this fixture for anything
+     * asserting that first()/last() over per-key frames really is the earliest/latest row.
+     * <p>
+     * Deliberately a NEW method: the committed tests over {@link #createTelemetry()} and
+     * {@link #createTelemetryWithNulls()} pin exact plan text (including a resolved
+     * {@code intervals: [...]} line) and exact result rows derived from the 1 s spacing.
+     */
+    protected void createTelemetryMultiPartition() throws Exception {
+        createTelemetryTable();
+        execute("INSERT INTO telemetry SELECT (x * 600000000L)::timestamp," +
+                " CASE WHEN x % 4 = 0 THEN 'SFID' WHEN x % 4 = 1 THEN 'HOTMIC'" +
+                "      WHEN x % 4 = 2 THEN 'KCAS' ELSE 'CALT' END," +
+                " CASE WHEN x % 5 = 0 THEN NULL ELSE x::double END" +
+                " FROM long_sequence(10000)");
+        // Non-vacuity guard: the whole point of this fixture is MANY partitions. If a future
+        // edit to the spacing or the row count collapses it back to one, every test built on
+        // it silently reverts to proving nothing about cross-partition frame order.
+        final StringSink partitionCount = new StringSink();
+        printSql("SELECT count() c FROM table_partitions('telemetry')", partitionCount);
+        TestUtils.assertEquals("c\n70\n", partitionCount);
+    }
+
     protected void createTelemetryWithNulls() throws Exception {
         createTelemetryTable();
         execute("INSERT INTO telemetry SELECT (x * 1000000L)::timestamp," +

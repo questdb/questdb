@@ -105,13 +105,61 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
             createTelemetryWithNulls();
             final String[] aggs = {"first", "last", "first_not_null", "last_not_null"};
             for (String agg : aggs) {
+                final String indexed = "SELECT param_id, " + agg + "(value) FROM telemetry" +
+                        " WHERE param_id IN ('SFID','HOTMIC') ORDER BY param_id";
+                // Pin every aggregate to the path it is meant to exercise. Without this the
+                // value comparison below would also pass if an aggregate quietly fell back to
+                // the k-way merge, and only first() would have direct per-key evidence.
+                assertQuery(indexed).noLeakCheck().assertsPlanContaining("frames: per-key");
                 assertSameResult(
-                        "SELECT param_id, " + agg + "(value) FROM telemetry" +
-                                " WHERE param_id IN ('SFID','HOTMIC') ORDER BY param_id",
+                        indexed,
                         "SELECT /*+ no_index */ param_id, " + agg + "(value) FROM telemetry" +
                                 " WHERE param_id IN ('SFID','HOTMIC') ORDER BY param_id"
                 );
             }
+        });
+    }
+
+    @Test
+    public void testFirstLastFamilyOverManyPartitionsMatchesFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            // ~70 daily partitions, so the per-key frame SEQUENCE for one key spans many
+            // partitions. That is the invariant acceptance rests on: per-key iterates
+            // partitions OUTER, so a single key's frames still arrive in ascending partition
+            // order and frame order within a key IS timestamp order. Over the single-partition
+            // fixtures this is vacuous -- those tests would pass even if a key's partitions
+            // came back shuffled. first()/last() here can only be right if the order holds.
+            createTelemetryMultiPartition();
+            final String[] aggs = {"first", "last", "first_not_null", "last_not_null"};
+            for (String agg : aggs) {
+                final String indexed = "SELECT param_id, " + agg + "(value) FROM telemetry" +
+                        " WHERE param_id IN ('SFID','HOTMIC') ORDER BY param_id";
+                assertQuery(indexed).noLeakCheck().assertsPlanContaining("frames: per-key");
+                assertSameResult(
+                        indexed,
+                        "SELECT /*+ no_index */ param_id, " + agg + "(value) FROM telemetry" +
+                                " WHERE param_id IN ('SFID','HOTMIC') ORDER BY param_id"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByOverManyPartitionsKeepsTheMerge() throws Exception {
+        assertMemoryLeak(() -> {
+            // The negative case over the same multi-partition data: a time bucket draws from
+            // several keys, so per-key frames can never satisfy it. The offer must be declined
+            // and the k-way merge kept, across partitions as well as within one.
+            createTelemetryMultiPartition();
+            final String indexed = "SELECT ts, first(value) FROM telemetry" +
+                    " WHERE param_id IN ('SFID','HOTMIC') SAMPLE BY 1h";
+            assertQuery(indexed).noLeakCheck().assertsPlanContaining("CoveringIndex on: param_id");
+            assertQuery(indexed).noLeakCheck().assertsPlanNotContaining("frames: per-key");
+            assertSameResult(
+                    indexed,
+                    "SELECT /*+ no_index */ ts, first(value) FROM telemetry" +
+                            " WHERE param_id IN ('SFID','HOTMIC') SAMPLE BY 1h"
+            );
         });
     }
 }
