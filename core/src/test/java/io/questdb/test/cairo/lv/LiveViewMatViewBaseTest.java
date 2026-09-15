@@ -26,7 +26,17 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * A materialized view is an accepted live-view base (WAL-backed, designated timestamp -
@@ -186,6 +196,107 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testMatViewFullRefreshIsRefusedWhileAViewsInvalidationCannotBeWritten() throws Exception {
+        // The apply job invalidates the dependent live views ahead of the mat view's TRUNCATE, but a view
+        // whose _lv.s write failed was still flipped invalid in memory only, and the TRUNCATE went on to
+        // commit. Measured on this fixture before the fix, with the write refused for the rebuild alone:
+        // the mat view rebuilt to its single 05:00 bucket and the view read invalid in memory; a restart
+        // loaded it active over its three pre-rebuild rows, and from then on its drain stopped at the
+        // TRUNCATE on every refresh pass - each pass reporting progress, none carrying it past the
+        // TRUNCATE - so a later base row reached the mat view and never the view, which stayed active
+        // with no fault.
+        //
+        // The durable invalidation refuses the TRUNCATE instead, which suspends the mat view's table
+        // ahead of the rebuild, and the view stays valid over the rows the mat view still holds.
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        final AtomicReference<String> failedViewDir = new AtomicReference<>();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final String dir = failedViewDir.get();
+                if (dir != null && Utf8s.endsWithAscii(name, Files.SEPARATOR + dir + Files.SEPARATOR + LiveViewState.LIVE_VIEW_STATE_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mvbase AS (" +
+                    "SELECT ts, k, avg(v) AS av FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues(engine);
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, k, avg(av) OVER ("
+                    + "PARTITION BY k ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS a FROM mvbase");
+            final String preRebuildMatViewRows = """
+                    ts\tk\tav
+                    2026-01-01T00:00:00.000000Z\ta\t1.0
+                    2026-01-01T01:00:00.000000Z\ta\t2.0
+                    2026-01-01T02:00:00.000000Z\ta\t3.0
+                    """;
+            final String viewRows = """
+                    ts\tk\ta
+                    2026-01-01T00:00:00.000000Z\ta\t1.0
+                    2026-01-01T01:00:00.000000Z\ta\t1.5
+                    2026-01-01T02:00:00.000000Z\ta\t2.0
+                    """;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("""
+                        INSERT INTO base (ts, k, v) VALUES
+                        ('2026-01-01T00:00:00.000000Z', 'a', 1.0),
+                        ('2026-01-01T01:00:00.000000Z', 'a', 2.0),
+                        ('2026-01-01T02:00:00.000000Z', 'a', 3.0)""");
+                drainWalAndMatViewQueues(engine);
+                driveRefreshToQuiescence(job);
+            }
+            assertQuery("lv_on_mv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(viewRows);
+
+            execute("TRUNCATE TABLE base");
+            execute("INSERT INTO base (ts, k, v) VALUES ('2026-01-01T05:00:00.000000Z', 'a', 100.0)");
+            drainWalQueue();
+            failedViewDir.set(engine.verifyTableName("lv_on_mv").getDirName());
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                execute("REFRESH MATERIALIZED VIEW mvbase FULL");
+                drainWalAndMatViewQueues(engine);
+                capture.drain();
+                capture.assertLogged("could not persist live view invalidation, refusing the operation [view=lv_on_mv");
+                capture.assertLogged("job failed, table suspended [table=mvbase");
+            } finally {
+                capture.stop();
+            }
+            TestUtils.assertContains(
+                    engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("mvbase")).getErrorMessage(),
+                    "could not persist live view invalidation [view=lv_on_mv, reason=base materialized view was rebuilt, error="
+            );
+            assertQuery("SELECT name, suspended FROM wal_tables() WHERE name = 'mvbase'")
+                    .noLeakCheck().noRandomAccess().returns("name\tsuspended\nmvbase\ttrue\n");
+            assertQuery("mvbase ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(preRebuildMatViewRows);
+            assertViewActiveOver(viewRows);
+
+            // A restart loads the view valid over the rows the mat view still holds.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            assertViewActiveOver(viewRows);
+
+            // Once the write goes through, RESUME WAL lands the rebuild and the view is invalid for it on
+            // disk.
+            failedViewDir.set(null);
+            execute("ALTER MATERIALIZED VIEW mvbase RESUME WAL");
+            drainWalAndMatViewQueues(engine);
+            assertQuery("mvbase ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    ts\tk\tav
+                    2026-01-01T05:00:00.000000Z\ta\t100.0
+                    """);
+            assertViewInvalidatedByRebuild(viewRows);
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            assertViewInvalidatedByRebuild(viewRows);
+        });
+    }
+
+    @Test
     public void testPlainBaseTruncateStillFreezesAndContinues() throws Exception {
         // The mat-view carve-out above must not disturb freeze-and-continue for a plain
         // base: a user TRUNCATE retires settled data, and the view keeps its emitted rows,
@@ -228,5 +339,21 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
                     "2026-01-01T02:00:00.000000Z\ta\t13.0\n");
             assertNoRefreshFaults("lv");
         });
+    }
+
+    private void assertViewActiveOver(String viewRows) throws Exception {
+        assertQuery("SELECT view_name, view_status, invalidation_reason FROM live_views()")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_name\tview_status\tinvalidation_reason\nlv_on_mv\tactive\t\n");
+        assertQuery("lv_on_mv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(viewRows);
+    }
+
+    private void assertViewInvalidatedByRebuild(String viewRows) throws Exception {
+        assertQuery("SELECT view_name, view_status, invalidation_reason FROM live_views()")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_name\tview_status\tinvalidation_reason\nlv_on_mv\tinvalid\tbase materialized view was rebuilt\n");
+        assertQuery("lv_on_mv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(viewRows);
     }
 }

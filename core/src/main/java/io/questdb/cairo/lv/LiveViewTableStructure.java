@@ -63,6 +63,10 @@ public class LiveViewTableStructure implements TableStructure {
     // default where the column does not come from one. Parallel to metadata's
     // columns; null when the caller resolved nothing.
     private final BoolList symbolCacheFlags;
+    // TTL in hours when positive, in months when negative, 0 for a view created without a TTL
+    // clause. TableUtils.createTable persists it into the LV table's _meta, so ALTER LIVE VIEW
+    // ... SET TTL rewrites the same field afterwards and no _lv format change is involved.
+    private final int ttlHoursOrMonths;
     private final String viewName;
 
     public LiveViewTableStructure(
@@ -72,7 +76,8 @@ public class LiveViewTableStructure implements TableStructure {
             GenericRecordMetadata metadata,
             LiveViewDefinition definition,
             @Nullable BoolList symbolCacheFlags,
-            int dedupKeyColumnIndex
+            int dedupKeyColumnIndex,
+            int ttlHoursOrMonths
     ) {
         this.configuration = configuration;
         this.viewName = viewName;
@@ -81,6 +86,7 @@ public class LiveViewTableStructure implements TableStructure {
         this.definition = definition;
         this.symbolCacheFlags = symbolCacheFlags;
         this.dedupKeyColumnIndex = dedupKeyColumnIndex;
+        this.ttlHoursOrMonths = ttlHoursOrMonths;
     }
 
     @Override
@@ -176,6 +182,11 @@ public class LiveViewTableStructure implements TableStructure {
     @Override
     public int getTimestampIndex() {
         return metadata.getTimestampIndex();
+    }
+
+    @Override
+    public int getTtlHoursOrMonths() {
+        return ttlHoursOrMonths;
     }
 
     /**

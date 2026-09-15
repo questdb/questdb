@@ -28,11 +28,12 @@ package io.questdb.cairo.lv;
  * Logical lifecycle state of a live view.
  * <p>
  * Derived state, not a persisted field. Registry visibility (locked / committed /
- * marked-dropped), {@code _lv.s.invalid}, {@code _lv.s.seedState} and the
- * recovery block together determine the state.
+ * marked-dropped), {@code _lv.s.invalid}, {@code _lv.s.seedState}, the
+ * sequencer's suspension flag for the view's own WAL table and the recovery block
+ * together determine the state.
  * <p>
- * Three of those four signals are durable. The fourth, the recovery block, is
- * re-derived on every start - from the checkpoint superblock for a format block
+ * The recovery block is the one signal no file records: it is re-derived on
+ * every start - from the checkpoint superblock for a format block
  * ({@link LiveViewCheckpointRecoveryPhase#BLOCKED}), by the restart's own
  * recovery for a refused rebuild
  * ({@link LiveViewCheckpointRecoveryPhase#REBUILD_BLOCKED}) - and it reports as
@@ -61,6 +62,20 @@ public enum LiveViewLifecycleState {
      * completes and flips to ACTIVE.
      */
     SEEDING,
+    /**
+     * Registry committed, not invalid, but the sequencer has suspended the view's
+     * own WAL table: an inline apply failed, or an operator ran
+     * {@code ALTER LIVE VIEW ... SUSPEND WAL}. Output the refresh worker commits into
+     * the view's WAL stays off disk until an apply lands, and the first one that does
+     * clears the suspension. The refresh worker's own inline applies carry no suspension
+     * gate, so they retry the table and a transient fault heals without an operator;
+     * {@code ALTER LIVE VIEW ... RESUME WAL} is what moves a view left with nothing else
+     * to drive it. Those retries do not honour an operator's {@code SUSPEND WAL} either,
+     * so the view's next flush ends that suspension too. A SEEDING view whose table is
+     * suspended reports this state as well. {@code wal_tables()} carries the error tag and
+     * message behind the suspension.
+     */
+    SUSPENDED,
     /**
      * Registry committed, {@code _lv.s.invalid=true}; refresh stopped, last persisted state remains queryable.
      */
@@ -110,18 +125,26 @@ public enum LiveViewLifecycleState {
      *                        {@link #INVALID}: refresh is stopped either way, and
      *                        an operator looking for stopped views must find it
      * @param seeding         {@code _lv.s.seedState == SEEDING}
+     * @param walSuspended    {@code true} iff the sequencer reports the view's own
+     *                        WAL table suspended
      */
     public static LiveViewLifecycleState derive(
             boolean registryVisible,
             boolean invalid,
             boolean recoveryBlocked,
-            boolean seeding
+            boolean seeding,
+            boolean walSuspended
     ) {
         if (!registryVisible) {
             return DROPPING;
         }
         if (invalid || recoveryBlocked) {
             return INVALID;
+        }
+        // Suspension outranks the seed signal: a suspended table keeps the view's
+        // output off disk whether the sweep or incremental refresh produced it.
+        if (walSuspended) {
+            return SUSPENDED;
         }
         return seeding ? SEEDING : ACTIVE;
     }
@@ -134,6 +157,7 @@ public enum LiveViewLifecycleState {
             case CREATING -> "creating";
             case ACTIVE -> "active";
             case SEEDING -> "seeding";
+            case SUSPENDED -> "suspended";
             case INVALID -> "invalid";
             case DROPPING -> "dropping";
             case VERSION_UNSUPPORTED -> "version_unsupported";

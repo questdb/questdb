@@ -26,6 +26,7 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.lv.LiveViewCheckpointTimeline.ENTRY_BASE_ROW_POSITION_OFFSET;
@@ -323,6 +324,55 @@ final class LiveViewCheckpointTimelineNode {
             }
         }
         return lo;
+    }
+
+    /**
+     * Removes every leaf entry whose {@code maxTimestamp} falls inside one of
+     * {@code intervals}, a flat list of {@code [lo, hiExclusive)} pairs sorted by
+     * {@code lo} and pairwise disjoint, compacting the survivors in place. Used by
+     * a retention removal, which drops the boundaries whose output a partition
+     * removal took off the table. Entries with a tied timestamp go together: the
+     * interval is a timestamp range, and every root at a removed timestamp
+     * describes output that is gone.
+     *
+     * @return the number of entries removed
+     */
+    int removeEntriesInRanges(@NotNull LongList intervals) {
+        assert leaf;
+        final int intervalCount = intervals.size();
+        int w = 0;
+        for (int r = 0; r < count; r++) {
+            final long ts = entryMaxTimestamp[r];
+            boolean removed = false;
+            for (int i = 0; i < intervalCount; i += 2) {
+                final long lo = intervals.getQuick(i);
+                if (lo > ts) {
+                    // Sorted by lo, so no later interval can hold this timestamp.
+                    break;
+                }
+                if (ts < intervals.getQuick(i + 1)) {
+                    removed = true;
+                    break;
+                }
+            }
+            if (removed) {
+                continue;
+            }
+            if (w != r) {
+                entryMaxTimestamp[w] = entryMaxTimestamp[r];
+                entryCheckpointId[w] = entryCheckpointId[r];
+                entryCreatedLvSeqTxn[w] = entryCreatedLvSeqTxn[r];
+                entryBaseRowPosition[w] = entryBaseRowPosition[r];
+                entryLogicalStateBytes[w] = entryLogicalStateBytes[r];
+                entryRootSegmentId[w] = entryRootSegmentId[r];
+                entryRootOffset[w] = entryRootOffset[r];
+                entryRootLength[w] = entryRootLength[r];
+            }
+            w++;
+        }
+        final int removedCount = count - w;
+        count = w;
+        return removedCount;
     }
 
     /**

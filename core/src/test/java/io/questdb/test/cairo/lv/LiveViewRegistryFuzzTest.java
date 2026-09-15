@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewLifecycleState;
@@ -348,6 +349,7 @@ public class LiveViewRegistryFuzzTest extends AbstractTest {
                 "SELECT * FROM " + base,
                 base,
                 null,
+                LiveViewDefinition.BASE_TABLE_ID_UNKNOWN,
                 0,
                 0,
                 's',
@@ -356,11 +358,12 @@ public class LiveViewRegistryFuzzTest extends AbstractTest {
                 0,
                 0,
                 (byte) 0,
+                0,
                 null,
                 new ObjList<>(),
                 new IntList(),
                 null
         );
-        return new LiveViewInstance(definition, liveViewToken(name, id), id, false, -1);
+        return new LiveViewInstance(definition, liveViewToken(name, id), id, false, LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN);
     }
 }

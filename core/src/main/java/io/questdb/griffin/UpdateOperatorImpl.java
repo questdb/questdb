@@ -232,6 +232,33 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
 
                 if (partitionIndex > -1) {
                     op.forceTestTimeout();
+                    // A live view over this table derives its rows from the values the commit below
+                    // overwrites, and it drains the base WAL, whose segments keep the pre-update
+                    // values - so it never sees the change, and every recovery path recomputes the
+                    // same range from the applied base and emits the post-update values. The view
+                    // has to invalidate, and it has to invalidate BEFORE the commit: the
+                    // invalidation writes the view's _lv.s, and a process that dies between a
+                    // committed UPDATE and that write leaves the view recorded valid over base rows
+                    // it can never reconcile with. A committed UPDATE leaves nothing behind for a
+                    // load-time check to find - the seqTxn is applied, the WAL segment is purgeable
+                    // and the base metadata is unchanged - so the order here is the only thing that
+                    // makes the invalidation durable. Dying the other way round, invalidated but
+                    // uncommitted, rolls the UPDATE back and re-applies it later, over a view that
+                    // is already invalid: conservative, and the outcome a real UPDATE has anyway.
+                    //
+                    // The same reasoning makes the write itself a precondition of the commit: a view
+                    // whose _lv.s cannot be written throws here, and the rollback below refuses the
+                    // UPDATE, where flipping the view in memory only and committing anyway leaves
+                    // the crash window's state behind for the next restart to load.
+                    //
+                    // ApplyWal2TableJob relies on this ordering and does not invalidate again after
+                    // the apply. Only a row-rewriting UPDATE reaches here (partitionIndex > -1 iff
+                    // rowsUpdated > 0), so an UPDATE that matches no row leaves a healthy view alone.
+                    // A table with no dependent live view answers with one registry lookup.
+                    sqlExecutionContext.getCairoEngine().invalidateLiveViewsForBaseTableDurably(
+                            tableToken,
+                            UpdateOperation.MAT_VIEW_INVALIDATION_REASON
+                    );
                     tableWriter.commit();
                     tableWriter.openLastPartition();
                     purgingOperator.purge(

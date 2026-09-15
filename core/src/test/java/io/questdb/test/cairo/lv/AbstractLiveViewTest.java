@@ -45,6 +45,8 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -359,6 +361,20 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Asserts the timeline's logical entries are exactly the {@code (maxTimestamp, effective row
+     * position)} pairs given, in order. The position is the effective one, so it carries the
+     * retention corrections the difference array holds rather than what the entry itself stores.
+     */
+    protected void assertLadder(LiveViewInstance instance, long... expectedPairs) {
+        final LongList expected = new LongList();
+        for (long value : expectedPairs) {
+            expected.add(value);
+        }
+        final LongList actual = snapshotCheckpointLadder(instance);
+        Assert.assertEquals("checkpoint ladder (maxTimestamp, effective position)", expected.toString(), actual.toString());
+    }
+
+    /**
      * Every logical timeline entry of {@code instance} as {@code (maxTimestamp, effective row
      * position)}, ascending - the ladder a resume reads to decide how many live-view rows the
      * root it selects stands on.
@@ -416,5 +432,34 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                 instance.isCheckpointRestoreAttempted()
         );
         return instance;
+    }
+
+    /**
+     * Reads like the default test clock - frozen on {@code currentMicros} - until
+     * {@link #startDrifting()} arms it, after which every read returns one microsecond later than
+     * the last. The WAL apply loop computes its deadline from one clock read and tests every later
+     * iteration against another, so an armed drift plus a zero
+     * {@code cairo.wal.apply.table.time.quota} stops the apply after the transaction its firstRun
+     * guard forces through. That is the part-way apply a live view's inline appliers have to
+     * survive, and a frozen clock leaves even a zero quota unbounded. A test installs it as
+     * {@code testMicrosClock} before its engine starts and arms it only around the pass under test.
+     */
+    protected static final class DriftingMicrosClock implements MicrosecondClock {
+        private long drift;
+        private boolean isDrifting;
+
+        @Override
+        public long getTicks() {
+            final long base = currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+            return isDrifting ? base + drift++ : base;
+        }
+
+        public void startDrifting() {
+            isDrifting = true;
+        }
+
+        public void stopDrifting() {
+            isDrifting = false;
+        }
     }
 }

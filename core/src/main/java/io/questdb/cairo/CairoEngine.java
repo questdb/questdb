@@ -135,6 +135,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
@@ -1013,7 +1014,8 @@ public class CairoEngine implements Closeable, WriterSource {
                             // synthesize "base table does not exist" when nothing was persisted.
                             if (!instance.isInvalid()) {
                                 long nowUs = configuration.getMicrosecondClock().getTicks();
-                                if (!baseTableExists && isReadOnlyMode()) {
+                                final boolean isBaseReplaced = baseTableExists && !definition.isSameBaseTable(baseTableToken);
+                                if ((!baseTableExists || isBaseReplaced) && isReadOnlyMode()) {
                                     // Read-only replica: the LV can download/register before its base
                                     // (object-store ordering). Invalidating is terminal here (no DROP+CREATE
                                     // on a replica), so leave the token null for scanForLaggingViews to
@@ -1021,17 +1023,75 @@ public class CairoEngine implements Closeable, WriterSource {
                                     LOG.info().$("live view base table not yet resolved on read-only node, deferring to runtime heal [table=")
                                             .$safe(definition.getBaseTableName())
                                             .$(", view=").$(tableToken)
+                                            .$(", expectedTableId=").$(definition.getBaseTableId())
                                             .I$();
+                                    // A name that resolves to another table is not the base either:
+                                    // the runtime heal re-resolves by name and binds only the table the
+                                    // view was created over.
+                                    definition.resolveBaseTableToken(null);
                                 } else if (!baseTableExists) {
+                                    // Durable, not re-derived on every load: the load binds a view to
+                                    // whatever table holds its base's name, so a view invalidated in
+                                    // memory only would load valid over a table created under that name
+                                    // later, and drain its commits on top of the missing base's rows.
                                     LOG.info().$("base table for live view does not exist [table=").$safe(definition.getBaseTableName())
                                             .$(", view=").$(tableToken)
                                             .I$();
-                                    instance.markInvalid("base table does not exist", nowUs);
+                                    invalidateLiveViewOnLoad(instance, "base table does not exist", tornStateRecovered, nowUs);
+                                } else if (isBaseReplaced) {
+                                    // The name resolves to a table the view was not created over: the
+                                    // base was dropped or renamed and a table created under its name, or
+                                    // it was rebased, and whichever invalidation that took never reached
+                                    // this view - a refresh pool that was off, a crash. Binding would drain
+                                    // the other table's commits on top of the old rows, at watermarks
+                                    // taken against a sequencer that table does not have. Durable, like
+                                    // the missing-base branch above.
+                                    LOG.info().$("base table for live view was replaced by another table, invalidating [table=")
+                                            .$safe(definition.getBaseTableName())
+                                            .$(", view=").$(tableToken)
+                                            .$(", expectedTableId=").$(definition.getBaseTableId())
+                                            .$(", tableId=").$(baseTableToken.getTableId())
+                                            .I$();
+                                    invalidateLiveViewOnLoad(instance, "base table was replaced", tornStateRecovered, nowUs);
                                 } else if (!baseTableToken.isWal()) {
+                                    // Durable for the same reason: once the base was converted back to
+                                    // WAL, the next load registered the view active at the watermark it
+                                    // held before the conversion, over rows the base took while it was not.
                                     LOG.info().$("base table for live view is not WAL table [table=").$safe(definition.getBaseTableName())
                                             .$(", view=").$(tableToken)
                                             .I$();
-                                    instance.markInvalid("base table is not WAL table", nowUs);
+                                    invalidateLiveViewOnLoad(instance, "base table is not WAL table", tornStateRecovered, nowUs);
+                                } else if (!isReadOnlyMode()) {
+                                    // ApplyWal2TableJob commits a structural change to the base writer
+                                    // and only then invalidates the dependent views, and it can only
+                                    // invalidate views the registry holds. A process that dies between
+                                    // the two, or a change applied while the refresh pool was off and
+                                    // nothing was registered, leaves the base changed under a view _lv.s
+                                    // still records valid - and the refresh worker compiles the
+                                    // view's SQL against the base's CURRENT metadata, so nothing faults
+                                    // on the change and the view goes on emitting rows its query was
+                                    // never created against. Ask the apply side's question here, against
+                                    // the metadata the base has applied.
+                                    //
+                                    // Not on a read-only node: a replica can register a view before its
+                                    // base has applied the changes the primary's CREATE compiled against,
+                                    // so a base BEHIND the definition reads exactly like a base that moved
+                                    // past it, and invalidating is terminal there.
+                                    final String brokenColumn = findBrokenLiveViewDependency(instance, baseTableToken);
+                                    if (brokenColumn != null) {
+                                        final String reason = LiveViewInstance.BROKEN_DEPENDENCY_INVALIDATION_REASON
+                                                + " [column=" + brokenColumn + ']';
+                                        LOG.info().$("base table no longer resolves a column the live view references, invalidating [table=")
+                                                .$safe(definition.getBaseTableName())
+                                                .$(", view=").$(tableToken)
+                                                .$(", column=").$safe(brokenColumn)
+                                                .I$();
+                                        // Durable, like the apply-side invalidation it stands in for:
+                                        // re-deriving it on every load would bring the view back valid
+                                        // once the column is retyped back, over base rows the round trip
+                                        // may have changed.
+                                        invalidateLiveViewOnLoad(instance, reason, tornStateRecovered, nowUs);
+                                    }
                                 }
                             }
                             if (tornStateRecovered) {
@@ -1653,6 +1713,16 @@ public class CairoEngine implements Closeable, WriterSource {
         // Resolve PARTITION BY: PartitionBy.NONE is the "inherit" sentinel.
         final int partitionBy = LiveViewTableStructure.resolvePartitionBy(op.getPartitionBy(), basePartitionBy);
 
+        // TTL granularity is a property of the resolved partition scheme, and a view that omits
+        // PARTITION BY inherits it from the base table - which the parser cannot see. Validate here,
+        // against the scheme the table is about to be created with, pointing at the TTL value the
+        // user typed. The parser already ran the same check when PARTITION BY was explicit, so this
+        // repeat is a no-op for those.
+        final int ttlHoursOrMonths = op.getTtlHoursOrMonths();
+        if (ttlHoursOrMonths != 0) {
+            PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, op.getTtlPosition());
+        }
+
         // Capture base sequencer head. It is the upper bound of the initial seed
         // (seedTargetSeqTxn) and, one past it, the first base commit the incremental drain
         // is responsible for (subscribeFromSeqTxn). Whichever start mode the view uses, the
@@ -1716,6 +1786,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 op.getSelectSql(),
                 op.getBaseTableName(),
                 baseTableToken,
+                baseTableToken.getTableId(),
                 baseTimestampType,
                 op.getFlushEveryInterval(),
                 op.getFlushEveryIntervalUnit(),
@@ -1724,6 +1795,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 partitionBy,
                 viewLowerBoundTimestamp,
                 op.getStartFromKind(),
+                // The same value LiveViewTableStructure below stamps into _meta. _lv carries it
+                // too because the sequencer-directory copy is what replicates, and a replica
+                // rebuilds the view's table from that copy alone - _meta does not ship with it,
+                // so a TTL that lived only in _meta would not survive the crossing.
+                ttlHoursOrMonths,
                 op.getAnchorSpec(),
                 dependencyColumnNames,
                 dependencyColumnTypes,
@@ -1736,7 +1812,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 metadata,
                 definition,
                 outputSymbolCacheFlags,
-                sparsePublicationKeyColumnIndex
+                sparsePublicationKeyColumnIndex,
+                ttlHoursOrMonths
         );
         if (sparsePublicationKeyColumnIndex != LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN) {
             LOG.info().$("live view carries sparse publication dedup keys [view=").$(op.getViewName())
@@ -2144,6 +2221,13 @@ public class CairoEngine implements Closeable, WriterSource {
     public void dropTableOrViewOrMatView(@Transient Path path, TableToken tableToken) {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
+            // Invalidate the dependent live views ahead of the drop, durably. A view's definition
+            // names its base, and the load binds it to whatever table holds that name, so a view
+            // _lv.s still records valid - through a process that died past the drop, or a write
+            // that failed - binds to a table created under the name afterwards and drains that
+            // table's commits on top of the dropped one's rows. A throw here refuses the drop over
+            // an intact base.
+            invalidateLiveViewsForBaseTableDurably(tableToken, "base table drop");
             if (notifyDropped(tableToken)) {
                 durableAckRegistry.onTableDropped(tableToken);
                 // Both-trees pre-externalization fire-point: fire the role-switch mint observer here,
@@ -2158,7 +2242,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
                 dependentViewGraph.removeView(tableToken);
-                invalidateLiveViewsForBaseTable(tableToken, "base table drop");
                 recentWriteTracker.removeTable(tableToken);
             } else {
                 LOG.info().$("table is already dropped [table=").$(tableToken).I$();
@@ -2167,6 +2250,9 @@ public class CairoEngine implements Closeable, WriterSource {
             CharSequence lockedReason = lockAll(tableToken, "removeTable", false);
             if (lockedReason == null) {
                 try {
+                    // A live view's base is WAL at CREATE, but one converted since still has its
+                    // dependents registered, so the WAL branch's rule applies here too.
+                    invalidateLiveViewsForBaseTableDurably(tableToken, "base table drop");
                     path.of(configuration.getDbRoot()).concat(tableToken).$();
                     if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
                         throw CairoException.critical(configuration.getFilesFacade().errno())
@@ -2180,7 +2266,6 @@ public class CairoEngine implements Closeable, WriterSource {
                     // Then it can push the scoreboard max txn value into incorrect state.
                     scoreboardPool.remove(tableToken);
                     notifyViewStoresAboutDrop(tableToken);
-                    invalidateLiveViewsForBaseTable(tableToken, "base table drop");
                     recentWriteTracker.removeTable(tableToken);
                 } finally {
                     unlockTableUnsafe(tableToken, null, false);
@@ -3005,17 +3090,42 @@ public class CairoEngine implements Closeable, WriterSource {
             io.questdb.cairo.sql.RecordMetadata postChangeMetadata,
             String reason
     ) {
-        invalidateLiveViewsForBaseTable0(baseTableToken, reason, postChangeMetadata);
+        invalidateLiveViewsForBaseTable0(baseTableToken, reason, postChangeMetadata, false);
     }
 
+    /**
+     * Invalidates every live view whose base is {@code baseTableToken}, best-effort on disk: a view
+     * whose {@code _lv.s} write fails still flips invalid in memory, and the call returns normally.
+     * For callers applying an operation that has already committed elsewhere and cannot be refused
+     * here: a replica applying the primary's DROP or RENAME of a base. A table created under the base's
+     * name before the next load is what this leaves open, since the load then binds the view to it.
+     */
     public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
-        invalidateLiveViewsForBaseTable0(baseTableToken, reason, null);
+        invalidateLiveViewsForBaseTable0(baseTableToken, reason, null, false);
+    }
+
+    /**
+     * Invalidates every live view whose base is {@code baseTableToken}, and returns only once each
+     * invalidation is on disk. A view whose {@code _lv.s} write fails is left valid, in memory as on
+     * disk, and the call throws, so the caller refuses the operation it was about to commit.
+     * <p>
+     * For callers that invalidate ahead of a commit the next load cannot be relied on to see: an UPDATE,
+     * a REBASE WAL and a TRUNCATE of a base materialized view leave nothing for it to find, and a DROP or
+     * RENAME of a base frees a name that a table created under it before that load fills. The
+     * best-effort variant flipped such a view in memory only and let the commit go ahead, so a restart
+     * loaded it valid over a base the operation had changed, or over a different table. Views ahead of
+     * the failing one in the fan-out stay invalidated, the outcome a commit failing after the
+     * invalidation already has.
+     */
+    public void invalidateLiveViewsForBaseTableDurably(TableToken baseTableToken, String reason) {
+        invalidateLiveViewsForBaseTable0(baseTableToken, reason, null, true);
     }
 
     private void invalidateLiveViewsForBaseTable0(
             TableToken baseTableToken,
             String reason,
-            @Nullable io.questdb.cairo.sql.RecordMetadata postChangeMetadata
+            @Nullable io.questdb.cairo.sql.RecordMetadata postChangeMetadata,
+            boolean isPersistRequired
     ) {
         final long invalidationTimestampUs = configuration.getMicrosecondClock().getTicks();
         // Persist each affected view's _lv.s before flipping its in-memory invalid
@@ -3061,9 +3171,12 @@ public class CairoEngine implements Closeable, WriterSource {
                     // Persist _lv.s before flipping the in-memory invalid bit, matching
                     // invalidateLiveView: WalPurgeJob releases the floor on the in-memory bit, so
                     // writing the durable state first keeps a concurrent purge from releasing the
-                    // floor while _lv.s still records the view as valid. On persist failure the view
-                    // still flips invalid in-memory (best-effort, terminal) and re-derives the same
-                    // state on restart.
+                    // floor while _lv.s still records the view as valid. On persist failure the
+                    // best-effort variant still flips the view invalid in-memory (terminal), and its
+                    // callers leave the load something to re-derive the state from. The durable
+                    // variant refuses instead, ahead of the flip: its caller's operation has not
+                    // committed, so the view is still right about the base, and a flip would release
+                    // the purge floor over a view _lv.s records valid.
                     path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
                     try {
                         blockFileWriter.of(path.$());
@@ -3080,9 +3193,23 @@ public class CairoEngine implements Closeable, WriterSource {
                                 blockFileWriter
                         );
                     } catch (Throwable t) {
-                        LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
+                        LOG.error().$(isPersistRequired
+                                        ? "could not persist live view invalidation, refusing the operation [view="
+                                        : "could not persist live view invalidation [view=")
+                                .$(instance.getLiveViewToken())
                                 .$(", reason=").$safe(viewReason)
                                 .$(", error=").$(t).I$();
+                        if (isPersistRequired) {
+                            if (t instanceof CairoException e) {
+                                throw CairoException.critical(e.getErrno())
+                                        .put("could not persist live view invalidation [view=").put(instance.getLiveViewToken().getTableName())
+                                        .put(", reason=").put(viewReason)
+                                        .put(", error=").put(e.getFlyweightMessage())
+                                        .put(']')
+                                        .setOutOfMemory(e.isOutOfMemory());
+                            }
+                            throw t;
+                        }
                     }
                     instance.markInvalid(viewReason, invalidationTimestampUs);
                 }
@@ -3160,7 +3287,8 @@ public class CairoEngine implements Closeable, WriterSource {
     /**
      * Whether the table is hard-suspended from WAL apply, either by the reloadable
      * {@code cairo.wal.apply.suspended.tables} config list or by a runtime
-     * {@code ALTER TABLE ... SUSPEND WAL}. The ApplyWal2Table job skips such tables. Resuming
+     * {@code ALTER TABLE ... SUSPEND WAL}. The ApplyWal2Table job skips such tables, and so does a
+     * live view's refresh worker, which applies the view's own WAL inline. Resuming
      * requires removing the table from the config list (and reloading) and running
      * {@code ALTER TABLE ... RESUME WAL}.
      */
@@ -3317,6 +3445,20 @@ public class CairoEngine implements Closeable, WriterSource {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Fires when the WAL apply is about to run a non-structural {@code ALTER LIVE VIEW} that was
+     * sequenced into a live view's own WAL: {@code SET TTL}, {@code DROP PARTITION} and
+     * {@code CONVERT PARTITION}. The operation is compiled under the WAL application context, so
+     * its partition selector, {@code LIST} or {@code WHERE}, is already resolved against this
+     * node's own reader. Runs on the apply thread before {@code TableWriter.apply}, and again if
+     * that apply is retried, so an implementation must key on {@code seqTxn}.
+     * <p>
+     * A no-op here. Enterprise overrides it to relay the command to replicas, which compute their
+     * live views locally and never receive this WAL.
+     */
+    public void notifyLiveViewAlterApplying(TableWriter writer, long seqTxn, AlterOperation alterOp) {
     }
 
     public void notifyLiveViewBaseTableCommit(TableToken baseTableToken, long seqTxn) {
@@ -3547,6 +3689,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (toTableToken != null) {
                     boolean renamed = false;
                     try {
+                        // Ahead of the rename's commit, durably, for the reason a DROP gives in
+                        // dropTableOrViewOrMatView: the renamed base frees its name for a table the
+                        // view's next load would bind to. A throw leaves renamed unset, so the finally
+                        // below releases the alias.
+                        invalidateLiveViewsForBaseTableDurably(fromTableToken, "base table rename");
                         try (WalWriter walWriter = getWalWriter(fromTableToken)) {
                             long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr, securityContext);
                             LOG.info().$("renaming table [from='").$safe(fromTableName)
@@ -3568,7 +3715,6 @@ public class CairoEngine implements Closeable, WriterSource {
                             if (fromTableToken.isWal()) {
                                 matViewStateStore.enqueueInvalidateDependentViews(fromTableToken, "table rename operation");
                             }
-                            invalidateLiveViewsForBaseTable(fromTableToken, "base table rename");
                         } else {
                             LOG.info()
                                     .$("failed to rename table [from=").$safe(fromTableName)
@@ -4361,6 +4507,38 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Returns the first column {@code instance} references that the base's applied metadata no
+     * longer resolves under the same name and type, or {@code null} when every one resolves or the
+     * metadata could not be read. The load-time counterpart of the check
+     * {@link #invalidateLiveViewsForBaseSchemaChange} runs after each structural apply.
+     * <p>
+     * A read that fails is not a decision: the base can be unreadable for reasons unrelated to the
+     * view, and the view would otherwise invalidate for good over a doubt. The refresh worker opens
+     * the base for real on its first cycle and faults loudly if it truly is unreadable.
+     */
+    private @Nullable String findBrokenLiveViewDependency(LiveViewInstance instance, TableToken baseTableToken) {
+        try (TableReaderMetadata baseMetadata = new TableReaderMetadata(configuration, baseTableToken)) {
+            baseMetadata.loadMetadata();
+            return instance.findFirstMissingOrRetypedColumn(baseMetadata);
+        } catch (Throwable th) {
+            if (th instanceof VirtualMachineError) {
+                throw th;
+            }
+            final LogRecord rec = LOG.error().$("could not read base table metadata to check live view dependencies, proceeding [view=")
+                    .$(instance.getLiveViewToken())
+                    .$(", table=").$(baseTableToken);
+            if (th instanceof CairoException ce) {
+                rec.$(", errno=").$(ce.getErrno())
+                        .$(", msg=").$safe(ce.getFlyweightMessage());
+            } else {
+                rec.$(", msg=").$safe(th.getMessage());
+            }
+            rec.I$();
+            return null;
+        }
+    }
+
     private @NotNull ViewMetadata getViewMetadata(TableToken tableToken) {
         final ViewState state = viewStateStore.getViewState(tableToken);
         if (state == null) {
@@ -4404,6 +4582,17 @@ public class CairoEngine implements Closeable, WriterSource {
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .I$();
             return false;
+        }
+    }
+
+    // Invalidates a live view the load found broken, writing _lv.s ahead of the in-memory flip. Over a
+    // torn _lv.s the flip alone: the load's rewrite of the reconstructed state persists it, and an
+    // append into the torn file would only fail first.
+    private void invalidateLiveViewOnLoad(LiveViewInstance instance, String reason, boolean isStateTorn, long nowUs) {
+        if (isStateTorn) {
+            instance.markInvalid(reason, nowUs);
+        } else {
+            invalidateLiveView(instance, reason);
         }
     }
 
@@ -4699,6 +4888,33 @@ public class CairoEngine implements Closeable, WriterSource {
                         Misc.getThreadLocalSink()
                 );
 
+                // Dependent live views hold a watermark they reached against the OLD base sequencer,
+                // which the rebase restarts near zero. They cannot recover by refreshing:
+                // refreshViewsForBaseTable only advances a view when seqTxn exceeds its
+                // lastProcessedSeqTxn, so every post-rebase commit up to that watermark falls below the
+                // gate. Invalidate them here, ahead of the registry commit, and not after it: a process
+                // that died between a committed rebase and the invalidation left every dependent view
+                // recorded valid in its _lv.s, and a view's definition records nothing a load could
+                // compare a rebased base against - it names its base, and the name, the WAL flag and
+                // the referenced columns all survive a rebase. The restart restored the view from its
+                // timeline, and once post-rebase commits reached its watermark before a scan caught it
+                // ahead of the base, it resumed mid-stream: rows missing and window values wrong, with
+                // no fault.
+                //
+                // A throw refuses the rebase - the catch below discards the clone while the old table
+                // is intact - rather than committing one no view was told about. That includes a view
+                // whose _lv.s cannot be written: the durable variant throws for it, where the
+                // best-effort one flipped it in memory only and let the rebase commit, which a restart
+                // then loaded valid over the rebased base. The other way round, a view invalidated
+                // for a rebase that then fails, is the cost: the next REBASE WAL
+                // would have invalidated it anyway, and only a rebase abandoned for RESUME WAL leaves a
+                // view invalidated for nothing. Ahead of the move below, not just ahead of the registry
+                // drop, so the _lv.s writes do not lengthen the window between the two, whose startup
+                // recovery the rebase does not have yet. invalidateLiveViewsForBaseTableDurably resolves
+                // dependents by base table name, which the rebase preserves. Mat views keep their
+                // refresh-queue invalidation past the commit, below.
+                invalidateLiveViewsForBaseTableDurably(oldToken, "base table rebase");
+
                 // Atomically move the completed clone into its final location.
                 if (ff.rename(src.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken).$(), dst.of(root).concat(newToken).$()) != Files.FILES_RENAME_OK) {
                     throw CairoException.critical(ff.errno()).put("could not move rebased table into place [from=").put(src).put(", to=").put(dst).put(']');
@@ -4800,32 +5016,6 @@ public class CairoEngine implements Closeable, WriterSource {
             // so their watermarks no longer map onto the new base. Force a full refresh of any dependents
             // (covers a rebased base table, and a rebased mat view that is itself a base of another).
             matViewStateStore.enqueueInvalidateDependentViews(newToken, "base table rebase");
-            // Dependent live views hold the same kind of stale watermark, but they cannot recover by
-            // refreshing: refreshViewsForBaseTable only advances a view when seqTxn exceeds its
-            // lastProcessedSeqTxn, so a sequencer restarted near zero drops every post-rebase commit
-            // below that gate. Without this the view serves indefinitely stale data while live_views()
-            // still reports it healthy. invalidateLiveViewsForBaseTable resolves dependents by base
-            // table name, which the rebase preserves, so either token finds the same set.
-            // Best-effort for the same reason as the mat view registration above: this call sits past
-            // the registry commit, so a throw would skip the rebase-source marker, the _txn/_meta
-            // tombstone, the sequencer drop and the pool eviction below, stranding the old directory
-            // where WalPurgeJob can never reclaim it. Unlike the queue publish on the line before,
-            // this one can throw: invalidateLiveViewsForBaseTable0's per-view catch covers only the
-            // _lv.s write, leaving the BlockFileWriter/Path try-with-resources and
-            // tryFreeRuntimeStateIfInvalid unguarded.
-            //
-            // A view left valid because this failed does NOT self-heal. buildViewGraphs only
-            // synthesizes an invalidation when the base is missing or non-WAL, and a rebase keeps
-            // both; scanForLaggingViews' ahead-of-base guard catches the view only while its stale
-            // watermark still exceeds the rebased sequencer's lastTxn, and goes quiet for good once
-            // new commits climb past it - resuming mid-stream and skipping everything in between.
-            // This log line is the operator's only signal.
-            try {
-                invalidateLiveViewsForBaseTable(newToken, "base table rebase");
-            } catch (Throwable lvEx) {
-                LOG.error().$("could not invalidate live views after base table rebase, they may need manual recreation [base=")
-                        .$(newToken).$(", e=").$(lvEx).I$();
-            }
 
             // Committed. Tear down the old table (data survives via new dir hard links). Mark the dir as
             // the rebase SOURCE first: the uploader stats this marker as the dir winds down and records

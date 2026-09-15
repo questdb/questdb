@@ -33,9 +33,12 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRetentionMarker;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -262,6 +265,80 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                             "2026-01-01T00:00:05.000000Z\ta\t10.0\t13.0\n" +
                             "2026-01-01T00:00:06.000000Z\ta\t6.0\t19.0\n");
             assertViewMatchesRecompute(viewSql);
+
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
+    public void testRestoreDropsTheRetentionMarkerWithTheTimelineItGuards() throws Exception {
+        // The snapshot step of section 5.4's crash matrix. The retention marker is the evidence
+        // that a removal became durable before its timeline correction did, and it lives in the
+        // same _checkpoints directory as the timeline it guards. An OSS snapshot excludes that
+        // directory whole and restore deletes the destination's copy of it, so the two can only
+        // ever disappear together - which is the property that makes the marker safe to trust.
+        //
+        // Either half surviving alone would be wrong. A timeline left behind without its marker
+        // is a ladder a restore would believe over a table the removal has already changed; a
+        // marker left behind without its timeline is a rebuild forced forever, since the marker
+        // carries no staleness rule and nothing would be left to clear it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS running FROM base";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms PARTITION BY DAY START FROM NOW AS " + viewSql);
+            final TableToken lvToken = engine.verifyTableName("lv");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-01T00:00:01.000000Z', 'a', 1.0)");
+                driveRefreshToQuiescence(job);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-02T00:00:01.000000Z', 'a', 2.0)");
+                driveRefreshToQuiescence(job);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-03T00:00:01.000000Z', 'a', 3.0)");
+                driveRefreshToQuiescence(job);
+                assertTimelineExists(lvToken);
+
+                execute("CHECKPOINT CREATE");
+                assertSnapshotDoesNotContainCheckpoints(lvToken);
+            }
+
+            // After the snapshot, drop a partition through the global apply job - the shape a
+            // node with refresh disabled runs. It writes the marker and commits the removal,
+            // and reconciles nothing, so the destination is left holding both the evidence and
+            // a timeline that still counts the rows that went.
+            execute("ALTER LIVE VIEW lv DROP PARTITION LIST '2026-01-01'");
+            try (ApplyWal2TableJob applyJob = new ApplyWal2TableJob(engine, 1)) {
+                applyJob.applyWalDirect(lvToken, Job.RUNNING_STATUS);
+            }
+            assertRetentionMarker(lvToken, true);
+            assertTimelineExists(lvToken);
+
+            restoreFromCheckpoint();
+
+            // Both went, and the container they shared is back empty. Read before the first
+            // refresh turn can publish a replacement.
+            assertCheckpointStateCleared(lvToken);
+            assertRetentionMarker(lvToken, false);
+
+            // Nothing to restore from, so the first turn rebuilds from the applied base and the
+            // view converges on a recompute over the restored base table.
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                capture.drain();
+                capture.assertNotLogged("restored live view from checkpoint timeline [view=lv");
+            } finally {
+                capture.stop();
+            }
+            assertViewMatchesRecompute(viewSql);
+            assertRetentionMarker(lvToken, false);
+            // The restored base still holds the dropped day and the rebuild recomputed over it,
+            // so the removal is undone - the documented DROP PARTITION recovery semantics, here
+            // reached through a restore rather than a crash.
+            assertQuery("SELECT count() FROM lv WHERE ts < '2026-01-02'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
 
             execute("CHECKPOINT RELEASE");
         });
@@ -1098,6 +1175,17 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
             Assert.assertFalse("stale timeline metadata must be removed at " + path, ff.exists(path.$()));
             path.trimTo(checkpointsDirLen).concat(LiveViewCheckpointLayout.DATA_DIR_NAME).$();
             Assert.assertFalse("stale timeline data must be removed at " + path, ff.exists(path.$()));
+        }
+    }
+
+    private void assertRetentionMarker(TableToken token, boolean expected) {
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            Assert.assertEquals(
+                    "retention marker presence at " + path,
+                    expected,
+                    LiveViewRetentionMarker.exists(configuration.getFilesFacade(), path)
+            );
         }
     }
 

@@ -73,10 +73,8 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -1738,10 +1736,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     //
     // ApplyWal2TableJob applies the metadata change to the writer BEFORE it calls
     // invalidateLiveViewsForBaseSchemaChange, so a refresh worker can reach the re-derive over a
-    // retyped referenced column while the invalidation is still in flight. The registry clear
-    // reproduces that window deterministically: with no registered instance the apply-side
-    // invalidation has nothing to mark, and buildViewGraphs reloads the view - still VALID, still
-    // carrying the dependency types it compiled against.
+    // retyped referenced column while the invalidation is still in flight. The fixture reproduces
+    // that window deterministically: it reloads the view first, as a restart does, so the instance
+    // holds no compiled factory and its first compile reads the base's current metadata - the replay
+    // then raises no drift that could stand in for the entry check - and applies the retype with
+    // that reloaded instance off the fan-out index, so the apply-side invalidation has nothing to
+    // mark. The order matters: a retype applied before the reload is caught by buildViewGraphs' own
+    // load-time dependency check, which invalidates the view before any refresh runs.
     //
     // The WAL loss is the plain one: the applied base TABLE survives, its WAL directory does not,
     // which is what a backup restore leaves behind. That reaches the very same door as the
@@ -1773,12 +1774,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 30, 'a')");
         drainWalQueue();
 
-        // The view is not registered while the retype applies, so the apply-side invalidation
-        // finds nothing to mark and the reloaded view comes back VALID over drifted metadata.
+        // The reloaded view is off the fan-out index while the retype applies, so the apply-side
+        // invalidation finds nothing to mark and the view stays VALID over drifted metadata.
         engine.getLiveViewRegistry().clear();
+        engine.buildViewGraphs();
+        final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(reloaded);
+        Assert.assertSame(reloaded, engine.getLiveViewRegistry().removeView("lv"));
         execute("ALTER TABLE base ALTER COLUMN x TYPE LONG");
         drainWalQueue();
-        engine.buildViewGraphs();
+        engine.getLiveViewRegistry().registerView(reloaded);
 
         // Same restore gap as testRestoredViewRederivesFromAppliedBaseWhenBaseWalIsGone: the
         // applied base table survives, its WAL segments do not. releaseInactive frees the pooled
@@ -3520,6 +3525,39 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             assertQuery("SELECT view_status, seed_target_seqtxn FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\tseed_target_seqtxn\n" +
                     "active\tnull\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testSuspendedStatusOutranksSeedingInCatalogue() throws Exception {
+        // A SEEDING view whose own WAL table the sequencer has suspended reads "suspended"
+        // in live_views().view_status: a suspended table keeps the sweep's output off disk
+        // as it does an ACTIVE view's. The seed signal is untouched underneath, so RESUME
+        // WAL returns the view to "seeding".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms START FROM BEGINNING AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\nseeding\n");
+
+            execute("ALTER LIVE VIEW lv SUSPEND WAL");
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(lvToken));
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\nsuspended\n");
+
+            execute("ALTER LIVE VIEW lv RESUME WAL");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\nseeding\n");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\nactive\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -7331,7 +7369,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final LiveViewInstance recovered = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull("a reset costs derived state, not the view", recovered);
             Assert.assertFalse(recovered.isStub());
-            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, recovered.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, recovered.getLifecycleState(engine.getTableSequencerAPI().isSuspended(recovered.getLiveViewToken())));
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
 
             // The base advances and the view refreshes forward over the rebuilt
@@ -7479,7 +7517,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull("torn _lv.s with no recoverable floor must register a stub", stub);
             Assert.assertTrue(stub.isStub());
-            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState(false));
             assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'")
                     .noLeakCheck().noRandomAccess()
                     .returns("view_name\tview_status\nlv\tstate_unreadable\n");
@@ -7535,7 +7573,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv_stub");
             Assert.assertNotNull(stub);
             Assert.assertTrue(stub.isStub());
-            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState(false));
             final LiveViewInstance ok = engine.getLiveViewRegistry().getViewInstance("lv_ok");
             Assert.assertNotNull(ok);
             Assert.assertFalse(ok.isStub());
@@ -7560,7 +7598,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final LiveViewInstance stubAfter = engine.getLiveViewRegistry().getViewInstance("lv_stub");
             Assert.assertNotNull(stubAfter);
             Assert.assertTrue(stubAfter.isStub());
-            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stubAfter.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stubAfter.getLifecycleState(false));
             assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv_stub'")
                     .noLeakCheck().noRandomAccess()
                     .returns("view_name\tview_status\nlv_stub\tstate_unreadable\n");
@@ -7625,7 +7663,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final LiveViewInstance recovered = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull("torn _lv.s must recover, not strand the view", recovered);
             Assert.assertFalse("recovered view is a real instance, not a stub", recovered.isStub());
-            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, recovered.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, recovered.getLifecycleState(engine.getTableSequencerAPI().isSuspended(recovered.getLiveViewToken())));
             assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'")
                     .noLeakCheck().noRandomAccess()
                     .returns("view_name\tview_status\nlv\tactive\n");
@@ -7655,7 +7693,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull("rewritten _lv.s must load on a clean restart", reloaded);
             Assert.assertFalse(reloaded.isStub());
-            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, reloaded.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, reloaded.getLifecycleState(engine.getTableSequencerAPI().isSuspended(reloaded.getLiveViewToken())));
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
 
             // The recovered view remains droppable via SQL - no longer a zombie.
@@ -8159,12 +8197,15 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         //
         // Cycle 1 flushes a block whose inline apply no-ops on EntryUnavailableException, so
         // flushLead un-stamps the slot and marks the tier stale. Cycle 2 therefore takes
-        // finishLeadRefresh's tierStale branch: it flushes (a second block, whose apply no-ops
-        // again) and then calls rebuildInMemoryTier, which restages the slot from the
-        // STILL-STALE disk, stamps it with that stale seqTxn and clears the stale marking. The
-        // slot is a correct tail of the disk it was staged from - but the LV WAL still carries
-        // two unapplied blocks, and the marking that would have told the next applier to rebuild
-        // is gone.
+        // finishLeadRefresh's tierStale branch and flushes a second block, whose apply no-ops
+        // again. That branch used to rebuild the tier from the STILL-STALE disk right after,
+        // stamping the slot with that stale seqTxn and clearing the stale marking; it now waits
+        // for a table that holds every committed block, so the test runs the same rebuild through
+        // rebuildInMemoryTierForTest. That is the state any rebuild over the backlog leaves; a
+        // part-way retry used to reach it too, and now leaves the tier stale instead. The slot is
+        // a correct tail of the disk it was staged from - but the LV WAL still carries two
+        // unapplied blocks, and the marking that would have told the next applier to rebuild is
+        // gone.
         //
         // Releasing the writer lets scanForLaggingViews / retryPendingLiveViewApply land the
         // whole backlog, which makes the disk tier completely correct. The slot is not: it holds
@@ -8217,11 +8258,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         2L, tracker.getSeqTxn() - tracker.getWriterTxn());
                 Assert.assertFalse("a busy writer must not suspend the LV table",
                         engine.getTableSequencerAPI().isSuspended(lvToken));
-                // Both preconditions of the retry-site guard, asserted rather than assumed. Cycle
-                // 2's rebuild cleared the tier-stale marking, which is what makes the re-stamp
-                // this test forbids look legitimate to retryPendingLiveViewApply; a future change
-                // that left the marking set would route the retry into rebuildInMemoryTier for the
-                // wrong reason and leave this test green and vacuous.
+                Assert.assertTrue("the stale flush must leave the tier stale over the backlog",
+                        instance.isTierStale());
+                job.rebuildInMemoryTierForTest(instance);
+                // Both preconditions of the retry-site guard, asserted rather than assumed. The
+                // rebuild over the backlog cleared the tier-stale marking, which is what makes the
+                // re-stamp this test forbids look legitimate to retryPendingLiveViewApply; a future
+                // change that left the marking set would route the retry into rebuildInMemoryTier
+                // for the wrong reason and leave this test green and vacuous.
                 Assert.assertFalse("the tier-stale marking must be gone, which is what lets the"
                         + " re-stamp below look legitimate", instance.isTierStale());
                 final long committedSeqTxn = tracker.getSeqTxn();
@@ -8327,9 +8371,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainJob(job);
                 drainWalQueue();
 
-                // Two held cycles build the backlog and, on the second, leave tierStale false:
-                // finishLeadRefresh's tierStale branch restages the slot from the still-stale disk
-                // and clears the marking while both blocks are still unapplied.
+                // Two held cycles build the backlog. finishLeadRefresh's tierStale branch on the
+                // second leaves the tier stale, since its rebuild waits for a table holding every
+                // committed block; the rebuild run below restages the slot from the still-stale
+                // disk and clears the marking while both blocks are unapplied, as that branch used
+                // to and as any rebuild over the backlog does.
                 try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
                     setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                     execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 2)");
@@ -8342,6 +8388,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 }
                 Assert.assertEquals("the two held cycles must leave two committed but unapplied LV blocks",
                         2L, tracker.getSeqTxn() - tracker.getWriterTxn());
+                Assert.assertTrue("the stale flush must leave the tier stale over the backlog",
+                        instance.isTierStale());
+                job.rebuildInMemoryTierForTest(instance);
                 Assert.assertFalse("the tier-stale marking must be gone, which is what lets the"
                                 + " re-stamp below look legitimate",
                         instance.isTierStale());
@@ -8449,9 +8498,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainJob(job);
                 drainWalQueue();
 
-                // Two held cycles build the backlog and, on the second, leave tierStale false:
-                // finishLeadRefresh's tierStale branch restages the slot from the still-stale disk
-                // and clears the marking while both blocks are still unapplied.
+                // Two held cycles build the backlog. finishLeadRefresh's tierStale branch on the
+                // second leaves the tier stale, since its rebuild waits for a table holding every
+                // committed block; the rebuild run below restages the slot from the still-stale
+                // disk and clears the marking while both blocks are unapplied, as that branch used
+                // to and as any rebuild over the backlog does.
                 try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
                     setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                     execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 2)");
@@ -8464,6 +8515,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 }
                 Assert.assertEquals("the two held cycles must leave two committed but unapplied LV blocks",
                         2L, tracker.getSeqTxn() - tracker.getWriterTxn());
+                Assert.assertTrue("the stale flush must leave the tier stale over the backlog",
+                        instance.isTierStale());
+                job.rebuildInMemoryTierForTest(instance);
                 Assert.assertFalse("the tier-stale marking must be gone, which is what lets the"
                         + " re-stamp below look legitimate", instance.isTierStale());
 
@@ -9096,7 +9150,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull("missing _lv.s must surface a stub, not be silently skipped", stub);
             Assert.assertTrue(stub.isStub());
-            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState(false));
             assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'")
                     .noLeakCheck().noRandomAccess()
                     .returns("view_name\tview_status\nlv\tstate_unreadable\n");
@@ -16297,7 +16351,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             Assert.assertNotNull("version-unsupported view must still be registered", stub);
             Assert.assertTrue("stub must be a load-failure stub", stub.isStub());
             Assert.assertEquals("stub must report version-unsupported",
-                    LiveViewLifecycleState.VERSION_UNSUPPORTED, stub.getLifecycleState());
+                    LiveViewLifecycleState.VERSION_UNSUPPORTED, stub.getLifecycleState(false));
 
             // view_name and view_status surface; definition/state columns are NULL
             // (string columns render empty, long columns render "null").
@@ -16331,7 +16385,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(stub);
-            Assert.assertEquals(LiveViewLifecycleState.VERSION_UNSUPPORTED, stub.getLifecycleState());
+            Assert.assertEquals(LiveViewLifecycleState.VERSION_UNSUPPORTED, stub.getLifecycleState(false));
             assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_name\tview_status\n" +
                     "lv\tversion_unsupported\n");
 
@@ -22455,10 +22509,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testRejectAlterLiveView() throws Exception {
-        // ALTER LIVE VIEW exists only for the WAL-control verbs (RESUME / SUSPEND WAL), which are
-        // the operator's recovery for a suspended view - see
-        // LiveViewTest.testSuspendedLiveViewCanBeResumed. Every STRUCTURAL verb stays rejected: a
-        // live view's schema is a function of its SELECT and must not be mutated in place.
+        // ALTER LIVE VIEW carries the WAL-control verbs (RESUME / SUSPEND WAL), which are the
+        // operator's recovery for a suspended view - see
+        // LiveViewTest.testSuspendedLiveViewCanBeResumed - plus the durable-tier verbs
+        // (SET TTL / DROP PARTITION / CONVERT PARTITION), covered by
+        // LiveViewDurableTierDdlTest. Every STRUCTURAL verb stays rejected: a live view's schema is
+        // a function of its SELECT and must not be mutated in place.
         // (ALTER TABLE <lv> is a separate path, covered by LiveViewTest.testRejectAlterTable with
         // "cannot modify live view".)
         assertMemoryLeak(() -> {
@@ -22468,7 +22524,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             for (String sql : new String[]{
                     "ALTER LIVE VIEW lv RENAME TO lv2",
                     "ALTER LIVE VIEW lv ADD COLUMN y INT",
-                    "ALTER LIVE VIEW lv DROP COLUMN x",
             }) {
                 try {
                     execute(sql);
@@ -22476,9 +22531,19 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 } catch (SqlException e) {
                     Assert.assertTrue(
                             sql + " -> wrong message [msg=" + e.getFlyweightMessage() + ']',
-                            Chars.contains(e.getFlyweightMessage(), "'resume' or 'suspend' expected")
+                            Chars.contains(e.getFlyweightMessage(), "'set', 'drop', 'convert', 'resume' or 'suspend' expected")
                     );
                 }
+            }
+            // DROP is accepted only as DROP PARTITION, so the column form stops one token later.
+            try {
+                execute("ALTER LIVE VIEW lv DROP COLUMN x");
+                Assert.fail("expected SqlException rejecting ALTER LIVE VIEW ... DROP COLUMN");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "'partition' expected")
+                );
             }
             // The name must still resolve to the untouched live view.
             Assert.assertNotNull(engine.getLiveViewRegistry().getViewInstance("lv"));
@@ -23678,34 +23743,5 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             assertShowCreateLiveViewRoundTrips("lv");
             execute("DROP LIVE VIEW lv");
         });
-    }
-
-    /**
-     * Reads like the default test clock - frozen on {@code currentMicros} - until
-     * {@link #startDrifting()} arms it, after which every read returns one microsecond later than
-     * the last. The WAL apply loop computes its deadline from one clock read and tests every later
-     * iteration against another, so an armed drift plus a zero
-     * {@code cairo.wal.apply.table.time.quota} stops the apply after the transaction its firstRun
-     * guard forces through. That is the part-way apply
-     * {@link #testFlushLeadPartialApplyLeavingOwnBlockPendingDoesNotRestampSlot} is about; nothing
-     * else in the suite needs it, and a frozen clock leaves even a zero quota unbounded.
-     */
-    private static final class DriftingMicrosClock implements MicrosecondClock {
-        private long drift;
-        private boolean isDrifting;
-
-        @Override
-        public long getTicks() {
-            final long base = currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-            return isDrifting ? base + drift++ : base;
-        }
-
-        private void startDrifting() {
-            isDrifting = true;
-        }
-
-        private void stopDrifting() {
-            isDrifting = false;
-        }
     }
 }

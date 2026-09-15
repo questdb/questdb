@@ -95,7 +95,16 @@ import io.questdb.std.Numbers;
  *     {@code F}.</li>
  *     <li>The effective {@code lvRowPosition} of every logical checkpoint is
  *     correct in every generation, including the reused suffix after an O3
- *     replacement changes the cumulative position.</li>
+ *     replacement changes the cumulative position, and the reused survivors
+ *     after a durable-tier removal (TTL eviction, {@code DROP PARTITION})
+ *     lowers it.</li>
+ *     <li>Inside one history epoch a logical checkpoint is removed only when
+ *     the output it describes is gone: a repair truncate drops the tail it is
+ *     about to rewrite, and a retention publication drops exactly the
+ *     boundaries whose {@code maxTimestamp} falls inside a removed partition.
+ *     Every other boundary keeps its id and its coordinate, so the retired
+ *     count plus the surviving set always accounts for every id the epoch
+ *     allocated.</li>
  * </ol>
  *
  * <h2>Three contracts the file schemas depend on</h2>

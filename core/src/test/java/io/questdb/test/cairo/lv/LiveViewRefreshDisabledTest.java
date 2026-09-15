@@ -63,6 +63,119 @@ public class LiveViewRefreshDisabledTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testBaseRetypeWhileUnattendedInvalidatesTheViewOnceRefreshReturns() throws Exception {
+        // The apply side invalidates a view over a referenced-column retype by walking the registry,
+        // and an unattended view is not in it. So a retype applied while the refresh pool was off went
+        // unnoticed, and the next start with a worker loaded the view valid and refreshed it over a
+        // schema its SELECT was never created against. The load-time dependency check invalidates it
+        // before the first cycle, naming the column.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = start("1")) {
+                serverMain.execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+                serverMain.execute("""
+                        INSERT INTO base VALUES
+                        (1, '2024-01-01T00:00:00.000000Z'),
+                        (2, '2024-01-01T00:00:01.000000Z'),
+                        (3, '2024-01-01T00:00:02.000000Z')""");
+                TestUtils.assertEventually(
+                        () -> serverMain.assertSql("SELECT count(*) FROM base", "count\n3\n"),
+                        30
+                );
+                serverMain.execute(CREATE_LIVE_VIEW);
+                TestUtils.assertEventually(
+                        () -> serverMain.assertSql("SELECT count(*) FROM lv", "count\n3\n"),
+                        60
+                );
+                // The rows can be visible a scan ahead of the seed's completion: when the global apply
+                // job lands the sweep's last block, the completion waits for the next turn to find it.
+                TestUtils.assertEventually(
+                        () -> serverMain.assertSql("SELECT view_status FROM live_views()", "view_status\nactive\n"),
+                        60
+                );
+            }
+
+            try (final TestServerMain serverMain = start("0")) {
+                serverMain.execute("ALTER TABLE base ALTER COLUMN val TYPE LONG");
+                TestUtils.assertEventually(
+                        () -> serverMain.assertSql(
+                                "SELECT \"type\" FROM table_columns('base') WHERE \"column\" = 'val'",
+                                "type\nLONG\n"
+                        ),
+                        30
+                );
+            }
+
+            try (final TestServerMain serverMain = start("1")) {
+                serverMain.assertSql(
+                        "SELECT view_status, invalidation_reason FROM live_views()",
+                        "view_status\tinvalidation_reason\n" +
+                                "invalid\tbase schema change to a referenced column [column=val]\n"
+                );
+                // An invalid view stays queryable, with the rows its own schema produced.
+                serverMain.assertSql("SELECT count(*) FROM lv", "count\n3\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBaseRecreatedWhileUnattendedInvalidatesTheViewOnceRefreshReturns() throws Exception {
+        // A DROP of the base invalidates its dependent views through the registry, and an unattended
+        // view is not in it. So a base dropped and created again under the same name while the refresh
+        // pool was off left nothing to find: the next start with a worker loaded the view over the new
+        // table by name. Measured before the fix, over this fixture with the new table's rows at 03 to 07
+        // in five commits: the view restored at its old watermark, skipped 03, and read rn 4 to 7 for 04
+        // to 07 on top of its three rows, active, where a recompute over the new table reads 1 to 5. The
+        // definition records the base's table id now, and the load invalidates the view instead.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = start("1")) {
+                serverMain.execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+                serverMain.execute("""
+                        INSERT INTO base VALUES
+                        (1, '2024-01-01T00:00:00.000000Z'),
+                        (1, '2024-01-01T00:00:01.000000Z'),
+                        (1, '2024-01-01T00:00:02.000000Z')""");
+                TestUtils.assertEventually(
+                        () -> serverMain.assertSql("SELECT count(*) FROM base", "count\n3\n"),
+                        30
+                );
+                serverMain.execute(CREATE_LIVE_VIEW);
+                TestUtils.assertEventually(
+                        () -> serverMain.assertSql("SELECT count(*) FROM lv", "count\n3\n"),
+                        60
+                );
+                // The rows can be visible a scan ahead of the seed's completion: when the global apply
+                // job lands the sweep's last block, the completion waits for the next turn to find it.
+                TestUtils.assertEventually(
+                        () -> serverMain.assertSql("SELECT view_status FROM live_views()", "view_status\nactive\n"),
+                        60
+                );
+            }
+
+            try (final TestServerMain serverMain = start("0")) {
+                serverMain.execute("DROP TABLE base");
+                serverMain.execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+                for (int i = 3; i <= 7; i++) {
+                    serverMain.execute("INSERT INTO base VALUES (1, '2024-01-01T00:00:0" + i + ".000000Z')");
+                }
+                TestUtils.assertEventually(
+                        () -> serverMain.assertSql("SELECT count(*) FROM base", "count\n5\n"),
+                        30
+                );
+            }
+
+            try (final TestServerMain serverMain = start("1")) {
+                serverMain.assertSql(
+                        "SELECT view_status, invalidation_reason FROM live_views()",
+                        "view_status\tinvalidation_reason\n" +
+                                "invalid\tbase table was replaced\n"
+                );
+                // An invalid view stays queryable, with the rows it computed over its own base.
+                serverMain.assertSql("SELECT count(*) FROM lv", "count\n3\n");
+            }
+        });
+    }
+
+    @Test
     public void testCreateLiveViewIsRejectedWithoutARefreshWorker() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = start("0")) {

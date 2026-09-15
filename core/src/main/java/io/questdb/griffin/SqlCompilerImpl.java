@@ -641,6 +641,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         parser.expr(lexer, listener, this);
     }
 
+    /**
+     * Returns the logical partition that holds the reader's newest row, or {@link Long#MIN_VALUE}
+     * when the table has no partitions. The newest attached partition may be a physical split, so
+     * the caller compares logical floors rather than the split timestamp itself.
+     */
+    private static long activeLogicalPartitionTimestamp(TableReader reader) {
+        return reader.getPartitionCount() > 0
+                ? reader.getTxFile().getLogicalPartitionTimestamp(reader.getMaxTimestamp())
+                : Long.MIN_VALUE;
+    }
+
     private static void addSupportedConversion(short fromType, short... toTypes) {
         for (short toType : toTypes) {
             columnConversionSupport[fromType][toType] = true;
@@ -883,6 +894,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private static boolean isTimestampUpdateCast(int from, int to) {
         return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
+    }
+
+    /**
+     * Words the live view active-partition rejection. {@link TableWriter#removePartition(long)}
+     * raises the same sentence as a recoverable {@link CairoException} at apply time, so an
+     * operator reading the WAL-apply log sees what the compiler would have told them.
+     */
+    private static SqlException liveViewActivePartitionDropError(TableReader reader, long activePartitionTimestamp, int position) {
+        return SqlException.position(position)
+                .put("cannot drop the active partition of a live view [partition=")
+                .ts(reader.getMetadata().getTimestampType(), activePartitionTimestamp)
+                .put(']');
     }
 
     /**
@@ -1450,6 +1473,39 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
+    /**
+     * Parses {@code CONVERT PARTITION TO {PARQUET|NATIVE} ...} after the {@code CONVERT} keyword,
+     * authorizes it and hands the partition selector over to
+     * {@link #alterTableDropConvertDetachOrAttachPartition}. Shared by {@code ALTER TABLE} and
+     * {@code ALTER LIVE VIEW}, which accept the identical clause.
+     */
+    private void alterTableConvertPartition(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            TableRecordMetadata tableMetadata
+    ) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'partition'");
+        if (!isPartitionKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+        }
+        tok = expectToken(lexer, "'to'");
+        if (!isToKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'to' expected");
+        }
+        tok = expectToken(lexer, "'parquet' or 'native'");
+        final int action;
+        if (isParquetKeyword(tok)) {
+            action = PartitionAction.CONVERT_TO_PARQUET;
+            executionContext.getSecurityContext().authorizeAlterTableConvertPartitionToParquet(tableToken);
+        } else if (isNativeKeyword(tok)) {
+            action = PartitionAction.CONVERT_TO_NATIVE;
+            executionContext.getSecurityContext().authorizeAlterTableConvertPartitionToNative(tableToken);
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
+        }
+        alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, action, executionContext);
+    }
+
     private void alterTableDedupEnable(int tableNamePosition, TableToken tableToken, TableRecordMetadata tableMetadata, GenericLexer lexer) throws SqlException {
         if (!tableMetadata.isWalEnabled()) {
             throw SqlException.$(tableNamePosition, "deduplication is only supported for WAL tables");
@@ -1565,9 +1621,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) throws SqlException {
         final int pos = lexer.lastTokenPosition();
         TableReader reader = null;
-        if (!tableMetadata.isWalEnabled() || executionContext.isWalApplication()) {
+        // A live view is WAL-enabled, so the primary would normally skip the reader and defer every
+        // partition check to the WAL apply. Open it anyway: the refresh worker applies the view's
+        // WAL inline, so a WHERE clause that matches nothing would otherwise no-op silently on a
+        // worker thread with no way to report it back to the operator. The apply-time behaviour is
+        // unchanged - the WAL replay context still resolves the selector against its own reader.
+        if (!tableMetadata.isWalEnabled() || executionContext.isWalApplication() || tableToken.isLiveView()) {
             reader = executionContext.getReader(tableToken);
         }
+
+        // A live view's newest partition is the durable frontier its refresh pipeline writes into,
+        // so DROP PARTITION must not name it. Best effort from this reader snapshot, which the
+        // statement outlives - TableWriter.removePartition repeats the check authoritatively at
+        // apply time. Skipped under WAL application: the replay recompiles this very SQL, its
+        // reader can lag the writer that is about to run it, and a SqlException raised here is not
+        // WAL-recoverable, so a false positive would suspend the view rather than let the writer
+        // decide.
+        final boolean rejectLiveViewActivePartition = action == PartitionAction.DROP
+                && tableToken.isLiveView()
+                && reader != null
+                && !executionContext.isWalApplication();
 
         try {
             if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
@@ -1576,7 +1649,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             final CharSequence tok = expectToken(lexer, "'list' or 'where'");
             if (isListKeyword(tok)) {
-                alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, pos, action);
+                alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, pos, action, rejectLiveViewActivePartition);
             } else if (isWhereKeyword(tok)) {
                 AlterOperationBuilder alterOperationBuilder = switch (action) {
                     case PartitionAction.DROP ->
@@ -1611,6 +1684,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     throw CairoException.partitionManipulationRecoverable().position(functionPosition)
                                             .put("no partitions matched WHERE clause");
                                 }
+                                if (rejectLiveViewActivePartition) {
+                                    // filterPartitions always evaluates the newest logical partition,
+                                    // so re-running the filter on it reproduces the decision it made.
+                                    final long activePartitionTimestamp = activeLogicalPartitionTimestamp(reader);
+                                    partitionFunctionRec.setTimestamp(activePartitionTimestamp);
+                                    if (function.getBool(partitionFunctionRec)) {
+                                        throw liveViewActivePartitionDropError(reader, activePartitionTimestamp, functionPosition);
+                                    }
+                                }
                             }
                             // Check for WITH clause for CONVERT TO PARQUET
                             CharSequence nextTok = SqlUtil.fetchNext(lexer);
@@ -1644,7 +1726,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableToken tableToken,
             @Nullable TableReader reader,
             int pos,
-            int action
+            int action,
+            boolean rejectLiveViewActivePartition
     ) throws SqlException {
         final AlterOperationBuilder alterOperationBuilder;
         switch (action) {
@@ -1705,6 +1788,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // Otherwise ignore the split time part.
                 int hi = action == PartitionAction.FORCE_DROP ? partitionName.length() : -1;
                 long timestamp = PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy, 0, hi);
+                if (rejectLiveViewActivePartition) {
+                    assert reader != null;
+                    final long activePartitionTimestamp = activeLogicalPartitionTimestamp(reader);
+                    // Both sides go through the logical floor. The parsed name already drops the
+                    // split suffix, but the newest attached partition is a physical one, which for
+                    // a split logical partition carries a timestamp the name never spells.
+                    if (reader.getTxFile().getLogicalPartitionTimestamp(timestamp) == activePartitionTimestamp) {
+                        throw liveViewActivePartitionDropError(reader, activePartitionTimestamp, lastPosition);
+                    }
+                }
                 alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
             } catch (CairoException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
@@ -2131,7 +2224,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * {@code ALTER LIVE VIEW <name> RESUME|SUSPEND WAL}. Mirrors compileAlterMatView.
+     * {@code ALTER LIVE VIEW <name> ...}. Mirrors compileAlterMatView.
      * <p>
      * A live view is a WAL table, so a failing inline apply suspends it like any other, and
      * hasPendingLiveViewApply then skips it until an operator RESUMEs. That recovery was
@@ -2139,25 +2232,66 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * ALTER LIVE VIEW grammar existed - so an idle view stayed suspended, serving a stale prefix,
      * with DROP + recreate the only escape.
      * <p>
-     * Only the WAL-control verbs live here; the structural ones stay rejected, since a live view's
-     * schema is a function of its SELECT.
+     * Beyond the WAL-control verbs, this grammar manages the view's durable tier - the WAL table
+     * that backs it: {@code SET TTL}, {@code DROP PARTITION} and {@code CONVERT PARTITION}. All
+     * three reuse the {@code ALTER TABLE} helpers verbatim, so partition name formats, WHERE
+     * clauses, the Parquet {@code WITH (...)} options and every error message match tables.
+     * {@code FORCE DROP PARTITION} is rejected: it bypasses the WAL and writes through a directly
+     * acquired TableWriter, but a live view's writer is owned by the refresh worker's inline apply.
+     * <p>
+     * One restriction is the view's own: {@code DROP PARTITION} may not name the newest partition,
+     * which is the durable frontier the refresh pipeline appends into. The check here is best
+     * effort, from a TableReader snapshot the statement outlives;
+     * {@link TableWriter#removePartition(long)} repeats it authoritatively at apply time.
+     * <p>
+     * The structural verbs stay rejected, since a live view's schema is a function of its SELECT.
      */
     private void compileAlterLiveView(SqlExecutionContext executionContext) throws SqlException {
         expectKeyword(lexer, "view");
         final int liveViewNamePosition = lexer.getPosition();
         CharSequence tok = expectToken(lexer, "live view name");
         assertNameIsQuotedOrNotAKeyword(tok, liveViewNamePosition);
-        final TableToken liveViewToken = tableExistsOrFail(liveViewNamePosition, unquote(tok), executionContext);
+        final CharSequence liveViewName = unquote(tok);
+        // Before any resolution, for the same reason as in compileAlterMatView. A live view cannot
+        // be renamed, but DROP + CREATE can still hand its name to a different view between the
+        // ALTER being sequenced and WAL-applied, and only the writer knows which view the statement
+        // meant.
+        executionContext.setStatementTargetTableName(liveViewName);
+        final TableToken liveViewToken = tableExistsOrFail(liveViewNamePosition, liveViewName, executionContext);
         if (!liveViewToken.isLiveView()) {
             throw SqlException.$(lexer.lastTokenPosition(), "live view name expected");
         }
-        tok = expectToken(lexer, "'resume' or 'suspend'");
-        if (isResumeKeyword(tok)) {
-            parseResumeWal(liveViewToken, liveViewNamePosition, executionContext);
-        } else if (isSuspendKeyword(tok)) {
-            parseSuspendWal(liveViewToken, liveViewNamePosition, executionContext);
-        } else {
-            throw SqlException.$(lexer.lastTokenPosition(), "'resume' or 'suspend' expected");
+
+        try (TableRecordMetadata tableMetadata = engine.getTableMetadata(liveViewToken)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || (!isSetKeyword(tok) && !isDropKeyword(tok) && !isConvertKeyword(tok)
+                    && !isResumeKeyword(tok) && !isSuspendKeyword(tok) && !isForceKeyword(tok))) {
+                compileAlterLiveViewExt(executionContext, tok, liveViewToken, liveViewNamePosition);
+                return;
+            }
+            if (isSetKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isTtlKeyword(tok)) {
+                    compileAlterLiveViewSetExt(executionContext, tok, liveViewToken, liveViewNamePosition);
+                    return;
+                }
+                alterTableOrMatViewSetTtl(liveViewToken, liveViewNamePosition, tableMetadata);
+            } else if (isDropKeyword(tok)) {
+                expectKeyword(lexer, "partition");
+                executionContext.getSecurityContext().authorizeAlterTableDropPartition(liveViewToken);
+                alterTableDropConvertDetachOrAttachPartition(tableMetadata, liveViewToken, PartitionAction.DROP, executionContext);
+            } else if (isConvertKeyword(tok)) {
+                alterTableConvertPartition(executionContext, liveViewToken, tableMetadata);
+            } else if (isResumeKeyword(tok)) {
+                parseResumeWal(liveViewToken, liveViewNamePosition, executionContext);
+            } else if (isSuspendKeyword(tok)) {
+                parseSuspendWal(liveViewToken, liveViewNamePosition, executionContext);
+            } else {
+                // FORCE, the only token left in the accepted set above. Named explicitly rather than
+                // left to the generic "expected" message, because FORCE DROP PARTITION is a real
+                // ALTER TABLE verb an operator would reasonably reach for here.
+                throw SqlException.$(lexer.lastTokenPosition(), "FORCE DROP PARTITION is not supported on live views");
+            }
         }
     }
 
@@ -2532,26 +2666,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executionContext.getSecurityContext().authorizeAlterTableAddColumn(tableToken);
                 alterTableAddColumn(executionContext, tableNamePosition, tableToken, tableMetadata);
             } else if (isConvertKeyword(tok)) {
-                tok = expectToken(lexer, "'partition'");
-                if (!isPartitionKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
-                }
-                tok = expectToken(lexer, "'to'");
-                if (!isToKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'to' expected");
-                }
-                tok = expectToken(lexer, "'parquet' or 'native'");
-                final int action;
-                if (isParquetKeyword(tok)) {
-                    action = PartitionAction.CONVERT_TO_PARQUET;
-                    executionContext.getSecurityContext().authorizeAlterTableConvertPartitionToParquet(tableToken);
-                } else if (isNativeKeyword(tok)) {
-                    action = PartitionAction.CONVERT_TO_NATIVE;
-                    executionContext.getSecurityContext().authorizeAlterTableConvertPartitionToNative(tableToken);
-                } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
-                }
-                alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, action, executionContext);
+                alterTableConvertPartition(executionContext, tableToken, tableMetadata);
             } else if (isDropKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || (!isColumnKeyword(tok) && !isPartitionKeyword(tok))) {
@@ -2595,7 +2710,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         tok = expectToken(lexer, "'list'");
                         if (isListKeyword(tok)) {
                             executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
-                            alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, null, lexer.lastTokenPosition(), PartitionAction.FORCE_DROP);
+                            alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, null, lexer.lastTokenPosition(), PartitionAction.FORCE_DROP, false);
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "'list' expected");
                         }
@@ -5786,6 +5901,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
         }
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
+    }
+
+    protected void compileAlterLiveViewExt(SqlExecutionContext executionContext, CharSequence tok, TableToken liveViewToken, int liveViewNamePosition) throws SqlException {
+        LOG.debug().$("'set' or 'drop' or 'convert' or 'resume' or 'suspend' expected [liveViewToken=").$(liveViewToken)
+                .$(", liveViewNamePosition=").$(liveViewNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'set', 'drop', 'convert', 'resume' or 'suspend' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'set', 'drop', 'convert', 'resume' or 'suspend' expected");
+    }
+
+    protected void compileAlterLiveViewSetExt(SqlExecutionContext executionContext, CharSequence tok, TableToken liveViewToken, int liveViewNamePosition) throws SqlException {
+        LOG.debug().$("'ttl' expected [liveViewToken=").$(liveViewToken)
+                .$(", liveViewNamePosition=").$(liveViewNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'ttl' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'ttl' expected");
     }
 
     protected void compileAlterMatViewExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {

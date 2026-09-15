@@ -119,6 +119,15 @@ public final class LiveViewCheckpointLayout {
      */
     public static final String REPAIRING_MARKER_FILE_NAME = "_repairing";
     /**
+     * Top-level marker file recording that the live view's table lost rows to TTL
+     * enforcement or {@code DROP PARTITION} which the checkpoint timeline has not yet
+     * been reconciled with: {@code _checkpoints/_retention}. Its presence forces a
+     * restart to rebuild from the applied base table rather than trust a timeline
+     * whose positions still count the removed rows. See
+     * {@link LiveViewRetentionMarker}.
+     */
+    public static final String RETENTION_MARKER_FILE_NAME = "_retention";
+    /**
      * CRC-checked copy-on-write work set of zero-reference segments awaiting
      * generation-safe physical removal.
      */
@@ -320,6 +329,13 @@ public final class LiveViewCheckpointLayout {
      */
     public static Path repairingMarkerPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {
         return dst.of(checkpointsDir).concat(REPAIRING_MARKER_FILE_NAME);
+    }
+
+    /**
+     * Points {@code dst} at {@code <checkpointsDir>/_retention}.
+     */
+    public static Path retentionMarkerPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {
+        return dst.of(checkpointsDir).concat(RETENTION_MARKER_FILE_NAME);
     }
 
     public static Path retirementQueuePath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {

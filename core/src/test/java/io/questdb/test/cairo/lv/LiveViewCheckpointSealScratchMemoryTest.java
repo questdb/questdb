@@ -302,7 +302,8 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                             LIFECYCLE_IDENTITY,
                             true,
                             1_500_000,
-                            0
+                            0,
+                            null
                     );
                     Assert.assertEquals(1, result.getRootsVersioned());
                 }
@@ -375,8 +376,8 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                         Assert.assertTrue("capture A must retain its tracker-bound scratch", trackerA.getUsed() > 0);
                         Assert.assertTrue("capture B must retain its tracker-bound scratch", trackerB.getUsed() > 0);
 
-                        writer.publishRepair(captureA, DEFINITION_TXN, 2, 2, 0, LIFECYCLE_IDENTITY_A, true, 1_500_000, 0);
-                        writer.publishRepair(captureB, DEFINITION_TXN, 2, 2, 0, LIFECYCLE_IDENTITY_B, true, 1_500_000, 0);
+                        writer.publishRepair(captureA, DEFINITION_TXN, 2, 2, 0, LIFECYCLE_IDENTITY_A, true, 1_500_000, 0, null);
+                        writer.publishRepair(captureB, DEFINITION_TXN, 2, 2, 0, LIFECYCLE_IDENTITY_B, true, 1_500_000, 0, null);
                     }
                 }
 

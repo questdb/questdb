@@ -57,6 +57,17 @@ import java.io.Closeable;
  *     compact, and reuses every prefix subtree below the floor. This is the
  *     preserve-the-prefix half of an EOF or predecessor-resume out-of-order
  *     repair: the tail roots go, the long-term anchors stay.</li>
+ *     <li>{@link #removeRanges} drops every entry whose {@code maxTimestamp}
+ *     falls inside one of a sorted set of disjoint timestamp intervals - the
+ *     retention removal of the roots a TTL eviction or {@code DROP PARTITION}
+ *     took the output of - and keeps everything else by page reference. Only
+ *     the spines that reach an affected leaf are path-copied; a subtree that
+ *     lies wholly inside an interval is released without being walked for
+ *     survivors, one wholly outside every interval is reused untouched, and a
+ *     node left with a single child is promoted the way a truncate promotes
+ *     one. Unlike a truncate the surviving keys can start above the old
+ *     minimum, so the copied spine carries every rewritten child's new minimum
+ *     key up with it.</li>
  * </ul>
  * Metadata pages are immutable and never rewritten in place, so a reader of the
  * prior generation keeps walking the old paths. The instance is reusable across
@@ -77,9 +88,13 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     private final LiveViewCheckpointTimelineNode newRootBuilder = new LiveViewCheckpointTimelineNode();
     private final LongList releasedSegmentIds = new LongList();
     private final ObjList<InsertResult> resultPool = new ObjList<>();
+    private final ObjList<RemoveResult> removePool = new ObjList<>();
     private final ObjList<LiveViewCheckpointTimelineNode> rightPool = new ObjList<>();
     private final ObjList<LiveViewCheckpointPageRef> spliceRefPool = new ObjList<>();
     private final ObjList<LiveViewCheckpointPageRef> truncateRefPool = new ObjList<>();
+    private static final int REMOVE_CHANGED = 1;
+    private static final int REMOVE_DROPPED = 2;
+    private static final int REMOVE_UNCHANGED = 0;
 
     public LiveViewCheckpointTimelineWriter(@NotNull CairoConfiguration configuration) {
         this(configuration, 64, 64);
@@ -179,6 +194,66 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     public void of(@Transient @NotNull Path checkpointsDir) {
         this.checkpointsDir.of(checkpointsDir);
         reader.of(checkpointsDir);
+    }
+
+    /**
+     * Drops every entry whose {@code maxTimestamp} lies inside one of
+     * {@code intervals} - a flat list of {@code [lo, hiExclusive)} pairs, sorted by
+     * {@code lo} and pairwise disjoint - and fills {@code newRootOut} with the new
+     * tree root. Subtrees no interval touches are reused by page reference, a
+     * subtree an interval covers whole is released without being descended, and
+     * only the spine down to each affected leaf is copied into {@code newSegmentId}.
+     * A node left with one child is promoted by reference, so the published tree
+     * stays as compact as an append would leave it; the root itself can collapse
+     * to a leaf.
+     * <p>
+     * Returns true when a non-empty tree survives. When no entry falls inside any
+     * interval nothing is written: {@code oldRoot} is reused as-is, the segment is
+     * discarded and {@link #getLastSegmentBytes()} reports 0. Returns false -
+     * leaving {@code newRootOut} untouched and, again, no segment behind - when
+     * every entry falls inside an interval, so the caller can fall back to a full
+     * retire.
+     */
+    public boolean removeRanges(
+            @NotNull LiveViewCheckpointPageRef oldRoot,
+            @NotNull LongList intervals,
+            long newSegmentId,
+            @NotNull LiveViewCheckpointPageRef newRootOut
+    ) {
+        releasedSegmentIds.clear();
+        lastSegmentBytes = 0;
+        lastSegmentPageCount = 0;
+        if (oldRoot.isNull()) {
+            return false;
+        }
+        assert intervals.size() % 2 == 0 : "removal intervals must be [lo, hi) pairs";
+        for (int i = 2, n = intervals.size(); i < n; i += 2) {
+            assert intervals.getQuick(i) >= intervals.getQuick(i - 1) : "removal intervals must be sorted and disjoint";
+        }
+        if (intervals.size() == 0) {
+            newRootOut.of(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength());
+            return true;
+        }
+        beginSegment(newSegmentId);
+        final int outcome = removeRec(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength(), intervals, 0);
+        if (outcome == REMOVE_UNCHANGED) {
+            // Nothing touched: no page was written, so leave no page-less segment
+            // behind and hand the old tree back.
+            segmentWriter.discard();
+            releasedSegmentIds.clear();
+            newRootOut.of(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength());
+            return true;
+        }
+        if (outcome == REMOVE_DROPPED) {
+            // Every key went. A dropped subtree is only ever released, never
+            // rewritten, so no page was written here either.
+            segmentWriter.discard();
+            return false;
+        }
+        commitSegment();
+        final LiveViewCheckpointPageRef rootRef = removeResultAt(0).ref;
+        newRootOut.of(rootRef.getSegmentId(), rootRef.getOffset(), rootRef.getLength());
+        return true;
     }
 
     /**
@@ -339,6 +414,95 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
             leftPool.setQuick(depth, node);
         }
         return node;
+    }
+
+    /**
+     * Removes the keys inside {@code intervals} from the subtree rooted at
+     * {@code (seg, off, len)}, writing rewritten nodes bottom-up. Reports one of
+     * {@link #REMOVE_UNCHANGED} (no key inside any interval; nothing written or
+     * released, the caller keeps the old reference), {@link #REMOVE_DROPPED} (every
+     * key inside an interval; every page released, nothing written) or
+     * {@link #REMOVE_CHANGED}, in which case {@link #removeResultAt} for
+     * {@code depth} holds the survivor's page reference and its new minimum key. A
+     * node that keeps exactly one child hands that child up by reference.
+     * <p>
+     * An internal node routes by child minimum keys alone, so a child's timestamp
+     * span is known only as {@code [min_i, min_i+1]} - closed on the right, since a
+     * timestamp tie can straddle two children. A child is dropped without a walk when
+     * an interval covers that whole span, reused when no interval meets it, and
+     * descended otherwise.
+     */
+    private int removeRec(long seg, long off, long len, LongList intervals, int depth) {
+        final LiveViewCheckpointTimelineNode node = leftAt(depth);
+        reader.openAndDecode(seg, off, len, node);
+        final RemoveResult res = removeResultAt(depth);
+        if (node.isLeaf()) {
+            if (node.removeEntriesInRanges(intervals) == 0) {
+                return REMOVE_UNCHANGED;
+            }
+            releasedSegmentIds.add(seg);
+            if (node.count() == 0) {
+                return REMOVE_DROPPED;
+            }
+            writePage(node, res.ref);
+            res.minTs = node.entryMaxTimestamp[0];
+            res.minId = node.entryCheckpointId[0];
+            return REMOVE_CHANGED;
+        }
+        final int count = node.count();
+        final LiveViewCheckpointTimelineNode out = rightAt(depth);
+        out.resetInternal();
+        boolean changed = false;
+        for (int ci = 0; ci < count; ci++) {
+            final long childMinTs = node.childMinMaxTimestamp[ci];
+            final long childMaxTs = ci + 1 < count ? node.childMinMaxTimestamp[ci + 1] : Long.MAX_VALUE;
+            if (!intersectsAny(intervals, childMinTs, childMaxTs)) {
+                out.appendChild(childMinTs, node.childMinCheckpointId[ci], node.childSegmentId[ci], node.childOffset[ci], node.childLength[ci]);
+                continue;
+            }
+            if (childMaxTs != Long.MAX_VALUE && coversAny(intervals, childMinTs, childMaxTs)) {
+                // Wholly inside an interval: never descended, so its pages have to be
+                // walked to be released. The walk costs what the removal discards.
+                releaseSubtreeRec(node.childSegmentId[ci], node.childOffset[ci], node.childLength[ci], depth + 1);
+                changed = true;
+                continue;
+            }
+            final int outcome = removeRec(node.childSegmentId[ci], node.childOffset[ci], node.childLength[ci], intervals, depth + 1);
+            if (outcome == REMOVE_UNCHANGED) {
+                out.appendChild(childMinTs, node.childMinCheckpointId[ci], node.childSegmentId[ci], node.childOffset[ci], node.childLength[ci]);
+            } else if (outcome == REMOVE_CHANGED) {
+                final RemoveResult child = removeResultAt(depth + 1);
+                out.appendChild(child.minTs, child.minId, child.ref.getSegmentId(), child.ref.getOffset(), child.ref.getLength());
+                changed = true;
+            } else {
+                changed = true;
+            }
+        }
+        if (!changed) {
+            return REMOVE_UNCHANGED;
+        }
+        releasedSegmentIds.add(seg);
+        final int kept = out.count();
+        if (kept == 0) {
+            return REMOVE_DROPPED;
+        }
+        res.minTs = out.childMinMaxTimestamp[0];
+        res.minId = out.childMinCheckpointId[0];
+        if (kept == 1) {
+            // Sole surviving child: promote it as this subtree's root by reference,
+            // writing no new internal page.
+            res.ref.of(out.childSegmentId[0], out.childOffset[0], (int) out.childLength[0]);
+            return REMOVE_CHANGED;
+        }
+        writePage(out, res.ref);
+        return REMOVE_CHANGED;
+    }
+
+    private RemoveResult removeResultAt(int depth) {
+        while (removePool.size() <= depth) {
+            removePool.add(new RemoveResult());
+        }
+        return removePool.getQuick(depth);
     }
 
     /**
@@ -522,6 +686,51 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
             pool.add(new LiveViewCheckpointPageRef());
         }
         return pool.getQuick(depth);
+    }
+
+    /**
+     * True when some interval of {@code intervals} covers the closed timestamp span
+     * {@code [spanMinTs, spanMaxTs]} whole.
+     */
+    private static boolean coversAny(LongList intervals, long spanMinTs, long spanMaxTs) {
+        for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            final long lo = intervals.getQuick(i);
+            if (lo > spanMinTs) {
+                break;
+            }
+            if (spanMaxTs < intervals.getQuick(i + 1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True when some interval of {@code intervals} meets the closed timestamp span
+     * {@code [spanMinTs, spanMaxTs]}.
+     */
+    private static boolean intersectsAny(LongList intervals, long spanMinTs, long spanMaxTs) {
+        for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            final long lo = intervals.getQuick(i);
+            if (lo > spanMaxTs) {
+                break;
+            }
+            if (spanMinTs < intervals.getQuick(i + 1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Per-recursion-level carrier for a {@link #removeRec} result: the survivor's
+     * page reference and its minimum key, which the parent spine carries up because
+     * a removal can take a subtree's lowest keys.
+     */
+    private static final class RemoveResult {
+        final LiveViewCheckpointPageRef ref = new LiveViewCheckpointPageRef();
+        long minId;
+        long minTs;
     }
 
     /**

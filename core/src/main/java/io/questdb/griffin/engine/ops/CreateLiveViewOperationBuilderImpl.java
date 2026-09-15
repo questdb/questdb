@@ -57,6 +57,12 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
     // CairoEngine.createLiveView knows, so it parses there and not in the parser.
     private String startFromTimestamp;
     private int startFromTimestampPosition;
+    // TTL in hours when positive, in months when negative, 0 when the clause was omitted. Lands in
+    // the LV table's _meta through LiveViewTableStructure, exactly as CREATE TABLE ... TTL does.
+    private int ttlHoursOrMonths;
+    // Position of the TTL value in the CREATE text, so the granularity check that
+    // CairoEngine.createLiveView runs against the resolved partition scheme can point at it.
+    private int ttlPosition;
     private String viewName;
     private int viewNamePosition;
 
@@ -78,6 +84,8 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
                 startFromKind,
                 startFromTimestamp,
                 startFromTimestampPosition,
+                ttlHoursOrMonths,
+                ttlPosition,
                 anchorSpec
         );
     }
@@ -98,6 +106,8 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
         startFromKind = LiveViewDefinition.START_FROM_UNSET;
         startFromTimestamp = null;
         startFromTimestampPosition = 0;
+        ttlHoursOrMonths = 0;
+        ttlPosition = 0;
         viewName = null;
         viewNamePosition = 0;
     }
@@ -172,6 +182,14 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
         this.startFromKind = LiveViewDefinition.START_FROM_TIMESTAMP;
         this.startFromTimestamp = startFromTimestamp;
         this.startFromTimestampPosition = startFromTimestampPosition;
+    }
+
+    public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
+        this.ttlHoursOrMonths = ttlHoursOrMonths;
+    }
+
+    public void setTtlPosition(int ttlPosition) {
+        this.ttlPosition = ttlPosition;
     }
 
     public void setViewName(String viewName) {

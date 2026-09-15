@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
@@ -38,6 +39,10 @@ import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRetentionMarker;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
@@ -213,6 +218,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final MPSequence commandPubSeq;
     private final RingQueue<TableWriterTask> commandQueue;
     private final SCSequence commandSubSeq;
+    // Partition removals the last commit made durable, since resetWalApplyCounters().
+    // The apply job reads them after each processed transaction; see PartitionRemovalEvents.
+    private final PartitionRemovalEvents committedPartitionRemovals = new PartitionRemovalEvents();
     private final CairoConfiguration configuration;
     private final LongList coveringAddrs = new LongList();
     private final LongList coveringAuxAddrs = new LongList();
@@ -298,11 +306,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Path path;
     private final int pathRootSize;
     private final int pathSize;
+    // Partition removals dropPartitionByExactTimestamp staged in memory and the next
+    // commitRemovePartitionOperation has not made durable yet: (lo, hiExclusive, rows, source)
+    // per physical partition. Cleared on rollback so a removal that never commits is never
+    // reported as one that did.
+    private final LongList pendingPartitionRemovals = new LongList();
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     // Pending parquet->native conversions awaiting a single batched commit.
     // Three longs per entry: [partitionTimestamp, oldPartitionNameTxn, lastPartitionConvertedFlag].
     private final LongList pendingParquetToNativeConversions = new LongList();
     private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
+    // Logical timestamps of the partitions dropParquetFormatForReplaceRange() decoded from parquet
+    // to native so a replace-range commit could rewrite them. restoreParquetFormatAfterReplaceRange()
+    // re-encodes them once the commit is durable. Kept across a failed apply so the retry that
+    // finds them already native still restores them.
+    private final LongList replaceRangeParquetPartitions = new LongList();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
@@ -627,6 +645,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // table-local file because it could not reach the purge queue or the
             // shared purge-log writer. This is best-effort and never fails open.
             recoverSpilledPostingSealPurges();
+
+            // Finish a parquet re-encode a crash interrupted between the decode's commit and
+            // the commit that made the replacement durable.
+            recoverPendingParquetRestore();
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -1694,6 +1716,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             commit00();
             lastWalCommitTimestampMicros = wallClockMicros;
             housekeep(wallClockMicros);
+            // After housekeep(), so a partition TTL has just evicted is not encoded on its way out.
+            restoreParquetFormatAfterReplaceRange();
             shrinkO3Mem();
 
             assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
@@ -2449,6 +2473,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
         long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
         return colTop > -1L ? colTop : defaultValue;
+    }
+
+    /**
+     * The partition removals the writer committed since the last
+     * {@link #resetWalApplyCounters()}, in commit order, each with the seqTxn its commit
+     * carried. Populated by TTL enforcement and {@code DROP PARTITION} only once their
+     * {@code _txn} commit has returned; a removal that rolled back is not in it. The apply
+     * job hands the list on to a live view's refresh worker, which owes the checkpoint
+     * timeline a correction for every row the durable tier lost.
+     */
+    public PartitionRemovalEvents getCommittedPartitionRemovals() {
+        return committedPartitionRemovals;
     }
 
     public long getDataAppendPageSize() {
@@ -3287,6 +3323,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public boolean removePartition(long timestamp) {
         partitionRemoveCandidates.clear();
+        pendingPartitionRemovals.clear();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             return false;
         }
@@ -3298,6 +3335,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // One logical partition may be split into multiple physical partitions.
         // For example, partition daily '2024-02-24' can be stored as 2 pieces '2024-02-24' and '2024-02-24T12'
         long logicalPartitionTimestampToDelete = txWriter.getLogicalPartitionTimestamp(timestamp);
+
+        // A live view's newest partition is the durable frontier its refresh pipeline writes into:
+        // the flush appends there and an out-of-order repair rewrites it. enforceTtl already refuses
+        // to evict it, and DROP PARTITION must refuse too. This is the authoritative check - the
+        // compiler's reader-based one runs against a snapshot the statement outlives - so it runs
+        // after the commit above, against the partition set the removal would act on. Recoverable,
+        // so a WAL replay marks the transaction committed and moves on instead of suspending the
+        // view. TTL eviction goes straight to dropPartitionByExactTimestamp and never lands here.
+        if (tableToken.isLiveView()
+                && txWriter.getPartitionCount() > 0
+                && logicalPartitionTimestampToDelete == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
+            throw CairoException.partitionManipulationRecoverable()
+                    .put("cannot drop the active partition of a live view [partition=")
+                    .ts(metadata.getTimestampType(), logicalPartitionTimestampToDelete)
+                    .put(']');
+        }
+
         int partitionIndex = txWriter.findAttachedPartitionRawIndexByLoTimestamp(logicalPartitionTimestampToDelete);
         if (partitionIndex < 0) {
             // A partition slit can exist without the partition itself.
@@ -3313,7 +3367,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.getLogicalPartitionTimestamp(
                         partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex)
                 ) == logicalPartitionTimestampToDelete) {
-            dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
+            dropped |= dropPartitionByExactTimestamp(partitionTimestamp, PartitionRemovalEvents.SOURCE_DROP_PARTITION);
         }
 
         if (dropped) {
@@ -3471,6 +3525,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         physicallyWrittenRowsSinceLastCommit.reset();
         dedupRowsRemovedSinceLastCommit.reset();
         hasTtlEvictedPartitionsSinceLastCommit = false;
+        committedPartitionRemovals.clear();
     }
 
     @Override
@@ -3480,6 +3535,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
                 partitionRemoveCandidates.clear();
+                pendingPartitionRemovals.clear();
                 rollbackDeferredPostingSealPurges();
                 o3CommitBatchTimestampMin = Long.MAX_VALUE;
                 if ((masterRef & 1) != 0) {
@@ -3636,6 +3692,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit();
         metadata.setTtlHoursOrMonths(ttlHoursOrMonths);
         writeMetadataToDisk();
+        if (tableToken.isLiveView()) {
+            updateLiveViewDefinitionTtl(ttlHoursOrMonths);
+        }
     }
 
     public void setSeqTxn(long seqTxn) {
@@ -5443,6 +5502,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         activeNullSetters = nullSetters;
     }
 
+    private void clearParquetRestoreMarker() {
+        try {
+            path.trimTo(pathSize);
+            ParquetRestoreMarker.clear(ff, path);
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
     private void clearTodoAndCommitMeta() {
         try {
             bumpMetadataVersion();
@@ -5623,9 +5691,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void commitRemovePartitionOperation() {
+        if (tableToken.isLiveView() && pendingPartitionRemovals.size() > 0) {
+            // Ordered before the commit below: the evidence that rows went missing has to
+            // be durable before the rows are, or a crash in between leaves a table the
+            // checkpoint timeline overstates with nothing to say so. A marker that cannot
+            // be written fails the removal instead: the partitions stay attached, the
+            // writer is discarded, and the WAL apply that drove this reports the fault.
+            writeLiveViewRetentionMarker();
+        }
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriter();
+        publishPendingPartitionRemovals();
         processPartitionRemoveCandidates();
 
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
@@ -7192,7 +7269,61 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private boolean dropPartitionByExactTimestamp(long timestamp) {
+    /**
+     * Decodes every parquet partition the replace range covers back to native, so the replace-mode
+     * O3 path has native partitions to rewrite: {@link #processO3Block} cannot express a row removal
+     * against a parquet file, and refuses such a commit outright.
+     * <p>
+     * The conversions commit their own {@code _txn} before the replacement runs. They have to: both
+     * the decode and the O3 replacement name their output directory after the current txn, so
+     * sharing one txn would have the replacement write into the directory the decode just produced.
+     * The partitions this method touches go on {@link #replaceRangeParquetPartitions}, and
+     * {@link #restoreParquetFormatAfterReplaceRange()} re-encodes them once the replacement is
+     * durable.
+     * <p>
+     * A crash between the two commits leaves the partitions native, and this method has nothing
+     * left to record on the replay, because the partitions it would have recorded are already
+     * native. {@link ParquetRestoreMarker} is what survives that window: it goes to disk before
+     * the decode commits and {@link #recoverPendingParquetRestore()} finishes the re-encode when
+     * the table is opened again.
+     */
+    private void dropParquetFormatForReplaceRange(long replaceRangeTsLo, long replaceRangeTsHiExcl, long seqTxn) {
+        if (replaceRangeTsHiExcl <= replaceRangeTsLo || !txWriter.hasParquetPartitions()) {
+            return;
+        }
+        final int pending = replaceRangeParquetPartitions.size();
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            // A read-only partition is left alone, the same way processO3Block skips writing to
+            // one: converting it would fail the apply over a partition the replacement is not
+            // going to touch anyway.
+            if (!txWriter.isPartitionParquet(i) || txWriter.isPartitionReadOnly(i)) {
+                continue;
+            }
+            // A parquet partition is never a split: convertPartitionNativeToParquet squashes the
+            // logical partition before it encodes, so the attached timestamp is the logical floor
+            // and the logical ceiling is the partition's exclusive upper bound.
+            final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+            final long partitionCeiling = txWriter.getNextLogicalPartitionTimestamp(partitionTimestamp);
+            if (partitionCeiling <= replaceRangeTsLo || partitionTimestamp >= replaceRangeTsHiExcl) {
+                continue;
+            }
+            replaceRangeParquetPartitions.add(partitionTimestamp);
+        }
+        if (replaceRangeParquetPartitions.size() == pending) {
+            return;
+        }
+        writeParquetRestoreMarker(seqTxn);
+        for (int i = pending, n = replaceRangeParquetPartitions.size(); i < n; i++) {
+            final long partitionTimestamp = replaceRangeParquetPartitions.getQuick(i);
+            LOG.info().$("decoding parquet partition for replace range commit [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
+            convertPartitionParquetToNative(partitionTimestamp, false);
+        }
+        commitPendingParquetToNativeConversions();
+    }
+
+    private boolean dropPartitionByExactTimestamp(long timestamp, byte removalSource) {
         final long minTimestamp = txWriter.getMinTimestamp(); // table min timestamp
         final long maxTimestamp = txWriter.getMaxTimestamp(); // table max timestamp
 
@@ -7203,6 +7334,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
+        // Before the partition list changes: the interval's upper bound and the row count
+        // both come from the neighbours this removal is about to shift.
+        stagePartitionRemoval(index, timestamp, removalSource);
 
         if (timestamp == txWriter.getPartitionTimestampByTimestamp(maxTimestamp)) {
             // removing active partition
@@ -7297,6 +7431,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         partitionRemoveCandidates.clear();
+        pendingPartitionRemovals.clear();
 
         long maxTimestamp = TableUtils.getMaxTimestamp(txWriter, timestampDriver, wallClockMicros, configuration.isTtlWallClockEnabled());
         boolean evicted = false;
@@ -7306,7 +7441,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long floorTimestamp = txWriter.getPartitionFloor(partitionTimestamp);
             if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
                 assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
-                evicted |= dropPartitionByExactTimestamp(partitionTimestamp);
+                evicted |= dropPartitionByExactTimestamp(partitionTimestamp, PartitionRemovalEvents.SOURCE_TTL);
                 continue;
             }
 
@@ -7315,7 +7450,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$("Partition's TTL expired, evicting [table=").$(metadata.getTableToken())
                         .$(", partitionTs=").microTime(partitionTimestamp)
                         .I$();
-                evicted |= dropPartitionByExactTimestamp(partitionTimestamp);
+                evicted |= dropPartitionByExactTimestamp(partitionTimestamp, PartitionRemovalEvents.SOURCE_TTL);
                 evictedPartitionTimestamp = partitionTimestamp;
             } else {
                 // Partitions are sorted by timestamp, no need to check the rest
@@ -10390,7 +10525,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long o3TimestampLo, o3TimestampHi;
                         if (isCommitReplaceMode()) {
                             if (isParquet) {
-                                // Parquet partitions do not support replace commits feature yet
+                                // Unreachable for a WAL replace commit: dropParquetFormatForReplaceRange()
+                                // decodes every parquet partition the range covers before the
+                                // replacement runs, and restoreParquetFormatAfterReplaceRange()
+                                // re-encodes them after it commits. Kept as a backstop, because the
+                                // merge path still has no way to remove rows from a parquet file.
                                 o3PartitionUpdRemaining.decrementAndGet();
                                 latchCount--;
                                 pressureControl.updateInflightPartitions(--inflightPartitions);
@@ -10854,6 +10993,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         walRowsProcessed = rowHi - rowLo;
 
         if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            // The replacement cannot rewrite a parquet partition, so the partitions it covers go
+            // back to native first and are re-encoded by restoreParquetFormatAfterReplaceRange()
+            // after this transaction commits. A replace-range transaction always applies alone
+            // (WalTxnDetails.calculateInsertTransactionBlock breaks the block on one), so this is
+            // the only place a replace commit can be intercepted.
+            dropParquetFormatForReplaceRange(replaceRangeTsLo, replaceRangeTsHi, seqTxn);
             processWalCommitDedupReplace(
                     walPath,
                     inOrder,
@@ -12233,6 +12378,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         publishDeferredPostingSealPurges(currentTableTxn, true, POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT);
     }
 
+    /**
+     * Moves the removals {@link #dropPartitionByExactTimestamp} staged into
+     * {@link #committedPartitionRemovals}, stamped with the seqTxn the commit that just
+     * returned carried. Runs only after that commit, so the log never names a removal
+     * the {@code _txn} does not hold.
+     */
+    private void publishPendingPartitionRemovals() {
+        final long seqTxn = txWriter.getSeqTxn();
+        for (int i = 0, n = pendingPartitionRemovals.size(); i < n; i += 4) {
+            committedPartitionRemovals.add(
+                    seqTxn,
+                    pendingPartitionRemovals.getQuick(i),
+                    pendingPartitionRemovals.getQuick(i + 1),
+                    pendingPartitionRemovals.getQuick(i + 2),
+                    (byte) pendingPartitionRemovals.getQuick(i + 3)
+            );
+        }
+        pendingPartitionRemovals.clear();
+    }
+
     private void publishPendingPostingSealPurges(long currentTableTxn) {
         if (!hasPostingIndexers) {
             return;
@@ -12874,6 +13039,61 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Some writer in-memory state will be still dirty, and it's not easy to roll everything back
         // for all the failure points. It's safer to re-open the writer object after a column-add failure.
         distressed = true;
+    }
+
+    /**
+     * Finishes a parquet re-encode that a crash interrupted, using the
+     * {@link ParquetRestoreMarker} the decode left in the table directory. The decode and the
+     * replacement it serves are two commits (see
+     * {@link #dropParquetFormatForReplaceRange(long, long, long)}), and a crash between them
+     * leaves the partitions native with nothing in the WAL replay left to say a re-encode was
+     * owed; a crash after the replacement committed but before the encode ran leaves the same
+     * debt on a table that may never take another commit. Both windows end here, at the next
+     * writer open.
+     * <p>
+     * The marker's partitions are re-encoded as they stand now: encoding is idempotent - a
+     * partition the replay is about to decode again simply pays for one more round trip - and a
+     * partition the replacement emptied or TTL evicted is gone and skipped. Best effort: losing
+     * the user's compaction is not a reason to fail a writer open, so only a distressed writer
+     * propagates.
+     */
+    private void recoverPendingParquetRestore() {
+        if (!PartitionBy.isPartitioned(partitionBy) || metadata.getTimestampIndex() < 0) {
+            return;
+        }
+        try {
+            path.trimTo(pathSize);
+            final long seqTxn = ParquetRestoreMarker.read(configuration, path, tableToken.getTableId(), replaceRangeParquetPartitions);
+            path.trimTo(pathSize);
+            if (seqTxn == Numbers.LONG_NULL) {
+                // Absent, unreadable, or another table's copy: there is no partition list to act
+                // on, so drop whatever is there rather than reading it again on every open.
+                ParquetRestoreMarker.clear(ff, path);
+                replaceRangeParquetPartitions.clear();
+                return;
+            }
+            if (replaceRangeParquetPartitions.size() == 0) {
+                // Nothing to re-encode: restoreParquetFormatAfterReplaceRange() would leave the
+                // marker in place, and the next open would read it again.
+                ParquetRestoreMarker.clear(ff, path);
+                return;
+            }
+            LOG.info().$("finishing an interrupted parquet re-encode on writer open [table=").$(tableToken)
+                    .$(", partitions=").$(replaceRangeParquetPartitions.size())
+                    .$(", seqTxn=").$(seqTxn)
+                    .I$();
+            restoreParquetFormatAfterReplaceRange();
+        } catch (Throwable th) {
+            LOG.critical().$("could not finish an interrupted parquet re-encode, partitions stay native [table=").$(tableToken)
+                    .$(", error=").$(th)
+                    .I$();
+            if (distressed) {
+                throw th;
+            }
+        } finally {
+            path.trimTo(pathSize);
+            replaceRangeParquetPartitions.clear();
+        }
     }
 
     /**
@@ -13653,6 +13873,66 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
+        }
+    }
+
+    /**
+     * Re-encodes the partitions {@link #dropParquetFormatForReplaceRange(long, long, long)}
+     * decoded, so a replace-range commit leaves the user's compaction where it found it. Runs
+     * after the commit is durable, because the partition's final row set is what has to be
+     * encoded, and again from {@link #recoverPendingParquetRestore()} when a crash got in
+     * between.
+     * <p>
+     * The bloom filters come from the per-column parquet encoding config, which is what
+     * {@code CONVERT PARTITION TO PARQUET} uses when its statement carries no {@code WITH} clause.
+     * A {@code WITH (bloom_filter_columns=..., fpp=...)} override is scoped to the statement that
+     * carried it and is stored nowhere, so a partition converted under one loses it here.
+     * <p>
+     * A partition the replacement emptied or that TTL evicted is gone by now, and is skipped. A
+     * failed re-encode leaves that partition native and does not fail the apply: the replacement
+     * data is already durable, and losing compaction is not worth suspending the table over. The
+     * writer going distressed is the exception - nothing further can run on it, so the
+     * {@link ParquetRestoreMarker} stays behind for the next writer to pick the remaining
+     * partitions up.
+     */
+    private void restoreParquetFormatAfterReplaceRange() {
+        if (replaceRangeParquetPartitions.size() == 0) {
+            return;
+        }
+        // The replacement and everything housekeep() did are committed by now, so the encode reads
+        // a settled partition and convertPartitionNativeToParquet does not take its commit-first
+        // branch, which asserts a non-WAL table.
+        assert !inTransaction();
+        try {
+            for (int i = 0, n = replaceRangeParquetPartitions.size(); i < n; i++) {
+                final long partitionTimestamp = replaceRangeParquetPartitions.getQuick(i);
+                if (txWriter.getPartitionIndex(partitionTimestamp) < 0) {
+                    LOG.info().$("replaced parquet partition is gone, nothing to re-encode [table=").$(tableToken)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                            .I$();
+                    continue;
+                }
+                LOG.info().$("re-encoding parquet partition after replace range commit [table=").$(tableToken)
+                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                        .I$();
+                try {
+                    convertPartitionNativeToParquet(partitionTimestamp, null, Double.NaN);
+                } catch (Throwable th) {
+                    LOG.critical().$("could not re-encode parquet partition after replace range commit, " +
+                                    "partition stays native [table=").$(tableToken)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                            .$(", error=").$(th)
+                            .I$();
+                    if (distressed) {
+                        throw th;
+                    }
+                }
+            }
+            // Every partition has had its turn, so the durable evidence has done its job. A
+            // partition that failed above is not retried: it would fail again on every commit.
+            clearParquetRestoreMarker();
+        } finally {
+            replaceRangeParquetPartitions.clear();
         }
     }
 
@@ -14811,6 +15091,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         activeNullSetters = o3NullSetters1;
     }
 
+    /**
+     * Records the interval and row count of the physical partition at {@code index}
+     * before {@link #dropPartitionByExactTimestamp} detaches it. The interval is
+     * {@code [partitionTimestamp, hiExclusive)} where {@code hiExclusive} is the smaller of
+     * the logical partition's ceiling and the next attached partition's timestamp, so a
+     * split partition reports the sub-range it held rather than the whole logical
+     * partition, and the row count is the partition's committed size. The event becomes
+     * visible through {@link #getCommittedPartitionRemovals()} only once
+     * {@link #commitRemovePartitionOperation()} has committed it.
+     */
+    private void stagePartitionRemoval(int index, long partitionTimestamp, byte removalSource) {
+        final int partitionCount = txWriter.getPartitionCount();
+        long hiExclusive = txWriter.getNextLogicalPartitionTimestamp(partitionTimestamp);
+        if (index + 1 < partitionCount) {
+            hiExclusive = Math.min(hiExclusive, txWriter.getPartitionTimestampByIndex(index + 1));
+        }
+        final long removedRows = index == partitionCount - 1
+                ? txWriter.getTransientRowCount()
+                : txWriter.getPartitionSize(index);
+        pendingPartitionRemovals.add(partitionTimestamp, hiExclusive, removedRows, removalSource);
+    }
+
     private long swapTimestampInMemCols(int timestampIndex) {
         long timestampAddr;
         var tsMem1 = o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex));
@@ -15208,6 +15510,67 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
     }
 
+    /**
+     * Mirrors the {@code _meta} TTL {@link #setMetaTtl(int)} has just written into the view's two
+     * {@code _lv} copies, so the definition never disagrees with the table it describes.
+     * <p>
+     * The sequencer-directory copy is the one that matters beyond this node: a replica rebuilds a
+     * live view's table from it - LV WAL never replicates, so the replica's own writer never sees
+     * this ALTER - and a stale copy there would hand a freshly genesised replica the TTL the view
+     * had at CREATE. The table-directory copy is what this node's own boot scan and
+     * {@code SHOW CREATE LIVE VIEW} read.
+     * <p>
+     * Runs after {@code _meta}, not before, so the surviving divergence after a crash is always
+     * the harmless direction: {@code _lv} lagging means a replica retains more than the primary,
+     * where {@code _lv} leading would have it evict data the primary still holds. The window is
+     * closed rather than merely narrowed - {@link #apply(AbstractOperation, long)} commits the
+     * ALTER's seqTxn only after the operation returns, and this runs inside the operation, so a
+     * crash here replays the whole ALTER and rewrites both copies.
+     * <p>
+     * A write failure fails the ALTER, which suspends the view; a RESUME replays it. That is the
+     * same treatment {@code writeLiveViewRetentionMarker} gets, and for the same reason: silently
+     * carrying on would leave a definition nothing later reconciles.
+     */
+    private void updateLiveViewDefinitionTtl(int ttlHoursOrMonths) {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(tableToken.getTableName());
+        // A registered view lends its own definition, which is both the object the rewrite needs
+        // and the in-memory copy that has to end up carrying the new value. With refresh disabled
+        // the registry holds nothing (CairoEngine.buildViewGraphs skips registration) and the
+        // global ApplyWal2TableJob drives this apply, so read the definition back off disk - the
+        // metadata it is handed is inert here, since append() writes none of it.
+        LiveViewDefinition definition = instance != null ? instance.getDefinition() : null;
+        if (blockFileWriter == null) {
+            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
+        }
+        try {
+            if (definition == null) {
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    path.trimTo(pathSize).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+                    definition = LiveViewDefinition.readFromPath(
+                            reader,
+                            path,
+                            tableToken,
+                            null,
+                            GenericRecordMetadata.copyOfNew(metadata)
+                    );
+                }
+            }
+            definition.updateTtl(ttlHoursOrMonths);
+            path.trimTo(pathSize).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+            try (BlockFileWriter definitionWriter = blockFileWriter) {
+                definitionWriter.of(path.$());
+                LiveViewDefinition.append(definition, definitionWriter);
+            }
+            path.trimTo(pathSize).concat(WalUtils.SEQ_DIR).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+            try (BlockFileWriter definitionWriter = blockFileWriter) {
+                definitionWriter.of(path.$());
+                LiveViewDefinition.append(definition, definitionWriter);
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
     private void updateMaxTimestamp(long timestamp) {
         txWriter.updateMaxTimestamp(timestamp);
         this.timestampSetter.accept(timestamp);
@@ -15310,11 +15673,47 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Writes the durable {@link LiveViewRetentionMarker} for a live view whose table is
+     * about to lose rows. Called before the removal's commit; see
+     * {@link #commitRemovePartitionOperation()}.
+     */
+    private void writeLiveViewRetentionMarker() {
+        try {
+            path.trimTo(pathSize).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            LiveViewRetentionMarker.write(configuration, path, tableToken.getTableId(), txWriter.getSeqTxn());
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
     private void writeMetadataToDisk() {
         rewriteAndSwapMetadata(metadata);
         clearTodoAndCommitMeta();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
+        }
+    }
+
+    /**
+     * Records the re-encode {@link #restoreParquetFormatAfterReplaceRange()} owes, before the
+     * decode's commit makes the partitions native. Best effort: the marker guards the user's
+     * compaction, not the data, so a table that cannot write it degrades to the old behaviour -
+     * a crash before the re-encode leaves the partitions native - rather than failing the apply
+     * and suspending the table.
+     */
+    private void writeParquetRestoreMarker(long seqTxn) {
+        try {
+            path.trimTo(pathSize);
+            ParquetRestoreMarker.write(configuration, path, tableToken.getTableId(), seqTxn, replaceRangeParquetPartitions);
+        } catch (Throwable th) {
+            LOG.critical().$("could not record the parquet partitions a replace range commit decoded, " +
+                            "a crash before the re-encode would leave them native [table=").$(tableToken)
+                    .$(", seqTxn=").$(seqTxn)
+                    .$(", error=").$(th)
+                    .I$();
+        } finally {
+            path.trimTo(pathSize);
         }
     }
 

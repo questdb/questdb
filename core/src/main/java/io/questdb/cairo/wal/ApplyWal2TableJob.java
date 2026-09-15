@@ -33,6 +33,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoKeywords;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.PartitionRemovalEvents;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -106,6 +107,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     // commit's applied state diverges from its raw WAL stream (dedup / skip / non-DATA op).
     // Read once by applyOutstandingWalTransactions right after processWalCommit returns.
     private boolean lastCommitDiverged;
+    // Partition removals the transactions of the current applyWal call made durable, in
+    // commit order, each stamped with its seqTxn. Reset at the start of every applyWal and
+    // appended to after every processed transaction, whether or not the batch then went on
+    // to fail: a removal the writer committed stays committed. LiveViewRefreshJob reads it
+    // right after applyWalDirect returns, before the next apply resets it.
+    private final PartitionRemovalEvents committedRemovalEvents = new PartitionRemovalEvents();
     private long lastAttemptSeqTxn;
     private long lastCommittedRows;
 
@@ -560,17 +567,30 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 assert walId == writer.getWalTnxDetails().getWalId(seqTxn);
                                 assert segmentId == writer.getWalTnxDetails().getSegmentId(seqTxn);
 
-                                final int txnCommitted = processWalCommit(
-                                        writer,
-                                        walId,
-                                        segmentId,
-                                        tempPath,
-                                        segmentTxn,
-                                        operationExecutor,
-                                        seqTxn,
-                                        commitTimestamp,
-                                        pressureControl
-                                );
+                                final int txnCommitted;
+                                try {
+                                    txnCommitted = processWalCommit(
+                                            writer,
+                                            walId,
+                                            segmentId,
+                                            tempPath,
+                                            segmentTxn,
+                                            operationExecutor,
+                                            seqTxn,
+                                            commitTimestamp,
+                                            pressureControl
+                                    );
+                                } finally {
+                                    // In a finally so a transaction that committed its removals
+                                    // and then failed further down still reports them: the
+                                    // writer publishes a removal only after its _txn commit
+                                    // returned, and nothing un-applies that commit. The writer's
+                                    // log is cleared here as well as by its own per-transaction
+                                    // reset, so a throw before that reset cannot hand the previous
+                                    // transaction's events over a second time.
+                                    committedRemovalEvents.addAll(writer.getCommittedPartitionRemovals());
+                                    writer.getCommittedPartitionRemovals().clear();
+                                }
                                 assert txnCommitted != 0;
 
                                 if (txnCommitted > 0) {
@@ -867,8 +887,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // truncate that then fails is harmless, whereas a throw after removeAllPartitions()
                 // would commit the seqTxn, never re-enter this arm, and leave the view active over a
                 // rebuilt base.
+                //
+                // Durably, for the same reason: a committed TRUNCATE leaves nothing for the next
+                // load to find, so a view whose _lv.s cannot be written refuses the TRUNCATE and
+                // suspends the mat view's table, rather than flipping invalid in memory only. A
+                // view flipped that way loaded valid on restart, and its drain then stopped at the
+                // TRUNCATE on every cycle, holding the pre-rebuild rows for good.
                 if (writer.getTableToken().isMatView()) {
-                    engine.invalidateLiveViewsForBaseTable(
+                    engine.invalidateLiveViewsForBaseTableDurably(
                             writer.getTableToken(),
                             "base materialized view was rebuilt"
                     );
@@ -984,27 +1010,30 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             }
                             return;
                         case CMD_UPDATE_TABLE:
+                            // Live views are invalidated too, but not here. An UPDATE rewrites base rows
+                            // in place, which the data-removal operations routed through the ALTER
+                            // branch above never do: those only retire settled data below the view's
+                            // replay window, so the view's already-computed rows stay consistent with
+                            // the base rows they came from. An UPDATE instead mutates the very rows a
+                            // live view derives from, and it does so only in the applied partitions -
+                            // the WAL segments the refresh worker drains keep the pre-update values.
+                            // The two sources the view reads then disagree: the forward drain emits
+                            // pre-update rows, while every recovery path (restart, O3 replay, refresh
+                            // failure) recomputes the same range from the applied base and emits
+                            // post-update rows. The view's contents would come to depend on whether a
+                            // recovery happened to run, so the view invalidates instead and the
+                            // operator recreates it.
+                            //
+                            // UpdateOperatorImpl does that BEFORE the UPDATE's commit, because the
+                            // invalidation is a write to the view's _lv.s and a process dying between
+                            // a committed UPDATE and that write would leave the view recorded valid for
+                            // good: a committed UPDATE leaves nothing in the base's metadata or txn log
+                            // for a load-time check to find. Invalidating here, after the apply
+                            // returned, is what left that window open.
                             final long rowsAffected = operationExecutor.executeUpdate(tableWriter, sql, seqTxn);
                             if (rowsAffected > 0) {
                                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                                 mvRefreshTask.invalidationReason = UpdateOperation.MAT_VIEW_INVALIDATION_REASON;
-                                // Live views must be invalidated too. An UPDATE rewrites base rows in
-                                // place, which the data-removal operations routed through the ALTER
-                                // branch above never do: those only retire settled data below the view's
-                                // replay window, so the view's already-computed rows stay consistent with
-                                // the base rows they came from. An UPDATE instead mutates the very rows a
-                                // live view derives from, and it does so only in the applied partitions -
-                                // the WAL segments the refresh worker drains keep the pre-update values.
-                                // The two sources the view reads then disagree: the forward drain emits
-                                // pre-update rows, while every recovery path (restart, O3 replay, refresh
-                                // failure) recomputes the same range from the applied base and emits
-                                // post-update rows. The view's contents would come to depend on whether a
-                                // recovery happened to run, so invalidate instead and let the operator
-                                // recreate it.
-                                engine.invalidateLiveViewsForBaseTable(
-                                        tableWriter.getTableToken(),
-                                        UpdateOperation.MAT_VIEW_INVALIDATION_REASON
-                                );
                             }
                             return;
                         default:
@@ -1141,6 +1170,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     /**
+     * The partition removals the last {@link #applyWal} call made durable, in commit
+     * order, with the seqTxn each removal's commit carried. Covers TTL evictions a DATA
+     * commit's housekeeping ran and {@code DROP PARTITION} SQL transactions alike, and
+     * keeps every removal committed before a later transaction in the same call failed
+     * or the call ran out of its time quota. Reset by the next {@link #applyWal}; a caller
+     * that needs the events past that must copy them.
+     */
+    public PartitionRemovalEvents getCommittedRemovalEvents() {
+        return committedRemovalEvents;
+    }
+
+    /**
      * Drives the apply loop for {@code tableToken} to best effort. Does NOT report
      * whether (or how far) it applied: it silently returns without applying when the
      * table backs off under memory pressure ({@code !isReadyToProcess()}) or the writer
@@ -1166,6 +1207,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         final Path tempPath = Path.PATH.get();
         SeqTxnTracker txnTracker = null;
         this.lastAttemptSeqTxn = -1;
+        committedRemovalEvents.clear();
         try {
             // security context is checked on writing to the WAL and can be ignored here
             final TableToken updatedToken = engine.getUpdatedTableToken(tableToken);

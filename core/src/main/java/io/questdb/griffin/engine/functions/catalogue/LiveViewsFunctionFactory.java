@@ -36,6 +36,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewLifecycleState;
 import io.questdb.cairo.lv.LiveViewSegmentRepairEnvelope;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -448,9 +449,15 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                 private LiveViewDefinition definition;
                 private CairoEngine engine;
                 private LiveViewInstance instance;
+                private LiveViewLifecycleState lifecycleState;
                 private long o3BoundaryReplayRows;
                 private long o3ReplayScanRows;
                 private long o3ResumeReplayRows;
+
+                private static boolean isWalSuspended(CairoEngine engine, LiveViewInstance instance) {
+                    final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTrackerIfExists(instance.getLiveViewToken());
+                    return tracker != null && tracker.isSuspended();
+                }
 
                 public void clear() {
                     applyLagDeferSinceUs = Numbers.LONG_NULL;
@@ -462,6 +469,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     checkpointTimeline = null;
                     definition = null;
                     engine = null;
+                    lifecycleState = null;
                     instance = null;
                     o3BoundaryReplayRows = 0;
                     o3ReplayScanRows = 0;
@@ -782,7 +790,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         return switch (col) {
                             case COLUMN_VIEW_NAME -> instance.getLiveViewToken().getTableName();
                             case COLUMN_VIEW_TABLE_DIR_NAME -> instance.getLiveViewToken().getDirName();
-                            case COLUMN_VIEW_STATUS -> instance.getLifecycleState().catalogueName();
+                            case COLUMN_VIEW_STATUS -> lifecycleState.catalogueName();
                             default -> null;
                         };
                     }
@@ -790,7 +798,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_VIEW_NAME -> definition.getViewName();
                         case COLUMN_VIEW_TABLE_DIR_NAME -> instance.getLiveViewToken().getDirName();
                         case COLUMN_BASE_TABLE_NAME -> definition.getBaseTableName();
-                        case COLUMN_VIEW_STATUS -> instance.getLifecycleState().catalogueName();
+                        case COLUMN_VIEW_STATUS -> lifecycleState.catalogueName();
                         case COLUMN_FLUSH_EVERY_INTERVAL_UNIT ->
                                 getIntervalUnit(definition.getFlushEveryIntervalUnit());
                         case COLUMN_IN_MEMORY_INTERVAL_UNIT -> getIntervalUnit(definition.getInMemoryIntervalUnit());
@@ -866,6 +874,13 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     this.engine = engine;
                     this.instance = instance;
                     this.definition = instance.getDefinition();
+                    // The sequencer's suspension flag for the view's own WAL table is the
+                    // one lifecycle signal the instance does not hold. Read through the
+                    // non-creating accessor: a table with no tracker yet was never
+                    // suspended, and a catalogue scan must not install one per row.
+                    // A stub's state is terminal and ignores the flag, so skip the
+                    // lookup for it.
+                    this.lifecycleState = instance.getLifecycleState(!instance.isStub() && isWalSuspended(engine, instance));
                     // Snapshot both tuples once per row. The writer publishes each of
                     // them by replacing the whole array, so one read per row gives the
                     // columns a consistent view; a read per column would let a fresh

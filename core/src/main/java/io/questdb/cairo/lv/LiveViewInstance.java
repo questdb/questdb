@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionRemovalEvents;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
@@ -70,6 +71,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * WAL writer pool per FLUSH cycle rather than being owned by the instance.
  */
 public class LiveViewInstance implements QuietCloseable {
+    // The invalidation reason for a referenced base column that no longer resolves under its name
+    // and type, when the operation that broke it is not known: the refresh worker's rebuilds and the
+    // load-time check both append " [column=<name>]". The apply side names its operation instead.
+    public static final String BROKEN_DEPENDENCY_INVALIDATION_REASON = "base schema change to a referenced column";
     public static final int CHECKPOINT_REPAIR_CORRECTION_TS = 1;
     public static final int CHECKPOINT_REPAIR_HIGH_TS = 3;
     public static final int CHECKPOINT_REPAIR_IN_PROGRESS = 0;
@@ -645,16 +650,29 @@ public class LiveViewInstance implements QuietCloseable {
     // is active, and the agent's startCheckpoint cannot complete its latch
     // handshake while the worker holds the refresh latch.
     private String pendingInvalidationReason;
-    // LV-WRITER space, not base space: the live-view writer's own seqTxn of an
-    // out-of-order repair's REPLACE_RANGE block that committed but whose inline
-    // apply did not land. LONG_NULL when nothing is outstanding. Refresh is blocked
-    // behind reconciliation until such a replacement is known applied or not
+    // Partition removals the live view's table committed - TTL evictions and DROP
+    // PARTITION - that the checkpoint timeline and the lifetime row counter have not been
+    // reconciled with yet. applyLiveViewWal transfers them here from the worker-owned
+    // apply job right after each inline apply, and the refresh job consumes them at the
+    // next safe boundary: it subtracts their rows from lvRowsTotal, disposes of the
+    // timeline and clears the log. Refresh-worker only, under the refresh latch, same
+    // discipline as lvRowsTotal. Heap-backed and grown once, so a removal costs no
+    // allocation on the steady state; the per-view memory tracker does not see it.
+    private final PartitionRemovalEvents pendingPartitionRemovals = new PartitionRemovalEvents();
+    // LV-WRITER space, not base space: the live-view writer's own seqTxn of a
+    // REPLACE_RANGE block that committed but whose inline apply did not land - an
+    // out-of-order repair's, or the one a seed sweep's reset commits to discard the
+    // output it could not prove. LONG_NULL when nothing is outstanding. Refresh is
+    // blocked behind reconciliation until such a replacement is known applied or not
     // applied: the repair's own bookkeeping (lvRowsTotal, every repaired root's
-    // lvRowPosition, the suffix range-add) reads the materialised table, so a turn
-    // that runs over an unapplied replacement derives its coordinates from a table
-    // that does not hold the output. In-RAM only - a restart reconciles the same
-    // window through LiveViewRefreshJob.reconcileAppliedFloorAfterRestart. Mutated
-    // and read under the refresh latch.
+    // lvRowPosition, the suffix range-add) reads the materialised table, and a sweep
+    // that ran on would seal seed roots and append output over rows the replacement is
+    // about to discard, so a turn that runs over an unapplied replacement derives its
+    // coordinates from a table that does not hold the output. In-RAM only - a restart
+    // reconciles the same window through LiveViewRefreshJob.reconcileAppliedFloorAfterRestart
+    // for an ACTIVE view, and through the seed sweep's resume setup, which applies the
+    // view's WAL and refuses to read the table until it is fully applied, for a SEEDING
+    // one. Mutated and read under the refresh latch.
     private long pendingReplacementLvSeqTxn = Numbers.LONG_NULL;
     // Cached RecordToRowCopier (compiled bytecode bridging the SELECT cursor's record
     // shape to the LV's WalWriter row). Invalidated when the WalWriter's metadata version
@@ -752,6 +770,13 @@ public class LiveViewInstance implements QuietCloseable {
     // restart. Numbers.LONG_NULL until the first seed turn initialises it; 0
     // means "swept nothing yet". Mutated under the refresh latch only.
     private long seedDataOffset = Numbers.LONG_NULL;
+    // The seed sweep owes a full-range REPLACE_RANGE commit before any of its
+    // output counts: the durable partial output it found could not be proven to
+    // be the deterministic prefix the sweep is recomputing, so the first commit
+    // of the re-sweep replaces the whole range rather than appending onto it.
+    // Armed by the resume setup and cleared by the commit that carries it.
+    // Mutated under the refresh latch only.
+    private boolean seedReplacePending;
     // Single-shot flag: the first seed turn of the process restores window
     // state + data offset from the timeline's newest root (if it holds one),
     // then later turns continue from the in-memory state. Mirrors
@@ -759,11 +784,14 @@ public class LiveViewInstance implements QuietCloseable {
     // latch only.
     private boolean seedResumeAttempted;
     // Skip-write floor for the seed sweep: the LV table's on-disk row count
-    // captured on the first turn of the process. Output rows whose position is
-    // below it are already durable (deterministic recompute), so the sweep
-    // recomputes them to advance window state but skips the WAL append. Spans
-    // however many turns the catch-up needs; persists across turns (the per-turn
-    // budget can split the catch-up). Mutated under the refresh latch only.
+    // captured on the first turn of the process, in the sweep's EMITTED-OUTPUT
+    // coordinate. Output rows whose position is below it are already durable
+    // (deterministic recompute), so the sweep recomputes them to advance window
+    // state but skips the WAL append. Spans however many turns the catch-up
+    // needs; persists across turns (the per-turn budget can split the catch-up).
+    // The two coordinates only coincide while nothing has removed rows from the
+    // table: a resume that cannot prove that takes the replacement above and a
+    // zero floor instead. Mutated under the refresh latch only.
     private long seedSkipWriteFloor;
     // The pinned snapshot's seqTxn, fixed for the whole sweep (see seedBaseReader).
     // The SEEDING -> ACTIVE handoff advances the watermarks to exactly this value
@@ -1695,7 +1723,16 @@ public class LiveViewInstance implements QuietCloseable {
         return latestSeenTs;
     }
 
-    public LiveViewLifecycleState getLifecycleState() {
+    /**
+     * Derives the lifecycle state {@code live_views().view_status} reports. The
+     * instance holds every durable signal itself except the sequencer's suspension
+     * flag for the view's own WAL table, which the caller reads off
+     * {@code TableSequencerAPI} and passes in; a stub ignores it.
+     *
+     * @param isWalSuspended {@code true} iff the sequencer reports the view's own
+     *                       WAL table suspended
+     */
+    public LiveViewLifecycleState getLifecycleState(boolean isWalSuspended) {
         if (stubState != null) {
             // Stub for an unloadable view (too-new format, or torn / corrupt state):
             // its durable signals were never read, so report the terminal state directly.
@@ -1709,7 +1746,8 @@ public class LiveViewInstance implements QuietCloseable {
                 !dropped && !isClosed,
                 stateReader.isInvalid(),
                 isCheckpointRecoveryBlocked(),
-                stateReader.getSeedState() == LiveViewState.SEED_STATE_SEEDING
+                stateReader.getSeedState() == LiveViewState.SEED_STATE_SEEDING,
+                isWalSuspended
         );
     }
 
@@ -1782,9 +1820,17 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * @return the live-view-writer seqTxn of an out-of-order repair's replacement
-     * that committed but did not apply, or {@link Numbers#LONG_NULL} when nothing
-     * is outstanding. See {@link #pendingReplacementLvSeqTxn}.
+     * The durable partition removals the refresh job still owes a reconciliation for. See
+     * the field for ownership; only the refresh worker reads or mutates it.
+     */
+    public PartitionRemovalEvents getPendingPartitionRemovals() {
+        return pendingPartitionRemovals;
+    }
+
+    /**
+     * @return the live-view-writer seqTxn of a replacement - an out-of-order repair's
+     * or a seed reset's - that committed but did not apply, or {@link Numbers#LONG_NULL}
+     * when nothing is outstanding. See {@link #pendingReplacementLvSeqTxn}.
      */
     public long getPendingReplacementLvSeqTxn() {
         return pendingReplacementLvSeqTxn;
@@ -1932,6 +1978,10 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public boolean hasPendingInvalidationReason() {
         return pendingInvalidationReason != null;
+    }
+
+    public boolean hasPendingPartitionRemovals() {
+        return !pendingPartitionRemovals.isEmpty();
     }
 
     public boolean hasWarnedBelowLowerBoundDrop() {
@@ -2094,6 +2144,15 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return {@code true} while the seed sweep still owes the full-range
+     * replacement that discards the durable partial output it could not prove.
+     * See {@link #seedReplacePending}.
+     */
+    public boolean isSeedReplacePending() {
+        return seedReplacePending;
+    }
+
+    /**
      * @return {@code true} once the refresh worker has attempted to resume the
      * seed sweep from the timeline's newest root on the first turn of this
      * process (whether a resume point was found or not). Single-shot per
@@ -2128,7 +2187,7 @@ public class LiveViewInstance implements QuietCloseable {
      * catalogue load path could not load the on-disk files (a too-new format version,
      * or a torn / corrupt {@code _lv} / {@code _lv.s} with no recoverable state). Such
      * a stub is visible in the catalogue and droppable but never refreshes. See the
-     * stub constructor and {@link #getLifecycleState()}.
+     * stub constructor and {@link #getLifecycleState(boolean)}.
      */
     public boolean isStub() {
         return stubState != null;
@@ -2779,8 +2838,10 @@ public class LiveViewInstance implements QuietCloseable {
      * {@link #isSeedResumeAttempted()}). Called by the refresh worker after
      * {@link #prepareForRecompile()} on a SEEDING view so the next
      * sweep turn restores window state and the data offset from the timeline's
-     * newest root against the recompiled factory, or re-sweeps from offset 0
-     * behind the skip-write floor. Mutated under the refresh latch only.
+     * newest root against the recompiled factory, re-sweeps from offset 0 behind
+     * the skip-write floor, or - when a partition removal is still outstanding -
+     * re-sweeps from offset 0 behind the replacement {@link #seedReplacePending}
+     * arms. Mutated under the refresh latch only.
      */
     public void resetSeedResumeAttempted() {
         seedResumeAttempted = false;
@@ -2980,8 +3041,8 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * Arms (or, with {@link Numbers#LONG_NULL}, clears) the reconciliation block a
-     * repair leaves behind when its replacement committed without applying. See
-     * {@link #pendingReplacementLvSeqTxn}.
+     * repair or a seed reset leaves behind when its replacement committed without
+     * applying. See {@link #pendingReplacementLvSeqTxn}.
      */
     public void setPendingReplacementLvSeqTxn(long lvSeqTxn) {
         this.pendingReplacementLvSeqTxn = lvSeqTxn;
@@ -3040,6 +3101,14 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setSeedDataOffset(long seedDataOffset) {
         this.seedDataOffset = seedDataOffset;
+    }
+
+    /**
+     * Arms or clears the seed sweep's owed full-range replacement. See
+     * {@link #seedReplacePending}.
+     */
+    public void setSeedReplacePending(boolean seedReplacePending) {
+        this.seedReplacePending = seedReplacePending;
     }
 
     /**

@@ -52,6 +52,9 @@ public class CreateLiveViewOperation implements Operation {
     // first point that knows whether the base is TIMESTAMP_MICRO or TIMESTAMP_NANO.
     private final @Nullable String startFromTimestamp;
     private final int startFromTimestampPosition;
+    // TTL in hours when positive, in months when negative, 0 when the CREATE carried no TTL clause.
+    private final int ttlHoursOrMonths;
+    private final int ttlPosition;
     private final String viewName;
     private final int viewNamePosition;
 
@@ -71,6 +74,8 @@ public class CreateLiveViewOperation implements Operation {
             byte startFromKind,
             @Nullable String startFromTimestamp,
             int startFromTimestampPosition,
+            int ttlHoursOrMonths,
+            int ttlPosition,
             @Nullable LiveViewDefinition.LvAnchorSpec anchorSpec
     ) {
         this.viewName = viewName;
@@ -88,6 +93,8 @@ public class CreateLiveViewOperation implements Operation {
         this.startFromKind = startFromKind;
         this.startFromTimestamp = startFromTimestamp;
         this.startFromTimestampPosition = startFromTimestampPosition;
+        this.ttlHoursOrMonths = ttlHoursOrMonths;
+        this.ttlPosition = ttlPosition;
         this.anchorSpec = anchorSpec;
     }
 
@@ -164,6 +171,14 @@ public class CreateLiveViewOperation implements Operation {
 
     public int getStartFromTimestampPosition() {
         return startFromTimestampPosition;
+    }
+
+    public int getTtlHoursOrMonths() {
+        return ttlHoursOrMonths;
+    }
+
+    public int getTtlPosition() {
+        return ttlPosition;
     }
 
     public String getViewName() {
