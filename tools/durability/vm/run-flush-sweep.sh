@@ -29,6 +29,8 @@ source "$HERE/lib/qemu.sh"
 source "$HERE/lib/verdict.sh"
 # shellcheck source=lib/arms.sh
 source "$HERE/lib/arms.sh"
+# shellcheck source=lib/junit.sh
+source "$HERE/lib/junit.sh"
 
 bash "$HERE/check-host.sh" >/dev/null || { bash "$HERE/check-host.sh"; exit 1; }
 
@@ -309,7 +311,15 @@ echo "  sweep mode=$SWEEP_MODE over $(echo "$points" | wc -w) boundaries: $(echo
 
 fails=0; checked=0
 failed_points=""
+# MACHINE-READABLE OUTPUT, alongside the text log rather than instead of it (issues/06). Lands
+# next to the per-boundary evidence in $OUTDIR, which is outside $RUN and therefore survives the
+# success-path cleanup -- a report that a green run deletes is no use to a dashboard.
+JUNIT_XML="${QDB_JUNIT_XML:-$OUTDIR/junit.xml}"
+mkdir -p "$(dirname "$JUNIT_XML")"
+junit_begin "$JUNIT_XML" "durability.$ARM.$MODE.W$WINDOW.$PROFILE"
+JUNIT_CLASS="durability.$ARM.$MODE.W$WINDOW.$PROFILE"
 for n in $points; do
+    point_started=$(date +%s)
     out=$(vm_ssh "$P2" "$KEY" "sudo umount /mnt/qdb 2>/dev/null; sudo dmsetup remove qdbdata 2>/dev/null; \
         sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
         sudo mkdir -p /mnt/qdb; \
@@ -322,9 +332,10 @@ for n in $points; do
     # `rm -rf "$RUN"`.
     mkdir -p "$OUTDIR"
     printf '%s\n' "$out" > "$OUTDIR/flush-$n.out"
-    line=$(echo "$out" | grep -vE '^DETAIL' | tail -1)
+    line=$(verdict_line "$out")
     v=$(verdict_classify "$line")
     checked=$((checked + 1))
+    junit_case "$JUNIT_CLASS" "flush-$n" "$v" "$(( $(date +%s) - point_started ))" "$out"
     echo "$STAMP sweep profile=$PROFILE epoch=$EPOCH mode=$MODE W=$WINDOW flush=$n/$nflush verdict=$v line=$line" >> "$LOG"
     printf '  flush %4d/%-4d -> %s\n' "$n" "$nflush" "$v"
     case "$v" in
@@ -353,6 +364,7 @@ if [ -n "$failed_points" ] && [ "${QDB_SWEEP_DENSIFY:-true}" = "true" ]; then
         for n in $(( f - 2 )) $(( f - 1 )) $(( f + 1 )); do
             [ "$n" -lt 1 ] && continue
             [ "$n" -gt "$nflush" ] && continue
+            point_started=$(date +%s)
             out=$(vm_ssh "$P2" "$KEY" "sudo umount /mnt/qdb 2>/dev/null; sudo dmsetup remove qdbdata 2>/dev/null; \
                 sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
                 sudo mkdir -p /mnt/qdb; \
@@ -361,8 +373,12 @@ if [ -n "$failed_points" ] && [ "${QDB_SWEEP_DENSIFY:-true}" = "true" ]; then
                 else echo 'MOUNT_FAILED'; fi")
             mkdir -p "$OUTDIR"
             printf '%s\n' "$out" > "$OUTDIR/flush-$n.out"
-            line=$(echo "$out" | grep -vE '^DETAIL' | tail -1)
+            line=$(verdict_line "$out")
             v=$(verdict_classify "$line")
+            # The densified neighbours are cases too. They are the BRACKET around a failure --
+            # the boundary that first breaks is what names the operation that did it -- so
+            # leaving them out of the report would hide the most informative points in the run.
+            junit_case "$JUNIT_CLASS" "flush-$n-densify" "$v" "$(( $(date +%s) - point_started ))" "$out"
             echo "$STAMP sweep-densify profile=$PROFILE mode=$MODE W=$WINDOW flush=$n/$nflush verdict=$v line=$line" >> "$LOG"
             printf '    neighbour %4d -> %s\n' "$n" "$v"
         done
@@ -370,6 +386,8 @@ if [ -n "$failed_points" ] && [ "${QDB_SWEEP_DENSIFY:-true}" = "true" ]; then
 fi
 
 vm_kill "$RUN"
+junit_finish
+echo "  junit xml: $JUNIT_XML"
 if [ "$fails" -eq 0 ] && [ "${QDB_KEEP_RUN:-0}" != "1" ]; then
     rm -rf "$RUN"
     echo "sweep complete: $checked boundaries, 0 failures; log at $LOG"
