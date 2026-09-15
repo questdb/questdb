@@ -597,7 +597,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         if (latestBy || multiKeyPageFrameCursor == null) {
             return false;
         }
-        if (hasOrderSensitiveAggregates) {
+        if (hasOrderSensitiveAggregates && !groupsByIndexKeyOnly(groupByKeyColumns)) {
             return false;
         }
         if (tsOrderedFrames) {
@@ -807,6 +807,25 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
         Misc.free(rowCursor);
         return null;
+    }
+
+    /**
+     * True when the consumer groups by exactly this scan's index column.
+     * <p>
+     * Every such group draws its rows from ONE key's posting list, which per-key mode
+     * emits partition-ascending with ascending row ids inside, so the frame-sequence row
+     * id that first()/last() compare is still timestamp-ordered within a group. That is
+     * what makes an order-sensitive aggregate safe over an otherwise unordered scan.
+     * Grouping by anything else -- a time bucket, say -- draws one group from many keys
+     * delivered key-by-key, and is not safe.
+     * <p>
+     * The filter indexes this reads are positions in the consumer's base metadata, which
+     * is this factory's own metadata, the same space {@link #keyQueryPosition} lives in.
+     */
+    private boolean groupsByIndexKeyOnly(@Nullable ListColumnFilter groupByKeyColumns) {
+        return groupByKeyColumns != null
+                && groupByKeyColumns.getColumnCount() == 1
+                && groupByKeyColumns.getColumnIndexFactored(0) == keyQueryPosition;
     }
 
     private static abstract class CoveringCursor implements RecordCursor {

@@ -32,8 +32,10 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
     public void testFirstGroupedByIndexKeyIsNotRejected() throws Exception {
         assertMemoryLeak(() -> {
             createTelemetry();
-            // first() is order-sensitive, so the offer is refused and the merge is kept.
-            // The guard must NOT fire: the base is still ts-ordered.
+            // first() is order-sensitive and the grouping is exactly the index column, so the
+            // base accepts the offer and drops to per-key frames. The guard must NOT fire: the
+            // base owns the claim that this arrangement is legal, and the values must still be
+            // each key's earliest row, not "whichever key was scanned first".
             assertQuery("SELECT param_id, first(value) FROM telemetry" +
                     " WHERE param_id IN ('SFID','HOTMIC') ORDER BY param_id DESC")
                     .noLeakCheck()
@@ -43,6 +45,73 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
                                     "SFID\t4.0\n" +
                                     "HOTMIC\t1.0\n"
                     );
+        });
+    }
+
+    @Test
+    public void testFirstGroupedByIndexKeyTakesPerKey() throws Exception {
+        assertMemoryLeak(() -> {
+            createTelemetryWithNulls();
+            // Grouping is exactly the index column, so the scan drops the k-way merge:
+            // "frames: per-key (unordered)" is the line that proves it.
+            assertQuery("SELECT param_id, first(value) FROM telemetry WHERE param_id IN ('SFID','HOTMIC')")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Async Group By workers: 1
+                              keys: [param_id]
+                              values: [first(value)]
+                              filter: null
+                                CoveringIndex on: param_id with: value
+                                  frames: per-key (unordered)
+                                  filter: param_id IN ['SFID','HOTMIC']
+                                    Frame forward scan on: telemetry
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstGroupedByTimeBucketKeepsTheMerge() throws Exception {
+        assertMemoryLeak(() -> {
+            createTelemetryWithNulls();
+            // SAMPLE BY groups by time bucket, so a bucket draws from many keys. Per-key
+            // would return "whichever key was scanned first" -- 373/389 buckets wrong when
+            // this was measured. The plan must NOT say per-key.
+            assertQuery("SELECT ts, first(value) FROM telemetry WHERE param_id IN ('SFID','HOTMIC') SAMPLE BY 10s")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('10s',ts)]
+                                  values: [first(value)]
+                                  filter: null
+                                    CoveringIndex on: param_id with: ts, value
+                                      filter: param_id IN ['SFID','HOTMIC']
+                                        Frame forward scan on: telemetry
+                            """);
+            assertSameResult(
+                    "SELECT ts, first(value) FROM telemetry" +
+                            " WHERE param_id IN ('SFID','HOTMIC') SAMPLE BY 10s",
+                    "SELECT /*+ no_index */ ts, first(value) FROM telemetry" +
+                            " WHERE param_id IN ('SFID','HOTMIC') SAMPLE BY 10s"
+            );
+        });
+    }
+
+    @Test
+    public void testFirstLastFamilyGroupedByIndexKeyMatchesFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            createTelemetryWithNulls();
+            final String[] aggs = {"first", "last", "first_not_null", "last_not_null"};
+            for (String agg : aggs) {
+                assertSameResult(
+                        "SELECT param_id, " + agg + "(value) FROM telemetry" +
+                                " WHERE param_id IN ('SFID','HOTMIC') ORDER BY param_id",
+                        "SELECT /*+ no_index */ param_id, " + agg + "(value) FROM telemetry" +
+                                " WHERE param_id IN ('SFID','HOTMIC') ORDER BY param_id"
+                );
+            }
         });
     }
 }

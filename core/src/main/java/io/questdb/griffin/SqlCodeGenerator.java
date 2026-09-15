@@ -428,6 +428,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // lifetime and pay that cost on every subsequent clear(). Typical query nesting is one or two
     // levels, so retaining a small head covers realistic reuse while releasing pathological depth.
     private static final int MAX_RETAINED_WHERE_CLAUSE_PARSERS = 8;
+    // Shared by validateOrderSensitiveAggregates() and its VectorAggregateFunction twin, which
+    // generic erasure keeps as two methods. One constant so the two backstops cannot drift apart
+    // in the message a user sees.
+    private static final String ORDER_SENSITIVE_UNORDERED_BASE_MSG = "base query does not provide ASC order over designated TIMESTAMP column, "
+            + "required by an order-sensitive aggregate";
     private static final ModelOperator RESTORE_WHERE_CLAUSE = IQueryModel::restoreWhereClause;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_ALL_CONSTRUCTOR = ExceptAllRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
@@ -11948,6 +11953,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<GroupByFunction> groupByFunctions,
             boolean offerAccepted
     ) throws SqlException {
+        // keep in sync with validateOrderSensitiveVectorAggregates(): same short-circuit terms,
+        // same scan-direction test, same message.
         if (offerAccepted || base == null || groupByFunctions == null
                 || base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER) {
             return;
@@ -11955,8 +11962,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             final GroupByFunction f = groupByFunctions.getQuick(i);
             if (f != null && f.isOrderSensitive()) {
-                throw SqlException.$(0, "base query does not provide ASC order over designated TIMESTAMP column, "
-                        + "required by an order-sensitive aggregate");
+                throw SqlException.$(0, ORDER_SENSITIVE_UNORDERED_BASE_MSG);
             }
         }
     }
@@ -11974,6 +11980,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<VectorAggregateFunction> vafs,
             boolean offerAccepted
     ) throws SqlException {
+        // keep in sync with validateOrderSensitiveAggregates(): same short-circuit terms,
+        // same scan-direction test, same message.
         if (offerAccepted || base == null || vafs == null
                 || base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER) {
             return;
@@ -11981,8 +11989,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0, n = vafs.size(); i < n; i++) {
             final VectorAggregateFunction f = vafs.getQuick(i);
             if (f != null && f.isOrderSensitive()) {
-                throw SqlException.$(0, "base query does not provide ASC order over designated TIMESTAMP column, "
-                        + "required by an order-sensitive aggregate");
+                throw SqlException.$(0, ORDER_SENSITIVE_UNORDERED_BASE_MSG);
             }
         }
     }
