@@ -95,7 +95,41 @@ case "$ARM" in
         # above Wm; the client held them in a DURABLE sf buffer that took the same power cut. Start
         # the server and let a restarted client replay before judging, or the oracle measures the
         # server's exposure alone and never tests the pairing that actually closes the gap.
-        if [ "$SFREPLAY" = "true" ]; then
+        # PASS A -- WHAT THE SERVER ALONE KEPT, before the client is allowed to replay.
+        #
+        # Without this the arm cannot support its own claim. Measuring only AFTER the replay
+        # gives `lost=0`, and `lost=0` has TWO causes that look identical:
+        #   * the server discarded at-risk txns and the client put them back  (the mechanism)
+        #   * the server never lost anything at this boundary                 (nothing happened)
+        # run-sf-replay.sh documents exactly this trap and solves it the same way: verify the
+        # SAME boundary twice and report the delta.
+        #
+        # The ORDER IS THE REAL SEQUENCE, not a trick: the server recovers first, then the client
+        # reconnects. Pass A runs the production recovery and measures the server's own result;
+        # the replay then happens on top of that, exactly as it would in a deployment.
+        sfa_distinct=-1; sfa_f=-1; sfa_c=-1
+        if [ "$SFREPLAY" = "compare" ]; then
+            paout=$(mktemp)
+            java $QDB_JVM -cp "$JAR" \
+                -DcommitMode="$MODE" -Dgroup.window.us="$WINDOW" -Depoch.interval.ms="$EPOCH" \
+                -Dsibling.table="$SIBLING" -Drecover.as="$RECOVER_AS" \
+                -Dmat.view="$MATVIEW" -Drebase="$REBASE" \
+                -Dschema.profile="$PROFILE" -Dqwp="$QWP" -Dqwp.sf="$QWPSF" \
+                org.questdb.CrashVerifier "$DB" >"$paout" 2>&1 || true
+            # ANCHORED TO THE WHOLE LINE SHAPE, not to the token. The engine logs to stdout on
+            # the same stream, and a log line can interleave mid-line -- observed producing
+            # `distinctIds=2026`, which is the YEAR from a timestamp, and a DURABILITY_FAILURE
+            # that was pure parse error. Requiring the full `qwp-sf rows=N distinctIds=N` shape
+            # makes a spliced line fail to match instead of yielding a plausible-looking number.
+            sfa_distinct=$(grep -oE '^qwp-sf rows=[0-9]+ distinctIds=[0-9]+' "$paout" | head -1 | grep -oE 'distinctIds=[0-9]+' | cut -d= -f2)
+            sfa_f=$(grep -oE '^recovered: count=[0-9]+ F=[0-9]+' "$paout" | grep -oE 'F=[0-9]+' | cut -d= -f2)
+            sfa_c=$(grep -oE ' C=[0-9]+' "$paout" | head -1 | tr -dc '0-9')
+            : "${sfa_distinct:=-1}"; : "${sfa_f:=-1}"; : "${sfa_c:=-1}"
+            echo "DETAIL SF_ARM_A serverAlone distinctIds=$sfa_distinct F=$sfa_f C=$sfa_c"
+            rm -f "$paout"
+        fi
+
+        if [ "$SFREPLAY" = "true" ] || [ "$SFREPLAY" = "compare" ]; then
             setsid env QDB_CAIRO_COMMIT_MODE="$MODE" \
                 QDB_CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW="${WINDOW}us" \
                 java $QDB_JVM -cp "$JAR" io.questdb.ServerMain -d "$(dirname "$DB")" \
@@ -153,6 +187,62 @@ case "$ARM" in
             [ -d "$DB" ] || why="$why db-root-absent"
             line="LOUD_FAILURE: verifier produced no verdict ($why)"
         fi
+        # PASS B vs PASS A. The delta is what the CLIENT put back, and it is the only number
+        # that distinguishes the mechanism working from nothing having happened.
+        if [ "$SFREPLAY" = "compare" ] && [ "${sfa_distinct:--1}" -ge 0 ] 2>/dev/null; then
+            sfb_distinct=$(grep -oE '^qwp-sf rows=[0-9]+ distinctIds=[0-9]+' "$vout" | head -1 | grep -oE 'distinctIds=[0-9]+' | cut -d= -f2)
+            : "${sfb_distinct:=-1}"
+            if [ "$sfb_distinct" -ge 0 ] 2>/dev/null; then
+                delta=$(( sfb_distinct - sfa_distinct ))
+                # SANITY GATE, and it fails LOUD rather than safe. Pass B verifies the same data
+                # as pass A plus whatever the client replayed, so distinct ids can only go UP.
+                # A negative delta is therefore physically impossible and means the numbers were
+                # mis-parsed. Reporting a durability verdict from unparsed numbers is how this
+                # produced a false DURABILITY_FAILURE with delta=-1230974; a boundary the oracle
+                # cannot evaluate is a finding about the harness, not a pass and not a defect.
+                if [ "$delta" -lt 0 ]; then
+                    echo "DETAIL SF_INDETERMINATE armA=$sfa_distinct armB=$sfb_distinct delta=$delta"
+                    line="LOUD_FAILURE qwp-sf: impossible negative replay delta ($delta) — the oracle's own numbers did not parse, so this boundary was not evaluated"
+                    sfb_distinct=-1
+                fi
+            fi
+            if [ "$sfb_distinct" -ge 0 ] 2>/dev/null; then
+                echo "DETAIL SF_ARM_B afterReplay distinctIds=$sfb_distinct delta=$delta"
+                # AT RISK is measured against what the CLIENT SENT, not against the server's own
+                # committed frontier. `F == C` only says the server kept what it had COMMITTED; it
+                # is silent about rows the client sent that the server never committed at all --
+                # exactly the set store-and-forward protects. Judging on F vs C printed
+                # "server lost nothing" beside a measured replay of 532,000 rows.
+                sent=$(grep -oE '^sent=[0-9]+' "$DB/_qwp_progress" 2>/dev/null | head -1 | cut -d= -f2)
+                : "${sent:=-1}"
+                if [ "$sent" -lt 0 ] 2>/dev/null; then
+                    echo "DETAIL SF_INDETERMINATE no sent= in _qwp_progress; cannot say what was at risk"
+                elif [ "$sfa_distinct" -lt "$sent" ] 2>/dev/null; then
+                    # The server alone held LESS than the client had sent. This is the boundary
+                    # that actually tests the pairing, so the client must have put something back.
+                    atrisk=$(( sent - sfa_distinct ))
+                    shortfall=$(( sent - sfb_distinct ))
+                    if [ "$delta" -gt 0 ]; then
+                        echo "DETAIL SF_REPLAY_PROVEN sent=$sent serverAlone=$sfa_distinct atRisk=$atrisk"
+                        echo "DETAIL SF_REPLAY_PROVEN client replayed $delta rows; endToEndShortfall=$shortfall"
+                        # A residual shortfall is EXPECTED, not a failure: sf_durability=periodic
+                        # means the client's own buffer is durable only to its last sync, so rows
+                        # sent after it died with the client's disk. Reported so the size of that
+                        # window is visible rather than assumed to be zero.
+                    else
+                        # THE FAILURE THIS ARM EXISTS TO CATCH: rows the client sent were missing
+                        # from the server, and the client put NONE of them back. Overrides pass B's
+                        # verdict, which would otherwise read as a pass.
+                        line="DURABILITY_FAILURE qwp-sf: $atrisk rows the client sent were absent after recovery (sent=$sent serverAlone=$sfa_distinct) and the client replayed NOTHING — store-and-forward did not close the gap"
+                    fi
+                else
+                    # Legitimate: the server already held everything the client had sent, so the
+                    # replay had nothing to do. Reported, never counted as proof of the mechanism.
+                    echo "DETAIL SF_NOT_DEMONSTRATED server alone already held everything sent (sent=$sent serverAlone=$sfa_distinct); replay had nothing to recover"
+                fi
+            fi
+        fi
+
         # Emit the verifier's FULL output, prefixed, BEFORE the verdict. Callers take the
         # verdict with `tail -1` / `grep -m1`, so prefixed detail lines cannot be mistaken
         # for it -- and the evidence stops being discarded here. Two layers of truncation

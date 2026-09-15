@@ -275,7 +275,16 @@ public class QwpCrashIngestClient {
                 }
 
                 writeProgressDurably(dbRoot, progressPath, progressTmp,
+                        // `sent` is the CLIENT's own truth and the only honest basis for asking
+                        // "was anything at risk?". The server's own frontier C cannot answer it:
+                        // C counts what the server COMMITTED, so `F == C` merely says the server
+                        // kept what it had. It says nothing about rows the client had sent that
+                        // the server never committed at all -- which is precisely the set
+                        // store-and-forward exists to protect. Judging on F vs C produced
+                        // self-contradictory output: "server lost nothing" printed beside a
+                        // measured replay of 532,000 rows.
                         (ackedRows + "\nC=" + c + "\nWm=" + wm + "\nrows=" + ackedRows
+                                + "\nsent=" + id
                                 + "\nackedFsn=" + ackedFsn
                                 + "\nlocalAcks=" + localAcks + "\ntrimAdv=" + trimAdvances + "\n")
                                 .getBytes(StandardCharsets.US_ASCII));

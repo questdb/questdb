@@ -48,7 +48,10 @@ MAX_POINTS="${3:-${QDB_SWEEP_POINTS:-40}}"
 # rejects any value for this arm that does not include `local`.
 case "${QDB_ARM:-reference}" in
     qwp)    QWP_FLAG=true;  QWP_SF_FLAG=false; SF_REPLAY="${QDB_SF_REPLAY:-false}"; QWP_TIER="${QDB_QWP_DURABLE_ACK:-off}"   ;;
-    qwp-sf) QWP_FLAG=true;  QWP_SF_FLAG=true;  SF_REPLAY="${QDB_SF_REPLAY:-true}";  QWP_TIER="${QDB_QWP_DURABLE_ACK:-local}" ;;
+    # `compare`, not `true`: verify each boundary TWICE -- server alone, then after the client
+    # replays -- and report the delta. Measuring only after the replay makes `lost=0` ambiguous,
+    # because it equally describes "the client refilled the gap" and "nothing was lost here".
+    qwp-sf) QWP_FLAG=true;  QWP_SF_FLAG=true;  SF_REPLAY="${QDB_SF_REPLAY:-compare}"; QWP_TIER="${QDB_QWP_DURABLE_ACK:-local}" ;;
     *)      QWP_FLAG=false; QWP_SF_FLAG=false; SF_REPLAY="${QDB_SF_REPLAY:-false}"; QWP_TIER="${QDB_QWP_DURABLE_ACK:-off}"   ;;
 esac
 PROFILE="${QDB_SCHEMA_PROFILE:-bitmap}"
@@ -258,6 +261,11 @@ done
 # BISECT AROUND FAILURES. A strided sweep says "it breaks somewhere in this gap"; the useful
 # question is which boundary FIRST breaks, because that names the operation that did it. Verify
 # the immediate neighbours of each failure so the report gives a bracket rather than a point.
+# THE DENSIFY PASS MUST VERIFY THE SAME WAY THE MAIN LOOP DOES. It did not: its verify.sh
+# invocation was a hand-copied duplicate that never gained --qwp, --qwp-sf or the arm's
+# --sf-replay mode. So a qwp-sf failure's neighbours were verified under a DIFFERENT oracle,
+# and came back green for the wrong reason -- a bracket that cannot bracket. Both call sites
+# now build the same argument list; keep it that way, or the next flag will drift too.
 if [ -n "$failed_points" ] && [ "${QDB_SWEEP_DENSIFY:-true}" = "true" ]; then
     echo "  densifying around failures:$failed_points"
     for f in $failed_points; do
@@ -268,7 +276,7 @@ if [ -n "$failed_points" ] && [ "${QDB_SWEEP_DENSIFY:-true}" = "true" ]; then
                 sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
                 sudo mkdir -p /mnt/qdb; \
                 if sudo mount /dev/vdb /mnt/qdb 2>/dev/null; then \
-                    bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --sf-replay=${QDB_SF_REPLAY:-false} --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
+                    bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --qwp=$QWP_FLAG --qwp-sf=$QWP_SF_FLAG --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --sf-replay=${SF_REPLAY} --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
                 else echo 'MOUNT_FAILED'; fi")
             mkdir -p "$OUTDIR"
             printf '%s\n' "$out" > "$OUTDIR/flush-$n.out"
