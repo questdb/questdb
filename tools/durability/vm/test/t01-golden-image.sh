@@ -12,5 +12,13 @@ vm_wait_ssh "$P" "$KEY" 240
 vm_ssh "$P" "$KEY" "java -version" 2>&1 | grep -q version || { echo "FAIL t01: no java"; exit 1; }
 vm_ssh "$P" "$KEY" "which dmsetup mkfs.ext4" >/dev/null || { echo "FAIL t01: missing dm/fs tooling"; exit 1; }
 vm_ssh "$P" "$KEY" "lsmod | grep -q dm_flakey" || { echo "FAIL t01: dm-flakey not loaded"; exit 1; }
+# dm-log-writes is what run-flush-sweep.sh -- the ENUMERATED crash instrument -- is built
+# on, so its absence matters more than dm-flakey's. It was unchecked here, and a missing
+# module surfaces late and obscurely: cloud-init's `modprobe` in build-image.sh does NOT
+# abort the build when it fails (runcmd failures are not fatal), so the image reports
+# "golden image ready" and the first sweep dies with "could not build the log-writes
+# stack" -- a message that reads like a scripting fault rather than a missing module.
+# Check it at image-acceptance time, where the fix is a package, not a debugging session.
+vm_ssh "$P" "$KEY" "lsmod | grep -q dm_log_writes" || { echo "FAIL t01: dm-log-writes not loaded"; exit 1; }
 vm_ssh "$P" "$KEY" "test -d /opt/vmcrash" || { echo "FAIL t01: /opt/vmcrash absent"; exit 1; }
 vm_kill "$RUN"; rm -rf "$RUN"; echo "PASS t01"
