@@ -42,6 +42,25 @@ verdict_classify() {  # LINE -> one token on stdout
     esac
 }
 
+# verdict_line BLOB -> the ONE verdict line out of a multi-line oracle output.
+#
+# guest/verify.sh prints its evidence as DETAIL / DETAIL-ERR lines and the verdict LAST. A
+# caller that classifies the whole blob therefore matches the FIRST line, which is evidence,
+# and gets UNPARSEABLE for a perfectly good run.
+#
+# THAT WAS NOT HYPOTHETICAL. power-cut-vm.sh classified the raw blob, so after verify.sh gained
+# its DETAIL output EVERY live-cut run classified as UNPARSEABLE internally: each one took the
+# failure path, kept its ~300-700 MB of disks, and exited 1 -- while its CALLERS, which took
+# `tail -1`, correctly reported DURABLE. One session of run-matrix.sh left 27 run directories
+# and 28 GB behind, and check-host.sh gates on >= 200 GB free, so a nightly would have wedged
+# itself and reported an infrastructure problem.
+#
+# Filtering DETAIL is not the same as `tail -1`: DETAIL-ERR lines can legitimately follow the
+# verdict. Both are handled here, once, instead of in three call sites with three opinions.
+verdict_line() {  # BLOB -> the verdict line (empty if there is none)
+    printf '%s\n' "$1" | grep -vE '^DETAIL' | grep -vE '^[[:space:]]*$' | tail -1
+}
+
 # A verdict that means "the run passed". Anything else keeps the disks.
 verdict_is_pass() {  # TOKEN -> exit 0 if pass
     case "$1" in

@@ -64,7 +64,11 @@ for cell in "${CELLS[@]}"; do
     declare -A got=()
 
     for arm in $arms; do
-        line=$(bash "$HERE/power-cut-vm.sh" --arm="$arm" --mode="$mode" --window-us="$w" 2>/dev/null | tail -1)
+        # verdict_line, not `tail -1`: the oracle's evidence lines can follow the verdict
+        # (DETAIL-ERR does), and one definition of "which line is the verdict" is what keeps
+        # this script, run-fuzz.sh and power-cut-vm.sh from disagreeing about the same run --
+        # which they did, silently, until the pass path stopped working.
+        line=$(verdict_line "$(bash "$HERE/power-cut-vm.sh" --arm="$arm" --mode="$mode" --window-us="$w" 2>/dev/null)")
         v=$(verdict_classify "$line")
         got[$arm]="$v"
         echo "$STAMP cell=$mode/W=$w arm=$arm verdict=$v line=$line" >> "$LOG"

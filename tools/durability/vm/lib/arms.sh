@@ -136,8 +136,8 @@ arm_progress_file() {
 arm_verify_flags() {
     local mode="${2:-adaptive}"
     case "$1" in
-        qwp)    echo "--arm=reference --qwp=true --qwp-sf=false" ;;
-        qwp-sf) echo "--arm=reference --qwp=true --qwp-sf=true --sf-replay=compare" ;;
+        qwp)    echo "--arm=reference --qwp=true --qwp-sf=false --sf-replay=${QDB_SF_REPLAY:-false}" ;;
+        qwp-sf) echo "--arm=reference --qwp=true --qwp-sf=true --sf-replay=${QDB_SF_REPLAY:-compare}" ;;
         # product differs from qwp-sf by ONE flag, and that flag is the arm: --server=product
         # makes the recovery pass and the replay server the SHIPPED artifact. Drop it and the
         # run silently degrades into a qwp-sf run wearing a product label -- the same false-green
@@ -150,11 +150,79 @@ arm_verify_flags() {
         # --qwp-sf=true here would fail the run on the absence of a guarantee never on offer.
         product)
             if arm_sf_capable "$mode"; then
-                echo "--arm=reference --qwp=true --qwp-sf=true --sf-replay=compare --server=product"
+                echo "--arm=reference --qwp=true --qwp-sf=true --sf-replay=${QDB_SF_REPLAY:-compare} --server=product"
             else
-                echo "--arm=reference --qwp=true --qwp-sf=false --server=product"
+                echo "--arm=reference --qwp=true --qwp-sf=false --sf-replay=false --server=product"
             fi
             ;;
         *)      echo "--arm=reference --qwp=false --qwp-sf=false" ;;
     esac
+}
+
+# arm_qwp_tier ARM MODE -> the durable-ack tier THAT arm requests by default.
+#
+# The arm NAME has to imply the tier: leaving it to a bare QDB_QWP_DURABLE_ACK default of `off`
+# launched qwp-sf with durable ack disabled, and the arm correctly refused to run -- a label
+# promising a guarantee the configuration never requested. An explicit QDB_QWP_DURABLE_ACK still
+# wins, because that is how the DEFANGED negative control turns the channel off on purpose.
+arm_qwp_tier() {
+    local arm="$1" mode="${2:-adaptive}"
+    case "$arm" in
+        qwp-sf)  echo "${QDB_QWP_DURABLE_ACK:-local}" ;;
+        product) if arm_sf_capable "$mode"; then echo "${QDB_QWP_DURABLE_ACK:-local}"; else echo off; fi ;;
+        *)       echo "${QDB_QWP_DURABLE_ACK:-off}" ;;
+    esac
+}
+
+# harness_workload_env ARM MODE -> the environment guest/run-workload.sh needs, as one string.
+#
+# ssh DOES NOT CARRY THE CALLER'S ENVIRONMENT, so every knob has to be named explicitly on the
+# remote command line. run-flush-sweep.sh did that for ten variables; power-cut-vm.sh named NONE
+# of them, and nothing said so. Consequences, all silent:
+#
+#   * QDB_QWP_DEFANG_ACK=1 was ignored, so the NEGATIVE CONTROL ran undefanged through the live
+#     cut and reported a healthy green -- a control that cannot fail, which is the exact defect
+#     the control exists to rule out. Found by running it: RPO_OK where RED was required.
+#   * QDB_EDITION=ent was ignored, so a run asked for as enterprise silently ran OSS. The
+#     edition assertion in run-workload.sh only fires when it SEES QDB_EDITION=ent, and it never
+#     did.
+#   * schema profile, sibling table, mat view, DDL churn, rebase and witness-fsync were all
+#     ignored, so the live cut only ever exercised the default dimension.
+#
+# FOURTH divergence between these two callers, after the three in issues/04. Same cause every
+# time -- two call sites, one vocabulary -- so it is built once here and referenced twice.
+harness_workload_env() {
+    local arm="$1" mode="${2:-adaptive}"
+    echo "QDB_SCHEMA_PROFILE=${QDB_SCHEMA_PROFILE:-bitmap}" \
+         "QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false}" \
+         "QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1}" \
+         "QDB_MAT_VIEW=${QDB_MAT_VIEW:-false}" \
+         "QDB_REBASE_AT_ROWS=${QDB_REBASE_AT_ROWS:--1}" \
+         "QDB_WITNESS_FSYNC=${QDB_WITNESS_FSYNC:-true}" \
+         "QDB_QWP_DURABLE_ACK=$(arm_qwp_tier "$arm" "$mode")" \
+         "QDB_QWP_DEFANG_ACK=${QDB_QWP_DEFANG_ACK:-0}" \
+         "QDB_QWP_BATCH=${QDB_QWP_BATCH:-1000}" \
+         "QDB_EDITION=${QDB_EDITION:-oss}"
+}
+
+# harness_verify_cmd ARM MODE WINDOW EPOCH -> the complete guest verify.sh command.
+#
+# Same rule as above, and the same history: the sweep's densify pass once carried a hand-copied
+# verify invocation that never gained --qwp / --qwp-sf / --sf-replay, so the neighbours of a
+# failure were graded by a different oracle than the failure itself. THREE call sites use this
+# now -- the sweep's main loop, its densify pass, and the live cut -- and none of them may
+# assemble their own.
+harness_verify_cmd() {
+    local arm="$1" mode="${2:-adaptive}" window="${3:-0}" epoch="${4:-1000}"
+    echo "env QDB_PRODUCT_RECOVERY_PASS=${QDB_PRODUCT_RECOVERY_PASS:-true}" \
+         "QDB_QWP_DURABLE_ACK=$(arm_qwp_tier "$arm" "$mode")" \
+         "QDB_QWP_SF_DIR=${QDB_QWP_SF_DIR:-/mnt/qdb/sf}" \
+         "QDB_QWP_SF_DURABILITY=${QDB_QWP_SF_DURABILITY:-periodic}" \
+         "bash /opt/vmcrash/guest/verify.sh $(arm_verify_flags "$arm" "$mode")" \
+         "--mode=$mode --window-us=$window --epoch-ms=$epoch" \
+         "--sibling=${QDB_SIBLING_TABLE:-false}" \
+         "--recover-as=${QDB_RECOVER_AS:-}" \
+         "--profile=${QDB_SCHEMA_PROFILE:-bitmap}" \
+         "--mat-view=${QDB_MAT_VIEW:-false}" \
+         "--rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false)"
 }

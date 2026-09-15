@@ -184,7 +184,11 @@ vm_ssh "$P" "$KEY" "QDB_FS_MOUNT_OPTS='${QDB_FS_MOUNT_OPTS:-}' QDB_SUPPRESS_WRIT
 
 # setsid + full redirection so the SSH channel closes immediately instead of
 # hanging on the workload's inherited stdout.
-vm_ssh "$P" "$KEY" "setsid bash /opt/vmcrash/guest/run-workload.sh \
+# THE ENVIRONMENT MUST BE NAMED ON THE REMOTE COMMAND LINE -- ssh does not carry the caller's.
+# This script named nothing, so every QDB_* knob was silently dropped on the live-cut path:
+# the DEFANGED negative control ran undefanged and went green, QDB_EDITION=ent ran OSS, and no
+# schema dimension beyond the default was reachable. One definition, in lib/arms.sh.
+vm_ssh "$P" "$KEY" "setsid env $(harness_workload_env "$ARM" "$MODE") bash /opt/vmcrash/guest/run-workload.sh \
     --arm=$ARM --mode=$MODE --window-us=$WINDOW --epoch-ms=$EPOCH ${MAX_ROWS:+--max-rows=$MAX_ROWS} \
     </dev/null >/mnt/qdb/workload.out 2>&1 &" \
     || bail "LOUD_FAILURE: could not start the workload"
@@ -278,8 +282,7 @@ vm_scp_dir "$P2" "$KEY" "$HERE/guest" /opt/vmcrash/ \
 vm_ssh "$P2" "$KEY" "QDB_FS_MOUNT_OPTS='${QDB_FS_MOUNT_OPTS:-}' bash /opt/vmcrash/guest/prepare-device.sh --reattach --mode=$DEVICE_MODE" >/dev/null \
     || bail "LOUD_FAILURE: could not reattach the device after the cut"
 
-LINE=$(vm_ssh "$P2" "$KEY" "bash /opt/vmcrash/guest/verify.sh $(arm_verify_flags "$ARM" "$MODE") --mode=$MODE \
-    --window-us=$WINDOW --epoch-ms=$EPOCH" 2>&1 || true)
+LINE=$(vm_ssh "$P2" "$KEY" "$(harness_verify_cmd "$ARM" "$MODE" "$WINDOW" "$EPOCH")" 2>&1 || true)
 vm_kill "$RUN"
 
 if [ "${RPO_ENFORCEABLE:-1}" -eq 0 ]; then
@@ -288,7 +291,13 @@ if [ "${RPO_ENFORCEABLE:-1}" -eq 0 ]; then
     esac
 fi
 LINE="$LINE [seed=$SEED cutAfterMs=$CUT_AFTER_MS]"
-V=$(verdict_classify "$LINE")
+# CLASSIFY THE VERDICT LINE, NOT THE WHOLE OUTPUT. verify.sh prints its evidence first and the
+# verdict last, so `verdict_classify "$LINE"` matched a DETAIL line and returned UNPARSEABLE for
+# every run once that evidence was added -- which silently turned the pass path off: disks kept
+# on green runs, exit 1 on green runs. Invisible from outside, because both callers take
+# `tail -1` and so reported the right verdict while this script was reporting the wrong one to
+# itself. 27 directories and 28 GB from a single run-matrix.sh session is what surfaced it.
+V=$(verdict_classify "$(verdict_line "$LINE")")
 if verdict_is_pass "$V"; then
     echo "$LINE"
     rm -rf "$RUN"

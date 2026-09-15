@@ -64,8 +64,10 @@ pass=0
 nocommit=0
 for i in $(seq 1 "$ITERATIONS"); do
     seed=$(od -An -N4 -tu4 < /dev/urandom | tr -dc '0-9')
-    line=$(bash "$HERE/power-cut-vm.sh" --arm="$ARM" --mode="$MODE" \
-             --window-us="$WINDOW" --seed="$seed" 2>/dev/null | tail -1)
+    # verdict_line, not `tail -1` -- see lib/verdict.sh. Same extraction as run-matrix.sh and
+    # power-cut-vm.sh, from one definition.
+    line=$(verdict_line "$(bash "$HERE/power-cut-vm.sh" --arm="$ARM" --mode="$MODE" \
+             --window-us="$WINDOW" --seed="$seed" 2>/dev/null)")
     v=$(verdict_classify "$line")
     echo "$STAMP fuzz iter=$i/$ITERATIONS mode=$MODE W=$WINDOW seed=$seed verdict=$v line=$line" >> "$LOG"
     printf '  [%2d/%2d] seed=%-12s -> %s\n' "$i" "$ITERATIONS" "$seed" "$v"
