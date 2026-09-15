@@ -3513,6 +3513,20 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testDeallocateAllOnEmptyPreparedStatementCache() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("DEALLOCATE ALL");
+                try (ResultSet resultSet = statement.executeQuery("SELECT 1")) {
+                    Assert.assertTrue(resultSet.next());
+                    Assert.assertEquals(1, resultSet.getInt(1));
+                    Assert.assertFalse(resultSet.next());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testContextClearsTransactionFlag() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, mode, port) -> {
             connection.setAutoCommit(true);

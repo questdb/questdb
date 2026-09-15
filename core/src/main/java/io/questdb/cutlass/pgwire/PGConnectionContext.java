@@ -1319,8 +1319,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void releaseToPool(@NotNull PGPipelineEntry pe) {
-        pe.close();
-        entryPool.release(pe);
+        if (pe != null) {
+            pe.close();
+            entryPool.release(pe);
+        }
     }
 
     private PGPipelineEntry removeNamedPortalFromCache(Utf8Sequence portalName) {
