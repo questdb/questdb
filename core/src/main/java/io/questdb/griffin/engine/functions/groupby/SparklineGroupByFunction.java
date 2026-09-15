@@ -350,6 +350,11 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isScalar() {
         return false;
     }

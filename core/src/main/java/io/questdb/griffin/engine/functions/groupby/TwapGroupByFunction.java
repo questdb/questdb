@@ -339,6 +339,11 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
      * workers, leading to concurrent access to the non-thread-safe allocator.
      */
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

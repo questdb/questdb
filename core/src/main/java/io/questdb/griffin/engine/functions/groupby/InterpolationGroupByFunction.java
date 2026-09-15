@@ -343,6 +343,11 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return wrappedFunction.isOrderSensitive();
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
         wrappedFunction.setNull(mapValue);
     }

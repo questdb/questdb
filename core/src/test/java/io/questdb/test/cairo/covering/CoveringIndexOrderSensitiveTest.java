@@ -145,6 +145,52 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
     }
 
     @Test
+    public void testParallelOrderSensitiveAggregatesGroupedByIndexKeyTakePerKey() throws Exception {
+        assertMemoryLeak(() -> {
+            // The acceptance half of the twap() case. Grouping is exactly the index column, so
+            // per-key IS legal: a single key's frames still arrive in ascending partition order,
+            // hence in timestamp order, which is what twap()'s step-function integration needs.
+            // ~70 partitions, so one key's frame sequence really does span many of them.
+            createTelemetryMultiPartition();
+            final String indexed = "SELECT param_id, twap(value, ts) FROM telemetry" +
+                    " WHERE param_id IN ('SFID','HOTMIC') ORDER BY param_id";
+            assertQuery(indexed).noLeakCheck().assertsPlanContaining("frames: per-key");
+            assertSameResult(
+                    indexed,
+                    "SELECT /*+ no_index */ param_id, twap(value, ts) FROM telemetry" +
+                            " WHERE param_id IN ('SFID','HOTMIC') ORDER BY param_id"
+            );
+        });
+    }
+
+    @Test
+    public void testParallelOrderSensitiveAggregatesMatchFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            createTelemetryWithNulls();
+            // array_agg(), sparkline() and twap() are parallel-capable, so they reach the
+            // already-wired async group-by site, and none of them carried isOrderSensitive()
+            // before this audit. Each query below groups by a time bucket, not by the index
+            // key, so the covering scan must DECLINE the ordering opt-out and keep the k-way
+            // merge. Unflagged, the offer carried orderSensitive == false, the scan dropped to
+            // one frame per key, and every bucket then saw its rows key-major rather than in
+            // timestamp order: array_agg() and sparkline() render that order directly, and
+            // twap() bridges the gap between two keys' observations as if it were elapsed time.
+            final String[] projections = {"array_agg(value)", "sparkline(value)", "twap(value, ts)"};
+            for (String projection : projections) {
+                final String indexed = "SELECT ts, " + projection + " FROM telemetry" +
+                        " WHERE param_id IN ('SFID','HOTMIC') SAMPLE BY 10s";
+                assertQuery(indexed).noLeakCheck().assertsPlanContaining("CoveringIndex on: param_id");
+                assertQuery(indexed).noLeakCheck().assertsPlanNotContaining("frames: per-key");
+                assertSameResult(
+                        indexed,
+                        "SELECT /*+ no_index */ ts, " + projection + " FROM telemetry" +
+                                " WHERE param_id IN ('SFID','HOTMIC') SAMPLE BY 10s"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testSampleByOverManyPartitionsKeepsTheMerge() throws Exception {
         assertMemoryLeak(() -> {
             // The negative case over the same multi-partition data: a time bucket draws from
