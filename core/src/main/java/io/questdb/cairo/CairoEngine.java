@@ -1023,15 +1023,22 @@ public class CairoEngine implements Closeable, WriterSource {
                                             .$(", view=").$(tableToken)
                                             .I$();
                                 } else if (!baseTableExists) {
+                                    // Durable, not re-derived on every load: the load binds a view to
+                                    // whatever table holds its base's name, so a view invalidated in
+                                    // memory only would load valid over a table created under that name
+                                    // later, and drain its commits on top of the missing base's rows.
                                     LOG.info().$("base table for live view does not exist [table=").$safe(definition.getBaseTableName())
                                             .$(", view=").$(tableToken)
                                             .I$();
-                                    instance.markInvalid("base table does not exist", nowUs);
+                                    invalidateLiveViewOnLoad(instance, "base table does not exist", tornStateRecovered, nowUs);
                                 } else if (!baseTableToken.isWal()) {
+                                    // Durable for the same reason: once the base was converted back to
+                                    // WAL, the next load registered the view active at the watermark it
+                                    // held before the conversion, over rows the base took while it was not.
                                     LOG.info().$("base table for live view is not WAL table [table=").$safe(definition.getBaseTableName())
                                             .$(", view=").$(tableToken)
                                             .I$();
-                                    instance.markInvalid("base table is not WAL table", nowUs);
+                                    invalidateLiveViewOnLoad(instance, "base table is not WAL table", tornStateRecovered, nowUs);
                                 } else if (!isReadOnlyMode()) {
                                     // ApplyWal2TableJob commits a structural change to the base writer
                                     // and only then invalidates the dependent views, and it can only
@@ -1057,18 +1064,11 @@ public class CairoEngine implements Closeable, WriterSource {
                                                 .$(", view=").$(tableToken)
                                                 .$(", column=").$safe(brokenColumn)
                                                 .I$();
-                                        if (tornStateRecovered) {
-                                            // The rewrite below persists the reconstructed state with
-                                            // this invalidation in it; an append into the torn file
-                                            // would only fail first.
-                                            instance.markInvalid(reason, nowUs);
-                                        } else {
-                                            // Durable, like the apply-side invalidation it stands in
-                                            // for: re-deriving it on every load would bring the view
-                                            // back valid once the column is retyped back, over base
-                                            // rows the round trip may have changed.
-                                            invalidateLiveView(instance, reason);
-                                        }
+                                        // Durable, like the apply-side invalidation it stands in for:
+                                        // re-deriving it on every load would bring the view back valid
+                                        // once the column is retyped back, over base rows the round trip
+                                        // may have changed.
+                                        invalidateLiveViewOnLoad(instance, reason, tornStateRecovered, nowUs);
                                     }
                                 }
                             }
@@ -2168,6 +2168,13 @@ public class CairoEngine implements Closeable, WriterSource {
     public void dropTableOrViewOrMatView(@Transient Path path, TableToken tableToken) {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
+            // Invalidate the dependent live views ahead of the drop, durably. A view's definition
+            // names its base, and the load binds it to whatever table holds that name, so a view
+            // _lv.s still records valid - through a process that died past the drop, or a write
+            // that failed - binds to a table created under the name afterwards and drains that
+            // table's commits on top of the dropped one's rows. A throw here refuses the drop over
+            // an intact base.
+            invalidateLiveViewsForBaseTableDurably(tableToken, "base table drop");
             if (notifyDropped(tableToken)) {
                 durableAckRegistry.onTableDropped(tableToken);
                 // Both-trees pre-externalization fire-point: fire the role-switch mint observer here,
@@ -2182,7 +2189,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
                 dependentViewGraph.removeView(tableToken);
-                invalidateLiveViewsForBaseTable(tableToken, "base table drop");
                 recentWriteTracker.removeTable(tableToken);
             } else {
                 LOG.info().$("table is already dropped [table=").$(tableToken).I$();
@@ -2191,6 +2197,9 @@ public class CairoEngine implements Closeable, WriterSource {
             CharSequence lockedReason = lockAll(tableToken, "removeTable", false);
             if (lockedReason == null) {
                 try {
+                    // A live view's base is WAL at CREATE, but one converted since still has its
+                    // dependents registered, so the WAL branch's rule applies here too.
+                    invalidateLiveViewsForBaseTableDurably(tableToken, "base table drop");
                     path.of(configuration.getDbRoot()).concat(tableToken).$();
                     if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
                         throw CairoException.critical(configuration.getFilesFacade().errno())
@@ -2204,7 +2213,6 @@ public class CairoEngine implements Closeable, WriterSource {
                     // Then it can push the scoreboard max txn value into incorrect state.
                     scoreboardPool.remove(tableToken);
                     notifyViewStoresAboutDrop(tableToken);
-                    invalidateLiveViewsForBaseTable(tableToken, "base table drop");
                     recentWriteTracker.removeTable(tableToken);
                 } finally {
                     unlockTableUnsafe(tableToken, null, false);
@@ -3035,9 +3043,9 @@ public class CairoEngine implements Closeable, WriterSource {
     /**
      * Invalidates every live view whose base is {@code baseTableToken}, best-effort on disk: a view
      * whose {@code _lv.s} write fails still flips invalid in memory, and the call returns normally.
-     * For callers whose operation has already committed: a dropped or renamed base, which the next load
-     * finds missing by name and invalidates again. A table created under the base's name before that
-     * load is what this leaves open, since the load then binds the view to it.
+     * For callers applying an operation that has already committed elsewhere and cannot be refused
+     * here: a replica applying the primary's DROP or RENAME of a base. A table created under the base's
+     * name before the next load is what this leaves open, since the load then binds the view to it.
      */
     public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
         invalidateLiveViewsForBaseTable0(baseTableToken, reason, null, false);
@@ -3048,11 +3056,13 @@ public class CairoEngine implements Closeable, WriterSource {
      * invalidation is on disk. A view whose {@code _lv.s} write fails is left valid, in memory as on
      * disk, and the call throws, so the caller refuses the operation it was about to commit.
      * <p>
-     * For callers that invalidate ahead of a commit that leaves nothing for the next load to find: an
-     * UPDATE, a REBASE WAL, a TRUNCATE of a base materialized view. The best-effort variant flipped such
-     * a view in memory only and let the commit go ahead, so a restart loaded it valid over a base the
-     * operation had changed. Views ahead of the failing one in the fan-out stay invalidated, the outcome
-     * a commit failing after the invalidation already has.
+     * For callers that invalidate ahead of a commit the next load cannot be relied on to see: an UPDATE,
+     * a REBASE WAL and a TRUNCATE of a base materialized view leave nothing for it to find, and a DROP or
+     * RENAME of a base frees a name that a table created under it before that load fills. The
+     * best-effort variant flipped such a view in memory only and let the commit go ahead, so a restart
+     * loaded it valid over a base the operation had changed, or over a different table. Views ahead of
+     * the failing one in the fan-out stay invalidated, the outcome a commit failing after the
+     * invalidation already has.
      */
     public void invalidateLiveViewsForBaseTableDurably(TableToken baseTableToken, String reason) {
         invalidateLiveViewsForBaseTable0(baseTableToken, reason, null, true);
@@ -3626,6 +3636,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (toTableToken != null) {
                     boolean renamed = false;
                     try {
+                        // Ahead of the rename's commit, durably, for the reason a DROP gives in
+                        // dropTableOrViewOrMatView: the renamed base frees its name for a table the
+                        // view's next load would bind to. A throw leaves renamed unset, so the finally
+                        // below releases the alias.
+                        invalidateLiveViewsForBaseTableDurably(fromTableToken, "base table rename");
                         try (WalWriter walWriter = getWalWriter(fromTableToken)) {
                             long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr, securityContext);
                             LOG.info().$("renaming table [from='").$safe(fromTableName)
@@ -3647,7 +3662,6 @@ public class CairoEngine implements Closeable, WriterSource {
                             if (fromTableToken.isWal()) {
                                 matViewStateStore.enqueueInvalidateDependentViews(fromTableToken, "table rename operation");
                             }
-                            invalidateLiveViewsForBaseTable(fromTableToken, "base table rename");
                         } else {
                             LOG.info()
                                     .$("failed to rename table [from=").$safe(fromTableName)
@@ -4515,6 +4529,17 @@ public class CairoEngine implements Closeable, WriterSource {
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .I$();
             return false;
+        }
+    }
+
+    // Invalidates a live view the load found broken, writing _lv.s ahead of the in-memory flip. Over a
+    // torn _lv.s the flip alone: the load's rewrite of the reconstructed state persists it, and an
+    // append into the torn file would only fail first.
+    private void invalidateLiveViewOnLoad(LiveViewInstance instance, String reason, boolean isStateTorn, long nowUs) {
+        if (isStateTorn) {
+            instance.markInvalid(reason, nowUs);
+        } else {
+            invalidateLiveView(instance, reason);
         }
     }
 
