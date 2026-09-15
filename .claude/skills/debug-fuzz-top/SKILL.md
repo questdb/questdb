@@ -14,10 +14,8 @@ Debug the failure described by `$ARGUMENTS`.
 - `git log --oneline lazy-geometry2` — the running record: every defect found so far and how it was
   fixed. Most failures rhyme with one already in there.
 
-This branch is `lazy-geometry2`, based on clean `master`. A DIFFERENT tree
-(`questdb-enterprise3`, `feat-partition-top-split`) implements the same feature as a SPLIT design where
-`_txn` carries one entry per piece. **Its notes do not transfer.** Here `attachedPartitions` is exactly
-as master has it — one 4-long record per DIRECTORY — and no partition index ever addresses a piece.
+`attachedPartitions` is exactly as master has it — one 4-long record per DIRECTORY — and no partition
+index ever addresses a piece.
 
 ## Vocabulary
 

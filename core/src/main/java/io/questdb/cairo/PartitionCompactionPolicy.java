@@ -129,7 +129,14 @@ public class PartitionCompactionPolicy implements Mutable {
         backoff.add(Micros.MINUTE_MICROS);
     }
 
-    public int selectPartition(TxWriter txWriter, PartitionGeometry geometry, long avgRecordSize, long nowMicros) {
+    /**
+     * Picks the partition to compact this commit, scanning from {@code fromIndex} - the caller passes the
+     * first partition at or after the earliest composite one, so the pass skips the cold plain partitions
+     * below it rather than starting at index 0. Every partition below the earliest composite is plain, so
+     * it would contribute nothing to the table-wide dead/live totals anyway; bounding the start leaves the
+     * table-pressure rule's denominator unchanged.
+     */
+    public int selectPartition(TxWriter txWriter, PartitionGeometry geometry, long avgRecordSize, long nowMicros, int fromIndex) {
         selectedReason = REASON_NONE;
         selectedPartitionIndex = -1;
         isSelectedPartitionHot = false;
@@ -162,7 +169,7 @@ public class PartitionCompactionPolicy implements Mutable {
         long deadRowsTable = 0;
         long liveRowsTable = 0;
 
-        for (int i = 0; i < n; i++) {
+        for (int i = Math.max(0, fromIndex); i < n; i++) {
             final long live = txWriter.getPartitionSize(i);
             final long e = geometry.getE(i);
             final int pieces = geometry.getPieceCount(i);
@@ -171,13 +178,17 @@ public class PartitionCompactionPolicy implements Mutable {
             if (pieces < 2 && e <= live) {
                 continue;
             }
+            final long dead = e - live;
+            // Fold this partition's waste into the table-wide totals BEFORE the backoff check. A composite
+            // partition that is only temporarily suppressed is still dead weight on the table, so excluding
+            // it would let the table-pressure denominator - and with it the latch - move with the backoff
+            // state rather than with the actual waste, flapping the rule on and off between commits.
+            deadRowsTable += dead;
+            liveRowsTable += live;
             final long partitionTs = txWriter.getPartitionTimestampByIndex(i);
             if (isSuppressed(partitionTs, nowMicros)) {
                 continue;
             }
-            final long dead = e - live;
-            deadRowsTable += dead;
-            liveRowsTable += live;
 
             final long lastWrite = geometry.getLastWriteMicros(i);
             if (lastWrite < coldestMicros || (lastWrite == coldestMicros && partitionTs < coldestTs)) {
@@ -292,6 +303,9 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     private void clearBackoff(long partitionTimestamp) {
+        if (backoff.size() == 0) {
+            return;
+        }
         for (int i = 0, n = backoff.size(); i < n; i += BACKOFF_LONGS) {
             if (backoff.getQuick(i) == partitionTimestamp) {
                 backoff.removeIndexBlock(i, BACKOFF_LONGS);
@@ -301,6 +315,11 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     private boolean isSuppressed(long partitionTimestamp, long nowMicros) {
+        // The overwhelmingly common case is no partition on backoff at all - nothing has been declined - so
+        // the check costs nothing per composite partition per pass until a decline populates the list.
+        if (backoff.size() == 0) {
+            return false;
+        }
         for (int i = 0, n = backoff.size(); i < n; i += BACKOFF_LONGS) {
             if (backoff.getQuick(i) == partitionTimestamp) {
                 return nowMicros < backoff.getQuick(i + 1);
