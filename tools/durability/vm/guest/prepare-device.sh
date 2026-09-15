@@ -39,9 +39,21 @@ if [ "$MODE" = "log-writes" ]; then
     fi
     [ "$REATTACH" -eq 1 ] || sudo mkfs.ext4 -F -q "/dev/mapper/$DM"
     sudo mkdir -p "$MNT"
-    mountpoint -q "$MNT" || sudo mount "/dev/mapper/$DM" "$MNT"
+    # QDB_FS_MOUNT_OPTS was honoured ONLY in the flakey branch below, so the documented
+    # ext4-journalling A/B did nothing on the replay path -- which is the path where the
+    # question actually matters. The README records the foreign-flush hypothesis as refuted,
+    # but that was measured on dm-flakey, where the cut boundary is arming time and the effect
+    # structurally cannot show. Here the boundary IS the flush. See durability-ci issues/08.
+    if ! mountpoint -q "$MNT"; then
+        if [ -n "${QDB_FS_MOUNT_OPTS:-}" ]; then
+            echo "prepare-device: mounting with non-default options: $QDB_FS_MOUNT_OPTS" >&2
+            sudo mount -o "$QDB_FS_MOUNT_OPTS" "/dev/mapper/$DM" "$MNT"
+        else
+            sudo mount "/dev/mapper/$DM" "$MNT"
+        fi
+    fi
     sudo chown ubuntu:ubuntu "$MNT"
-    echo "device ready: /dev/mapper/$DM (log-writes, log=$LOGDEV) -> $MNT"
+    echo "device ready: /dev/mapper/$DM (log-writes, log=$LOGDEV, opts=${QDB_FS_MOUNT_OPTS:-default}) -> $MNT"
     exit 0
 fi
 

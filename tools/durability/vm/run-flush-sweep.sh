@@ -154,7 +154,7 @@ if [ "${QDB_EDITION:-oss}" = "ent" ]; then
     for j in "$ENT_DEPS"/*.jar; do vm_scp "$P" "$KEY" "$j" "/opt/vmcrash/entlib/$(basename "$j")"; done
 fi
 vm_ssh "$P" "$KEY" "sudo sync"
-vm_ssh "$P" "$KEY" "bash /opt/vmcrash/guest/prepare-device.sh --mode=log-writes" >/dev/null \
+vm_ssh "$P" "$KEY" "QDB_FS_MOUNT_OPTS='${QDB_FS_MOUNT_OPTS:-}' bash /opt/vmcrash/guest/prepare-device.sh --mode=log-writes" >/dev/null \
     || { keep; echo "LOUD_FAILURE: could not build the log-writes stack"; exit 1; }
 
 vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false} QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1} QDB_MAT_VIEW=${QDB_MAT_VIEW:-false} QDB_REBASE_AT_ROWS=${QDB_REBASE_AT_ROWS:--1} QDB_WITNESS_FSYNC=${QDB_WITNESS_FSYNC:-true} QDB_QWP_DURABLE_ACK=$QWP_TIER QDB_QWP_DEFANG_ACK=${QDB_QWP_DEFANG_ACK:-0} QDB_QWP_BATCH=${QDB_QWP_BATCH:-1000} QDB_EDITION=$EDITION bash /opt/vmcrash/guest/run-workload.sh --arm=$ARM --mode=$MODE \
@@ -239,7 +239,7 @@ for n in $points; do
     out=$(vm_ssh "$P2" "$KEY" "sudo umount /mnt/qdb 2>/dev/null; sudo dmsetup remove qdbdata 2>/dev/null; \
         sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
         sudo mkdir -p /mnt/qdb; \
-        if sudo mount /dev/vdb /mnt/qdb 2>/dev/null; then \
+        if sudo mount ${QDB_FS_MOUNT_OPTS:+-o ${QDB_FS_MOUNT_OPTS}} /dev/vdb /mnt/qdb 2>/dev/null; then \
             bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --qwp=$QWP_FLAG --qwp-sf=$QWP_SF_FLAG --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --sf-replay=${SF_REPLAY} --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
         else echo 'MOUNT_FAILED'; fi")
     # Archive the FULL per-boundary output. The one-line verdict in $LOG is a summary,
@@ -282,7 +282,7 @@ if [ -n "$failed_points" ] && [ "${QDB_SWEEP_DENSIFY:-true}" = "true" ]; then
             out=$(vm_ssh "$P2" "$KEY" "sudo umount /mnt/qdb 2>/dev/null; sudo dmsetup remove qdbdata 2>/dev/null; \
                 sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
                 sudo mkdir -p /mnt/qdb; \
-                if sudo mount /dev/vdb /mnt/qdb 2>/dev/null; then \
+                if sudo mount ${QDB_FS_MOUNT_OPTS:+-o ${QDB_FS_MOUNT_OPTS}} /dev/vdb /mnt/qdb 2>/dev/null; then \
                     bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --qwp=$QWP_FLAG --qwp-sf=$QWP_SF_FLAG --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --sf-replay=${SF_REPLAY} --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
                 else echo 'MOUNT_FAILED'; fi")
             mkdir -p "$OUTDIR"
