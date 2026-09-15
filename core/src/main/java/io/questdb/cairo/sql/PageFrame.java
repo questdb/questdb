@@ -66,15 +66,6 @@ public interface PageFrame {
     int getColumnCount();
 
     /**
-     * Returns page frame format.
-     * <p>
-     * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
-     */
-    byte getFormat();
-
-    IndexReader getIndexReader(int columnIndex, int direction);
-
-    /**
      * Per-column runtime source tag.
      *
      * @param columnIndex index of the column
@@ -141,6 +132,26 @@ public interface PageFrame {
      */
     default long getCoveredRowLo() {
         return -1;
+    }
+
+    /**
+     * Returns page frame format.
+     * <p>
+     * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
+     */
+    byte getFormat();
+
+    IndexReader getIndexReader(int columnIndex, int direction);
+
+    /**
+     * Returns the high row, exclusive, to ask this frame's INDEX for. See {@link #getIndexRowLo()}.
+     */
+    default long getIndexRowHi() {
+        return getPartitionHi();
+    }
+
+    default long getIndexRowLo() {
+        return getPartitionLo();
     }
 
     /**

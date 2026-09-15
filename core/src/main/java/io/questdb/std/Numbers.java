@@ -1736,6 +1736,14 @@ public final class Numbers {
                             }
                             val = r;
                             break EX;
+                        case 'T':
+                        case 't':
+                            r = val * 1024L * 1024L * 1024L * 1024L;
+                            if (r > val) {
+                                throw NumericException.instance().put("duration overflow");
+                            }
+                            val = r;
+                            break EX;
                         default:
                             break;
                     }

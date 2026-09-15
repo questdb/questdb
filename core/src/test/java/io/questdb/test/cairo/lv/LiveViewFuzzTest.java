@@ -58,7 +58,6 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.nanotime.NanosFormatUtils;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.TestUtils;
@@ -1843,7 +1842,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             } catch (Throwable th) {
                 errors.add(th);
             } finally {
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-cw-writer-" + writerId);
     }
@@ -1911,7 +1910,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             } catch (Throwable th) {
                 errors.add(th);
             } finally {
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-rvr-reader");
     }
@@ -2738,7 +2737,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     } catch (Throwable th) {
                         errors.add(th);
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-cw-refresh-driver") : null;
 
@@ -3969,7 +3968,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-rvr-refresh-driver");
             final AtomicLong nativeRowsValidated = new AtomicLong();

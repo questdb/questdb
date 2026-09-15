@@ -47,7 +47,7 @@ public class LatestByValueIndexedRowCursorFactory implements RowCursorFactory {
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         try (RowCursor indexReaderCursor = pageFrame
                 .getIndexReader(columnIndex, IndexReader.DIR_BACKWARD)
-                .getCursor(symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1)) {
+                .getCursor(symbolKey, pageFrame.getIndexRowLo(), pageFrame.getIndexRowHi() - 1)) {
             if (indexReaderCursor.hasNext()) {
                 cursor.of(indexReaderCursor.next());
                 return cursor;

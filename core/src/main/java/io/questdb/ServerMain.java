@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataID;
 import io.questdb.cairo.FlushQueryCacheJob;
+import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
@@ -807,8 +808,26 @@ public class ServerMain implements Closeable {
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPoolWrite, engine);
 
+                        // Own single thread, never the shared write pool: a composite partition's REWRITE copies the
+                        // whole partition inline on the worker that picked the job up, and on sharedPoolWrite that
+                        // worker is one of the few running WAL apply and the O3 jobs, so the copy would hold up
+                        // ingestion for as long as it takes.
+                        final PartitionCompactionScanJob partitionCompactionScanJob = new PartitionCompactionScanJob(engine);
+                        final WorkerPool compactionPool = getWorkerPool(
+                                new PartitionCompactionPoolConfiguration(config.getMetrics()),
+                                Requester.PARTITION_COMPACTION,
+                                sharedPoolWrite
+                        );
+                        compactionPool.assign(partitionCompactionScanJob);
+                        compactionPool.freeOnExit(partitionCompactionScanJob);
+
                         if (walSupported) {
-                            sharedPoolWrite.assign(config.getFactoryProvider().getWalJobFactory().createCheckWalTransactionsJob(engine));
+                            // CheckWalTransactionsJob owns a TxReader, so it needs the same freeOnExit its
+                            // two neighbours in this block get. freeObjListIfCloseable skips a job that is
+                            // not closeable, so a custom factory returning a plain job stays safe.
+                            final SynchronizedJob checkWalTransactionsJob = config.getFactoryProvider().getWalJobFactory().createCheckWalTransactionsJob(engine);
+                            sharedPoolWrite.assign(checkWalTransactionsJob);
+                            sharedPoolWrite.freeOnExit(checkWalTransactionsJob);
                             final WalPurgeJob walPurgeJob = config.getFactoryProvider().getWalJobFactory().createWalPurgeJob(engine);
                             walPurgeJob.delayByHalfInterval();
                             sharedPoolWrite.assign(walPurgeJob);
@@ -1590,6 +1609,40 @@ public class ServerMain implements Closeable {
             }
             Misc.free(server);
             server = null;
+        }
+    }
+
+    /**
+     * WorkerPoolConfiguration for the dedicated partition-compaction pool: one worker, sleeping between
+     * the sweep's own check intervals.
+     */
+    private static final class PartitionCompactionPoolConfiguration implements WorkerPoolConfiguration {
+        private final Metrics metrics;
+
+        PartitionCompactionPoolConfiguration(Metrics metrics) {
+            this.metrics = metrics;
+        }
+
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "partition-compaction";
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            // The sweep only wakes on its own check interval (2 min by default), so let the worker fall
+            // through to a sleeping wait almost immediately rather than spin the shared defaults away.
+            return 1;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return 1;
         }
     }
 

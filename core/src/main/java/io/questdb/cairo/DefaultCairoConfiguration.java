@@ -324,6 +324,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getDebugWalApplyMaxTxnBlockSize() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return EN_LOCALE;
     }
@@ -771,6 +776,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3PartitionPreSplitMaxCuts() {
+        return 10_000;
+    }
+
+    @Override
     public int getO3OpenColumnQueueCapacity() {
         return 1024;
     }
@@ -856,6 +866,86 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getParquetExportVersion() {
         return ParquetVersion.PARQUET_VERSION_V1;
+    }
+
+    @Override
+    public long getPartitionCompactionAvgRowsPieceLim() {
+        return 4096;
+    }
+
+    @Override
+    public long getPartitionCompactionCheckInterval() {
+        return 120_000;
+    }
+
+    @Override
+    public long getPartitionCompactionDeadMinSize() {
+        return 50 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public double getPartitionCompactionDeadRowsRatio() {
+        return 1;
+    }
+
+    @Override
+    public long getPartitionCompactionDeclineBackoffMax() {
+        return 60 * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public long getPartitionCompactionIdleTimeout() {
+        return 60 * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getPartitionCompactionHotCommits() {
+        return 10;
+    }
+
+    @Override
+    public long getPartitionCompactionHotTime() {
+        return 10 * Micros.SECOND_MICROS;
+    }
+
+    @Override
+    public int getPartitionCompactionMoveTailMinGain() {
+        return 2;
+    }
+
+    @Override
+    public int getPartitionCompactionPieceThreshold() {
+        return 20;
+    }
+
+    @Override
+    public int getPartitionCompactionPrefixMinPercent() {
+        return 50;
+    }
+
+    @Override
+    public int getPartitionCompactionTableDeadStopPercent() {
+        return 10;
+    }
+
+    @Override
+    public long getPartitionCompactionTableDeadThreshold() {
+        return 50 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getPartitionCompactionTableDeadThresholdPercent() {
+        return 50;
+    }
+
+    @Override
+    public long getPartitionCompactionTableDeadTrigger() {
+        return 10 * Numbers.SIZE_1GB;
+    }
+
+    @Override
+    public long getPartitionCompactionTimeBudgetMs() {
+        return 1000;
     }
 
     @Override
@@ -1001,6 +1091,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
+    }
+
+    @Override
+    public long getSequencerCheckMinInterval() {
+        return 500;
     }
 
     @Override
@@ -1712,6 +1807,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isMultiKeyDedupEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isO3PartitionMergeAppendEnabled() {
         return false;
     }
 
