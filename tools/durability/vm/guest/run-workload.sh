@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# guest/run-workload.sh --arm=reference|product --mode=MODE [--window-us=W] [--epoch-ms=N] [--max-rows=N]
+# guest/run-workload.sh --arm=reference|qwp|qwp-sf|product --mode=MODE [--window-us=W] [--epoch-ms=N] [--max-rows=N]
 #
 # Starts the arm's workload against the DB root on the flakey device. Blocks;
 # the controller cuts it short.
 #
 #   reference — CrashIngestWriter with the engine embedded. Captures C and Wm
 #               (localDurableSeqTxn) in-process, which works today.
-#   product   — the real server plus a wire client. W=0 ONLY: the client-side
-#               LOCAL durable-ack frontier is WIP, so at W>0 this arm cannot
-#               observe Wm and therefore cannot enforce the RPO bar. The
-#               controller rejects W>0 for this arm; the guard here is a second
-#               line of defence in case it is invoked directly.
+#   qwp/qwp-sf— a real classpath-launched server plus the real WebSocket client.
+#   product   — the SHIPPED release tarball, started by the real questdb.sh
+#               launcher, plus the same client qwp-sf uses. W>0 IS SUPPORTED:
+#               the client's LOCAL durable-ack tier supplies the durable
+#               frontier, so the RPO bar applies here exactly as it does to
+#               qwp-sf. (It was W=0-only while that tier was unbuilt; the tier
+#               landed with issues/17 and was measured against a module-launched
+#               server before this arm was wired up.)
 set -euo pipefail
 
 ARM=reference
@@ -81,14 +84,21 @@ case "$ARM" in
         :
         ;;
     product)
-        if [ "$WINDOW" -gt 0 ]; then
-            echo "run-workload: product arm supports W=0 only (got W=$WINDOW)." >&2
-            echo "  The client-side LOCAL durable-ack frontier is WIP, so Wm cannot be" >&2
-            echo "  observed and the RPO bar cannot be enforced at W>0." >&2
+        # THE SHIPPED-ARTIFACT ARM. Identical to qwp-sf in every respect except which server
+        # binary runs and how it is launched -- see guest/product-dist.sh for why that is a
+        # runtime-configuration difference rather than a packaging detail.
+        #
+        # ENT is refused rather than quietly downgraded: the enterprise distribution is a
+        # different artifact that this arm does not build or ship, and running the OSS tarball
+        # under an `ent` label is the same false-green shape as a sync-labelled nosync run.
+        if [ "${QDB_EDITION:-oss}" = "ent" ]; then
+            echo "run-workload: arm=product has no enterprise distribution to run (QDB_EDITION=ent)." >&2
+            echo "  The ENT tarball is not built by this harness; use --arm=qwp-sf for ENT coverage." >&2
             exit 64
         fi
-        echo "run-workload: product arm is implemented by Task 6b; not yet available" >&2
-        exit 64
+        # shellcheck source=product-dist.sh
+        source /opt/vmcrash/guest/product-dist.sh
+        product_dist_unpack || exit 64
         ;;
     *) echo "run-workload: unknown arm $ARM" >&2; exit 64 ;;
 esac
@@ -121,7 +131,7 @@ case "$ARM" in
             org.questdb.CrashIngestWriter "$DB" > /mnt/qdb/writer.log 2>&1
         ;;
 
-    qwp|qwp-sf)
+    qwp|qwp-sf|product)
         # QWP arm: a REAL server plus a REAL WebSocket client, so the cut lands on the wire
         # protocol's write path -- frame decode, ingress buffering, server-side commit -- none of
         # which the embedded-engine arm touches. The server owns the engine; the client only speaks
@@ -147,29 +157,41 @@ case "$ARM" in
         #     with io/questdb/jar/jni/LoadException.
         #   * ACL is ON by default (acl.enabled=true, admin/quest), so every request needs
         #     credentials where OSS needs none.
-        if [ "${QDB_EDITION:-oss}" = "ent" ]; then
-            SERVER_CP="/opt/vmcrash/questdb-enterprise.jar:/opt/vmcrash/entlib/*:$JAR"
-            SERVER_MAIN="com.questdb.EntServerMain"
-        else
-            SERVER_CP="$JAR"
-            SERVER_MAIN="io.questdb.ServerMain"
-        fi
-        env QDB_CAIRO_COMMIT_MODE="$MODE" \
-            QDB_CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW="${WINDOW}us" \
-            QDB_CAIRO_ADAPTIVE_EPOCH_INTERVAL="${EPOCH}ms" \
-            java $QDB_JVM -cp "$SERVER_CP" \
-            $SERVER_MAIN -d "$(dirname "$DB")" > /mnt/qdb/server.log 2>&1 &
-        echo "qwp: server started pid=$!" >> /mnt/qdb/writer.log
-        # Wait for HTTP before ingesting: connecting to a half-started server fails the upgrade
-        # and the arm would report a connection error as if it were a durability finding.
         CURL_AUTH=""
         [ "${QDB_EDITION:-oss}" = "ent" ] && CURL_AUTH="-u ${QDB_ENT_USER:-admin}:${QDB_ENT_PASSWORD:-quest}"
-        # Require a DATASET, not merely an HTTP response: under ENT an unauthenticated request
-        # answers 401 and `curl >/dev/null && ...` would report the server as up.
-        for _ in $(seq 1 120); do
-            curl -s $CURL_AUTH "http://localhost:9000/exec?query=select%201" 2>/dev/null | grep -q dataset && break
-            sleep 0.5
-        done
+        if [ "$ARM" = product ]; then
+            # THE SHIPPED LAUNCHER STARTS THE SERVER, and it backgrounds the JVM itself -- so no
+            # trailing `&` here, and no hand-built java line. Reconstructing the launcher's
+            # command line would test our reading of questdb.sh instead of questdb.sh.
+            product_server_start "$(dirname "$DB")" "$MODE" "$WINDOW" "$EPOCH" /mnt/qdb/server.log \
+                || { echo "run-workload: shipped server failed to start; see /mnt/qdb/server.log" >&2; exit 64; }
+            echo "product: server started via $PRODUCT_DIST_DIR/questdb.sh (dist $(product_dist_version))" >> /mnt/qdb/writer.log
+            # ASSERT THE ARTIFACT before a single row is ingested -- see product-dist.sh.
+            product_server_assert /mnt/qdb/writer.log \
+                || { echo "run-workload: product premise assertion failed; refusing to ingest" >&2; exit 64; }
+        else
+            if [ "${QDB_EDITION:-oss}" = "ent" ]; then
+                SERVER_CP="/opt/vmcrash/questdb-enterprise.jar:/opt/vmcrash/entlib/*:$JAR"
+                SERVER_MAIN="com.questdb.EntServerMain"
+            else
+                SERVER_CP="$JAR"
+                SERVER_MAIN="io.questdb.ServerMain"
+            fi
+            env QDB_CAIRO_COMMIT_MODE="$MODE" \
+                QDB_CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW="${WINDOW}us" \
+                QDB_CAIRO_ADAPTIVE_EPOCH_INTERVAL="${EPOCH}ms" \
+                java $QDB_JVM -cp "$SERVER_CP" \
+                $SERVER_MAIN -d "$(dirname "$DB")" > /mnt/qdb/server.log 2>&1 &
+            echo "qwp: server started pid=$!" >> /mnt/qdb/writer.log
+            # Wait for HTTP before ingesting: connecting to a half-started server fails the upgrade
+            # and the arm would report a connection error as if it were a durability finding.
+            # Require a DATASET, not merely an HTTP response: under ENT an unauthenticated request
+            # answers 401 and `curl >/dev/null && ...` would report the server as up.
+            for _ in $(seq 1 120); do
+                curl -s $CURL_AUTH "http://localhost:9000/exec?query=select%201" 2>/dev/null | grep -q dataset && break
+                sleep 0.5
+            done
+        fi
         # ASSERT THE EDITION. A silent fallback to OSS would report enterprise coverage that was
         # never exercised -- the same failure shape as a run labelled sync while serving nosync.
         if [ "${QDB_EDITION:-oss}" = "ent" ]; then
@@ -198,10 +220,12 @@ case "$ARM" in
             echo "run-workload: server is in '$actual_mode' but the run claims '$MODE' -- refusing." >> /mnt/qdb/writer.log
             exit 64
         fi
-        # qwp-sf FORCES the local tier and an SF buffer on the crashed device; they are what the
-        # arm IS, so they are not left to an environment variable that could be unset without
-        # anyone noticing. The plain qwp arm keeps whatever was asked for (default off).
-        if [ "$ARM" = qwp-sf ]; then
+        # qwp-sf AND product FORCE the local tier and an SF buffer on the crashed device; they are
+        # what those arms ARE, so they are not left to an environment variable that could be unset
+        # without anyone noticing. The plain qwp arm keeps whatever was asked for (default off).
+        # Messages below name $ARM rather than a literal: the product arm reaches this block too,
+        # and a refusal that names the wrong arm sends the reader to the wrong script.
+        if [ "$ARM" = qwp-sf ] || [ "$ARM" = product ]; then
             QWP_TIER="${QDB_QWP_DURABLE_ACK:-local}"
             case "$QWP_TIER" in
                 *local*) ;;
@@ -214,10 +238,10 @@ case "$ARM" in
                     # The verifier must report DURABILITY_FAILURE here, because the client holds
                     # nothing on the strength of an ack it never asked for. Never set in a real run.
                     if [ "${QDB_QWP_DEFANG_ACK:-0}" = "1" ]; then
-                        echo "run-workload: WARNING — qwp-sf DEFANGED (tier='$QWP_TIER'); the sweep MUST fail" >&2
-                        echo "qwp-sf: DEFANGED negative control, tier=$QWP_TIER" >> /mnt/qdb/writer.log
+                        echo "run-workload: WARNING — $ARM DEFANGED (tier='$QWP_TIER'); the sweep MUST fail" >&2
+                        echo "$ARM: DEFANGED negative control, tier=$QWP_TIER" >> /mnt/qdb/writer.log
                     else
-                        echo "run-workload: arm=qwp-sf requires a tier including 'local' (got '$QWP_TIER')" >&2
+                        echo "run-workload: arm=$ARM requires a tier including 'local' (got '$QWP_TIER')" >&2
                         echo "run-workload: that is the whole arm; refusing rather than running a qwp arm under an sf label" >&2
                         exit 64
                     fi
@@ -229,7 +253,7 @@ case "$ARM" in
             # not implemented), so the client's own guarantee extends only to its last sync.
             QWP_SF_DIR="${QDB_QWP_SF_DIR:-/mnt/qdb/sf}"
             mkdir -p "$QWP_SF_DIR"
-            echo "qwp-sf: tier=$QWP_TIER sf_dir=$QWP_SF_DIR durability=${QDB_QWP_SF_DURABILITY:-periodic}" >> /mnt/qdb/writer.log
+            echo "$ARM: tier=$QWP_TIER sf_dir=$QWP_SF_DIR durability=${QDB_QWP_SF_DURABILITY:-periodic}" >> /mnt/qdb/writer.log
         else
             QWP_TIER="${QDB_QWP_DURABLE_ACK:-off}"
             QWP_SF_DIR="${QDB_QWP_SF_DIR:-/mnt/qdb/sf}"

@@ -52,27 +52,24 @@ for a in "$@"; do
     esac
 done
 
-# Reject an unrunnable arm HERE, before 100GB of disks and two VM boots. `product` parses
-# everywhere but is not implemented, and currently fails deep inside the guest as a
-# confusing "workload never reached its first commit" (see issues/03).
+# Reject an unrunnable arm HERE, before 100GB of disks and two VM boots. The list lives in
+# lib/arms.sh so it cannot disagree with the arms the guest scripts actually implement.
 if ! arm_is_known "$ARM"; then
-    echo "power-cut-vm: arm '$ARM' is not runnable (known: reference, qwp, qwp-sf)" >&2
+    echo "power-cut-vm: arm '$ARM' is not runnable (known: reference, qwp, qwp-sf, product)" >&2
     exit 64
 fi
 
-# The product arm at W>0 cannot ENFORCE the RPO bar yet -- the client-side LOCAL
-# durable-ack frontier is WIP, so Wm is unobservable from the client. It can
-# still MEASURE the data-loss gap, and that is the useful thing: identifying how
-# much is lost is what the bar would later be drawn against. So run the cell and
-# report RPO_UNVERIFIED with the measured gap, rather than refusing and learning
-# nothing. The reference arm enforces the bar at W>0 today.
-if [ "$ARM" = "product" ] && [ "$WINDOW" -gt 0 ]; then
-    echo "power-cut-vm: product arm at W=$WINDOW will MEASURE the loss gap but cannot" >&2
-    echo "  enforce the RPO bar (client-side Wm is WIP). Verdict -> RPO_UNVERIFIED." >&2
-    RPO_ENFORCEABLE=0
-else
-    RPO_ENFORCEABLE=1
-fi
+# THE PRODUCT ARM ENFORCES THE RPO BAR AT W>0, like every other arm here.
+#
+# It could not while the client-side LOCAL durable-ack frontier was unbuilt: Wm was unobservable
+# from outside the server, so this script downgraded the cell to RPO_UNVERIFIED and measured the
+# gap instead of grading it. That tier landed with issues/17, and it was verified against a
+# MODULE-LAUNCHED server -- not merely a classpath one -- before this arm was enabled:
+# localAcks and trimAdvances both advance, and Wm tracks, through the shipped launcher.
+#
+# The downgrade is gone rather than left dormant. A latent "cannot enforce" branch on a path
+# that now can is how a bar quietly stops being a bar.
+RPO_ENFORCEABLE=1
 
 # Randomised cut timing is the POINT of this harness, not a detail. The Java
 # sweeps enumerate every durability op; this one samples real wall-clock moments
@@ -134,6 +131,24 @@ vm_wait_ssh "$P" "$KEY" 240 || bail "LOUD_FAILURE: guest never answered SSH"
 
 vm_scp "$P" "$KEY" "$HERE/../../../benchmarks/target/benchmarks.jar" /opt/vmcrash/benchmarks.jar \
     || bail "LOUD_FAILURE: could not ship benchmarks.jar into the guest"
+
+# The product arm additionally needs the RELEASE TARBALL, which is what it exists to test.
+# Same resolution rules as run-flush-sweep.sh: globbed for the version, exactly one match, and
+# never rebuilt or assembled here -- the harness ships what the real assembly produced.
+if [ "$ARM" = product ]; then
+    DIST_TGZ="${QDB_PRODUCT_DIST_TGZ:-}"
+    if [ -z "$DIST_TGZ" ]; then
+        mapfile -t _dists < <(find "$HERE/../../../core/target" -maxdepth 1 -name 'questdb-*-no-jre-bin.tar.gz' 2>/dev/null | sort)
+        case ${#_dists[@]} in
+            0) bail "LOUD_FAILURE: arm=product needs the release tarball; build it with: JAVA_HOME=<a stock JDK> mvn -pl core -am package -P build-binaries -Dmaven.test.skip=true" ;;
+            1) DIST_TGZ="${_dists[0]}" ;;
+            *) bail "LOUD_FAILURE: ${#_dists[@]} candidate no-jre tarballs in core/target; set QDB_PRODUCT_DIST_TGZ to choose" ;;
+        esac
+    fi
+    echo "  product dist: $(basename "$DIST_TGZ")"
+    vm_scp "$P" "$KEY" "$DIST_TGZ" /opt/vmcrash/questdb-dist.tar.gz \
+        || bail "LOUD_FAILURE: could not ship the release tarball into the guest"
+fi
 
 # Re-ship the guest scripts every run. They are baked into the golden image too,
 # but re-shipping means editing one does not require an image rebuild — and it
@@ -233,6 +248,10 @@ vm_wait_ssh "$P2" "$KEY" 240 || bail "LOUD_FAILURE: guest never rebooted after t
 # having made the jar durable.
 vm_scp "$P2" "$KEY" "$HERE/../../../benchmarks/target/benchmarks.jar" /opt/vmcrash/benchmarks.jar \
     || bail "LOUD_FAILURE: could not re-ship benchmarks.jar after the cut"
+# Re-ship the tarball for the same reason the jar is re-shipped: the post-cut boot must RECOVER
+# with the shipped artifact, and whatever was unpacked before the cut may not have survived it.
+[ "$ARM" = product ] && { vm_scp "$P2" "$KEY" "$DIST_TGZ" /opt/vmcrash/questdb-dist.tar.gz \
+    || bail "LOUD_FAILURE: could not re-ship the release tarball after the cut"; }
 vm_scp_dir "$P2" "$KEY" "$HERE/guest" /opt/vmcrash/ \
     || bail "LOUD_FAILURE: could not re-ship the guest scripts after the cut"
 

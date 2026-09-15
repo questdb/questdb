@@ -54,6 +54,10 @@ case "${QDB_ARM:-reference}" in
     # replays -- and report the delta. Measuring only after the replay makes `lost=0` ambiguous,
     # because it equally describes "the client refilled the gap" and "nothing was lost here".
     qwp-sf) QWP_FLAG=true;  QWP_SF_FLAG=true;  SF_REPLAY="${QDB_SF_REPLAY:-compare}"; QWP_TIER="${QDB_QWP_DURABLE_ACK:-local}" ;;
+    # product is qwp-sf with the SERVER ARTIFACT SWAPPED, so every flag here is qwp-sf's. The one
+    # difference is carried by --server=product below, which is what makes the shipped launcher --
+    # and the JPMS module configuration it starts -- the thing under test.
+    product) QWP_FLAG=true; QWP_SF_FLAG=true;  SF_REPLAY="${QDB_SF_REPLAY:-compare}"; QWP_TIER="${QDB_QWP_DURABLE_ACK:-local}" ;;
     *)      QWP_FLAG=false; QWP_SF_FLAG=false; SF_REPLAY="${QDB_SF_REPLAY:-false}"; QWP_TIER="${QDB_QWP_DURABLE_ACK:-off}"   ;;
 esac
 PROFILE="${QDB_SCHEMA_PROFILE:-bitmap}"
@@ -90,6 +94,33 @@ ENT_ROOT="${QDB_ENT_ROOT:-$(cd "$HERE/../../../.." 2>/dev/null && pwd)}"
 ENT_JAR="${QDB_ENT_JAR:-}"
 ENT_DEPS="${QDB_ENT_DEPS:-$ENT_ROOT/questdb-ent/target/deps}"
 
+# THE RELEASE TARBALL, for the product arm. Resolved on the HOST, before any VM boots, so a
+# missing artifact costs a message rather than two boots and a confusing guest-side failure.
+#
+# Globbed, not pinned: the version moves with the POM, and a hardcoded name silently becomes
+# wrong at the next bump -- the same fault the ENT jar resolution above was written to avoid.
+# Exactly one match is required; an ambiguous target/ is reported rather than resolved by luck.
+#
+# NOT hand-assembled from parts, and deliberately not rebuilt here either. Fidelity to the
+# shipped artifact is the entire point of this arm, so the tarball must come from the real
+# assembly (-P build-binaries) and the harness only ships what that produced.
+DIST_TGZ="${QDB_PRODUCT_DIST_TGZ:-}"
+if [ "${QDB_ARM:-reference}" = product ] && [ -z "$DIST_TGZ" ]; then
+    mapfile -t _dists < <(find "$HERE/../../../core/target" -maxdepth 1 -name 'questdb-*-no-jre-bin.tar.gz' 2>/dev/null | sort)
+    case ${#_dists[@]} in
+        0) echo "LOUD_FAILURE: arm=product needs the release tarball, and core/target has none."
+           echo "  Build it with the real assembly:"
+           echo "    JAVA_HOME=<a stock JDK> mvn -pl core -am package -P build-binaries -Dmaven.test.skip=true"
+           echo "  A Nix/flox JDK fails the jlink step with 'libmanagement_ext.so has been modified';"
+           echo "  that is the JDK, not the product build. See issues/03."
+           exit 1 ;;
+        1) DIST_TGZ="${_dists[0]}" ;;
+        *) echo "LOUD_FAILURE: ${#_dists[@]} candidate no-jre tarballs in core/target; set QDB_PRODUCT_DIST_TGZ to choose:"
+           printf '    %s\n' "${_dists[@]}"
+           exit 1 ;;
+    esac
+fi
+
 STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"
 BASE="$STATE_DIR/base"
 KEY="$BASE/id_ed25519"
@@ -109,7 +140,11 @@ truncate -s 60G "$RUN/log.raw"
 
 echo "flush-boundary crash sweep — $STAMP"
 echo "  arm=$ARM edition=$EDITION mode=$MODE W=$WINDOW profile=$PROFILE epoch=${EPOCH}ms sibling=${QDB_SIBLING_TABLE:-false} recoverAs=${QDB_RECOVER_AS:-same} ddlEvery=${QDB_DDL_EVERY_ROWS:--1} matView=${QDB_MAT_VIEW:-false} rebaseAt=${QDB_REBASE_AT_ROWS:--1}"
-[ "$ARM" = qwp-sf ] && echo "  qwp-sf: tier=$QWP_TIER sfReplay=$SF_REPLAY sfDurability=${QDB_QWP_SF_DURABILITY:-periodic}"
+{ [ "$ARM" = qwp-sf ] || [ "$ARM" = product ]; } && echo "  $ARM: tier=$QWP_TIER sfReplay=$SF_REPLAY sfDurability=${QDB_QWP_SF_DURABILITY:-periodic}"
+# NAME THE ARTIFACT IN THE RUN'S OWN OUTPUT. "arm=product" says which code path ran; only the
+# tarball's name says WHICH BUILD was under test, and a report that cannot say that is not
+# evidence about a shipped artifact.
+[ "$ARM" = product ] && echo "  product: dist=$(basename "$DIST_TGZ") recoveryPass=${QDB_PRODUCT_RECOVERY_PASS:-true}"
 # A defanged run is REQUIRED to fail. Say so up front, so a reader of the log cannot mistake
 # the red result for a regression -- and so a GREEN one is immediately visible as the real
 # problem it would be.
@@ -118,6 +153,20 @@ if [ "${QDB_QWP_DEFANG_ACK:-0}" = "1" ]; then
 fi
 
 keep() { echo "run state kept at $RUN" >&2; }
+
+# THE VERIFY INVOCATION, BUILT ONCE. Every flag in it is constant across boundaries, and the two
+# call sites below -- the main loop and the densify pass -- MUST use the same one. They did not:
+# the densify pass carried a hand-copied duplicate that never gained --qwp, --qwp-sf or
+# --sf-replay, so the neighbours of a qwp-sf failure were verified under a different oracle and
+# came back green for the wrong reason. A bracket that cannot bracket is worse than none. One
+# string, referenced twice, so the next flag cannot drift either -- the same fix, and the same
+# reason, as lib/arms.sh.
+#
+# --server is what makes this arm the product arm: the recovery pass and the replay server run
+# the SHIPPED artifact. QDB_PRODUCT_RECOVERY_PASS must travel as an ENV VAR because ssh does not
+# carry the caller's environment.
+VERIFY_SERVER="$(arm_server_kind "$ARM")"
+VERIFY_CMD="env QDB_PRODUCT_RECOVERY_PASS=${QDB_PRODUCT_RECOVERY_PASS:-true} bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --qwp=$QWP_FLAG --qwp-sf=$QWP_SF_FLAG --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --sf-replay=${SF_REPLAY} --mat-view=${QDB_MAT_VIEW:-false} --server=$VERIFY_SERVER --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false)"
 
 # Same rule as power-cut-vm.sh: the disks are kept on failure, the VM is not.
 # Nine orphaned qemu processes accumulated in one session before this existed.
@@ -130,6 +179,10 @@ vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P" "" "$RUN/log.raw"
 vm_wait_ssh "$P" "$KEY" 240 || { keep; echo "LOUD_FAILURE: guest never answered SSH"; exit 1; }
 vm_scp "$P" "$KEY" "$HERE/../../../benchmarks/target/benchmarks.jar" /opt/vmcrash/benchmarks.jar
 vm_scp_dir "$P" "$KEY" "$HERE/guest" /opt/vmcrash/
+# The release tarball goes in WHOLE and is unpacked in the guest, so what runs there is the
+# artifact a user downloads, not a directory tree we assembled on the host and copied file by
+# file. Both boots need it: the first writes with the shipped server, the second RECOVERS with it.
+[ "$ARM" = product ] && vm_scp "$P" "$KEY" "$DIST_TGZ" /opt/vmcrash/questdb-dist.tar.gz
 # ENT ships as a jar PLUS its runtime deps: it is not a fat jar, and without entlib/ the server
 # dies with io/questdb/jar/jni/LoadException.
 if [ "${QDB_EDITION:-oss}" = "ent" ]; then
@@ -196,6 +249,7 @@ vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P2" "" "$RUN/log.raw"
 vm_wait_ssh "$P2" "$KEY" 240 || { keep; echo "LOUD_FAILURE: guest never rebooted"; exit 1; }
 vm_scp "$P2" "$KEY" "$HERE/../../../benchmarks/target/benchmarks.jar" /opt/vmcrash/benchmarks.jar
 vm_scp_dir "$P2" "$KEY" "$HERE/guest" /opt/vmcrash/
+[ "$ARM" = product ] && vm_scp "$P2" "$KEY" "$DIST_TGZ" /opt/vmcrash/questdb-dist.tar.gz
 
 nflush=$(vm_ssh "$P2" "$KEY" "sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --list | head -1" \
     | grep -oE '[0-9]+ flushes' | grep -oE '^[0-9]+')
@@ -240,7 +294,7 @@ for n in $points; do
         sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
         sudo mkdir -p /mnt/qdb; \
         if sudo mount ${QDB_FS_MOUNT_OPTS:+-o ${QDB_FS_MOUNT_OPTS}} /dev/vdb /mnt/qdb 2>/dev/null; then \
-            bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --qwp=$QWP_FLAG --qwp-sf=$QWP_SF_FLAG --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --sf-replay=${SF_REPLAY} --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
+            $VERIFY_CMD; \
         else echo 'MOUNT_FAILED'; fi")
     # Archive the FULL per-boundary output. The one-line verdict in $LOG is a summary,
     # not evidence: every time a result needed explaining, the explanation was in the
@@ -283,7 +337,7 @@ if [ -n "$failed_points" ] && [ "${QDB_SWEEP_DENSIFY:-true}" = "true" ]; then
                 sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
                 sudo mkdir -p /mnt/qdb; \
                 if sudo mount ${QDB_FS_MOUNT_OPTS:+-o ${QDB_FS_MOUNT_OPTS}} /dev/vdb /mnt/qdb 2>/dev/null; then \
-                    bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --qwp=$QWP_FLAG --qwp-sf=$QWP_SF_FLAG --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --sf-replay=${SF_REPLAY} --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
+                    $VERIFY_CMD; \
                 else echo 'MOUNT_FAILED'; fi")
             mkdir -p "$OUTDIR"
             printf '%s\n' "$out" > "$OUTDIR/flush-$n.out"

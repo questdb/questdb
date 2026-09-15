@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
-# guest/verify.sh --arm=reference|product --mode=MODE
+# guest/verify.sh --arm=reference --mode=MODE [--server=classpath|product]
 #
 # Runs the arm's oracle and prints EXACTLY ONE verdict line on stdout. Anything
 # else is classified UNPARSEABLE upstream and keeps the run's disks.
+#
+# --arm names the ORACLE, not the workload that produced the data, and `reference`
+# is the only oracle there is. Every other arm is expressed as that oracle plus
+# modifiers -- --qwp / --qwp-sf / --server -- which is the convention lib/arms.sh
+# encodes in arm_verify_flags(). Forwarding a WORKLOAD arm straight through to
+# --arm was one of the three bugs in issues/04, and it surfaced only after a full
+# record, cut and reboot cycle.
 #
 # The reference arm delegates to CrashVerifier, which runs the PRODUCTION
 # recovery triple — RecoveryCoordinator.recover() -> notifyWalTxnRepublisher ->
@@ -34,6 +41,12 @@ QWP="${QDB_QWP:-false}"
 QWPSF="${QDB_QWP_SF:-false}"
 REBASE="${QDB_REBASE:-false}"
 SFREPLAY="${QDB_SF_REPLAY:-false}"
+# WHICH SERVER BINARY runs during verification: `classpath` (benchmarks.jar, every other arm) or
+# `product` (the shipped tarball through questdb.sh). The oracle itself is unchanged either way --
+# CrashVerifier is the INSTRUMENT and must stay identical across arms, or verdicts stop being
+# comparable. What this switches is the SERVER that performs crash recovery and serves the
+# store-and-forward replay, which for the product arm must be the shipped artifact.
+SERVER="${QDB_VERIFY_SERVER:-classpath}"
 
 for a in "$@"; do
     case "$a" in
@@ -49,6 +62,7 @@ for a in "$@"; do
         --qwp-sf=*)    QWPSF="${a#*=}" ;;
         --rebase=*)    REBASE="${a#*=}" ;;
         --sf-replay=*) SFREPLAY="${a#*=}" ;;
+        --server=*)    SERVER="${a#*=}" ;;
         *) echo "LOUD_FAILURE: verify.sh unknown argument $a"; exit 0 ;;
     esac
 done
@@ -71,6 +85,16 @@ if [ ! -s "$JAR" ]; then
     echo "LOUD_FAILURE: $JAR missing or empty after the cut — shipped artifacts were not durable"
     exit 0
 fi
+
+case "$SERVER" in
+    classpath) ;;
+    product)
+        # shellcheck source=product-dist.sh
+        source /opt/vmcrash/guest/product-dist.sh
+        product_dist_unpack || { echo "LOUD_FAILURE: product distribution unusable in the guest"; exit 0; }
+        ;;
+    *) echo "LOUD_FAILURE: verify.sh unknown --server=$SERVER"; exit 0 ;;
+esac
 
 case "$ARM" in
     reference)
@@ -117,6 +141,69 @@ case "$ARM" in
             echo "${v:--1}"
         }
 
+        # ---- PRODUCT RECOVERY PASS ---------------------------------------------------------
+        # The product arm claims "the SHIPPED artifact recovers". Without this pass it would not:
+        # CrashVerifier opens the crashed database first and runs the production recovery triple
+        # itself, so by the time the shipped server started for the replay there would be nothing
+        # left to recover, and the arm would prove only that the shipped server WROTE the data.
+        #
+        # So let the shipped artifact open the crashed root FIRST, exactly as an operator
+        # restarting a machine would, and let ITS recovery be the one under test. Everything after
+        # this point measures the state the shipped server left behind.
+        #
+        # Cost is one extra server start/stop per boundary. QDB_PRODUCT_RECOVERY_PASS=false turns
+        # it off, at the price of the arm's central claim -- so it is reported in the output either
+        # way, never silently skipped.
+        if [ "$SERVER" = product ]; then
+            if [ "${QDB_PRODUCT_RECOVERY_PASS:-true}" != "true" ]; then
+                echo "DETAIL PRODUCT_RECOVERY skipped (QDB_PRODUCT_RECOVERY_PASS=false) -- recovery was NOT performed by the shipped artifact"
+            else
+                rm -f /mnt/qdb/product-recovery.log
+                if ! product_server_start "$(dirname "$DB")" "$MODE" "$WINDOW" "$EPOCH" /mnt/qdb/product-recovery.log; then
+                    echo "DETAIL PRODUCT_RECOVERY server log tail:"; tail -20 /mnt/qdb/product-recovery.log 2>/dev/null | sed 's/^/DETAIL /'
+                    echo "LOUD_FAILURE: the shipped server did not start on the crashed database"
+                    exit 0
+                fi
+                if ! product_server_assert /mnt/qdb/product-recovery.log; then
+                    product_server_stop || true
+                    echo "LOUD_FAILURE: product premise assertion failed at verification time -- the server that recovered was not the shipped artifact"
+                    exit 0
+                fi
+                # The PASSING case leaves evidence too, in the per-boundary output the sweep
+                # archives. Otherwise the only trace of the arm's central premise lives in a
+                # guest-side log that dies with the VM, and a reader of the results has to take
+                # "it was the shipped server" on trust.
+                echo "DETAIL PRODUCT_PREMISE $PRODUCT_PREMISE"
+                # WAIT FOR THE WAL TO DRAIN. Answering SQL is not the same as having finished
+                # recovery: the apply job runs behind the HTTP endpoint, so reading the row count
+                # immediately would measure a recovery in progress and under-report it. Poll until
+                # the count stops moving. `|| true` on every pipeline: under `set -euo pipefail` a
+                # query against a table that does not exist yet -- a legitimate early boundary --
+                # would otherwise kill this script before it could emit a verdict.
+                _prev=-1; _stable=0; _rows=-1
+                for _ in $(seq 1 120); do
+                    _rows=$(curl -s -G http://localhost:9000/exec --data-urlencode "query=select count() from t" 2>/dev/null \
+                            | grep -oE '\[\[[0-9]+\]\]' | grep -oE '[0-9]+' | head -1 || true)
+                    : "${_rows:=-1}"
+                    if [ "$_rows" = "$_prev" ]; then
+                        _stable=$((_stable + 1))
+                        [ "$_stable" -ge 3 ] && break
+                    else
+                        _stable=0
+                    fi
+                    _prev="$_rows"
+                    sleep 0.5
+                done
+                echo "DETAIL PRODUCT_RECOVERY dist=$(product_dist_version) shippedServerRecoveredRows=$_rows"
+                # The database must be RELEASED before the oracle opens it; a held lock is what
+                # left 2 of 7 boundaries with no verdict at all in the first compare run.
+                if ! product_server_stop; then
+                    echo "LOUD_FAILURE: the shipped server would not stop after the recovery pass"
+                    exit 0
+                fi
+            fi
+        fi
+
         sfa_distinct=-1; sfa_f=-1; sfa_c=-1
         if [ "$SFREPLAY" = "compare" ]; then
             pares="/mnt/qdb/verify-armA.properties"; rm -f "$pares"
@@ -142,14 +229,25 @@ case "$ARM" in
         fi
 
         if [ "$SFREPLAY" = "true" ] || [ "$SFREPLAY" = "compare" ]; then
-            setsid env QDB_CAIRO_COMMIT_MODE="$MODE" \
-                QDB_CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW="${WINDOW}us" \
-                java $QDB_JVM -cp "$JAR" io.questdb.ServerMain -d "$(dirname "$DB")" \
-                </dev/null >/mnt/qdb/replay-server.log 2>&1 &
-            for _ in $(seq 1 120); do
-                curl -s "http://localhost:9000/exec?query=select+1" >/dev/null 2>&1 && break
-                sleep 0.5
-            done
+            # THE REPLAY SERVER IS THE ARM'S SERVER, not a convenient one. For the product arm the
+            # client must reconnect to the shipped artifact, or the half of the cycle that accepts
+            # the replayed rows would be tested on the other binary -- product coverage for the
+            # write path and classpath coverage for the recovery path, reported as one verdict.
+            if [ "$SERVER" = product ]; then
+                if ! product_server_start "$(dirname "$DB")" "$MODE" "$WINDOW" "$EPOCH" /mnt/qdb/replay-server.log; then
+                    echo "LOUD_FAILURE: the shipped server did not start for the store-and-forward replay"
+                    exit 0
+                fi
+            else
+                setsid env QDB_CAIRO_COMMIT_MODE="$MODE" \
+                    QDB_CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW="${WINDOW}us" \
+                    java $QDB_JVM -cp "$JAR" io.questdb.ServerMain -d "$(dirname "$DB")" \
+                    </dev/null >/mnt/qdb/replay-server.log 2>&1 &
+                for _ in $(seq 1 120); do
+                    curl -s "http://localhost:9000/exec?query=select+1" >/dev/null 2>&1 && break
+                    sleep 0.5
+                done
+            fi
             java $QDB_JVM -cp "$JAR" \
                 -Dqwp.addr=localhost:9000 \
                 -Dqwp.replay.only=true \
@@ -159,8 +257,18 @@ case "$ARM" in
                 org.questdb.QwpCrashIngestClient "$DB" >/mnt/qdb/replay-client.log 2>&1 || true
             # Stop the server so the verifier opens the database itself, exactly as it does for
             # every other arm -- a live writer would otherwise hold locks the verifier needs.
-            pkill -f "[S]erverMain -d" 2>/dev/null || true
-            sleep 3
+            # The product server is stopped THE SHIPPED WAY (questdb.sh stop: SIGTERM, poll,
+            # escalate), which also waits for the process to be gone rather than sleeping and
+            # hoping. The classpath branch keeps the pattern that matches its own cmdline.
+            if [ "$SERVER" = product ]; then
+                product_server_stop || {
+                    echo "LOUD_FAILURE: the shipped server would not stop after the store-and-forward replay"
+                    exit 0
+                }
+            else
+                pkill -f "[S]erverMain -d" 2>/dev/null || true
+                sleep 3
+            fi
         fi
 
         vout=$(mktemp); verr=$(mktemp)
@@ -297,7 +405,11 @@ case "$ARM" in
         ;;
 
     product)
-        echo "LOUD_FAILURE: product arm oracle is implemented by Task 6b; not yet available"
+        # There is no separate product ORACLE, and there should not be: the arm varies the
+        # ARTIFACT, and a measurement that changes with the thing being measured cannot compare
+        # them. The product arm runs this same reference oracle with --server=product, which is
+        # what lib/arms.sh emits. Reaching this branch means a caller sent the workload arm here.
+        echo "LOUD_FAILURE: --arm=product is not an oracle; the product arm uses --arm=reference --server=product (see lib/arms.sh arm_verify_flags)"
         ;;
 
     *)

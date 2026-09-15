@@ -282,13 +282,60 @@ Two failures this harness is built to avoid reporting as evidence:
 | Arm | Mechanism | Proves | Does **not** prove |
 |---|---|---|---|
 | **reference** | `CrashIngestWriter` embedded, `CrashVerifier` runs the production recovery triple | The engine's durability contract on real storage: every acked txn survives; loss confined to `(Wm, C]` and bounded by W | Anything about the shipped server binary, its entry point, or the wire |
-| **product** (W=0 only) | Real server, real client, PG-wire oracle | The **shipped artifact** recovers: `recovered >= C`, no loss | Nothing at W>0 — see the limitation below |
+| **qwp** | A real classpath-launched server plus the real WebSocket client; the SERVER tracks and recovers | The wire protocol's write path — frame decode, ingress buffering, server-side commit — and that the server alone honours the bar | That a client can close the server's RPO window; anything about packaging or the entry point |
+| **qwp-sf** | As `qwp`, plus the client requests the LOCAL durable-ack tier and holds un-acked rows in a store-and-forward buffer **on the crashed device** | That the client puts back what the server's RPO window legitimately dropped: measured as a delta between two verifications of the same boundary, not implied | Anything about packaging or the entry point — it runs the same shade-jar as `qwp` |
+| **product** | The **release tarball** (`questdb-<ver>-no-jre-bin.tar.gz`) unpacked in the guest and started by the real `questdb.sh`, plus the same client and oracle `qwp-sf` uses | The **shipped artifact** writes, survives a cut, and **recovers**: same RPO bar as `qwp-sf`, but on the artifact a user actually downloads, launched as a **named JPMS module** | That the enterprise distribution ships correctly (it is a different artifact, and this arm refuses `QDB_EDITION=ent`); that the bundled web console ships (built without `-P build-web-console`) |
 
-**Product arm is W=0 only, deliberately.** At W=0 adaptive is fsync-before-return, so every
-committed txn is durable and the bar needs no durable-ack frontier. At W>0 it would need
-`Wm`, and the **client-side LOCAL durable-ack frontier is WIP** — so `power-cut-vm.sh`
-*refuses* `--arm=product --window-us>0` rather than print a verdict it never checked. The
-reference arm reads the frontier in-process and covers W>0 today.
+**The product arm is `qwp-sf` with one variable changed: the server binary and how it is
+launched.** That is a runtime-configuration difference, not a packaging detail:
+
+| | every other arm | the shipped launcher |
+|---|---|---|
+| how | `java -cp benchmarks.jar io.questdb.ServerMain` | `java -p questdb.jar -m io.questdb/io.questdb.ServerMain` |
+| module | unnamed, classpath | **named module `io.questdb`** |
+| native access | `--enable-native-access=ALL-UNNAMED` | `--enable-native-access=io.questdb` |
+| opens | `--add-opens=...=ALL-UNNAMED` | `--add-opens=...=io.questdb` |
+| artifact | a JMH shade-jar (`Main-Class: org.openjdk.jmh.Main`) | the assembled release artifact |
+
+Reflection, native-access enforcement, resource loading and native-library extraction all
+follow the module, so a regression in any of them is **invisible to every other arm**.
+
+**The arm asserts its own premise, twice, and both checks are demonstrated able to fail:**
+
+1. the running JVM's command line must carry `-m io.questdb/io.questdb.ServerMain`. Run
+   against a classpath-launched server it refuses (`rc=64`).
+2. `build()` must report the **commit hash baked into the tarball's manifest**. Run against a
+   correctly module-launched server with a doctored manifest hash it refuses (`rc=64`).
+
+Both pass their evidence into the archived per-boundary output as
+`DETAIL PRODUCT_PREMISE moduleLaunched=yes dist=<ver> commit=<sha>`, so a green run can be
+audited rather than trusted. A silent fallback to a classpath server would otherwise report
+product coverage that never happened — both servers write byte-identical data, so nothing
+downstream could tell.
+
+**W>0 is supported and is the interesting case.** It was W=0-only while the client-side LOCAL
+durable-ack frontier did not exist; that landed with the `qwp-sf` arm, and was re-verified
+through the shipped launcher (`localAcks` and `trimAdvances` both advance, `Wm` tracks) before
+this arm was enabled. `run-matrix.sh` still runs the product cells at W=0 only — but that is a
+limit of the LIVE-CUT flow, which cannot create a W>0 gap at all, not a limit of the arm.
+
+**The shipped artifact does the recovering.** Before the oracle opens the crashed database, the
+product arm starts the shipped server on it and lets ITS recovery run, then waits for the WAL
+to drain and reports `DETAIL PRODUCT_RECOVERY shippedServerRecoveredRows=N`. Without that pass
+the arm would prove only that the shipped server WROTE the data: `CrashVerifier` opens the root
+first and would have completed recovery itself. Costs one extra server start/stop per boundary;
+`QDB_PRODUCT_RECOVERY_PASS=false` opts out and says so in the output.
+
+**Getting the tarball.** The harness ships what the real assembly produced and never assembles
+one itself:
+
+```bash
+JAVA_HOME=<a stock JDK> mvn -pl core -am package -P build-binaries -Dmaven.test.skip=true
+```
+
+A Nix/flox JDK fails the `jlink` step with `libmanagement_ext.so has been modified` — its native
+libraries are patchelf-rewritten, so jlink refuses to link from it. That is the JDK, not the
+product build, and not the `--compress=2` deprecation warning printed just above the error.
 
 ## Why killing the VMM is not, by itself, a power cut
 

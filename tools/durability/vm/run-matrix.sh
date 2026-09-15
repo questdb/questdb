@@ -25,11 +25,19 @@ fails=0
 
 # mode:window_us:arms
 #
-# The product arm runs W=0 cells only. The client-side LOCAL durable-ack
-# frontier is WIP, so at W>0 the product arm cannot observe Wm and therefore
-# cannot enforce the RPO bar — running it there would print a verdict it never
-# actually checked. The reference arm reads the frontier in-process and covers
-# W>0 today.
+# THE PRODUCT CELLS RUN AGAIN. They were dead for as long as the arm was a stub: three of these
+# four cells named an arm that exited 64 inside the guest, and because the workload is launched
+# with `setsid ... &` the SSH call returned 0 and the failure resurfaced later as the misleading
+# "workload never reached its first commit" (issues/03).
+#
+# THE W=0 RESTRICTION HERE IS ABOUT THIS FLOW, NOT ABOUT THE ARM. The product arm enforces the
+# RPO bar at W>0 perfectly well -- the flush sweep runs it there. But run-matrix drives
+# power-cut-vm.sh, the LIVE-CUT flow, and that flow cannot observe the W>0 gap at all: QEMU
+# cache=none sends guest writes O_DIRECT to host storage, the host never loses power, and
+# dm-flakey only discards writes issued after arming -- which is precisely the set adaptive
+# leaves at risk. Measured by probe with QuestDB removed from the experiment; see spec.md §3.
+# So a W>0 cell here would grade a gap it cannot create. W>0 coverage lives in
+# run-flush-sweep.sh, which is the CI instrument regardless.
 CELLS=(
     "adaptive:0:reference product"
     "adaptive:50000:reference"
@@ -87,9 +95,14 @@ for cell in "${CELLS[@]}"; do
     fi
 
     # A disagreement between the arms is a finding about the layer between them
-    # — the wire, the ack plumbing, the server lifecycle — not a flake to retry.
+    # — the wire, the ack plumbing, the server lifecycle, the PACKAGING and the module
+    # configuration the shipped launcher starts — not a flake to retry.
     # Only meaningful where BOTH arms ran; a single-arm cell has nothing to
     # diverge from and must not be compared against an unset value.
+    #
+    # Note the two arms reach a pass verdict by different NAMES: the reference arm reports
+    # DURABLE, and so does the product arm at W=0. verdict_classify normalises both, so the
+    # comparison is between classifications, not raw lines.
     if [ -n "${got[reference]:-}" ] && [ -n "${got[product]:-}" ] \
        && [ "${got[reference]}" != "${got[product]}" ]; then
         echo "  DIVERGENCE $mode W=$w reference=${got[reference]} product=${got[product]}"

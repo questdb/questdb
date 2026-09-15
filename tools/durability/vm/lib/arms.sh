@@ -10,7 +10,17 @@
 #   qwp        a REAL server and a REAL WebSocket client. The SERVER tracks and recovers.
 #   qwp-sf     as qwp, PLUS the client requests the LOCAL durable-ack tier, holds un-acked
 #              rows in a store-and-forward buffer on the crashed device, and replays them.
-#   product    the SHIPPED artifact and its real entry point. Not implemented yet.
+#   product    qwp-sf with the SERVER ARTIFACT SWAPPED: the release tarball
+#              (questdb-<ver>-no-jre-bin.tar.gz), unpacked in the guest and started by the real
+#              questdb.sh launcher, which runs QuestDB as a NAMED JPMS MODULE
+#              (-p questdb.jar -m io.questdb/io.questdb.ServerMain). Every other arm runs the
+#              engine on the CLASSPATH in the unnamed module, so nothing else here can see a
+#              packaging, entry-point or module-configuration regression.
+#
+# WHY product IS qwp-sf AND NOT ITS OWN CONTRACT. One arm should vary ONE thing. The client,
+# the payload, the oracle and the bar are all identical to qwp-sf; only the server binary and
+# the way it is launched differ. That is what makes a product-vs-qwp-sf divergence attributable
+# to packaging rather than to a different test.
 #
 # WHY THIS FILE EXISTS. The liveness pattern below was hardcoded in power-cut-vm.sh as
 # [C]rashIngestWriter, and separately fixed -- for the qwp arm only -- inside
@@ -32,17 +42,35 @@
 # still returned DURABLE instead of failing as vacuous.
 arm_live_pattern() {
     case "$1" in
-        qwp|qwp-sf) echo "[Q]wpCrashIngestClient" ;;
-        *)          echo "[C]rashIngestWriter" ;;
+        qwp|qwp-sf|product) echo "[Q]wpCrashIngestClient" ;;
+        *)                  echo "[C]rashIngestWriter" ;;
+    esac
+}
+
+# arm_server_kind ARM -> which SERVER BINARY the arm runs, for callers that must start one.
+#
+#   classpath  java -cp benchmarks.jar io.questdb.ServerMain   (qwp, qwp-sf)
+#   product    dist/questdb.sh start -d ROOT                   (product)
+#
+# verify.sh needs this as well as run-workload.sh: the store-and-forward replay starts a server
+# for the client to reconnect to, and for the product arm that server must be the shipped one
+# too. A product run whose RECOVERY happened on a classpath server would report product coverage
+# for half the cycle -- the write half -- and quietly test the other artifact for the rest.
+arm_server_kind() {
+    case "$1" in
+        product) echo "product" ;;
+        *)       echo "classpath" ;;
     esac
 }
 
 # arm_is_known ARM -> 0 if this is an arm the harness can run.
-# `product` is deliberately absent: it parses but is not implemented, and reporting it as
-# known here would let a caller start a cell that cannot produce a verdict.
+# `product` joined this list when it gained a real implementation. It was deliberately absent
+# while it was a stub, because reporting it as known would let a caller start a cell that
+# cannot produce a verdict -- which is exactly what run-matrix.sh did for three of its four
+# cells (issues/03).
 arm_is_known() {
     case "$1" in
-        reference|qwp|qwp-sf) return 0 ;;
+        reference|qwp|qwp-sf|product) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -62,8 +90,8 @@ arm_is_known() {
 # A guard that silently gives up is worse than one that fails, because the run still looks fine.
 arm_progress_file() {
     case "$1" in
-        qwp|qwp-sf) echo "_qwp_progress" ;;
-        *)          echo "_progress" ;;
+        qwp|qwp-sf|product) echo "_qwp_progress" ;;
+        *)                  echo "_progress" ;;
     esac
 }
 
@@ -81,6 +109,11 @@ arm_verify_flags() {
     case "$1" in
         qwp)    echo "--arm=reference --qwp=true --qwp-sf=false" ;;
         qwp-sf) echo "--arm=reference --qwp=true --qwp-sf=true --sf-replay=compare" ;;
+        # product differs from qwp-sf by ONE flag, and that flag is the arm: --server=product
+        # makes the recovery pass and the replay server the SHIPPED artifact. Drop it and the
+        # run silently degrades into a qwp-sf run wearing a product label -- the same false-green
+        # shape as a sweep reporting mode=sync while serving nosync.
+        product) echo "--arm=reference --qwp=true --qwp-sf=true --sf-replay=compare --server=product" ;;
         *)      echo "--arm=reference --qwp=false --qwp-sf=false" ;;
     esac
 }
