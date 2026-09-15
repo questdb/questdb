@@ -12571,7 +12571,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             backup,
                                             true,
                                             backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs, reader.getSymbolMapReader(keyReaderColIdx)),
-                                            !SqlHints.hasCoveringUnorderedHint(model)
+                                            true
                                     );
                                 } catch (Throwable th) {
                                     Misc.free(backup);

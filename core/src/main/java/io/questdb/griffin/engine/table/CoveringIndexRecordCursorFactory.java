@@ -830,14 +830,27 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     /**
-     * True when the consumer groups by exactly this scan's index column.
+     * True when the consumer's grouping includes this scan's index column -- whether
+     * that is the only column it groups by, or the index key plus other grouping terms
+     * (e.g. a SAMPLE BY time bucket).
      * <p>
-     * Every such group draws its rows from ONE key's posting list, which per-key mode
-     * emits partition-ascending with ascending row ids inside, so the frame-sequence row
-     * id that first()/last() compare is still timestamp-ordered within a group. That is
-     * what makes an order-sensitive aggregate safe over an otherwise unordered scan.
-     * Grouping by anything else -- a time bucket, say -- draws one group from many keys
-     * delivered key-by-key, and is not safe.
+     * Per-key mode delivers each key's rows partition-ascending with ascending row ids
+     * inside, so every group produced by a grouping that includes the index key draws
+     * its rows from exactly one key's already-ordered posting list. Any additional
+     * grouping term only narrows those groups further -- it cannot reorder rows drawn
+     * from a single key's stream. That is what makes an order-sensitive aggregate
+     * (first()/last()) safe over an otherwise unordered (per-key) scan: it is the
+     * grouping being a superset of {@code {index key}} that matters, not it being
+     * exactly equal.
+     * <p>
+     * This inspects the {@link ListColumnFilter}, which carries only grouping COLUMNS.
+     * A SAMPLE BY bucket is a key FUNCTION, not a column, and never enters that filter --
+     * so {@code SELECT ts, first(value), param_id FROM t WHERE param_id IN (...) SAMPLE
+     * BY 10s}, grouped by both the bucket and the index key, is ACCEPTED here: the filter
+     * contains exactly {@code [param_id]}. That is intentional, not an oversight -- do
+     * not tighten this to require the filter equal exactly the index key at the SQL
+     * grouping level, or the SAMPLE BY case above (which is safe, and works today) will
+     * start being rejected.
      * <p>
      * The filter indexes this reads are positions in the consumer's base metadata, which
      * is this factory's own metadata, the same space {@link #keyQueryPosition} lives in.
