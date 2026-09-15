@@ -298,6 +298,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelGroupByEnabled();
 
+    boolean isParallelHashJoinGroupByEnabled();
+
+    /** Compile-time choice: dictionary-wide predicate caches may grow with symbol cardinality. */
+    boolean isSymbolPredicateCacheEnabled();
+
     boolean isParallelHorizonJoinEnabled();
 
     boolean isParallelReadParquetEnabled();
@@ -415,6 +420,10 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
 
     void setParallelGroupByEnabled(boolean parallelGroupByEnabled);
+
+    void setParallelHashJoinGroupByEnabled(boolean enabled);
+
+    void setSymbolPredicateCacheEnabled(boolean enabled);
 
     void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled);
 

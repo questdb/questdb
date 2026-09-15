@@ -109,6 +109,59 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelFilteredReducersOverParquetReleaseWorkerSlotsOnRowIdListBreach() throws Exception {
+        // The filtered keyed GROUP BY, non-keyed GROUP BY and top-K reducers acquire a per-worker slot
+        // and then open that slot's filtered row id list, which allocates against the per-query
+        // tracker. testParallelGroupByOverParquetReleasesWorkerSlotsOnBreach runs the same three
+        // queries, but there the default 256-entry list fits under the limit and the breach lands
+        // later, in the decode. Here the list alone is larger than the whole limit, so opening it is
+        // the allocation that breaches on every execution, whatever else the query has charged. The
+        // size fragment passed to assertNoSlotLeakOnBreach pins that. The list open must therefore sit
+        // inside the try that releases the slot, or every breach leaks a slot for as long as the
+        // factory stays cached.
+        //
+        // The queue cap follows testParallelGroupByOverParquetReleasesWorkerSlotsOnBreach. All three
+        // queries reduce on UnorderedPageFrameSequence, so only its queue needs the cap.
+        final long rowIdListCapacity = 262_144;
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024 * 1024L);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, rowIdListCapacity);
+        setProperty(PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        final String rowIdListBreach = "size=" + rowIdListCapacity * Long.BYTES + ",";
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (s VARCHAR, ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT rpad(x::varchar, 256, 'a'), (x * 1_000_000L)::timestamp, x FROM long_sequence(50_000)",
+                                sqlExecutionContext
+                        );
+                        engine.execute("INSERT INTO tab VALUES ('z', '1970-01-02T00:00:00.000000Z', -1)", sqlExecutionContext);
+                        engine.execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '1970-01-01'", sqlExecutionContext);
+                        // AsyncGroupByRecordCursorFactory.filterAndAggregate
+                        TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
+                                "SELECT s, count(*) c FROM tab WHERE ts < '1970-01-02' AND s != 'zzz' GROUP BY s",
+                                rowIdListBreach);
+                        // AsyncGroupByNotKeyedRecordCursorFactory.filterAndAggregate
+                        TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
+                                "SELECT count(s) c FROM tab WHERE ts < '1970-01-02' AND s != 'zzz'",
+                                rowIdListBreach);
+                        // AsyncTopKRecordCursorFactory.filterAndFindTopK
+                        TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
+                                "SELECT s FROM tab WHERE ts < '1970-01-02' AND s != 'zzz' ORDER BY s LIMIT 5",
+                                rowIdListBreach);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelGroupByOverParquetBalancesSharedCounter() throws Exception {
         // Bounded-cardinality key (500 distinct wide values) keeps the GROUP BY maps small,
         // so the run stays under the generous limit. assertMemoryLeak around the repeated

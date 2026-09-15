@@ -353,8 +353,9 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
                         memGrown - memAtInitial >= expectedGrowthBytes
                 );
 
-                // The fix: clear() shrinks every list back to its initial capacity.
+                // clear() releases all backing; getters reopen at initial capacity.
                 ctx.clear();
+                Assert.assertEquals(memAtInitial, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD));
 
                 Assert.assertEquals(rowIdInitialCapacity, ctx.getFilteredRows(-1).getCapacity());
                 Assert.assertEquals(columnInitialCapacity, ctx.getDataAddresses(-1).getCapacity());
@@ -368,7 +369,7 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
                 final long memCleared = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD);
                 Assert.assertTrue(
                         "clear() should release the grown memory, still holding " + (memCleared - memAtInitial) + " extra bytes",
-                        memCleared <= memAtInitial
+                        memCleared == memAtInitial + (1 + slotCount) * (rowIdInitialCapacity + 2 * columnInitialCapacity) * Long.BYTES
                 );
             } finally {
                 Misc.free(ctx);
@@ -417,8 +418,9 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
                         memGrown - memAtInitial >= expectedGrowthBytes
                 );
 
-                // The fix: clear() shrinks the lists back to their initial capacity.
+                // clear() releases all backing; getters reopen at initial capacity.
                 ctx.clear();
+                Assert.assertEquals(memAtInitial, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD));
 
                 Assert.assertEquals(initialCapacity, ctx.getFilteredRows(-1).getCapacity());
                 for (int i = 0; i < slotCount; i++) {
@@ -428,7 +430,7 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
                 final long memCleared = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD);
                 Assert.assertTrue(
                         "clear() should release the grown row-id memory, still holding " + (memCleared - memAtInitial) + " extra bytes",
-                        memCleared <= memAtInitial
+                        memCleared == memAtInitial + (1 + slotCount) * initialCapacity * Long.BYTES
                 );
             } finally {
                 Misc.free(ctx);

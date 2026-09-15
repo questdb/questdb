@@ -51,6 +51,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -528,6 +529,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public ParquetDecoder getParquetDecoder(int partitionIndex) {
+            return baseCursor.getParquetDecoder(partitionIndex);
+        }
+
+        @Override
         public long getRemainingRowsInInterval() {
             return baseCursor.getRemainingRowsInInterval();
         }
@@ -579,6 +585,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         @Override
         public long size() {
             return baseCursor.size();
+        }
+
+        @Override
+        public boolean supportsParquetDecoderLookup() {
+            return baseCursor.supportsParquetDecoderLookup();
         }
 
         @Override

@@ -46,6 +46,7 @@ import org.junit.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
@@ -60,6 +61,72 @@ import java.util.concurrent.locks.LockSupport;
 public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
 
     private static final long THROTTLE = 100;
+
+    @Test
+    public void testRowThrottleCadenceAcrossResetsAndCancellation() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int throttle : new int[]{Integer.MIN_VALUE, 0, 1, 2, 8, 2_000_000, Integer.MAX_VALUE}) {
+                AtomicInteger clockReads = new AtomicInteger();
+                DefaultSqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                    @Override
+                    public int getCircuitBreakerThrottle() {
+                        return throttle;
+                    }
+
+                    @Override
+                    public MillisecondClock getClock() {
+                        return () -> {
+                            clockReads.incrementAndGet();
+                            return 1000;
+                        };
+                    }
+                };
+                try (NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, config)) {
+                    for (int reset = 0; reset < 4; reset++) {
+                        switch (reset) {
+                            case 0 -> breaker.resetTimer();
+                            case 1 -> breaker.rearmTimer();
+                            case 2 -> breaker.of(-1);
+                            default -> breaker.clear();
+                        }
+                        clockReads.set(0);
+                        for (int row = 0; row < 32; row++) {
+                            breaker.statefulThrowExceptionIfTripped();
+                            Assert.assertEquals("throttle=" + throttle + ", row=" + row,
+                                    1 + row / Math.max(1, throttle), clockReads.get());
+                        }
+                        int before = clockReads.get();
+                        breaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        breaker.statefulThrowExceptionIfTripped();
+                        Assert.assertEquals("an explicit check resets the row window", before + 2, clockReads.get());
+                    }
+                    if (throttle <= 8) {
+                        AtomicBoolean cancelled = new AtomicBoolean();
+                        breaker.setCancelledFlag(cancelled);
+                        breaker.resetTimer();
+                        breaker.statefulThrowExceptionIfTripped();
+                        cancelled.set(true);
+                        int calls = 0;
+                        try {
+                            for (; calls < Math.max(1, throttle); calls++) {
+                                breaker.statefulThrowExceptionIfTripped();
+                            }
+                            Assert.fail("cancellation must be detected within the row window");
+                        } catch (CairoException ex) {
+                            Assert.assertTrue(ex.isCancellation());
+                            Assert.assertEquals(Math.max(1, throttle) - 1, calls);
+                        }
+                        try {
+                            breaker.statefulThrowExceptionIfTripped();
+                            Assert.fail("a failed check must remain immediately observable");
+                        } catch (CairoException ex) {
+                            Assert.assertTrue(ex.isCancellation());
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     @Test
     public void testAtomicBooleanConditionalClearLinearizesWithCancel() throws Exception {

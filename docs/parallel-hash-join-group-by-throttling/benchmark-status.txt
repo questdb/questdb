@@ -1,0 +1,8 @@
+Historical interruption record from d2e59fc832, before the confirmed rerun.
+The subsequent completed run is documented in confirmed/comparison.txt and confirmed/allocation.txt.
+
+Benchmark execution stopped at the user's request because other agents are running on the same machine.
+No primary case completed. The partial latency run is retained only as an interrupted-run record and is not performance evidence.
+The fixed recovery comparison and allocation benchmark have not run on this implementation.
+Do not run or resume any benchmark without explicit user confirmation that the machine is available for the run.
+Correctness regressions and benchmark packaging completed before the interrupted latency run.

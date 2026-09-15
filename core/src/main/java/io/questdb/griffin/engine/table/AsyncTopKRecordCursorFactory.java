@@ -221,13 +221,15 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
         final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
-        final DirectLongList rows = filterCtx.getFilteredRows(slotId);
-        rows.clear();
         final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
-        // navigateTo() can throw, so it must sit inside the try that releases the slot: the locks
-        // have no reset and the atom outlives the query, so a leaked slot starves the pool.
+        // getFilteredRows() opens the row id list through the per-query memory tracker, and
+        // navigateTo() decodes the frame. Both can throw, so they must sit inside the try that
+        // releases the slot: the locks have no reset and the atom outlives the query, so a leaked
+        // slot starves the pool.
         try {
+            final DirectLongList rows = filterCtx.getFilteredRows(slotId);
+            rows.clear();
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
                 frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());

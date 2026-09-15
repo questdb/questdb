@@ -25,15 +25,24 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -41,6 +50,7 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.atomic.AtomicLong;
 
 @RunWith(Parameterized.class)
 public class OrderByEncodeSortTest extends AbstractCairoTest {
@@ -1209,6 +1219,29 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByLimitParquetRowFilteredEmitOverManyRowGroups() throws Exception {
+        // Two-bound limits are not top-K candidates, so the encoded limited sort emits.
+        assertParquetRowFilteredEmitOverManyRowGroups(
+                "SELECT x, l FROM pqm ORDER BY l LIMIT 0, 900",
+                true,
+                false,
+                true,
+                "Encode sort light lo: 0 hi: 900"
+        );
+    }
+
+    @Test
+    public void testOrderByLimitParquetRowFilteredEmitOverManyRowGroupsTopK() throws Exception {
+        assertParquetRowFilteredEmitOverManyRowGroups(
+                "SELECT x, l FROM pqm ORDER BY l LIMIT 900",
+                true,
+                true,
+                true,
+                "Async Top K"
+        );
+    }
+
+    @Test
     public void testOrderByLimitSmallLimitUnderTightMemoryCap() throws Exception {
         // The caps fit ~32K entries; the 50,000-row scan overflows them without
         // compaction. The tree-chain path holds only `limit` entries, so both
@@ -1641,6 +1674,30 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             42
                             """);
         });
+    }
+
+    @Test
+    public void testOrderByParquetRowFilteredEmitOverManyRowGroups() throws Exception {
+        assertParquetRowFilteredEmitOverManyRowGroups(
+                "SELECT x, l FROM pqm WHERE k < 3 ORDER BY l",
+                false,
+                false,
+                false,
+                "Encode sort light",
+                "Filter filter"
+        );
+    }
+
+    @Test
+    public void testOrderByParquetRowFilteredEmitOverManyRowGroupsAsyncFilter() throws Exception {
+        assertParquetRowFilteredEmitOverManyRowGroups(
+                "SELECT x, l FROM pqm WHERE k < 3 ORDER BY l",
+                true,
+                false,
+                false,
+                "Encode sort light",
+                "Async"
+        );
     }
 
     @Test
@@ -2487,11 +2544,157 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         """);
     }
 
+    // The table holds 300 Parquet row groups of 16 rows each, more than the SCATTERED decode
+    // cache's 256-buffer cap. Row x sits at local row k = (x - 1) % 16 of row group
+    // p = (x - 1) / 16. The three rows with k < 3 get the sort key k * 300 + (p * 7919) % 300,
+    // so key order runs through a permutation of all row groups once per k, and the emit
+    // walks every declared frame three times. The query must declare exactly those 900 rows.
+    // The pool must keep one row-filtered buffer per declared frame: a cap below the declared
+    // frame count evicts on every revisit and decodes the evicted frames again.
+    private void assertParquetRowFilteredEmitOverManyRowGroups(
+            String query,
+            boolean isParallelFilterEnabled,
+            boolean isParallelTopKEnabled,
+            boolean expectSize,
+            String... planFragments
+    ) throws Exception {
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        final int frameCount = 300;
+        final int rowsPerFrame = 16;
+        final int declaredRowsPerFrame = 3;
+        final int declaredRowCount = frameCount * declaredRowsPerFrame;
+        final long[] expectedX = new long[declaredRowCount];
+        for (int p = 0; p < frameCount; p++) {
+            for (int k = 0; k < declaredRowsPerFrame; k++) {
+                expectedX[k * frameCount + (p * 7919) % frameCount] = (long) p * rowsPerFrame + k + 1;
+            }
+        }
+        final StringSink expected = new StringSink();
+        expected.put("x\tl\n");
+        for (int l = 0; l < declaredRowCount; l++) {
+            expected.put(expectedX[l]).put('\t').put(l).put('\n');
+        }
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowsPerFrame);
+        final AtomicLong rowFilteredDecodeCount = new AtomicLong();
+        final CairoConfiguration countingConfiguration = new CairoConfigurationWrapper(configuration) {
+            @Override
+            public ParquetPartitionDecoder newParquetPartitionDecoder() {
+                return new RowFilteredDecodeCountingDecoder(rowFilteredDecodeCount);
+            }
+        };
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        engine.execute(
+                                """
+                                        CREATE TABLE pqm AS (
+                                            SELECT
+                                                x,
+                                                (x - 1) % 16 k,
+                                                CASE
+                                                    WHEN (x - 1) % 16 < 3 THEN ((x - 1) % 16) * 300 + (((x - 1) / 16) * 7919) % 300
+                                                    ELSE 900 + x
+                                                END l,
+                                                timestamp_sequence(0, 1_000_000) ts
+                                            FROM long_sequence(4_800)
+                                        ) TIMESTAMP(ts) PARTITION BY DAY""",
+                                sqlExecutionContext
+                        );
+                        engine.execute("INSERT INTO pqm VALUES (1_000_000, 99, 10_000_000, '2000-01-01')", sqlExecutionContext);
+                        engine.execute("ALTER TABLE pqm CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'", sqlExecutionContext);
+                        sqlExecutionContext.setParallelFilterEnabled(isParallelFilterEnabled);
+                        sqlExecutionContext.setParallelTopKEnabled(isParallelTopKEnabled);
+
+                        assertQuery(query)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize(expectSize)
+                                .withPlanContaining(planFragments)
+                                .returns(expected);
+
+                        // One emit pass decodes each declared frame at most once. Frames the scan
+                        // left in the cache serve the emit without a row-filtered decode.
+                        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                            rowFilteredDecodeCount.set(0);
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                final Record record = cursor.getRecord();
+                                long rowCount = 0;
+                                while (cursor.hasNext()) {
+                                    Assert.assertEquals(expectedX[(int) rowCount], record.getLong(0));
+                                    Assert.assertEquals(rowCount, record.getLong(1));
+                                    rowCount++;
+                                }
+                                Assert.assertEquals(declaredRowCount, rowCount);
+                            }
+                            final long decodeCount = rowFilteredDecodeCount.get();
+                            Assert.assertTrue("emit must row-filter the Parquet decode", decodeCount > 0);
+                            Assert.assertTrue(
+                                    "emit decoded evicted frames again, decodes=" + decodeCount + ", declared frames=" + frameCount,
+                                    decodeCount <= frameCount
+                            );
+                        }
+                    },
+                    countingConfiguration,
+                    LOG
+            );
+        });
+    }
+
     private String limitedSortPlanType() {
         return sortMode == SortMode.SORT_ENABLED ? "Encode sort light" : "Sort light";
     }
 
     public enum SortMode {
         SORT_ENABLED, DISABLED
+    }
+
+    // Counts the raw-range row-filtered decodes the page frame memory pool issues for
+    // declared emit rows. The list overload delegates to the raw-range one; its calls
+    // come from late materialization and are excluded.
+    private static class RowFilteredDecodeCountingDecoder extends ParquetPartitionDecoder {
+        private final AtomicLong rowFilteredDecodeCount;
+        private boolean isDelegating;
+
+        private RowFilteredDecodeCountingDecoder(AtomicLong rowFilteredDecodeCount) {
+            this.rowFilteredDecodeCount = rowFilteredDecodeCount;
+        }
+
+        @Override
+        public void decodeRowGroupWithRowFilterFillNulls(
+                RowGroupBuffers rowGroupBuffers,
+                int columnOffset,
+                DirectIntList columns,
+                int rowGroupIndex,
+                int rowLo,
+                int rowHi,
+                DirectLongList filteredRows
+        ) {
+            isDelegating = true;
+            try {
+                super.decodeRowGroupWithRowFilterFillNulls(rowGroupBuffers, columnOffset, columns, rowGroupIndex, rowLo, rowHi, filteredRows);
+            } finally {
+                isDelegating = false;
+            }
+        }
+
+        @Override
+        public void decodeRowGroupWithRowFilterFillNulls(
+                RowGroupBuffers rowGroupBuffers,
+                int columnOffset,
+                DirectIntList columns,
+                int rowGroupIndex,
+                int rowLo,
+                int rowHi,
+                long filteredRowsAddr,
+                long filteredRowsCount
+        ) {
+            if (!isDelegating) {
+                rowFilteredDecodeCount.incrementAndGet();
+            }
+            super.decodeRowGroupWithRowFilterFillNulls(rowGroupBuffers, columnOffset, columns, rowGroupIndex, rowLo, rowHi, filteredRowsAddr, filteredRowsCount);
+        }
     }
 }

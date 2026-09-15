@@ -220,8 +220,8 @@ fn encode_decode_and_verify_varchar_slice(
         .expect("column type should be recognized");
 
     let row_group_count = decoder.row_group_count;
-    let mut rgb = RowGroupBuffers::new(allocator);
-    let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
+    let mut rgb = RowGroupBuffers::new(allocator.clone());
+    let mut ctx = DecodeContext::new_in(buf.as_ptr(), buf_len, allocator.clone());
     let columns = vec![(0i32, col_type)];
 
     // The file buffer is a known valid memory range for pointer verification.
@@ -1004,8 +1004,8 @@ fn encode_decode_and_verify_varchar_slice_filtered(
         .expect("column type should be recognized");
 
     let row_group_count = decoder.row_group_count;
-    let mut rgb = RowGroupBuffers::new(allocator);
-    let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
+    let mut rgb = RowGroupBuffers::new(allocator.clone());
+    let mut ctx = DecodeContext::new_in(buf.as_ptr(), buf_len, allocator.clone());
     let columns = vec![(0i32, col_type)];
 
     let file_range = MemRange::new(buf.as_ptr(), buf.len());
@@ -1445,8 +1445,8 @@ fn encode_decode_and_verify_varchar_slice_filtered_fill_nulls(
         .expect("column type should be recognized");
 
     let row_group_count = decoder.row_group_count;
-    let mut rgb = RowGroupBuffers::new(allocator);
-    let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
+    let mut rgb = RowGroupBuffers::new(allocator.clone());
+    let mut ctx = DecodeContext::new_in(buf.as_ptr(), buf_len, allocator.clone());
     let columns = vec![(0i32, col_type)];
 
     let file_range = MemRange::new(buf.as_ptr(), buf.len());

@@ -49,7 +49,6 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.SuspensionScope;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -71,7 +70,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private final MillisecondClock clock;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AsyncQueryErrorState errorState = new AsyncQueryErrorState("unexpected reduce error");
-    private final LongList frameRowCounts = new LongList();
     private final MessageBus messageBus;
     private final MPSequence reducePubSeq;
     private final RingQueue<UnorderedPageFrameReduceTask> reduceQueue;
@@ -89,7 +87,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private boolean isUninterruptible;
     private PageFrameMemoryRecord localRecord;
     // Per-query native memory tracker captured from the owning SqlExecutionContext
-    // at workload start. Null when no per-query limit is configured. Workers read
+    // at workload start, including unlimited queries. Null for unregistered work. Workers read
     // this off the task via task.getFrameSequence().getMemoryTracker() to charge
     // their allocations to the active workload.
     private MemoryTracker memoryTracker;
@@ -363,7 +361,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     public long getFrameRowCount(int frameIndex) {
-        return frameRowCounts.getQuick(frameIndex);
+        return frameAddressCache.getFrameSize(frameIndex);
     }
 
     public long getId() {
@@ -431,7 +429,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         try {
             assert frameCursor == null;
             frameCursor = base.getPageFrameCursor(executionContext, order);
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
+            frameAddressCache.setMemoryTracker(memoryTracker);
+            frameAddressCache.of(base.getMetadata(), frameCursor);
 
             id = ID_SEQ.incrementAndGet();
             resetCancellation();
@@ -442,10 +441,15 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
 
             atom.init(frameCursor, executionContext);
         } catch (TableReferenceOutOfDateException e) {
+            // The caller releases the per-query tracker on failure, so free the tracked address
+            // cache now. A cache left open would stay charged to a pooled tracker and a later
+            // reset() would free it against whichever tracker is bound then.
+            Misc.free(frameAddressCache, e);
             frameCursor = Misc.freeIfCloseable(frameCursor);
             throw e;
         } catch (Throwable th) {
             LOG.error().$("could not initialize unordered page frame sequence [error=").$(th).I$();
+            Misc.free(frameAddressCache, th);
             frameCursor = Misc.free(frameCursor);
             throw th;
         }
@@ -468,7 +472,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         isReadyToDispatch = false;
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
-        frameRowCounts.clear();
         // Drop the retained Throwable so a pooled sequence does not pin it while idle.
         errorState.clear();
 
@@ -520,7 +523,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private void buildAddressCache() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);
         }
 
@@ -578,9 +580,14 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         }
         try {
             if (isActive()) {
-                localRecord.of(getSymbolTableSource());
-                reduceStartedCounter.incrementAndGet();
-                reducer.reduce(-1, localRecord, frameIndex, workStealCircuitBreaker, this, this);
+                UnorderedPageFrameReduceJob.reduce(
+                        -1,
+                        localRecord,
+                        workStealCircuitBreaker,
+                        frameIndex,
+                        this,
+                        this
+                );
             }
         } catch (Throwable th) {
             if (isReducerFailureReportable(th)) {

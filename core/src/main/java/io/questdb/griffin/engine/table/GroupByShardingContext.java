@@ -411,7 +411,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         int ownCount = 0;
         int reclaimed = 0;
         int total = 0;
-        int mergedCount = 0; // used for work stealing decisions
+        int mergedCount = 0; // positive completed-task count; the latch counts down from zero
         long lastOwnerYieldNanos = QueryParallelFiberDispatcher.OWNER_YIELD_UNSET;
 
         try {
@@ -431,7 +431,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                             mergeShard(-1, shardIndex);
                             ownCount++;
                             total++;
-                            mergedCount = postAggregationDoneLatch.getCount();
+                            mergedCount = -postAggregationDoneLatch.getCount();
                             break;
                         }
                         if (isOwnerParkable) {
@@ -441,7 +441,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                         } else {
                             Os.pause();
                         }
-                        mergedCount = postAggregationDoneLatch.getCount();
+                        mergedCount = -postAggregationDoneLatch.getCount();
                     } else {
                         queue.get(cursor).of(
                                 postAggregationCircuitBreaker,
@@ -511,7 +511,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                     } else {
                         Os.pause();
                     }
-                    mergedCount = postAggregationDoneLatch.getCount();
+                    mergedCount = -postAggregationDoneLatch.getCount();
                 }
             }
         }

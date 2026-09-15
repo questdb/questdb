@@ -3067,28 +3067,49 @@ fn decode_null_bitmap<'a>(
 /// fill) thus keeps stale bytes from an earlier page of the same file in its tail;
 /// a caller needing a zeroed tail must `clear()` first (see
 /// `decompress_varchar_slice_dict`).
-pub(super) fn resize_decompress_buffer(buffer: &mut Vec<u8>, size: usize) -> ParquetResult<()> {
-    if size > buffer.len() {
-        buffer.try_reserve(size - buffer.len()).map_err(|_| {
-            fmt_err!(
-                OutOfMemory(None),
-                "cannot allocate {} bytes for a decompressed page",
-                size
-            )
-        })?;
+pub(crate) trait DecompressionBuffer: std::ops::DerefMut<Target = [u8]> {
+    fn resize_for_decompression(&mut self, size: usize) -> ParquetResult<()>;
+}
+
+impl DecompressionBuffer for AcVec<u8> {
+    fn resize_for_decompression(&mut self, size: usize) -> ParquetResult<()> {
+        self.resize(size, 0)?;
+        Ok(())
     }
-    buffer.resize(size, 0);
-    Ok(())
+}
+
+impl DecompressionBuffer for Vec<u8> {
+    fn resize_for_decompression(&mut self, size: usize) -> ParquetResult<()> {
+        let buffer = self;
+        if size > buffer.len() {
+            buffer.try_reserve(size - buffer.len()).map_err(|_| {
+                fmt_err!(
+                    OutOfMemory(None),
+                    "cannot allocate {} bytes for a decompressed page",
+                    size
+                )
+            })?;
+        }
+        buffer.resize(size, 0);
+        Ok(())
+    }
+}
+
+pub(super) fn resize_decompress_buffer(
+    buffer: &mut impl DecompressionBuffer,
+    size: usize,
+) -> ParquetResult<()> {
+    buffer.resize_for_decompression(size)
 }
 
 pub(super) fn decompress_sliced_dict<'a>(
     page: SlicedDictPage<'a>,
-    buffer: &'a mut Vec<u8>,
+    buffer: &'a mut impl DecompressionBuffer,
 ) -> ParquetResult<DictPage<'a>> {
     let buf = if page.compression != parquet2::compression::Compression::Uncompressed {
         resize_decompress_buffer(buffer, page.uncompressed_size)?;
         parquet2::compression::decompress(page.compression, page.buffer, buffer)?;
-        buffer
+        &buffer[..]
     } else {
         page.buffer
     };
@@ -3101,7 +3122,7 @@ pub(super) fn decompress_sliced_dict<'a>(
 
 pub(super) fn decompress_sliced_data<'a>(
     page: &'a SlicedDataPage<'a>,
-    decompress_buffer: &'a mut Vec<u8>,
+    decompress_buffer: &'a mut impl DecompressionBuffer,
 ) -> ParquetResult<DataPage<'a>> {
     let buffer = if page.compression != parquet2::compression::Compression::Uncompressed {
         match &page.header {
@@ -3112,7 +3133,7 @@ pub(super) fn decompress_sliced_data<'a>(
                     page.buffer,
                     decompress_buffer,
                 )?;
-                decompress_buffer
+                &decompress_buffer[..]
             }
             DataPageHeader::V2(header) => {
                 let offset = (header.definition_levels_byte_length
@@ -3132,7 +3153,7 @@ pub(super) fn decompress_sliced_data<'a>(
                         &page.buffer[offset..],
                         &mut decompress_buffer[offset..],
                     )?;
-                    decompress_buffer
+                    &decompress_buffer[..]
                 } else {
                     // is_compressed=false: the page body is already uncompressed and
                     // returned as-is, so the decompress buffer is never read. Compare
@@ -5806,6 +5827,31 @@ mod tests {
         // error: no leak across JNI on the abort-class path it replaces.
         drop(bufs);
         assert_eq!(tas.rss_mem_used(), 0, "decode error path leaked memory");
+    }
+
+    #[test]
+    fn decompression_scratch_charges_growth_before_allocation() {
+        let state = crate::allocator::TestAllocatorState::new().with_memory_tracker();
+        let mut ctx =
+            crate::parquet_read::DecodeContext::new_in(std::ptr::null(), 0, state.allocator());
+        state.set_tracker_limit(1024);
+        resize_decompress_buffer(&mut ctx.decompress_buffer, 1024).unwrap();
+        assert_eq!(state.tracker_used(), 1024);
+        let address = ctx.decompress_buffer.as_ptr();
+        assert!(resize_decompress_buffer(&mut ctx.decompress_buffer, 2048).is_err());
+        assert_eq!(ctx.decompress_buffer.as_ptr(), address);
+        assert_eq!(ctx.decompress_buffer.len(), 1024);
+        assert_eq!(state.tracker_used(), 1024);
+        // Dictionary scratch coexists with the data page scratch.
+        assert!(resize_decompress_buffer(&mut ctx.dict_decompress_buffer, 1024).is_err());
+        assert_eq!(state.tracker_used(), 1024);
+        state.set_tracker_limit(0);
+        resize_decompress_buffer(&mut ctx.decompress_buffer, 2048).unwrap();
+        resize_decompress_buffer(&mut ctx.dict_decompress_buffer, 1024).unwrap();
+        assert_eq!(state.tracker_used(), 3072);
+        drop(ctx);
+        assert_eq!(state.tracker_used(), 0);
+        assert_eq!(state.tagged_used(), 0);
     }
 
     #[test]

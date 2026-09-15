@@ -1,0 +1,29 @@
+Working directory: /home/puzpuzpuz/projects/questdb
+Implementation revision: 4a05a7eb242e1225e57b3f1bd7d3798059a2820c
+No production or benchmark source changes.
+
+Package before latency:
+mvn -pl benchmarks -am package -P build-rust-library,qdbr-release -DskipTests -Dmaven.test.skip=true
+PASS (17.731 seconds)
+
+Latency followed by allocation; interrupted and resumed commands are retained:
+bash /tmp/questdb-task9g/run.sh
+Initial driver exited 134 on right-swapped warmup; first eleven cases completed.
+bash /tmp/questdb-task9g/continue.sh
+PASS (exit 0). Retry and remaining cases complete. Recovery comparison exit 0.
+
+Completed evidence verification:
+python3 benchmarks/compare-hash-join-group-by-recovery.py /tmp/questdb-task9g/reference /tmp/questdb-task9g/candidate /tmp/questdb-task9g/comparison.csv
+PASS: 27 cases, 1360 measured executions, 1741 ordered result checks; 54 bounds, 0 failures.
+python3 benchmarks/allocation/validate.py /tmp/questdb-task9g/allocation
+PASS: 24 cases, 234 measured executions, 405 thread windows, zero unexplained bytes; all four workers in every census case.
+bash -n /tmp/questdb-task9g/run.sh /tmp/questdb-task9g/continue.sh /tmp/questdb-task9g/allocation.sh
+PASS
+
+Focused regressions after both matrices:
+mvn -pl core test -P build-rust-library,qdbr-release -Dtest=AsyncHashJoinGroupByTest,HashJoinGroupByPlannerTest,HashJoinGroupByConcurrentTest,IntHashJoinBuildTest
+PASS: 83 tests, 0 failures, 0 errors, 0 skips (44.662 seconds).
+
+Publication verifies every source/jar/input hash, all 54 distinct recovery bounds,
+all allocation windows and byte-for-byte equality with the frozen reference.
+The unresolved initial warmup SIGSEGV remains a failed execution-completion outcome.

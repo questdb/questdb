@@ -24,16 +24,49 @@
 
 package io.questdb.test.std;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.test.tools.LimitedMemoryTracker;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class DirectIntListTest {
     private static final Log LOG = LogFactory.getLog(DirectIntListTest.class);
+
+    @Test
+    public void testTrackedInitialAllocationGrowthAndReuse() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(7);
+                 DirectIntList list = new DirectIntList(2, MemoryTag.NATIVE_DEFAULT, true)) {
+                list.setMemoryTracker(tracker);
+                Assert.assertThrows(CairoException.class, list::reopen);
+                Assert.assertEquals(0, tracker.getUsed());
+                tracker.setLimit(8);
+                list.reopen();
+                list.add(10);
+                list.add(20);
+                Assert.assertEquals(8, tracker.getUsed());
+                Assert.assertThrows(CairoException.class, () -> list.add(30));
+                Assert.assertEquals(8, tracker.getUsed());
+                Assert.assertEquals(2, list.size());
+                Assert.assertEquals(20, list.get(1));
+                tracker.setLimit(0);
+                list.add(30);
+                Assert.assertEquals(16, tracker.getUsed());
+                list.close();
+                Assert.assertEquals(0, tracker.getUsed());
+                list.reopen();
+                Assert.assertEquals(8, tracker.getUsed());
+                list.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
 
     @Test
     public void testAddAll() {

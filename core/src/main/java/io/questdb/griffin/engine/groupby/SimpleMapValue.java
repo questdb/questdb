@@ -33,6 +33,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Long256Util;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
@@ -49,12 +50,31 @@ public class SimpleMapValue implements MapValue, Mutable, QuietCloseable {
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
     private final Long256Impl long256 = new Long256Impl();
+    private MemoryTracker memoryTracker;
     private boolean isNew;
     private long ptr;
 
     public SimpleMapValue(int columnCount) {
+        this(columnCount, null);
+    }
+
+    /** The borrowed tracker must remain alive until this value is closed. */
+    public SimpleMapValue(int columnCount, MemoryTracker memoryTracker) {
+        this(columnCount, memoryTracker, true);
+    }
+
+    /** A closed shell can be constructed before a query tracker is available. */
+    public SimpleMapValue(int columnCount, MemoryTracker memoryTracker, boolean allocate) {
         this.columnCount = columnCount;
-        this.ptr = Unsafe.malloc(32L * columnCount, MemoryTag.NATIVE_FAST_MAP);
+        if (allocate) {
+            reopen(memoryTracker);
+        }
+    }
+
+    public void reopen(MemoryTracker memoryTracker) {
+        assert ptr == 0;
+        this.memoryTracker = memoryTracker;
+        this.ptr = Unsafe.malloc(32L * columnCount, MemoryTag.NATIVE_FAST_MAP, memoryTracker);
     }
 
     @Override
@@ -111,7 +131,10 @@ public class SimpleMapValue implements MapValue, Mutable, QuietCloseable {
 
     @Override
     public void close() {
-        this.ptr = Unsafe.free(ptr, 32L * columnCount, MemoryTag.NATIVE_FAST_MAP);
+        if (ptr != 0) {
+            this.ptr = Unsafe.free(ptr, 32L * columnCount, MemoryTag.NATIVE_FAST_MAP, memoryTracker);
+        }
+        memoryTracker = null;
     }
 
     public void copy(SimpleMapValue srcValue) {

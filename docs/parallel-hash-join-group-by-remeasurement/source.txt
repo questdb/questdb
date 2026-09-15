@@ -1,0 +1,6 @@
+Implementation revision: 4a05a7eb242e1225e57b3f1bd7d3798059a2820c
+Core tree: b850da3371f32f98c654d5e9920bce85f45d7667
+Benchmarks tree: a464f3782020b2c9f967bdd418704af4e6d9a677
+Build command: mvn -pl benchmarks -am package -P build-rust-library,qdbr-release -DskipTests -Dmaven.test.skip=true
+Working tree was clean before the build; source patch base: 1586b7650f.
+Reference data copied unchanged from docs/parallel-hash-join-group-by-recovery/reference.

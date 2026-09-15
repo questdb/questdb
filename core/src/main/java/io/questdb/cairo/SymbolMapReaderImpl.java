@@ -40,6 +40,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
@@ -54,6 +55,9 @@ import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
+    // Bounded by simultaneous expression/slot views, independent of dictionary size.
+    private final ObjList<SymbolTableView> viewPool = new ObjList<>();
+    private static final int MAX_POOLED_VIEWS = 256;
     private final ObjList<String> cache = new ObjList<>();
     private final MemoryCMR charMem = Vm.getCMRInstance();
     private final StringSink columnNameSink = new StringSink();
@@ -160,7 +164,13 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return this.columnNameTxn != columnNameTxn;
     }
 
-    public StaticSymbolTable newSymbolTableView() {
+    public synchronized StaticSymbolTable newSymbolTableView() {
+        if (viewPool.size() > 0) {
+            SymbolTableView view = viewPool.getLast();
+            viewPool.remove(viewPool.size() - 1);
+            view.closed = false;
+            return view;
+        }
         return new SymbolTableView();
     }
 
@@ -338,7 +348,21 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return charMem.getStrB(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
-    private class SymbolTableView implements StaticSymbolTable {
+    private class SymbolTableView implements StaticSymbolTable, QuietCloseable {
+        private boolean closed;
+
+        @Override
+        public void close() {
+            synchronized (SymbolMapReaderImpl.this) {
+                if (!closed) {
+                    closed = true;
+                    if (viewPool.size() < MAX_POOLED_VIEWS) {
+                        viewPool.add(this);
+                    }
+                }
+            }
+        }
+
         private final DirectString csviewA = new DirectString();
         private final DirectString csviewB = new DirectString();
         private final DirectString csviewInternal = new DirectString();

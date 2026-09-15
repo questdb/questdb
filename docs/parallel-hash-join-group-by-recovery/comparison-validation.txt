@@ -1,0 +1,3 @@
+cases=27 measured_executions=1360 result_checks=1741
+cases=27 measured_executions=1360 result_checks=1741
+recovery comparisons=54 failures=0

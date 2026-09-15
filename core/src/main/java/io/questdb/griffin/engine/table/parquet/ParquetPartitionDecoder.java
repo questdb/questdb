@@ -86,7 +86,7 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
             int rowLo,
             int rowHi
     ) {
-        ensureDecodeContext();
+        ensureDecodeContext(rowGroupBuffers);
         final int columnsSize = (int) (columns.size() >>> 1);
         return decodeRowGroup(
                 decodeContextPtr,
@@ -115,7 +115,7 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
             int rowGroupHi
     ) {
         if (decodeContextPtr == 0) {
-            decodeContextPtr = ParquetFileDecoder.createDecodeContext(parquetAddr, parquetSize);
+            decodeContextPtr = ParquetFileDecoder.createTrackedDecodeContext(parquetAddr, parquetSize, rowGroupBuffers.getNativeAllocator());
         }
         return decodeRowGroupRange(
                 decodeContextPtr,
@@ -139,7 +139,7 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
             int rowHi,
             DirectLongList filteredRows
     ) {
-        ensureDecodeContext();
+        ensureDecodeContext(rowGroupBuffers);
         final int columnsSize = (int) (columns.size() >>> 1);
         decodeRowGroupWithRowFilter(
                 decodeContextPtr, parquetAddr, parquetSize,
@@ -176,7 +176,7 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
             long filteredRowsAddr,
             long filteredRowsCount
     ) {
-        ensureDecodeContext();
+        ensureDecodeContext(rowGroupBuffers);
         final int columnsSize = (int) (columns.size() >>> 1);
         decodeRowGroupWithRowFilterFillNulls(
                 decodeContextPtr, parquetAddr, parquetSize,
@@ -375,6 +375,12 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
     ) {
         decodeRowGroupWithRowFilterFromBuffers(decodeContextPtr, parquetMetaReaderPtr, rowGroupBufsPtr, columnOffset,
                 columnsPtr, columnCount, rowGroupIndex, chunksPtr, rowLo, rowHi, filteredRowsPtr, filteredRowsSize);
+    }
+
+    protected void ensureDecodeContext(RowGroupBuffers rowGroupBuffers) {
+        if (decodeContextPtr == 0) {
+            decodeContextPtr = ParquetFileDecoder.createTrackedDecodeContext(parquetAddr, parquetSize, rowGroupBuffers.getNativeAllocator());
+        }
     }
 
     protected void ensureDecodeContext() {

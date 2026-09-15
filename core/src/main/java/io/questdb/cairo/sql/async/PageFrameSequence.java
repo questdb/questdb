@@ -49,7 +49,6 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.SuspensionScope;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -65,7 +64,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
     private final MillisecondClock clock;
-    private final LongList frameRowCounts = new LongList();
     private final PageFrameReduceTaskFactory localTaskFactory;
     private final MessageBus messageBus;
     private final AtomicInteger reduceFinishedCounter = new AtomicInteger(0);
@@ -87,7 +85,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // Local reduce task used when there is no slots in the queue to dispatch tasks.
     private PageFrameReduceTask localTask;
     // Per-query native memory tracker captured from the owning SqlExecutionContext
-    // at workload start. Null when no per-query limit is configured. Workers read
+    // at workload start, including unlimited queries. Null for unregistered work. Workers read
     // this off the task via task.getFrameSequence().getMemoryTracker() to charge
     // their allocations to the active workload.
     private MemoryTracker memoryTracker;
@@ -282,7 +280,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     }
 
     public long getFrameRowCount(int frameIndex) {
-        return frameRowCounts.getQuick(frameIndex);
+        return frameAddressCache.getFrameSize(frameIndex);
     }
 
     public long getId() {
@@ -458,7 +456,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
+            frameAddressCache.setMemoryTracker(memoryTracker);
+            frameAddressCache.of(base.getMetadata(), frameCursor);
 
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();
@@ -474,11 +473,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // If atom is to fail, we will be releasing whatever we prepared.
             atom.init(frameCursor, executionContext);
         } catch (TableReferenceOutOfDateException e) {
+            // The caller releases the per-query tracker on failure, so free the tracked address
+            // cache now. A cache left open would stay charged to a pooled tracker and a later
+            // reset() would free it against whichever tracker is bound then.
+            Misc.free(frameAddressCache, e);
             frameCursor = Misc.freeIfCloseable(frameCursor);
             throw e;
         } catch (Throwable th) {
             // Log the OG exception as the below frame cursor close call may throw.
             LOG.error().$("could not initialize page frame sequence [error=").$(th).I$();
+            Misc.free(frameAddressCache, th);
             frameCursor = Misc.free(frameCursor);
             throw th;
         }
@@ -507,7 +511,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         readyToDispatch = false;
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
-        frameRowCounts.clear();
 
         Throwable cleanupFailure = null;
         try {
@@ -607,7 +610,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private void buildAddressCache() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);
         }
 

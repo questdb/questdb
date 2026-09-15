@@ -1,0 +1,512 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin;
+
+import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Misc;
+import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
+import org.junit.Test;
+
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertAgainstBaseline;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertDifferential;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
+
+public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
+    // Aliases denote SQL sides, including RIGHT: r is always the SQL LHS.
+    private static final String[] JOINS = {" join ", " left join ", " right join "};
+    private static final String PROJECTED_R = "(select s2, d, id, s, l, i, t, f from a) r";
+    private static final String PROJECTED_P = "(select f, i, s, t, id, l, d, s2 from b) p";
+
+    @Test
+    public void testColumnRolesAndEveryAggregateType() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            for (int workers : new int[]{1, 4}) {
+                try (SqlExecutionContextImpl context = context(engine, workers)) {
+                    context.changePageFrameSizes(1, 2);
+                    for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
+                        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
+                        for (String join : JOINS) {
+                            assertDifferential("select r.s lhs, r.s repeated, p.s rhs, r.i+p.i combined, "
+                                    + "sum(r.d+p.d),avg(r.d+p.d),count(r.i+p.i),count(r.l+p.l)"
+                                    + from(join) + " order by lhs,repeated,rhs,combined", context, true);
+                            for (int keys = 0; keys < 4; keys++) {
+                                for (int args = 1; args < 4; args++) {
+                                    String group = columns(keys, false);
+                                    String sql = "select " + (group.isEmpty() ? "" : group + ", ")
+                                            + aggregates(args, false) + from(join)
+                                            + (group.isEmpty() ? "" : " order by " + group);
+                                    assertDifferential(sql, context, true);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolRolesAcrossAllStoragePairs() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2);
+            createTables(false);
+            // Equal text has different IDs on both sources and in their second SYMBOL columns.
+            try (TableReader a = getReader("a"); TableReader b = getReader("b")) {
+                Assert.assertNotEquals(a.getSymbolMapReader(4).keyOf("shared"), b.getSymbolMapReader(4).keyOf("shared"));
+                Assert.assertNotEquals(a.getSymbolMapReader(4).keyOf("shared"), a.getSymbolMapReader(5).keyOf("shared"));
+            }
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 2);
+                for (int left = 0; left < 3; left++) {
+                    storage("a", left);
+                    for (int right = 0; right < 3; right++) {
+                        storage("b", right);
+                        for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
+                            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
+                            for (String join : JOINS) {
+                                for (int keys = 0; keys < 4; keys++) {
+                                    for (int args = 1; args < 4; args++) {
+                                        String group = columns(keys, true);
+                                        assertDifferential("select " + (group.isEmpty() ? "" : group + ", ")
+                                                + aggregates(args, true) + from(join)
+                                                + (group.isEmpty() ? "" : " order by " + group), context, true);
+                                    }
+                                }
+                                // f is needed only by WHERE; s2 is needed only inside an argument.
+                                String build = join.equals(" right join ") ? "r" : "p";
+                                String probe = build.equals("r") ? "p" : "r";
+                                String sql = "select r.s, p.s, count(r.s), count(p.s), "
+                                        + "sum(length(r.s2)::double), avg(length(p.s2)::double)" + from(join)
+                                        + " where (" + build + ".f='keep' or " + build + ".f is null)"
+                                        + " and " + probe + ".t >= '2020-01-01' and " + probe + ".t < '2020-01-04'"
+                                        + " order by r.s,p.s";
+                                assertDifferential(sql, context, true);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolClonesRebindingAndDictionaryGrowth() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null);
+                context.changePageFrameSizes(1, 2);
+                for (int format = 0; format < 3; format++) {
+                    for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
+                        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
+                        for (String join : JOINS) {
+                            for (boolean keyed : new boolean[]{false, true}) {
+                                storage("a", format);
+                                storage("b", format);
+                                bindVariableService.setStr(0, "shared");
+                                String sql = "select " + (keyed ? "r.s, p.s, r.s2, p.s2, " : "")
+                                        + aggregates(3, true) + ",sum(case when p.s=$1 then 1.0 else 0.0 end) selected" + from(join)
+                                        + (keyed ? " order by r.s,p.s,r.s2,p.s2" : "");
+                                try (RecordCursorFactory factory = engine.select(sql, context)) {
+                                    fused(factory);
+                                    for (int state = 0; state < 5; state++) {
+                                        if (state == 1) {
+                                            execute("insert into a values (1,4,40,4,'new','shared','keep','2020-01-04')");
+                                            execute("insert into b values (1,8,80,8,'new','different','keep','2020-01-04')");
+                                            bindVariableService.setStr(0, "new");
+                                        } else if (state == 2) {
+                                            execute("truncate table a");
+                                            execute("truncate table b");
+                                            execute("insert into a values (1,1,1,1,null,null,null,'2020-01-01')");
+                                            execute("insert into b values (1,1,1,1,null,null,null,'2020-01-01')");
+                                        } else if (state == 3) {
+                                            execute("truncate table a");
+                                            execute("truncate table b");
+                                        } else if (state == 4) {
+                                            insertRows("a", false);
+                                            insertRows("b", true);
+                                            bindVariableService.setStr(0, "shared");
+                                        }
+                                        if (state != 3) {
+                                            storage("a", format);
+                                            storage("b", format);
+                                        }
+                                        assertAgainstBaseline(sql, factory, context);
+                                        if (keyed) {
+                                            assertSymbolClones(factory, context);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJoinKeyAndPayloadTopsAcrossStoragePairs() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2);
+            createTables(true);
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 2);
+                for (int left = 0; left < 3; left++) {
+                    storage("a", left);
+                    for (int right = 0; right < 3; right++) {
+                        storage("b", right);
+                        for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
+                            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
+                            for (String join : JOINS) {
+                                String build = join.equals(" right join ") ? "r" : "p";
+                                for (String filter : new String[]{"", " where " + build + ".f is null",
+                                        " and " + build + ".f='keep'", " where " + build + ".d>1000"}) {
+                                    for (boolean keyed : new boolean[]{false, true}) {
+                                        String group = "r.id,p.id,r.s,p.s,r.i,p.l";
+                                        assertDifferential("select " + (keyed ? group + ", " : "") + aggregates(3, false)
+                                                + from(join) + filter + (keyed ? " order by " + group : ""), context, true);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testExtremeKeysNullsAndRejectedRealMatches() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            for (int state = 0; state < 7; state++) {
+                execute("truncate table a");
+                execute("truncate table b");
+                if (state != 1 && state != 3) {
+                    insertRows("a", false);
+                }
+                if (state != 2 && state != 3) {
+                    insertRows("b", true);
+                }
+                if (state == 4) {
+                    execute("update a set i=null,l=null,d=null,s=null,s2=null");
+                    execute("update b set i=null,l=null,d=null,s=null,s2=null");
+                } else if (state == 5) {
+                    execute("update b set id=999");
+                } else if (state == 6) {
+                    execute("update a set id=1");
+                    execute("update b set id=1");
+                }
+                try (SqlExecutionContextImpl context = context(engine, 4)) {
+                    context.changePageFrameSizes(1, 2);
+                    for (String join : JOINS) {
+                        String build = join.equals(" right join ") ? "r" : "p";
+                        for (String filter : new String[]{"", " where " + build + ".d is null",
+                                " where " + build + ".d>1000", " and " + build + ".d>1000",
+                                " where " + build + ".s is null or " + build + ".s='absent'"}) {
+                            assertDifferential("select " + aggregates(3, false) + from(join) + filter, context, true);
+                            assertDifferential("select r.id,p.id,r.s,p.s," + aggregates(3, false) + from(join)
+                                    + filter + " order by r.id,p.id,r.s,p.s", context, true);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSeededSymbolRoleStorageMatrix() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 3);
+            createTables(false);
+            Rnd rnd = new Rnd(130, 95);
+            for (int scenario = 0; scenario < 18; scenario++) {
+                for (String table : new String[]{"a", "b"}) {
+                    execute("truncate table " + table);
+                    int rows = 8 + rnd.nextInt(24);
+                    for (int row = 0; row < rows; row++) {
+                        String key = switch (rnd.nextInt(7)) {
+                            case 0 -> "null";
+                            case 1 -> "2147483647";
+                            case 2 -> "-2147483647";
+                            default -> Integer.toString(rnd.nextInt(5) - 2);
+                        };
+                        String s = rnd.nextInt(4) == 0 ? "null" : "'s" + rnd.nextInt(8) + "'";
+                        String s2 = rnd.nextInt(4) == 0 ? "null" : "'s" + rnd.nextInt(8) + "'";
+                        execute("insert into " + table + " values (" + key + "," + row + "," + row + ","
+                                + (rnd.nextInt(4) == 0 ? "null" : Double.toString(row * 0.25)) + "," + s + "," + s2
+                                + ",'keep','2020-01-0" + (1 + row / 12) + "')");
+                    }
+                }
+                storage("a", scenario % 3);
+                storage("b", scenario / 3 % 3);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, scenario < 9 ? 1 : Integer.MAX_VALUE);
+                for (int workers : new int[]{1, 2, 4}) {
+                    try (SqlExecutionContextImpl context = context(engine, workers)) {
+                        context.changePageFrameSizes(1, 1 + rnd.nextInt(5));
+                        for (String join : JOINS) {
+                            for (int keys = 0; keys < 4; keys++) {
+                                String group = columns(keys, true);
+                                assertDifferential("select " + (group.isEmpty() ? "" : group + ", ")
+                                        + aggregates(1 + rnd.nextInt(3), true) + from(join)
+                                        + (group.isEmpty() ? "" : " order by " + group), context, true);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testExcludedFunctionsKeysAndBarriers() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                for (String join : JOINS) {
+                    for (String side : new String[]{"r", "p"}) {
+                        for (String aggregate : new String[]{"sum(" + side + ".i)", "sum(" + side + ".l)",
+                                "avg(" + side + ".i)", "avg(" + side + ".l)", "count(" + side + ".t)",
+                                "min(" + side + ".d)", "max(" + side + ".d)", "first(" + side + ".d)",
+                                "last(" + side + ".d)", "count_distinct(" + side + ".s)", "ksum(" + side + ".d)", "count(" + side + ".i::short)"}) {
+                            assertDifferential("select " + aggregate + from(join), context, false);
+                            assertDifferential("select r.s,p.s," + aggregate + from(join) + " order by r.s,p.s", context, false);
+                        }
+                    }
+                    // PostgreSQL-style ::float means DOUBLE (SqlParser.rewritePgCast),
+                    // unlike a FLOAT table column. Check the compiled allowlist boundary.
+                    assertDifferential("select sum(r.d::float)" + from(join), context, true);
+                    for (String on : new String[]{"r.id=p.id and r.i=p.i", "r.id+1=p.id", "r.l=p.l", "r.s=p.s", "r.d=p.d", "r.t=p.t"}) {
+                        assertDifferential("select count(*) from " + PROJECTED_R + join + PROJECTED_P + " on " + on, context, false);
+                    }
+                    for (String barrier : new String[]{"select distinct r.s from ", "select r.s from "}) {
+                        String inner = barrier + PROJECTED_R + join + PROJECTED_P + " on r.id=p.id"
+                                + (barrier.contains("distinct") ? "" : " limit 2");
+                        assertDifferential("select s,count(*) from (" + inner + ") order by s", context, false);
+                    }
+                }
+                execute("alter table a add column v float");
+                execute("alter table b add column v float");
+                execute("update a set v=1");
+                execute("update b set v=2");
+                for (String join : JOINS) {
+                    for (String side : new String[]{"r", "p"}) {
+                        assertDifferential("select sum(" + side + ".v) from a r" + join + "b p on r.id=p.id", context, false);
+                        assertDifferential("select r.s,p.s,sum(" + side + ".v) from a r" + join
+                                + "b p on r.id=p.id order by r.s,p.s", context, false);
+                    }
+                }
+                assertDifferential("select count(*) from a r full join b p on r.id=p.id", context, false);
+                assertDifferential("select count(*) from a r left join b p on r.id=p.id and r.d>0", context, false);
+                assertDifferential("select count(*) from a r right join b p on r.id=p.id and p.d>0", context, false);
+                assertDifferential("select count(*) from a r left join b p on r.id=p.id where r.d>p.d", context, false);
+                assertDifferential("select count(*) from a r join b p on r.id=p.id join b q on r.id=q.id", context, false);
+                // Random arguments cannot be compared across executions; assert plan equality and
+                // deterministic row counts while still consuming the unsupported expression.
+                String sql = "select count(*) n, sum(rnd_double()) d" + from(JOINS[0]);
+                String ordinaryPlan;
+                long pairs;
+                context.setParallelHashJoinGroupByEnabled(false);
+                try (RecordCursorFactory factory = engine.select(sql, context); RecordCursor cursor = factory.getCursor(context)) {
+                    ordinaryPlan = plan(factory, context);
+                    Assert.assertTrue(cursor.hasNext());
+                    pairs = cursor.getRecord().getLong(0);
+                    Assert.assertTrue(cursor.getRecord().getDouble(1) >= 0);
+                }
+                context.setParallelHashJoinGroupByEnabled(true);
+                try (RecordCursorFactory factory = engine.select(sql, context); RecordCursor cursor = factory.getCursor(context)) {
+                    Assert.assertEquals(ordinaryPlan, plan(factory, context));
+                    Assert.assertFalse(ordinaryPlan.contains("Async Hash Join Group By"));
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(pairs, cursor.getRecord().getLong(0));
+                    Assert.assertTrue(cursor.getRecord().getDouble(1) >= 0);
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInvalidSqlKeepsCompilationErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                for (String sql : new String[]{"select sum(r.d,p.d)" + from(JOINS[0]), "select avg()" + from(JOINS[2]),
+                        "select count(r.missing)" + from(JOINS[1]), "select missing_function(r.d)" + from(JOINS[0]),
+                        "select sum(r.d) from a r join b p on r.missing=p.id"}) {
+                    String message = null;
+                    int position = -1;
+                    for (boolean enabled : new boolean[]{false, true}) {
+                        context.setParallelHashJoinGroupByEnabled(enabled);
+                        try (RecordCursorFactory ignored = engine.select(sql, context)) {
+                            Assert.fail(sql);
+                        } catch (SqlException ex) {
+                            if (enabled) {
+                                Assert.assertEquals(sql, message, ex.getFlyweightMessage().toString());
+                                Assert.assertEquals(sql, position, ex.getPosition());
+                            } else {
+                                message = ex.getFlyweightMessage().toString();
+                                position = ex.getPosition();
+                            }
+                        }
+                        Assert.assertNull(context.getMemoryTracker());
+                    }
+                }
+            }
+        });
+    }
+
+    private static String aggregates(int roles, boolean symbols) {
+        String sql = "count(*) pairs, count() pairs_again";
+        for (int side = 1; side <= 2; side++) {
+            if ((roles & side) != 0) {
+                String s = side == 1 ? "r" : "p";
+                if (symbols) {
+                    sql += ",count(" + s + ".s) " + s + "s,count(" + s + ".s) " + s + "again,count(" + s + ".s2) " + s + "s2"
+                            + ",count(length(" + s + ".s)) " + s + "len,sum(length(" + s + ".s2)::double) " + s + "sum"
+                            + ",avg(length(" + s + ".s)::double) " + s + "avg";
+                } else {
+                    sql += ",count(" + s + ".id) " + s + "key,count(" + s + ".i) " + s + "i,count(" + s + ".l) " + s + "l"
+                            + ",count(" + s + ".d) " + s + "d,count(" + s + ".s) " + s + "s,sum(" + s + ".d) " + s + "sum"
+                            + ",avg(" + s + ".d) " + s + "avg,sum(" + s + ".d) " + s + "again"
+                            + ",sum(coalesce(" + s + ".d,0.0)) " + s + "expr,avg(" + s + ".id::double) " + s + "keyavg";
+                }
+            }
+        }
+        return sql;
+    }
+
+    private static void assertSymbolClones(RecordCursorFactory factory, SqlExecutionContextImpl context) throws Exception {
+        try (RecordCursor cursor = factory.getCursor(context)) {
+            SymbolTable[] clones = new SymbolTable[4];
+            try {
+                // Parent initialization may request these before the first row builds/merges.
+                for (int col = 0; col < clones.length; col++) {
+                    Assert.assertEquals(ColumnType.SYMBOL, factory.getMetadata().getColumnType(col));
+                    clones[col] = cursor.newSymbolTable(col);
+                    Assert.assertNotNull(clones[col]);
+                    Assert.assertNotSame(cursor.getSymbolTable(col), clones[col]);
+                }
+                for (int pass = 0; pass < 2; pass++) {
+                    while (cursor.hasNext()) {
+                        Record record = cursor.getRecord();
+                        for (int col = 0; col < clones.length; col++) {
+                            CharSequence value = record.getSymA(col);
+                            String expected = value == null ? null : value.toString();
+                            int key = record.getInt(col);
+                            Assert.assertEquals(expected, string(clones[col].valueOf(key)));
+                            Assert.assertEquals(expected, string(cursor.getSymbolTable(col).valueBOf(key)));
+                            Assert.assertEquals(expected, string(record.getSymB(col)));
+                            // Access another dictionary while retaining the clone's A flyweight.
+                            CharSequence saved = clones[col].valueOf(key);
+                            clones[(col + 1) % clones.length].valueBOf(SymbolTable.VALUE_IS_NULL);
+                            Assert.assertEquals(expected, string(saved));
+                        }
+                    }
+                    cursor.toTop();
+                }
+            } finally {
+                for (SymbolTable clone : clones) {
+                    Misc.freeIfCloseable(clone);
+                }
+            }
+        }
+        Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+        Assert.assertNull(context.getMemoryTracker());
+    }
+
+    private static String columns(int roles, boolean symbols) {
+        String r = symbols ? "r.s,r.s2,length(r.s)" : "r.id,r.i,r.l,r.d,r.s";
+        String p = symbols ? "p.s,p.s2,length(p.s)" : "p.id,p.i,p.l,p.d,p.s";
+        return switch (roles) {
+            case 1 -> r;
+            case 2 -> p;
+            case 3 -> r + "," + p;
+            default -> "";
+        };
+    }
+
+    private void createTables(boolean tops) throws Exception {
+        for (String table : new String[]{"a", "b"}) {
+            if (tops) {
+                execute("create table " + table + " (t timestamp) timestamp(t) partition by day");
+                execute("insert into " + table + " values ('2019-12-31'),('2020-01-01')");
+                String[] names = {"id", "i", "l", "d", "s", "s2", "f"};
+                String[] types = {"int", "int", "long", "double", "symbol", "symbol", "symbol"};
+                for (int i = 0; i < names.length; i++) {
+                    execute("alter table " + table + " add column " + names[i] + " " + types[i]);
+                }
+            } else {
+                execute("create table " + table + " (id int,i int,l long,d double,s symbol,s2 symbol,f symbol,t timestamp) timestamp(t) partition by day");
+            }
+            insertRows(table, table.equals("b"));
+        }
+    }
+
+    private static String from(String join) {
+        return " from " + PROJECTED_R + join + PROJECTED_P + " on r.id=p.id";
+    }
+
+    private void insertRows(String table, boolean reverse) throws Exception {
+        String first = reverse ? "'other','shared'" : "'shared','other'";
+        String second = reverse ? "'shared','other'" : "'other','shared'";
+        execute("insert into " + table + " (id,i,l,d,s,s2,f,t) values "
+                + "(1,1,10,0.5," + first + ",'keep','2020-01-01T01'),"
+                + "(1,null,null,null,null,null,'drop','2020-01-01T02'),"
+                + "(1,2,20,2," + second + ",'drop','2020-01-02'),"
+                + "(0,0,0,0,'zero','shared','keep','2020-01-02T01'),"
+                + "(-2147483647,-1,-10,-0.5,'negative','other','keep','2020-01-02T02'),"
+                + "(2147483647,4,40,4,'maximum',null,'drop','2020-01-03'),"
+                + "(null,null,null,null,null,'null-key',null,'2020-01-03T01'),"
+                + "(" + (reverse ? 7 : 9) + ",8,80,8,'miss',null,'keep','2020-01-03T02')");
+    }
+
+    private void storage(String table, int format) throws Exception {
+        execute("alter table " + table + " convert partition to native where t >= 0");
+        if (format != 0) {
+            execute("alter table " + table + " convert partition to parquet where "
+                    + (format == 1 ? "t < '2020-01-02'" : "t >= 0"));
+        }
+    }
+
+    private static String string(CharSequence value) {
+        return value == null ? null : value.toString();
+    }
+}

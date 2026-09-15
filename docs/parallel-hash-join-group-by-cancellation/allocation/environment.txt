@@ -1,0 +1,11 @@
+openjdk version "25.0.4" 2026-07-21
+OpenJDK Runtime Environment (build 25.0.4+7-1-24.04-Ubuntu)
+OpenJDK 64-Bit Server VM (build 25.0.4+7-1-24.04-Ubuntu, mixed mode, sharing)
+Linux andrei-desktop 7.0.0-30-generic #30~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Fri Aug  7 13:27:52 UTC 2 x86_64 x86_64 x86_64 GNU/Linux
+0c5d8d78afe20349b36d7eab6c9689d404b4b252
+b811eccb6db226baa03ea75368faca9b8e0495c903c8ba10e8e7c264477cb793  -
+7f8f6a8ebf8a1ed862d25302ac895dfdaf2422e84683ef7c496d9983f9a0ca0a  benchmarks/target/benchmarks.jar
+f4c4790a1e1da995825dbe7c29731ad35a04dd9041b83f260e2f8d1aba15d769  benchmarks/allocation/AllocationAgent.java
+e3fbcc78f483fd1aa65b371d8e4644dc5d9fa93b55de0cd602a40f4196da61cc  benchmarks/allocation/HashJoinGroupByAllocationBenchmark.java
+6f3828a215c920059a5efa2fb55c233d6c54ec5cadca99ce1b1bdd10077c7ddd  /home/puzpuzpuz/.m2/repository/org/ow2/asm/asm/9.9.1/asm-9.9.1.jar
+JVM_FLAGS=-ea -Xbatch -XX:TieredStopAtLevel=1 -XX:-DoEscapeAnalysis -XX:-UseTLAB --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow

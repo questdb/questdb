@@ -77,10 +77,10 @@ pub fn decode_single_timestamp_value(
         ascii: None,
         id: None,
     };
-    let mut ctx = DecodeContext::new(file_data.as_ptr(), file_data.len() as u64);
     // Safety: caller guarantees `allocator` points to a valid QdbAllocator
     // for the duration of this call.
     let alloc = unsafe { &*allocator }.clone();
+    let mut ctx = DecodeContext::new_in(file_data.as_ptr(), file_data.len() as u64, alloc.clone());
     let mut bufs = ColumnChunkBuffers::new(alloc);
     // A stale or corrupt `_pm`/footer can record a byte range past the parquet
     // mmap; surface it as Err rather than slice-panic out of the JNI boundary.
@@ -575,7 +575,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
 fn decompress_data_page<'a>(
     is_varchar_slice: bool,
     page: &'a parquet2::read::SlicedDataPage<'a>,
-    decompress_buffer: &'a mut Vec<u8>,
+    decompress_buffer: &'a mut impl crate::parquet_read::decode::DecompressionBuffer,
     varchar_slice_page_bufs: &'a mut Vec<Vec<u8>>,
     varchar_slice_buf_pool: &mut Vec<Vec<u8>>,
 ) -> ParquetResult<crate::parquet_read::page::DataPage<'a>> {

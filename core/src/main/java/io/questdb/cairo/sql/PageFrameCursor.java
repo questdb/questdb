@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ReaderScanProfile;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
@@ -68,6 +69,15 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      * and writer indexes (field_ids) for parquet column mapping.
      */
     ColumnMapping getColumnMapping();
+
+    /**
+     * Returns an already opened decoder without mutating cursor or reader state.
+     * Called concurrently only after frame enumeration has published the opened
+     * partitions. The cursor owns the decoder and must outlive its consumers.
+     */
+    default ParquetDecoder getParquetDecoder(int partitionIndex) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Returns the number of rows remaining in the current interval that have not yet been
@@ -180,6 +190,11 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      * @return number of rows in all page frames
      */
     long size();
+
+    /** Whether frame caches can borrow decoders by partition without per-frame heap references. */
+    default boolean supportsParquetDecoderLookup() {
+        return false;
+    }
 
     /**
      * @return true if cursor supports fast size calculation,

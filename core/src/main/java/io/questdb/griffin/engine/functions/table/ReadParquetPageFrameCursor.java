@@ -123,6 +123,11 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
+    public ParquetFileDecoder getParquetDecoder(int partitionIndex) {
+        return decoder;
+    }
+
+    @Override
     public long getRemainingRowsInInterval() {
         return 0L;
     }
@@ -211,6 +216,11 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     @Override
     public long size() {
         return rowCount;
+    }
+
+    @Override
+    public boolean supportsParquetDecoderLookup() {
+        return true;
     }
 
     @Override

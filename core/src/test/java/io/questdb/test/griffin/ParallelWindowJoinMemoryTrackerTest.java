@@ -41,6 +41,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -385,6 +386,62 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinFilterReducersReleaseWorkerSlotsOnRowIdListBreach() throws Exception {
+        // The eight filterAndAggregate* reducers acquire a per-worker slot and then open the reduce
+        // task's row id list, which allocates against the per-query tracker. With the default
+        // 256-entry list that open fits, so testWindowJoinReleasesWorkerSlotsOnBreach breaches them
+        // elsewhere. Here the list alone is larger than the whole limit, so opening it is the
+        // allocation that breaches on every execution, whatever else the query has charged, and the
+        // size fragment pins it. The open must therefore sit inside the try that releases the slot.
+        //
+        // The aggregate* reducers are not repeated here: they open the list before they acquire, so a
+        // breach there holds no slot. The keyed factory's filtering reducers open it inside the try.
+        //
+        // The native master fans out into ~40 frames. The queue cap makes the owner reach the
+        // latch-gated steal branch, see testWindowJoinReleasesWorkerSlotsOnBreach.
+        final long rowIdListCapacity = 262_144;
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024 * 1024L);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, rowIdListCapacity);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        final String rowIdListBreach = "size=" + rowIdListCapacity * Long.BYTES + ",";
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createTrades(engine, sqlExecutionContext, 40_000, 8);
+                        createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        final String fixed = "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
+                        final String dynamic = "RANGE BETWEEN t.qty::long seconds PRECEDING AND 2 seconds FOLLOWING";
+                        final String scalar = "SELECT t.ts, array_agg(p.price) FROM trades t WINDOW JOIN prices p ";
+                        final String vect = "SELECT t.ts, sum(p.price) FROM trades t WINDOW JOIN prices p ";
+                        final String where = " WHERE t.qty > 0";
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                scalar + fixed + " EXCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE", rowIdListBreach);
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + fixed + " EXCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE_VECT", rowIdListBreach);
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                scalar + fixed + " INCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE_PREVAILING", rowIdListBreach);
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + fixed + " INCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE_VECT_PREVAILING", rowIdListBreach);
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + "ON p.price > 0 " + fixed + " INCLUDE PREVAILING" + where,
+                                "FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED", rowIdListBreach);
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + dynamic + " EXCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE_DYNAMIC", rowIdListBreach);
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + dynamic + " INCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING", rowIdListBreach);
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                vect + "ON t.sym = p.sym " + dynamic + " INCLUDE PREVAILING" + where,
+                                "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED", rowIdListBreach);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinReleasesWorkerSlotsOnBreach() throws Exception {
         // A window join reducer acquires a per-worker slot and only then sizes the temporary row id
         // and timestamp lists, whose backing chunk is the first thing the reduce charges to the
@@ -676,6 +733,20 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
             String query,
             String expectedReducer
     ) throws SqlException {
+        assertReducerReleasesSlots(compiler, ctx, query, expectedReducer, null);
+    }
+
+    /**
+     * Same as {@link #assertReducerReleasesSlots(SqlCompiler, SqlExecutionContext, String, String)},
+     * and also requires every breach message to contain {@code expectedBreachFragment}.
+     */
+    private static void assertReducerReleasesSlots(
+            SqlCompiler compiler,
+            SqlExecutionContext ctx,
+            String query,
+            String expectedReducer,
+            @Nullable String expectedBreachFragment
+    ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
             TestUtils.assertFactoryInTree(factory, AsyncWindowJoinRecordCursorFactory.class, query);
             AsyncWindowJoinRecordCursorFactory joinFactory = null;
@@ -692,7 +763,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                     joinFactory.getReducerName()
             );
         }
-        TestUtils.assertNoSlotLeakOnBreach(compiler, ctx, query);
+        TestUtils.assertNoSlotLeakOnBreach(compiler, ctx, query, expectedBreachFragment);
     }
 
     // Repeats the cursor lifecycle and watches the per-query tracker itself on every cycle, not just

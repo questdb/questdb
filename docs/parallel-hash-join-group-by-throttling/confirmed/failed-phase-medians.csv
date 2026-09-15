@@ -1,0 +1,7 @@
+case,repetition,variant,samples,elapsed_median_ms,build_median_ms,init_median_ms,probe_median_ms,merge_median_ms,remaining_median_ms
+compressed-groups,0,lower-reference,10,134.6623385,0.382385,0.0618855,132.152584,0.4522145,1.638096
+compressed-groups,0,shared-throttle,10,150.4510645,0.4080425,0.0595515,148.3173605,0.460341,1.2298045
+concurrent-4,0,lower-reference,40,90.2062085,1.050398,0.052904,88.6957665,0.0619155,0.2020125
+concurrent-4,0,shared-throttle,40,103.1886545,1.116828,0.047123,101.800204,0.0707425,0.255703
+high-cardinality,1,lower-reference,10,212.275775,0.7685065,0.066094,58.3379095,8.052123,145.455859
+high-cardinality,1,shared-throttle,10,234.937749,0.7432245,0.068428,55.788645,7.911818,170.284335
