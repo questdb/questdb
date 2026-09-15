@@ -13,6 +13,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib/qemu.sh"
 # shellcheck source=lib/verdict.sh
 source "$HERE/lib/verdict.sh"
+# shellcheck source=lib/arms.sh
+source "$HERE/lib/arms.sh"
 
 bash "$HERE/check-host.sh" >/dev/null || { bash "$HERE/check-host.sh"; exit 1; }
 
@@ -49,6 +51,14 @@ for a in "$@"; do
         *) echo "power-cut-vm: unknown argument $a" >&2; exit 64 ;;
     esac
 done
+
+# Reject an unrunnable arm HERE, before 100GB of disks and two VM boots. `product` parses
+# everywhere but is not implemented, and currently fails deep inside the guest as a
+# confusing "workload never reached its first commit" (see issues/03).
+if ! arm_is_known "$ARM"; then
+    echo "power-cut-vm: arm '$ARM' is not runnable (known: reference, qwp, qwp-sf)" >&2
+    exit 64
+fi
 
 # The product arm at W>0 cannot ENFORCE the RPO bar yet -- the client-side LOCAL
 # durable-ack frontier is WIP, so Wm is unobservable from the client. It can
@@ -163,7 +173,7 @@ gate=${MIN_ROWS:-0}
 [ "$gate" -lt 1 ] && gate=1
 anchored=0
 for _ in $(seq 1 180); do
-    n=$(vm_ssh "$P" "$KEY" "head -1 /mnt/qdb/db/_progress 2>/dev/null | tr -dc '0-9'" 2>/dev/null || echo "")
+    n=$(vm_ssh "$P" "$KEY" "head -1 /mnt/qdb/db/$(arm_progress_file "$ARM") 2>/dev/null | tr -dc '0-9'" 2>/dev/null || echo "")
     if [ -n "$n" ] && [ "$n" -ge "$gate" ] 2>/dev/null; then anchored=1; break; fi
     sleep 0.2
 done
@@ -176,17 +186,14 @@ sleep "$(awk "BEGIN{printf \"%.3f\", $CUT_AFTER_MS/1000}")"
 # Cutting a finished, quiesced system has nothing in flight and yields a
 # guaranteed pass that proves nothing -- a vacuous iteration. Fail it loudly
 # instead of counting it as evidence.
-# The bracket is load-bearing. pgrep -f matches against FULL COMMAND LINES, and
-# the ssh command running this check carries "CrashIngestWriter" in its own
-# cmdline -- so a plain `pgrep -f CrashIngestWriter` MATCHES ITSELF and reports
-# the workload alive even after it has exited. `[C]rash...` matches the real
-# process but not the literal text of the command searching for it.
-#
-# Caught by the negative control: a deliberately tiny (--max-rows=5000) workload
-# that had long since finished still returned DURABLE instead of failing as
-# vacuous. The check was present and running, and simply could not fail.
-if ! vm_ssh "$P" "$KEY" "pgrep -f '[C]rashIngestWriter' >/dev/null"; then
-    bail "LOUD_FAILURE: workload was not running at cut time (seed=$SEED delay=${CUT_AFTER_MS}ms) — iteration would be vacuous"
+# ARM-SPECIFIC, and it was not. This was hardcoded to the reference arm's process, so every
+# qwp / qwp-sf run driven through this script aborted as "workload was not running" -- the
+# pattern cannot match the process those arms actually start. run-flush-sweep.sh had fixed
+# it locally and the fix was never shared, which is precisely how the two copies drifted.
+# One definition now, in lib/arms.sh, carrying the bracket idiom and its history with it.
+LIVE_PAT="$(arm_live_pattern "$ARM")"
+if ! vm_ssh "$P" "$KEY" "pgrep -f '$LIVE_PAT' >/dev/null"; then
+    bail "LOUD_FAILURE: workload ($LIVE_PAT) was not running at cut time (seed=$SEED delay=${CUT_AFTER_MS}ms) — iteration would be vacuous"
 fi
 
 # ---- THE CUT: arm the device first, then kill the machine ------------------
@@ -232,7 +239,7 @@ vm_scp_dir "$P2" "$KEY" "$HERE/guest" /opt/vmcrash/ \
 vm_ssh "$P2" "$KEY" "QDB_FS_MOUNT_OPTS='${QDB_FS_MOUNT_OPTS:-}' bash /opt/vmcrash/guest/prepare-device.sh --reattach --mode=$DEVICE_MODE" >/dev/null \
     || bail "LOUD_FAILURE: could not reattach the device after the cut"
 
-LINE=$(vm_ssh "$P2" "$KEY" "bash /opt/vmcrash/guest/verify.sh --arm=$ARM --mode=$MODE \
+LINE=$(vm_ssh "$P2" "$KEY" "bash /opt/vmcrash/guest/verify.sh $(arm_verify_flags "$ARM") --mode=$MODE \
     --window-us=$WINDOW --epoch-ms=$EPOCH" 2>&1 || true)
 vm_kill "$RUN"
 

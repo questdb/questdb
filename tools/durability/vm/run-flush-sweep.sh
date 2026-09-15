@@ -27,6 +27,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib/qemu.sh"
 # shellcheck source=lib/verdict.sh
 source "$HERE/lib/verdict.sh"
+# shellcheck source=lib/arms.sh
+source "$HERE/lib/arms.sh"
 
 bash "$HERE/check-host.sh" >/dev/null || { bash "$HERE/check-host.sh"; exit 1; }
 
@@ -161,7 +163,7 @@ vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE QDB_SIBLING_TABLE=${Q
 # Let it build a real history: many commits means many flushes means many
 # crash points. Anchor on the first commit so startup is not counted.
 for _ in $(seq 1 120); do
-    n=$(vm_ssh "$P" "$KEY" "head -1 /mnt/qdb/db/_progress 2>/dev/null | tr -dc '0-9'" 2>/dev/null || echo "")
+    n=$(vm_ssh "$P" "$KEY" "head -1 /mnt/qdb/db/$(arm_progress_file "$ARM") 2>/dev/null | tr -dc '0-9'" 2>/dev/null || echo "")
     [ -n "$n" ] && [ "$n" -ge 1 ] 2>/dev/null && break
     sleep 0.2
 done
@@ -170,8 +172,7 @@ sleep 8
 # QwpCrashIngestClient, so the reference-arm pattern would never match and every qwp run
 # would abort as "workload not running" -- a guard that fails closed on a healthy run is as
 # useless as one that never fires. Bracket idiom avoids pgrep matching its own ssh cmdline.
-LIVE_PAT="[C]rashIngestWriter"
-case "$ARM" in qwp|qwp-sf) LIVE_PAT="[Q]wpCrashIngestClient" ;; esac
+LIVE_PAT="$(arm_live_pattern "$ARM")"
 vm_ssh "$P" "$KEY" "pgrep -f '$LIVE_PAT' >/dev/null" || {
     # CAPTURE THE GUEST LOGS. This assertion fires when the workload died, and the
     # reason is always in writer.log -- which used to require booting the VM again to
