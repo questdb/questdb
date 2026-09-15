@@ -28,9 +28,6 @@ import org.junit.Test;
 
 public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryTest {
 
-    private static final String ORDER_SENSITIVE_REJECTION =
-            "base query does not provide ASC order over designated TIMESTAMP column, required by an order-sensitive aggregate";
-
     @Test
     public void testFirstGroupedByIndexKeyIsNotRejected() throws Exception {
         assertMemoryLeak(() -> {
@@ -120,6 +117,57 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
                                 " WHERE param_id IN ('SFID','HOTMIC') ORDER BY param_id"
                 );
             }
+        });
+    }
+
+    /**
+     * The shape the refusal actually cost users, and the one no test covered while the refusal was
+     * in place: {@code first()}/{@code last()} over a {@code LIKE} filter on a POSTING-indexed
+     * symbol. Every {@code First*}/{@code Last*} function is order-sensitive and
+     * {@code supportsParallelism()}, so they reach the async group-by sites and hit the guard --
+     * which made a mainstream time-series query throw on this branch while stock master answered
+     * it. See {@link #testAsyncKeyedOrderSensitiveOverPatternFilterMatchesFullScan()} for why the
+     * guard was wrong.
+     * <p>
+     * The NOT-KEYED arm is the load-bearing one. Its single group draws from BOTH matching keys, so
+     * it is the only arm where key-major arrival and timestamp arrival can disagree -- and the
+     * fixture is built so they do, with {@code 'AB'} owning the earliest row and {@code 'AA'} the
+     * latest. Timestamp order gives {@code first = 20.0, last = 11.0}; one-key-at-a-time order
+     * would give {@code 10.0} and {@code 21.0}. The keyed arm cannot discriminate -- a group
+     * confined to one key is ascending either way -- but is kept because it is the query users
+     * write.
+     */
+    @Test
+    public void testFirstLastFamilyOverPatternFilterMatchesFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterleavedSymbolPatternTable();
+            final String[] aggs = {"first", "last", "first_not_null", "last_not_null"};
+            for (String agg : aggs) {
+                final String notKeyed = "SELECT " + agg + "(price) FROM pattern_tel_x WHERE sym LIKE 'A%'";
+                assertQuery(notKeyed).noLeakCheck().assertsPlanContaining("AdaptiveSymbolPattern");
+                assertQuery(notKeyed).noLeakCheck().assertsPlanContaining("Async Group By");
+                assertSameResult(
+                        notKeyed,
+                        "SELECT /*+ no_index */ " + agg + "(price) FROM pattern_tel_x WHERE sym LIKE 'A%'"
+                );
+
+                final String keyed = "SELECT sym, " + agg + "(price) FROM pattern_tel_x" +
+                        " WHERE sym LIKE 'A%' ORDER BY sym";
+                assertQuery(keyed).noLeakCheck().assertsPlanContaining("AdaptiveSymbolPattern");
+                assertQuery(keyed).noLeakCheck().assertsPlanContaining("Async Group By");
+                assertSameResult(
+                        keyed,
+                        "SELECT /*+ no_index */ sym, " + agg + "(price) FROM pattern_tel_x" +
+                                " WHERE sym LIKE 'A%' ORDER BY sym"
+                );
+            }
+            // Pin the discriminating values outright, so a future change that makes BOTH arms
+            // key-major still fails here rather than agreeing on a wrong answer.
+            assertQuery("SELECT first(price) f, last(price) l FROM pattern_tel_x WHERE sym LIKE 'A%'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("f\tl\n20.0\t11.0\n");
         });
     }
 
@@ -213,104 +261,106 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
     }
 
     /**
-     * The guard at the async KEYED group-by site must throw BEFORE the ownership transfer.
+     * {@code array_agg()} over a pattern filter on a POSTING-indexed symbol, at the async KEYED
+     * group-by site. This pinned a REFUSAL until the final whole-branch review; it now pins the
+     * answer, which is also what stock master returns.
      * <p>
-     * The transfer nulls {@code innerProjectionFunctions} and {@code outerProjectionFunctions},
-     * and those two variables are the only handles through which the {@code catch} at the end of
-     * {@code generateGroupBy} can reach the assembled functions: with both null,
-     * {@code GroupByUtils.freeAssembledProjectionFunctions} returns at its very first branch
-     * without closing anything. A throw placed between the transfer and the constructor therefore
-     * closes nothing that the constructor would have adopted.
+     * <b>Why the refusal was wrong.</b> It was a false positive, not a conservative trade. The
+     * order-sensitivity guard used to read
+     * {@link io.questdb.cairo.sql.RecordCursorFactory#getScanDirection()}, and
+     * {@code AdaptiveSymbolPatternRecordCursorFactory} has to answer THAT conservatively across
+     * every delegate it may open -- including the bitmap-index delegate, whose key-by-key drain
+     * genuinely is unordered. But that delegate has no page frames to give, so
+     * {@code getPageFrameCursor()} never returns it, and {@code getCursor()} opens it only when
+     * there is no covering delegate at all. The fixture below declares {@code INCLUDE (price)}, so
+     * a covering delegate exists and NO route this factory can take opens the delegate whose
+     * direction was making the guard fire. The guard was asking the wrong factory the wrong
+     * question: it protects a page-frame consumer, so it now asks
+     * {@code getPageFrameScanDirection()}, which describes only the delegates such a consumer can
+     * be served by.
      * <p>
-     * The {@code ARRAY[...]} literal in the projection is load-bearing, not decoration. Most
-     * projection functions hold only heap state, so failing to close them is invisible to
-     * {@code assertMemoryLeak} and a test built on them would pass with the defect present. An
-     * array literal owns a {@code DirectArray}, whose backing store is native and tagged
-     * {@code NATIVE_ND_ARRAY}. Verified by mutation: with the offer and the guard moved back below
-     * this site's transfer block, this test fails with
-     * {@code Memory usage by tag: NATIVE_ND_ARRAY, difference: 24 expected:<0> but was:<24>} --
-     * eight bytes per element of the three-element literal, and on the leak check rather than on
-     * the exception, which still throws exactly as asserted.
+     * The guard is NOT weakened. Where the base is genuinely unordered it still fires; the tests in
+     * this class that pin the k-way merge being kept for a time-bucket grouping are untouched and
+     * still pass.
      * <p>
-     * <b>The refusal itself is DISPUTED and the decision is still pending.</b> Stock master
-     * answers this query correctly; the throw pinned here is a deliberate fail-closed trade
-     * taken because {@code AdaptiveSymbolPatternRecordCursorFactory} answers
-     * {@code SCAN_DIRECTION_OTHER} conservatively at compile time, before it knows which
-     * delegate it will open. Narrowing the guard so these queries keep working is a live
-     * option; if it is taken, this assertion is expected to change.
+     * <b>What the {@code ARRAY[...]} literal is still doing here.</b> It was added as a
+     * native-memory detector for a separate fix -- the guard must run ABOVE the ownership transfer
+     * at this site, because the transfer nulls {@code innerProjectionFunctions} and
+     * {@code outerProjectionFunctions}, the only handles {@code generateGroupBy}'s {@code catch}
+     * can free assembled functions through. A {@code DirectArray} is tagged
+     * {@code NATIVE_ND_ARRAY}, so a leak there is visible to {@code assertMemoryLeak}, which
+     * heap-only projection functions are not; the ordering fix was verified by mutation at the
+     * time ({@code NATIVE_ND_ARRAY, difference: 24}). That fix stays in the code, but with the
+     * refusal gone there is no longer a reachable throw at this site, so this test can no longer
+     * cover it -- it now asserts only that the SUCCESS path leaks nothing.
      */
     @Test
-    public void testAsyncKeyedGuardRejectionFreesAssembledFunctions() throws Exception {
+    public void testAsyncKeyedOrderSensitiveOverPatternFilterMatchesFullScan() throws Exception {
         assertMemoryLeak(() -> {
             createSymbolPatternTable();
-            assertExceptionNoLeakCheck(
-                    "SELECT sym, array_agg(price) x, ARRAY[1.0,2.0,3.0] z FROM pattern_tel WHERE sym LIKE 'A%'",
-                    0,
-                    ORDER_SENSITIVE_REJECTION
+            final String indexed = "SELECT sym, array_agg(price) x, ARRAY[1.0,2.0,3.0] z FROM pattern_tel" +
+                    " WHERE sym LIKE 'A%' ORDER BY sym";
+            // Both arms must not be the same plan, or the comparison below proves nothing.
+            assertQuery(indexed).noLeakCheck().assertsPlanContaining("AdaptiveSymbolPattern");
+            assertQuery(indexed).noLeakCheck().assertsPlanContaining("Async Group By");
+            assertSameResult(
+                    indexed,
+                    "SELECT /*+ no_index */ sym, array_agg(price) x, ARRAY[1.0,2.0,3.0] z FROM pattern_tel" +
+                            " WHERE sym LIKE 'A%' ORDER BY sym"
             );
         });
     }
 
     /**
      * The async KEYED twin of
-     * {@link #testAsyncKeyedGuardRejectionFreesAssembledFunctions()}: same transfer/guard ordering
-     * hazard, same native-array detector, same code site, different position for the array: here
-     * it is the grouping key rather than an extra projection column, so the key-rewrite loop
+     * {@link #testAsyncKeyedOrderSensitiveOverPatternFilterMatchesFullScan()}: same code site, same
+     * reasoning for why the refusal was a false positive, different position for the array literal.
+     * Here it is the grouping key rather than an extra projection column, so the key-rewrite loop
      * replaces the outer entry and the parsed original becomes reachable only through its paired
-     * inner slot. That is the one branch of
+     * inner slot -- the one branch of
      * {@code GroupByUtils.freeAssembledProjectionFunctions} that the sibling test does not walk.
      * <p>
-     * <b>The refusal itself is DISPUTED and the decision is still pending.</b> Stock master
-     * answers this query correctly; the throw pinned here is a deliberate fail-closed trade
-     * taken because {@code AdaptiveSymbolPatternRecordCursorFactory} answers
-     * {@code SCAN_DIRECTION_OTHER} conservatively at compile time, before it knows which
-     * delegate it will open. Narrowing the guard so these queries keep working is a live
-     * option; if it is taken, this assertion is expected to change.
+     * The key is constant, so every matching row lands in one group and {@code array_agg()} renders
+     * the arrival order directly: this asserts the rows reach the aggregate in timestamp order.
      */
     @Test
-    public void testAsyncKeyedGuardRejectionFreesAssembledFunctionsWithArrayKey() throws Exception {
+    public void testAsyncKeyedOrderSensitiveWithArrayKeyMatchesFullScan() throws Exception {
         assertMemoryLeak(() -> {
             createSymbolPatternTable();
-            assertExceptionNoLeakCheck(
-                    "SELECT ARRAY[1.0,2.0] k, array_agg(price) FROM pattern_tel WHERE sym LIKE 'A%'",
-                    0,
-                    ORDER_SENSITIVE_REJECTION
+            final String indexed = "SELECT ARRAY[1.0,2.0] k, array_agg(price) FROM pattern_tel WHERE sym LIKE 'A%'";
+            assertQuery(indexed).noLeakCheck().assertsPlanContaining("AdaptiveSymbolPattern");
+            assertQuery(indexed).noLeakCheck().assertsPlanContaining("Async Group By");
+            assertSameResult(
+                    indexed,
+                    "SELECT /*+ no_index */ ARRAY[1.0,2.0] k, array_agg(price) FROM pattern_tel WHERE sym LIKE 'A%'"
             );
         });
     }
 
     /**
      * The async NOT-KEYED site: no grouping column at all, so codegen takes the
-     * {@code keyTypesCopy.getColumnCount() == 0} branch, which has its own transfer block with the
-     * same hazard and received the same fix.
+     * {@code keyTypesCopy.getColumnCount() == 0} branch. Same false-positive refusal until the
+     * final review, same reasoning -- see
+     * {@link #testAsyncKeyedOrderSensitiveOverPatternFilterMatchesFullScan()}.
      * <p>
-     * This test pins REACHABILITY only, not the transfer ordering, and the distinction is
-     * deliberate. A native-memory detector needs a projection entry that owns native memory at
-     * compile time, and at this site every projection entry is an aggregate: any constant
-     * subexpression that could own a {@code DirectArray} is folded away before a Function is
-     * built. Four shapes were tried against a mutation of this site alone --
+     * This site has no native-memory detector and never had one: every projection entry here is an
+     * aggregate, and any constant subexpression that could own a {@code DirectArray} is folded away
+     * before a Function is built. Four shapes were tried against a mutation of this site alone --
      * {@code array_agg(price * ARRAY[2.0,3.0][1])}, {@code array_agg(price)[1]},
      * {@code sum(ARRAY[1.0,5.0][2]), array_agg(price)} and
-     * {@code array_agg(price + ARRAY[1.0,2.0][2]), array_agg(price)} -- and none leaked, because
-     * constant folding removes the array before codegen. So this site's ordering is currently
-     * unobservable, and would become observable the moment a not-keyed projection function owns
-     * native memory.
-     * <p>
-     * <b>The refusal itself is DISPUTED and the decision is still pending.</b> Stock master
-     * answers this query correctly; the throw pinned here is a deliberate fail-closed trade
-     * taken because {@code AdaptiveSymbolPatternRecordCursorFactory} answers
-     * {@code SCAN_DIRECTION_OTHER} conservatively at compile time, before it knows which
-     * delegate it will open. Narrowing the guard so these queries keep working is a live
-     * option; if it is taken, this assertion is expected to change.
+     * {@code array_agg(price + ARRAY[1.0,2.0][2]), array_agg(price)} -- and none leaked. Recorded
+     * so the gap is not rediscovered as a finding.
      */
     @Test
-    public void testAsyncNotKeyedGuardRejectionIsReachableWithoutAKey() throws Exception {
+    public void testAsyncNotKeyedOrderSensitiveOverPatternFilterMatchesFullScan() throws Exception {
         assertMemoryLeak(() -> {
             createSymbolPatternTable();
-            assertExceptionNoLeakCheck(
-                    "SELECT array_agg(price) FROM pattern_tel WHERE sym LIKE 'A%'",
-                    0,
-                    ORDER_SENSITIVE_REJECTION
+            final String indexed = "SELECT array_agg(price) FROM pattern_tel WHERE sym LIKE 'A%'";
+            assertQuery(indexed).noLeakCheck().assertsPlanContaining("AdaptiveSymbolPattern");
+            assertQuery(indexed).noLeakCheck().assertsPlanContaining("Async Group By");
+            assertSameResult(
+                    indexed,
+                    "SELECT /*+ no_index */ array_agg(price) FROM pattern_tel WHERE sym LIKE 'A%'"
             );
         });
     }
@@ -325,6 +375,27 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
      * latestBy} leaves both page-frame cursors null, so it is always generated serially, and the
      * serial sites carry no guard.
      */
+    /**
+     * {@link #createSymbolPatternTable()}'s shape, but with the two matching keys INTERLEAVED so
+     * that key-major arrival and timestamp arrival disagree: {@code 'AB'} owns the earliest row and
+     * {@code 'AA'} the latest. Without that the two orders coincide and an order-sensitivity
+     * assertion over this fixture would be vacuous.
+     * <p>
+     * Four matching rows in 1004 is 0.4%, comfortably inside the 2% share that admits the covering
+     * route and so puts the factory in wrapped mode -- the one mode that supplies page frames, and
+     * therefore the only one that reaches the guarded async group-by sites.
+     */
+    private void createInterleavedSymbolPatternTable() throws Exception {
+        execute("CREATE TABLE pattern_tel_x (" +
+                "  sym SYMBOL INDEX TYPE POSTING INCLUDE (price)," +
+                "  price DOUBLE," +
+                "  ts TIMESTAMP" +
+                ") TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO pattern_tel_x VALUES" +
+                " ('AB', 20.0, 0), ('AA', 10.0, 1), ('AB', 21.0, 2), ('AA', 11.0, 3)");
+        execute("INSERT INTO pattern_tel_x SELECT 'BA', x::DOUBLE, timestamp_sequence(4, 1) FROM long_sequence(1000)");
+    }
+
     private void createSymbolPatternTable() throws Exception {
         execute("CREATE TABLE pattern_tel (" +
                 "  sym SYMBOL INDEX TYPE POSTING INCLUDE (price)," +

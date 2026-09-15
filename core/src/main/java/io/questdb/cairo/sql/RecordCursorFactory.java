@@ -225,6 +225,28 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns the scan direction of the rows this factory delivers THROUGH
+     * {@link #getPageFrameCursor(SqlExecutionContext, int)}, using the same constants as
+     * {@link #getScanDirection()}.
+     * <p>
+     * The two answers coincide for almost every factory, which is why the default simply
+     * forwards. They diverge only for a factory that picks between several delegates at open
+     * time and cannot offer all of them as page frames: {@link #getScanDirection()} must stay
+     * conservative across EVERY delegate it could open, because a record-cursor consumer may
+     * receive any of them, whereas a page-frame consumer can only ever receive one of the
+     * subset that has frames to give. Answering the conservative direction to a page-frame
+     * consumer refuses queries that the delegate making it conservative could not execute.
+     * <p>
+     * Ask this, not {@link #getScanDirection()}, whenever the caller is about to consume page
+     * frames. Ask {@link #getScanDirection()} everywhere else.
+     *
+     * @return the scan direction of this factory's page frames
+     */
+    default int getPageFrameScanDirection() {
+        return getScanDirection();
+    }
+
+    /**
      * Returns the direction of scanning used in this factory:
      * - {@link #SCAN_DIRECTION_FORWARD}, {@link #SCAN_DIRECTION_BACKWARD} - for regular data/interval frame scans
      * - {@link #SCAN_DIRECTION_OTHER} - for some index scans, e.g. cursor-order index lookup with multiple values

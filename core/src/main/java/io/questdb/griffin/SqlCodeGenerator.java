@@ -11982,8 +11982,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         // keep in sync with validateOrderSensitiveVectorAggregates(): same short-circuit terms,
         // same scan-direction test, same message.
+        //
+        // getPageFrameScanDirection(), NOT getScanDirection(): every caller of this guard is about
+        // to build a page-frame consumer, and a factory that chooses between delegates at open time
+        // owes getScanDirection() an answer covering delegates a page-frame consumer can never be
+        // served by. Asking the wider question refused queries on the strength of a delegate that
+        // could not execute them -- see AdaptiveSymbolPatternRecordCursorFactory.
         if (offerAccepted || base == null || groupByFunctions == null
-                || base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER) {
+                || base.getPageFrameScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER) {
             return;
         }
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
@@ -12008,9 +12014,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             boolean offerAccepted
     ) throws SqlException {
         // keep in sync with validateOrderSensitiveAggregates(): same short-circuit terms,
-        // same scan-direction test, same message.
+        // same scan-direction test, same message -- including asking
+        // getPageFrameScanDirection() rather than getScanDirection(); see the note there.
         if (offerAccepted || base == null || vafs == null
-                || base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER) {
+                || base.getPageFrameScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER) {
             return;
         }
         for (int i = 0, n = vafs.size(); i < n; i++) {

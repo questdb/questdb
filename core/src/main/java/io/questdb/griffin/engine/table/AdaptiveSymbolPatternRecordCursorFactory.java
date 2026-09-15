@@ -403,11 +403,33 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
+    public int getPageFrameScanDirection() {
+        // getPageFrameCursor() above returns the covering delegate or the scan delegate and nothing
+        // else, so those two are the only directions a page-frame consumer can ever observe. The
+        // bitmap-index delegate is deliberately absent: it has no page frames to give, and it is
+        // unreachable even through getCursor() whenever a covering delegate exists, because that
+        // open prefers the covering delegate unconditionally. Including it here -- as
+        // getScanDirection() must, for record-cursor callers -- made the order-sensitivity guard in
+        // SqlCodeGenerator refuse first()/last()/twap()/array_agg() over a pattern filter on a
+        // POSTING-indexed symbol, on the strength of a delegate that could not have executed the
+        // query. In self-filtering mode (coveringDelegate == null) this answer describes the scan
+        // delegate alone, which is honest: supportsPageFrameCursor() reports false in that mode, so
+        // no page-frame consumer reaches this factory at all.
+        if (scanDelegate.getPageFrameScanDirection() != SCAN_DIRECTION_FORWARD
+                || (coveringDelegate != null && coveringDelegate.getPageFrameScanDirection() != SCAN_DIRECTION_FORWARD)) {
+            return SCAN_DIRECTION_OTHER;
+        }
+        return SCAN_DIRECTION_FORWARD;
+    }
+
+    @Override
     public int getScanDirection() {
         // Compile-time callers read this before the runtime picks a delegate, so it must hold for every
         // delegate this factory could open: the covering merge, the bitmap index route, and the fallback
         // scan. The covering merge and the fallback scan emit row ids ascending; the index route does so
         // only with its heap row cursor, and reports SCAN_DIRECTION_OTHER when it drains key by key.
+        // A page-frame consumer must ask getPageFrameScanDirection() instead -- the index route has no
+        // frames, so it cannot be the delegate that serves such a consumer.
         if (indexDelegate.getScanDirection() != SCAN_DIRECTION_FORWARD
                 || scanDelegate.getScanDirection() != SCAN_DIRECTION_FORWARD
                 || (coveringDelegate != null && coveringDelegate.getScanDirection() != SCAN_DIRECTION_FORWARD)) {
