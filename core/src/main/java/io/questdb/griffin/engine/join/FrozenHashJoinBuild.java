@@ -59,6 +59,14 @@ public interface FrozenHashJoinBuild {
          */
         void findUnchecked(int key);
 
+        /**
+         * Positions the payload directly for a build with exactly one row per key.
+         * The caller must establish rowCount == keyCount for this execution and
+         * check cancellation at frame boundaries. Clears the duplicate iterator;
+         * read the payload only when this returns true.
+         */
+        boolean findSingleUnchecked(int key);
+
         Record getRecord();
 
         boolean hasNext();

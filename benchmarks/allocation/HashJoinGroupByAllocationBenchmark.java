@@ -136,6 +136,7 @@ public final class HashJoinGroupByAllocationBenchmark {
                             // 1,022 rows; this never warms a data-sized Java pool.
                             snapshot(0);
                             warmSymbolViews(engine, concurrent ? 2 : 1);
+                            warmLocalFilterTasks(engine, factory, context, peer);
                             for (int setup = 0; setup < 64; setup++) {
                                 if (peer != null) peer.request++;
                                 execute(factory, context);
@@ -246,6 +247,32 @@ public final class HashJoinGroupByAllocationBenchmark {
             engine.execute("insert into " + table + " values (-1,-1,'active',0.0,'1970-01-03')", context);
             if (!storage.equals("native")) engine.execute("alter table " + table + " convert partition to parquet"
                     + (storage.equals("mixed") ? " where ts < '1970-01-02'" : " where ts < '1970-01-03'"), context);
+        }
+    }
+
+    private static void warmLocalFilterTasks(CairoEngine engine, RecordCursorFactory factory,
+                                             HashJoinGroupByBenchmark.BenchmarkContext context, Peer peer) throws Exception {
+        // Each filter has one lazy owner-local task, including bounded decoder
+        // shells. Normal warmup may never fill its queue when workers keep up.
+        // Pin each shard's collector during one small-result setup per owner:
+        // after one queue cycle, remaining frames must use the local task.
+        // The bind still admits only 1,022 rows; no measured symbols are copied.
+        io.questdb.MessageBus bus = engine.getMessageBus();
+        SCSequence[] gates = new SCSequence[bus.getPageFrameReduceShardCount()];
+        try {
+            for (int shard = 0; shard < gates.length; shard++) {
+                gates[shard] = new SCSequence();
+                bus.getPageFrameCollectFanOut(shard).and(gates[shard]);
+            }
+            execute(factory, context);
+            if (peer != null) {
+                peer.request++;
+                peer.await();
+            }
+        } finally {
+            for (int shard = 0; shard < gates.length; shard++) {
+                if (gates[shard] != null) bus.getPageFrameCollectFanOut(shard).remove(gates[shard]);
+            }
         }
     }
 

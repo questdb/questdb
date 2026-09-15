@@ -68,6 +68,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final ObjList<Slot> slots = new ObjList<>();
     private IntHashJoinBuild build;
     private FrozenHashJoinBuild frozen;
+    private boolean isBuildUnique;
     private boolean functionsInitialized;
     private boolean filtersInitialized;
     private GroupByShardingContext shardingContext;
@@ -155,6 +156,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             }
         }
         frozen = null;
+        isBuildUnique = false;
         failure = Misc.freeBestEffort(failure, build);
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -255,6 +257,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         final long rowCountHint = cursor.size();
         build.open(executionContext.getMemoryTracker(), executionContext.getCircuitBreaker());
         frozen = build.build(cursor, buildKeyColumn, rowCountHint);
+        isBuildUnique = frozen.getRowCount() == frozen.getKeyCount();
         metrics.buildRows = frozen.getRowCount();
         metrics.buildKeys = frozen.getKeyCount();
         metrics.buildBytes = frozen.getSizeInBytes();
@@ -288,6 +291,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     Slot getSlot(int slot) {
         return slots.getQuick(slot + 1);
+    }
+
+    boolean isBuildUnique() {
+        return isBuildUnique;
     }
 
     boolean isOuter() {

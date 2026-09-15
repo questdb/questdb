@@ -253,28 +253,32 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 final long rowCount = sequence.getFrameRowCount(frameIndex);
                 // The shared reduce job checks the breaker before each frame, as for GROUP BY.
                 // Duplicate iteration below checks separately because join fanout can exceed a frame.
-                for (long r = 0; r < rowCount; r++) {
-                    slot.scannedRows++;
-                    probeRecord.setRowIndex(r);
-                    if (probeFilter != null && !probeFilter.getBool(probeRecord)) {
-                        continue;
-                    }
-                    probe.findUnchecked(probeRecord.getInt(probeKeyColumn));
-                    if (probe.hasNext()) {
-                        final long rowId = probeRecord.getRowId();
-                        record.setHasMatch(true);
-                        do {
-                            if (!sequence.isActive()) {
-                                return;
-                            }
-                            probe.next();
-                            matchedPairs++;
-                            update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
-                        } while (probe.hasNext());
-                    } else if (outer) {
-                        record.setHasMatch(false);
-                        slot.nullExtendedRows++;
-                        update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                if (atom.isBuildUnique()) {
+                    aggregateUnique(atom, slotId, probeRecord, fragment, map, rowCount);
+                } else {
+                    for (long r = 0; r < rowCount; r++) {
+                        slot.scannedRows++;
+                        probeRecord.setRowIndex(r);
+                        if (probeFilter != null && !probeFilter.getBool(probeRecord)) {
+                            continue;
+                        }
+                        probe.findUnchecked(probeRecord.getInt(probeKeyColumn));
+                        if (probe.hasNext()) {
+                            final long rowId = probeRecord.getRowId();
+                            record.setHasMatch(true);
+                            do {
+                                if (!sequence.isActive()) {
+                                    return;
+                                }
+                                probe.next();
+                                matchedPairs++;
+                                update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
+                            } while (probe.hasNext());
+                        } else if (outer) {
+                            record.setHasMatch(false);
+                            slot.nullExtendedRows++;
+                            update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                        }
                     }
                 }
                 if (fragment != null) {
@@ -286,6 +290,49 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             }
         } finally {
             atom.release(slotId);
+        }
+    }
+
+    private static void aggregateUnique(
+            AsyncHashJoinGroupByAtom atom,
+            int slotId,
+            PageFrameMemoryRecord probeRecord,
+            GroupByMapFragment fragment,
+            Map map,
+            long rowCount
+    ) {
+        // Keep the singleton loop separate so its additional call sites do not
+        // enlarge the general loop that handles arbitrarily long duplicate chains.
+        final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinGroupByRecord record = slot.joinedRecord;
+        final FrozenHashJoinBuild.Probe probe = slot.probe;
+        final HashJoinGroupByFunctions functions = atom.getFunctions();
+        final RecordSink sink = functions.getMapSink(slotId);
+        final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
+        final Function probeFilter = atom.getFilterContext().getFilter(slotId);
+        final Function postJoinFilter = functions.getFilter(slotId);
+        final int probeKeyColumn = atom.getProbeKeyColumn();
+        final boolean outer = atom.isOuter();
+        long matchedPairs = 0;
+        try {
+            for (long r = 0; r < rowCount; r++) {
+                slot.scannedRows++;
+                probeRecord.setRowIndex(r);
+                if (probeFilter != null && !probeFilter.getBool(probeRecord)) {
+                    continue;
+                }
+                if (probe.findSingleUnchecked(probeRecord.getInt(probeKeyColumn))) {
+                    record.setHasMatch(true);
+                    matchedPairs++;
+                    update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                } else if (outer) {
+                    record.setHasMatch(false);
+                    slot.nullExtendedRows++;
+                    update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                }
+            }
+        } finally {
+            slot.matchedPairs += matchedPairs;
         }
     }
 
