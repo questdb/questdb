@@ -152,6 +152,14 @@ public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMuta
         return this;
     }
 
+    public Utf16Sink putStringSink(@Nullable StringSink sink) {
+        // Subclasses may expose different text through length() and charAt().
+        if (sink == null || sink.getClass() != StringSink.class) {
+            return put((CharSequence) sink);
+        }
+        return put(sink.buffer, 0, sink.pos);
+    }
+
     public void replace(char from, char to) {
         for (int i = 0; i < pos; i++) {
             if (buffer[i] == from) {

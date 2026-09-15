@@ -24,8 +24,8 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.std.FiberLocal;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -33,7 +33,7 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 public class HttpException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
-    private static final CarrierLocal<HttpException> tlException = new CarrierLocal<>(HttpException::new);
+    private static final FiberLocal<HttpException> tlException = new FiberLocal<>(HttpException::new);
     private final StringSink message = new StringSink();
 
     public static HttpException instance(CharSequence message) {

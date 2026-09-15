@@ -179,7 +179,7 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
                     return false;
                 }
 
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (slaveCursor.hasNext()) {
                     return true;
                 }

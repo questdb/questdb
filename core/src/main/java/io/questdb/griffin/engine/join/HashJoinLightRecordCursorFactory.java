@@ -165,7 +165,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
     ) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             MapKey key = keyMap.withKey();
             key.put(keyRecord, recordSink);
@@ -231,7 +231,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
             final Record masterRecord = masterCursor.getRecord();
             while (masterCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterCursorSink);
                 MapValue value = key.findValue();
@@ -276,7 +276,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
 
             while (masterCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterCursorSink);
                 MapValue value = key.findValue();
