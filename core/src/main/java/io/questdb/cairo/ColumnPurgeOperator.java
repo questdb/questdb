@@ -338,7 +338,7 @@ public class ColumnPurgeOperator implements Closeable {
                     final long updateRowId = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID);
                     if (task.getColumnType() == ColumnType.NULL) {
                         // Not a column at all: a retired _geometry generation, whose file-name suffix rides in the
-                        // column-version slot. See GEOMETRY_PURGE.md.
+                        // column-version slot. See COMPOSITE_PARTITIONS.md.
                         setUpPartitionPath(task.getTimestampType(), task.getPartitionBy(), partitionTimestamp, partitionTxnName);
                         int geometryDirLen = path.size();
                         final boolean exists = ff.exists(PartitionGeometryFile.geometryFileName(path, (int) columnVersion));

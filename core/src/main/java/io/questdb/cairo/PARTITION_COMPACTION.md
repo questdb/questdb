@@ -1,8 +1,5 @@
 # Compaction: reclaiming wasted space in composite partitions
 
-Original design doc (condensed - idea and mechanism only, implementation detail and rationale
-stripped). Ported from the enterprise `feat-partition-top-split` branch.
-
 ## The problem
 
 Merge-append never overwrites. When it rewrites a hot piece, it appends the new copy at the end of

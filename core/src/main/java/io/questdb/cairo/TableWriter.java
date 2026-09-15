@@ -341,7 +341,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LongList partitionRemoveCandidates = new LongList();
     /**
      * {@code _geometry} generations retired by this transaction, in {@link io.questdb.tasks.ColumnPurgeTask}'s block
-     * layout - see {@link #setGeometryRefRetiringGenerations} and GEOMETRY_PURGE.md.
+     * layout - see {@link #setGeometryRefRetiringGenerations} and COMPOSITE_PARTITIONS.md.
      */
     private final LongList retiredGeometryGenerations = new LongList();
     private final Path path;
@@ -14232,7 +14232,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Publishes {@code newRef} for the partition and queues every {@code _geometry} generation the move retires. A
      * rotation and a MAKE-PLAIN both leave the retired file in the SAME directory, so the ordinary partition purge
-     * never sees it - see GEOMETRY_PURGE.md. Call this instead of {@code txWriter.setPartitionGeometryRef} wherever
+     * never sees it - see COMPOSITE_PARTITIONS.md. Call this instead of {@code txWriter.setPartitionGeometryRef} wherever
      * the directory stays put; the sites that write a fresh directory leave the whole of the old one to
      * {@link #safeDeletePartitionDir}.
      */

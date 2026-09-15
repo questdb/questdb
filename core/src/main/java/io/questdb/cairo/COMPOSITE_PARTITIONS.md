@@ -136,6 +136,17 @@ file past its size cap.
 `PartitionGeometry` resolves lazily: a table with no composite partition never opens the file, and a
 query over one partition of a thousand opens one file.
 
+### Purging retired generations
+
+A generation roll leaves the old `_geometry.<gen>` behind, and it cannot be deleted at rotation time: a
+lazy reader (or a checkpoint's copied `_txn`) may still resolve a record out of it. So each site that moves
+a partition's geometry ref while keeping its directory (JOIN, MOVE-TAIL front, MAKE-PLAIN, squash target,
+and the O3 commit) hands the retired generations to the column purge queue via
+`PurgingOperator.purgeColumnVersionAsync`, as a block disambiguated by `columnType == ColumnType.NULL` (no
+real column carries it). `ColumnPurgeOperator` reads the retired file's offset-0 record for its writer txn
+and deletes only once `TxnScoreboard` and any running checkpoint have cleared that watermark; a directory
+written fresh (REWRITE, `assembleFreshPartitionVersion`) instead goes through the ordinary partition purge.
+
 ## Storage
 
 | Item | What it does |
@@ -181,7 +192,7 @@ query over one partition of a thousand opens one file.
 ## Compaction of dead space
 
 All four moves are built and on by default - see `PARTITION_COMPACTION.md` for the rules and
-`PARTITION_COMPACTION_JOB_DESIGN.md` for the background job that drives them off the writer thread.
+`PARTITION_COMPACTION_JOB.md` for the background job that drives them off the writer thread.
 Cheapest first; the writer tries one partition per commit, and each move is its own transaction.
 
 **JOIN** - pieces that are neighbours BOTH in timestamp order and in the files fold into one. Reads
