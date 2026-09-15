@@ -24,9 +24,20 @@
 
 package io.questdb.cairo.idx;
 
-import io.questdb.cairo.sql.RowCursor;
+/**
+ * Iterates source-backed index hits. The ordinal identifies the hit inside the
+ * index frame; the source-row reference identifies the underlying table row.
+ */
+public interface SourceRowCursor extends CoveringIndexCursor {
 
-public interface CoveringRowCursor extends RowCursor, CoveringIndexCursor {
+    long getCursorRowRef();
 
-    long seekToLast();
+    long getCursorSeqTxn();
+
+    /** Returns the current hit's raw symbol key, including {@code VALUE_IS_NULL}. */
+    int getCursorSymbolKey();
+
+    long getCursorTimestamp();
+
+    long nextOrdinal();
 }

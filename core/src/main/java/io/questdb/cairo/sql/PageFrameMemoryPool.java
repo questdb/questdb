@@ -720,9 +720,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     /**
      * Acquire (or reuse) this pool's per-frame {@link CoveringBuffers} for a
      * single-key covered frame and decode its covered columns into them, returning
-     * the buffers; returns {@code null} for a non-covered frame or a multi-key
-     * (merged) covered frame, which cannot be reproduced from a single detached
-     * cursor and stays on the eager flat addresses. Shared by the flyweight
+     * the buffers; returns {@code null} for a non-covered frame or a frame already
+     * materialized by its producer. Shared by the flyweight
      * ({@link #patchCoveredFrameMemory}) and record ({@link #navigateCoveredRecord})
      * arms so both decode identically.
      */
@@ -738,6 +737,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             return null;
         }
         final IndexReader reader = addressCache.getCoveredIndexReader(frameIndex);
+        if (reader == null) {
+            // The producer already materialized this covered frame.
+            return null;
+        }
         final long rowLo = addressCache.getCoveredRowLo(frameIndex);
         final long rowHi = addressCache.getCoveredRowHi(frameIndex);
         final int[] includeIndices = addressCache.getCoveredIncludeIndices(frameIndex);
@@ -1684,6 +1687,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         @Override
+        public IndexReader.SourceRowResolver getSourceRowResolver() {
+            return currentDecodedFrameBuffers != null && currentDecodedFrameBuffers.hasSourceRows()
+                    ? currentDecodedFrameBuffers
+                    : IndexReader.SourceRowResolver.NONE;
+        }
+
+        @Override
         public int getSourceColumnType(int columnIndex) {
             if (frameFormat == PartitionFormat.PARQUET && hasTypeCasts) {
                 return sourceColumnTypes.getQuick(columnIndex);
@@ -2189,7 +2199,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
     }
 
-    private class DecodedFrameBuffers implements QuietCloseable {
+    private class DecodedFrameBuffers implements IndexReader.SourceRowResolver, QuietCloseable {
         private final DirectLongList auxPageAddresses;
         private final DirectLongList auxPageSizes;
         // Per-query-column leading column-top count, parallel to pageAddresses. Lets a lazy
@@ -2216,6 +2226,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // accounts it rather than the current chunk's logical size.
         private long retainedBytes;
         private int slotCount;
+        private long sourceBaseRowHi = -1;
+        private long sourceBaseRowLo = Long.MAX_VALUE;
+        private boolean sourceBaseRowsPrepared;
+        private long sourceRowRefsAddress;
+        private int sourceRowRefsRowCount;
+        private long sourceRowTimestampsAddress;
         private byte usageFlags;
 
         public DecodedFrameBuffers() {
@@ -2281,6 +2297,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             retainedBytes = 0;
             isRowFiltered = false;
             resourceReleaser = null;
+            sourceBaseRowHi = -1;
+            sourceBaseRowLo = Long.MAX_VALUE;
+            sourceBaseRowsPrepared = false;
+            sourceRowRefsAddress = 0;
+            sourceRowRefsRowCount = 0;
+            sourceRowTimestampsAddress = 0;
             // releaseDecodedFrameBuffers() parks closed shells without unlinking first; drop the
             // LRU links so a pooled shell cannot retain its former neighbours.
             prev = null;
@@ -2310,9 +2332,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // This buffer is being repurposed for a new frame; drop the prior frame's pins.
             releaseDecodeResources();
             clearAddresses();
+            final long resource = decoder.decodeSubframe(rowGroupBuffers, rowLo, rowHi);
+            retainDecodeResource(decoder, resource);
+            if (frameRowLo == 0) {
+                sourceRowRefsAddress = decoder.sourceRowRefsAddress(resource);
+                sourceRowRefsRowCount = rowHi - rowLo;
+                sourceRowTimestampsAddress = decoder.sourceRowTimestampsAddress(resource);
+            }
             if (columns.size() > 0) {
-                final long resource = decoder.decodeSubframe(rowGroupBuffers, rowLo, rowHi);
-                retainDecodeResource(decoder, resource);
                 slotCount = (int) (columns.size() / 2);
                 decodedBytes = isAccountingEnabled() ? rowGroupBuffers.sumChunkBytes(0, slotCount) : 0;
             } else {
@@ -2323,6 +2350,44 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             decodedRowHi = rowHi;
             isRowFiltered = false;
             remapColumns(frameRowLo);
+        }
+
+        @Override
+        public int find(long timestamp, long sourceRowRef) {
+            if (!hasSourceRows()) {
+                return -1;
+            }
+            int lo = 0;
+            int hi = sourceRowRefsRowCount;
+            while (lo < hi) {
+                final int mid = (lo + hi) >>> 1;
+                final long midTimestamp = Unsafe.getLong(sourceRowTimestampsAddress + (long) mid * Long.BYTES);
+                if (midTimestamp < timestamp) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            while (lo < sourceRowRefsRowCount
+                    && Unsafe.getLong(sourceRowTimestampsAddress + (long) lo * Long.BYTES) == timestamp) {
+                if (Unsafe.getLong(sourceRowRefsAddress + (long) lo * Long.BYTES) == sourceRowRef) {
+                    return lo;
+                }
+                lo++;
+            }
+            return -1;
+        }
+
+        @Override
+        public long getBaseRowHi() {
+            prepareSourceBaseRows();
+            return sourceBaseRowHi;
+        }
+
+        @Override
+        public long getBaseRowLo() {
+            prepareSourceBaseRows();
+            return sourceBaseRowLo;
         }
 
         public long decodeRemainingColumns(
@@ -2476,12 +2541,39 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             auxPageAddresses.clear();
             auxPageSizes.clear();
             columnTops.clear();
+            sourceBaseRowHi = -1;
+            sourceBaseRowLo = Long.MAX_VALUE;
+            sourceBaseRowsPrepared = false;
+            sourceRowRefsAddress = 0;
+            sourceRowRefsRowCount = 0;
+            sourceRowTimestampsAddress = 0;
         }
 
         private void ensureCapacityAndZero(DirectLongList list, int size) {
             list.setCapacity(size);
             list.zero();
             list.setPos(size);
+        }
+
+        private boolean hasSourceRows() {
+            return sourceRowRefsAddress != 0 && sourceRowTimestampsAddress != 0;
+        }
+
+        private void prepareSourceBaseRows() {
+            if (sourceBaseRowsPrepared) {
+                return;
+            }
+            sourceBaseRowsPrepared = true;
+            if (sourceRowRefsAddress == 0) {
+                return;
+            }
+            for (int row = 0; row < sourceRowRefsRowCount; row++) {
+                final long sourceRowRef = Unsafe.getLong(sourceRowRefsAddress + (long) row * Long.BYTES);
+                if (sourceRowRef >= 0) {
+                    sourceBaseRowLo = Math.min(sourceBaseRowLo, sourceRowRef);
+                    sourceBaseRowHi = Math.max(sourceBaseRowHi, sourceRowRef);
+                }
+            }
         }
 
         // Releases the chunk leases this buffer holds via the releaser that acquired them -- the

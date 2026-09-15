@@ -64,7 +64,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        cursor.of(pageFrame);
+        cursor.of(pageFrame, pageFrameMemory);
         return cursor;
     }
 
@@ -161,6 +161,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
         private RowCursor current;
         private int index;
         private PageFrame pageFrame;
+        private PageFrameMemory pageFrameMemory;
 
         @Override
         public void close() {
@@ -185,7 +186,9 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
                         .getCursor(
                                 symbolKeys.getQuick(index++),
                                 pageFrame.getPartitionLo(),
-                                pageFrame.getPartitionHi() - 1
+                                pageFrame.getPartitionHi() - 1,
+                                null,
+                                pageFrameMemory.getSourceRowResolver()
                         );
 
                 if (current.hasNext()) {
@@ -195,8 +198,9 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
             return false;
         }
 
-        private void of(PageFrame pageFrame) {
+        private void of(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
             this.pageFrame = pageFrame;
+            this.pageFrameMemory = pageFrameMemory;
             this.index = 0;
             Misc.free(current);
             this.current = EmptyRowCursor.INSTANCE;

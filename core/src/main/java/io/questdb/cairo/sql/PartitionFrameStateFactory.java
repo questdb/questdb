@@ -35,6 +35,9 @@ import org.jetbrains.annotations.Nullable;
  * instances borrow it while materializing page frames.
  */
 public interface PartitionFrameStateFactory extends QuietCloseable {
+    /** Binds data windows before TableReader exposes the handle to page-frame workers. */
+    void bind(long state);
+
     /** Returns the index reader for a partition state, or {@code null} when unavailable. */
     default @Nullable IndexReader getIndexReader(
             TableReader reader,
@@ -47,7 +50,7 @@ public interface PartitionFrameStateFactory extends QuietCloseable {
     }
 
     /**
-     * Opens one immutable state and returns its sole owning opaque handle.
+     * Pins one immutable snapshot without binding data windows and returns its owning handle.
      */
     long open(TableReader reader, int partitionIndex, long readerSeqTxn);
 

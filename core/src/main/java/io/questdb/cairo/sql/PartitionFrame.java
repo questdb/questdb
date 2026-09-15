@@ -75,4 +75,18 @@ public interface PartitionFrame {
      * @return first row of a partition frame
      */
     long getRowLo();
+
+    /**
+     * Inclusive timestamp bound that produced this frame's logical row range.
+     */
+    default long getTimestampHi() {
+        return Long.MAX_VALUE;
+    }
+
+    /**
+     * Inclusive timestamp bound that produced this frame's logical row range.
+     */
+    default long getTimestampLo() {
+        return Long.MIN_VALUE;
+    }
 }

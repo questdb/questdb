@@ -319,7 +319,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     /**
      * The per-partition posting (index) reader the covered frame's columns
-     * decode from, or {@code null} when the frame has no covered columns.
+     * decode from, or {@code null} when the frame has no covered columns or its
+     * producer already materialized them.
      */
     public IndexReader getCoveredIndexReader(int frameIndex) {
         return coveredIndexReaders.getQuick(frameIndex);
@@ -564,8 +565,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     /**
      * Updates column addresses and parquet decoder for an existing frame entry.
      * Called during lazy partition opening to patch zero-address skeleton entries
-     * with real mmap addresses. Does not change frame structure (size, format,
-     * rowIdOffset, parquet row group indices).
+     * with real mmap addresses. The row-group fields are also patched because a
+     * skeleton native frame has no partition-decoder window until its partition is open.
      */
     public void updateAddresses(int frameIndex, @Transient PageFrame frame) {
         final int offset = frameIndex * columnCount;
@@ -588,6 +589,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         final long partitionFrameState = frame.getPartitionFrameState();
         partitionFrameStates.setQuick(frameIndex, partitionFrameState);
         final int parquetRowGroup = frame.getParquetRowGroup();
+        parquetRowGroups.setQuick(frameIndex, parquetRowGroup);
+        parquetRowGroupLos.setQuick(frameIndex, frame.getParquetRowGroupLo());
+        parquetRowGroupHis.setQuick(frameIndex, frame.getParquetRowGroupHi());
         if (parquetRowGroup >= 0
                 && partitionFrameState != 0
                 && PartitionFrameState.requiresMaterialization(partitionFrameState, parquetRowGroup)) {

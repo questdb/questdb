@@ -583,6 +583,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     @Override
+    public boolean isCoveringFrameMaterializationRequired() {
+        return false;
+    }
+
+    @Override
     public boolean isOpen() {
         return keyMem.getFd() != -1;
     }

@@ -349,25 +349,13 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Returns the Rust-owned partition-frame state for this partition. The only
-     * Java per-partition state is exactly one opaque Rust handle pointer.
+     * Binds data windows on first use, before page-frame workers borrow the handle.
      */
     public long getOrOpenPartitionFrameState(int partitionIndex) {
-        final long existing = partitionFrameStates.getQuick(partitionIndex);
-        if (existing != 0) {
-            return existing;
+        final long state = getOrOpenPartitionState(partitionIndex);
+        if (state != 0 && !PartitionFrameState.isBound(state)) {
+            partitionFrameStateFactory.bind(state);
         }
-        if (!txFile.getPartitionHasDelta(partitionIndex)) {
-            return 0;
-        }
-        if (partitionFrameStateFactory == null) {
-            partitionFrameStateFactory = configuration.newPartitionFrameStateFactory(tableToken);
-            if (partitionFrameStateFactory == null) {
-                return 0;
-            }
-        }
-        final long state = partitionFrameStateFactory.open(this, partitionIndex, getSeqTxn());
-        partitionFrameStates.setQuick(partitionIndex, state);
         return state;
     }
 
@@ -402,7 +390,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     public IndexReader getIndexReader(int partitionIndex, int columnIndex, int direction) {
         if (txFile.getPartitionHasDelta(partitionIndex)) {
             openPartition(partitionIndex);
-            final long state = getOrOpenPartitionFrameState(partitionIndex);
+            final long state = getOrOpenPartitionState(partitionIndex);
             if (state == 0 || partitionFrameStateFactory == null) {
                 throw CairoException.critical(0)
                         .put("cold delta partition state is unavailable [partitionIndex=")
@@ -1333,6 +1321,26 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (tempMem8b != 0) {
             tempMem8b = Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
         }
+    }
+
+    /** Shares one pinned snapshot between index readers and lazy data-frame binding. */
+    private long getOrOpenPartitionState(int partitionIndex) {
+        final long existing = partitionFrameStates.getQuick(partitionIndex);
+        if (existing != 0) {
+            return existing;
+        }
+        if (!txFile.getPartitionHasDelta(partitionIndex)) {
+            return 0;
+        }
+        if (partitionFrameStateFactory == null) {
+            partitionFrameStateFactory = configuration.newPartitionFrameStateFactory(tableToken);
+            if (partitionFrameStateFactory == null) {
+                return 0;
+            }
+        }
+        final long state = partitionFrameStateFactory.open(this, partitionIndex, getSeqTxn());
+        partitionFrameStates.setQuick(partitionIndex, state);
+        return state;
     }
 
     private long getPartitionNameTxn(int partitionIndex) {

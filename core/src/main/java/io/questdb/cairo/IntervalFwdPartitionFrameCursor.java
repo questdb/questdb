@@ -174,7 +174,7 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 intervalsLo++;
             }
             if (lo < hi) {
-                populateFrame(framePartition, lo, hi);
+                populateFrame(framePartition, lo, hi, intervalLo, intervalHi);
                 sizeSoFar = Math.addExact(sizeSoFar, hi - lo);
                 return frame;
             }

@@ -362,11 +362,13 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         return baseFinder;
     }
 
-    protected void populateFrame(int partitionIndex, long rowLo, long rowHi) {
+    protected void populateFrame(int partitionIndex, long rowLo, long rowHi, long timestampLo, long timestampHi) {
         frame.partitionFrameState = currentPartitionFrameState;
         frame.partitionIndex = partitionIndex;
         frame.rowHi = rowHi;
         frame.rowLo = rowLo;
+        frame.timestampHi = timestampHi;
+        frame.timestampLo = timestampLo;
         final byte format = reader.getPartitionFormat(partitionIndex);
         if (format == PartitionFormat.PARQUET) {
             frame.format = PartitionFormat.PARQUET;
@@ -396,6 +398,8 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         protected int partitionIndex;
         protected long rowHi;
         protected long rowLo;
+        protected long timestampHi;
+        protected long timestampLo;
 
         @Override
         public ParquetPartitionDecoder getParquetMetaDecoder() {
@@ -425,6 +429,16 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         @Override
         public long getRowLo() {
             return rowLo;
+        }
+
+        @Override
+        public long getTimestampHi() {
+            return timestampHi;
+        }
+
+        @Override
+        public long getTimestampLo() {
+            return timestampLo;
         }
     }
 }

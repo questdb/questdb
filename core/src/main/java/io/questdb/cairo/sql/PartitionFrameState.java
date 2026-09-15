@@ -31,6 +31,7 @@ import io.questdb.std.Unsafe;
  * Stable Java view of the fixed ABI header in an opaque Rust partition-state handle.
  */
 public final class PartitionFrameState {
+    private static final int HEADER_BASE_ROWS = 5;
     private static final int HEADER_HAS_CUSTOM_FRAMES = 3;
     private static final int HEADER_LOGICAL_ROWS = 2;
     private static final int HEADER_SUBFRAME_SIZE = 4;
@@ -43,6 +44,10 @@ public final class PartitionFrameState {
     public static final long WINDOW_HAS_DELTA = 1;
 
     private PartitionFrameState() {
+    }
+
+    public static long getBasePartitionRowCount(long state) {
+        return headerValue(state, HEADER_BASE_ROWS);
     }
 
     public static long getBaseRowCount(long state, int window) {
@@ -67,6 +72,11 @@ public final class PartitionFrameState {
 
     public static boolean hasCustomFrames(long state) {
         return headerValue(state, HEADER_HAS_CUSTOM_FRAMES) != 0;
+    }
+
+    /** Data summaries exist only after TableReader binds the snapshot for data-frame access. */
+    public static boolean isBound(long state) {
+        return headerValue(state, HEADER_SUMMARIES_ADDR) != 0;
     }
 
     public static boolean requiresMaterialization(long state, int window) {

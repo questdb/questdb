@@ -67,6 +67,10 @@ public class IntLongSortedList implements Mutable {
         return src.getQuick(0);
     }
 
+    public long peekValue() {
+        return buf.getQuick(0);
+    }
+
     public long pollAndReplace(int index, long value) {
         long v = buf.getQuick(0);
         int p = binSearch(value);

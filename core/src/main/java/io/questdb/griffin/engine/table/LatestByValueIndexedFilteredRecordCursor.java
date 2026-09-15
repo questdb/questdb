@@ -30,6 +30,7 @@ import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -116,10 +117,18 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
 
-            frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
+            final int frameIndex = frameCount++;
+            frameAddressCache.add(frameIndex, frame);
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            recordA.init(frameMemory);
 
-            try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
+            try (RowCursor cursor = indexReader.getCursor(
+                    symbolKey,
+                    partitionLo,
+                    partitionHi,
+                    null,
+                    frameMemory.getSourceRowResolver()
+            )) {
                 while (cursor.hasNext()) {
                     // Per the IndexReader.getCursor(key, minValue, maxValue) contract, returned rows are
                     // already relative to minValue == partitionLo here, so cursor.next() is already

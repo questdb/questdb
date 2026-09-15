@@ -183,7 +183,7 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 intervalsHi = currentInterval;
             }
             if (lo < hi) {
-                populateFrame(currentPartition, lo, hi);
+                populateFrame(currentPartition, lo, hi, intervalLo, intervalHi);
                 sizeSoFar = Math.addExact(sizeSoFar, hi - lo);
                 return frame;
             }

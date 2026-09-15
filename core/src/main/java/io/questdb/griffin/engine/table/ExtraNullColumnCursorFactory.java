@@ -640,7 +640,9 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public IndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
-            return columnIndex < columnSplit ? baseCursor.getIndexReaderForCurrentFrame(columnIndex, direction) : null;
+            return columnIndex < columnSplit
+                    ? baseCursor.getIndexReaderForCurrentFrame(columnIndex, direction)
+                    : null;
         }
 
         @Override
@@ -715,6 +717,15 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         public void recordAt(Record record, int frameIndex, long rowIndex) {
             record = ((ExtraNullColumnRecord) record).getBaseRecord();
             baseCursor.recordAt(record, frameIndex, rowIndex);
+        }
+
+        @Override
+        public boolean recordAtSourceRow(Record record, long sourceRowRef, long timestamp) {
+            return baseCursor.recordAtSourceRow(
+                    ((ExtraNullColumnRecord) record).getBaseRecord(),
+                    sourceRowRef,
+                    timestamp
+            );
         }
 
         @Override

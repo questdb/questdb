@@ -24,9 +24,10 @@
 
 package io.questdb.cairo.idx;
 
-import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.QuietCloseable;
 
-public interface CoveringRowCursor extends RowCursor, CoveringIndexCursor {
+/** Iterates covered index hits. */
+public interface CoveringIndexCursor extends QuietCloseable, CoveringRow {
 
-    long seekToLast();
+    boolean hasNext();
 }

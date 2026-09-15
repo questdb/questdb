@@ -93,5 +93,19 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
     @Override
     void releaseDecodeResource(long resource);
 
+    /**
+     * Returns the exact source-row sidecar owned by {@code resource}, or {@code 0} when absent.
+     */
+    default long sourceRowRefsAddress(long resource) {
+        return 0;
+    }
+
+    /**
+     * Returns the logical timestamp column parallel to {@link #sourceRowRefsAddress(long)}.
+     */
+    default long sourceRowTimestampsAddress(long resource) {
+        return 0;
+    }
+
     void releaseWindow();
 }
