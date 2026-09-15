@@ -93,19 +93,19 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     /**
+     * Why the last {@link #selectPartition} picked what it picked.
+     */
+    public int getSelectedReason() {
+        return selectedReason;
+    }
+
+    /**
      * True when the last {@link #selectPartition} picked, for {@link #REASON_TABLE_PRESSURE} alone, a
      * partition one of the last {@link CairoConfiguration#getPartitionCompactionHotCommits()} commits
      * wrote. The caller withholds REWRITE from such a partition; every cheaper step stays available.
      */
     public boolean isSelectedPartitionHot() {
         return isSelectedPartitionHot;
-    }
-
-    /**
-     * Why the last {@link #selectPartition} picked what it picked.
-     */
-    public int getSelectedReason() {
-        return selectedReason;
     }
 
     public void onCompacted(long partitionTimestamp) {

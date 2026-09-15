@@ -2771,7 +2771,7 @@ public final class TableUtils {
     ) {
         try {
             final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
-            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion);
+            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion, ColumnType.MAX_STORAGE_VERSION);
             final int columnCount = getColumnCount(metaPath, metaMem, META_OFFSET_COUNT);
 
             long offset = getColumnNameOffset(columnCount);
@@ -2850,13 +2850,20 @@ public final class TableUtils {
     }
 
     public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
+        // Exact-version check for metadata whose version has a single supported value, such as the
+        // sequencer WAL format version. Table metadata that may carry the composite storage marker
+        // must use the range overload below; do not widen this one, it also guards the WAL format.
+        validateMetaVersion(metaPath, metaMem, metaVersionOffset, expectedVersion, expectedVersion);
+    }
+
+    public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion, int maxVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
         // A table that currently holds composite partitions carries ColumnType.MAX_STORAGE_VERSION
         // rather than ColumnType.VERSION; both are readable by this binary, so accept the whole
-        // [expectedVersion, MAX_STORAGE_VERSION] range. A version below expectedVersion is a table
+        // [expectedVersion, maxVersion] range. A version below expectedVersion is a table
         // that predates a migration (migrations bring it up before it is opened), and a version
-        // above MAX_STORAGE_VERSION comes from a newer binary this one cannot read.
-        if (metaVersion < expectedVersion || metaVersion > ColumnType.MAX_STORAGE_VERSION) {
+        // above maxVersion comes from a newer binary this one cannot read.
+        if (metaVersion < expectedVersion || metaVersion > maxVersion) {
             throw CairoException.metadataVersionMismatch(metaPath, expectedVersion, metaVersion);
         }
     }

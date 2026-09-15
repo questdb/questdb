@@ -84,7 +84,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
 
     /**
      * Package-private rather than private: {@link ColumnPurgeOperator} deletes retired generations and has to name
-     * them exactly the way {@link #append} and {@link #read} do - see GEOMETRY_PURGE.md.
+     * them exactly the way {@link #append} and {@link #read} do - see COMPOSITE_PARTITIONS.md.
      */
     static LPSZ geometryFileName(Path partitionDir, int generation) {
         return partitionDir.concat(TableUtils.PARTITION_GEOMETRY_FILE_NAME).put('.').put(generation).$();

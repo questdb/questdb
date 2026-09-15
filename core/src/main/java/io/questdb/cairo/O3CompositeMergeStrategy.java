@@ -35,7 +35,8 @@ import io.questdb.std.ObjList;
  */
 public class O3CompositeMergeStrategy {
     /**
-     * Stride of the piece bounds list: {@code tsLo}, {@code tsHi}, {@code rowOffset}, {@code rowCount}.
+     * Stride of the piece bounds list: {@code tsLo}, {@code tsHi}, {@code rowOffset}, {@code rowCount},
+     * {@code writerTxn}, {@code lastWriteMicros}.
      */
     public static final int LONGS_PER_BOUND = 6;
     /**
@@ -104,9 +105,11 @@ public class O3CompositeMergeStrategy {
      *                             found a new piece
      * @param physicalRows         the partition's physical extent BEFORE this commit writes anything, used only to test whether
      *                             the last piece owns the shared files' tail; pass a value no piece can reach (e.g.
+     *                             {@code -1}, as replace-commit mode does) to force no piece to own the tail
      * @param commitMayDedup       whether this commit's rows can collide with an existing row.
      * @param plan                 output, reused across calls: {@code plan.actions} is reset and repopulated so its {@code size()} IS
-     *                             the action count, and {@code plan.appendActionIndex} is set to the {@link ActionType#APPEND} action's position,
+     *                             the action count, and {@code plan.appendActionIndex} is set to the {@link ActionType#APPEND} action's
+     *                             position, or {@code -1} when this commit produces no APPEND action
      * @return {@code plan}, for a fluent call at the use site
      */
     public static Plan computeActions(
@@ -283,16 +286,16 @@ public class O3CompositeMergeStrategy {
         return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_ROW_OFFSET);
     }
 
-    public static long getWriterTxn(LongList bounds, int piece) {
-        return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_WRITER_TXN);
-    }
-
     public static long getTsHi(LongList bounds, int piece) {
         return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_TS_HI);
     }
 
     public static long getTsLo(LongList bounds, int piece) {
         return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_TS_LO);
+    }
+
+    public static long getWriterTxn(LongList bounds, int piece) {
+        return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_WRITER_TXN);
     }
 
     /**

@@ -341,7 +341,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LongList partitionRemoveCandidates = new LongList();
     /**
      * {@code _geometry} generations retired by this transaction, in {@link io.questdb.tasks.ColumnPurgeTask}'s block
-     * layout - see {@link #setGeometryRefRetiringGenerations} and GEOMETRY_PURGE.md.
+     * layout - see {@link #setGeometryRefRetiringGenerations} and COMPOSITE_PARTITIONS.md.
      */
     private final LongList retiredGeometryGenerations = new LongList();
     private final Path path;
@@ -357,6 +357,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
     private final TableWriterSegmentFileCache segmentFileCache;
     private final TxReader slaveTxReader;
+    /**
+     * File row ranges of the tail a split-partition removal moves out of its parent, as {@code (lo, hi)}
+     * pairs - one pair for an ordinary directory, one per piece the tail crosses for a composite one.
+     */
+    private final LongList splitTailFileRanges = new LongList();
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
     private final SymbolTableProviderFromWriter symbolTableProvider = new SymbolTableProviderFromWriter();
@@ -10979,23 +10984,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void o3ConsumePartitionUpdateSink_findNewSplitPartitionSizeTimestamp(Path partitionPath, long partitionTimestamp, long partitionSize) {
+    private void o3ConsumePartitionUpdateSink_findNewSplitPartitionSizeTimestamp(
+            Path partitionPath,
+            int partitionIndex,
+            long partitionTimestamp,
+            long partitionSize
+    ) {
         // Find how many rows of the same timestamp we need to split out to create a minimum size split partition
         // this is needed sometimes when split partition is fully removed in a replace commit
         int pathSize = partitionPath.size();
+        // A composite directory numbers its rows over the pieces and its files reach E, not the live row count.
+        // Walk the trailing equal-timestamp run in LOGICAL order and translate each row through the piece it
+        // falls in: file order is not timestamp order, so a plain backward scan of ts.d reads the wrong rows.
+        final boolean composite = txWriter.isPartitionComposite(partitionIndex);
+        final PartitionGeometry geometry = composite ? getGeometry() : null;
+        final long mapRows = composite ? geometry.getE(partitionIndex) : partitionSize;
         try {
             CharSequence tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
             final long fd = openRO(ff, dFile(partitionPath, tsColumnName, COLUMN_NAME_TXN_NONE), LOG);
             try {
-                final long mapSize = partitionSize * Long.BYTES;
+                final long mapSize = mapRows * Long.BYTES;
                 final long addr = mapRO(ff, fd, mapSize, MemoryTag.MMAP_TABLE_WRITER);
                 try {
-                    long lastTs = Unsafe.getLong(addr + (partitionSize - 1) * Long.BYTES);
+                    int ordinal = composite ? geometry.getPieceCount(partitionIndex) - 1 : 0;
+                    long pieceCumulativeLo = composite ? geometry.getPieceCumulativeLo(partitionIndex, ordinal) : 0;
+                    long shift = composite ? geometry.getPieceShift(partitionIndex, ordinal) : 0;
+                    assert !composite
+                            || pieceCumulativeLo + geometry.getPieceRowCount(partitionIndex, ordinal) == partitionSize
+                            : "geometry live rows disagree with the _txn partition size";
+                    long lastTs = Unsafe.getLong(addr + (partitionSize - 1 + shift) * Long.BYTES);
 
                     long currentTs = lastTs - 1;
                     long row = partitionSize - 2;
                     for (; row >= 0; row--) {
-                        currentTs = Unsafe.getLong(addr + row * Long.BYTES);
+                        if (row < pieceCumulativeLo) {
+                            pieceCumulativeLo = geometry.getPieceCumulativeLo(partitionIndex, --ordinal);
+                            shift = geometry.getPieceShift(partitionIndex, ordinal);
+                        }
+                        currentTs = Unsafe.getLong(addr + (row + shift) * Long.BYTES);
                         if (currentTs != lastTs) {
                             break;
                         }
@@ -11055,6 +11081,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long prevPartitionNameTxn = setStateForTimestamp(path, prevPartitionTimestamp);
                         o3ConsumePartitionUpdateSink_findNewSplitPartitionSizeTimestamp(
                                 path,
+                                i - 1,
                                 prevPartitionTimestamp,
                                 prevPartitionSize
                         );
@@ -11073,9 +11100,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", deletedSplitPartition=").$ts(timestampDriver, partitionTimestamp)
                                 .$();
 
+                        // Resolve the tail's file rows while the parent is still where the geometry keys it:
+                        // the branches below remove or resize it. A composite parent addresses the tail through
+                        // its pieces and its files reach E, so the source frame has to span E, not the live rows.
+                        final boolean prevPartitionComposite = txWriter.isPartitionComposite(i - 1);
+                        final long sourceFrameRows;
+                        splitTailFileRanges.clear();
+                        if (prevPartitionComposite) {
+                            final PartitionGeometry geometry = getGeometry();
+                            sourceFrameRows = geometry.getE(i - 1);
+                            geometry.collectPieceFileRanges(i - 1, newPrevPartitionSize, prevPartitionSize, splitTailFileRanges);
+                        } else {
+                            sourceFrameRows = prevPartitionSize;
+                            splitTailFileRanges.add(newPrevPartitionSize, prevPartitionSize);
+                        }
+
                         int insertPartitionIndex = i;
                         FrameFactory frameFactory = engine.getFrameFactory();
-                        try (Frame sourceFrame = frameFactory.openRO(path, prevPartitionTimestamp, metadata, columnVersionWriter, prevPartitionSize)) {
+                        try (Frame sourceFrame = frameFactory.openRO(path, prevPartitionTimestamp, metadata, columnVersionWriter, sourceFrameRows)) {
                             // Create the source frame and then manipulate partitions in txWriter
                             // When newSplitPartitionTimestamp == partitionTimestamp it is the only way
                             // to open 2 frames to the same partition timestamp
@@ -11085,6 +11127,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 insertPartitionIndex = removeAttachedPartitionsTracked(prevPartitionTimestamp);
                             } else {
                                 txWriter.updatePartitionSizeByTimestamp(prevPartitionTimestamp, newPrevPartitionSize);
+                                if (prevPartitionComposite) {
+                                    // A composite directory counts its live rows in the geometry, not in _txn.
+                                    // Without this the pieces go on claiming the rows that just moved out and a
+                                    // reader returns them twice, once here and once in the new split.
+                                    trimCompositePartitionToRows(i - 1, newPrevPartitionSize, newSplitPartitionTimestamp - 1);
+                                }
                             }
 
                             txWriter.insertPartition(insertPartitionIndex, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
@@ -11093,7 +11141,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // Self-tracking (no external ColumnTopSink): safe here the same way
                             // rewritePhysicalPartition and squash are - see Frame.publishColumnTops.
                             try (Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter, 0)) {
-                                FrameAlgebra.append(targetFrame, sourceFrame, newPrevPartitionSize, prevPartitionSize, txWriter.getTxn() + 1L, configuration.getCommitMode());
+                                for (int r = 0, n = splitTailFileRanges.size(); r < n; r += 2) {
+                                    FrameAlgebra.append(
+                                            targetFrame,
+                                            sourceFrame,
+                                            splitTailFileRanges.getQuick(r),
+                                            splitTailFileRanges.getQuick(r + 1),
+                                            txWriter.getTxn() + 1L,
+                                            configuration.getCommitMode()
+                                    );
+                                }
                                 ColumnTopSink sink = columnVersionWriter.asColumnTopSink(newSplitPartitionTimestamp);
                                 targetFrame.publishColumnTops(sink);
                             }
@@ -14175,7 +14232,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Publishes {@code newRef} for the partition and queues every {@code _geometry} generation the move retires. A
      * rotation and a MAKE-PLAIN both leave the retired file in the SAME directory, so the ordinary partition purge
-     * never sees it - see GEOMETRY_PURGE.md. Call this instead of {@code txWriter.setPartitionGeometryRef} wherever
+     * never sees it - see COMPOSITE_PARTITIONS.md. Call this instead of {@code txWriter.setPartitionGeometryRef} wherever
      * the directory stays put; the sites that write a fresh directory leave the whole of the old one to
      * {@link #safeDeletePartitionDir}.
      */
@@ -16936,6 +16993,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             txWriter.getTxn() + 1,
                             configuration.getMicrosecondClock().getTicks()
                     );
+                    // The appended run starts at the extent E; when the target's own last piece also ends
+                    // at E, that new piece is file-adjacent to it and carries the SAME shift. Fold the pair,
+                    // exactly as O3PartitionJob.foldAdjacentPieces and every other publish path do, so the
+                    // squash never commits geometry no reader-correctness invariant expects. Result-
+                    // preserving: file-adjacent pieces already tile one contiguous run.
+                    geometry.foldPending();
                     geometry.commitUpdate(targetPartitionIndex, targetExtent + appendedRows);
                     final long targetGeometryRef = geometry.publish(
                             targetPartitionIndex,
@@ -17329,6 +17392,47 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathTrimToLen);
         }
+    }
+
+    /**
+     * Trims a composite directory's geometry down to its first {@code newLiveRows} rows: the pieces above them go, and
+     * the piece they end inside keeps only its head, its {@code tsHi} becoming {@code newMaxTimestamp}. {@code E} does
+     * not move - the files keep every byte, which is exactly what lets a reader pinned on an earlier txn go on reading
+     * the rows this drops.
+     */
+    private void trimCompositePartitionToRows(int partitionIndex, long newLiveRows, long newMaxTimestamp) {
+        final PartitionGeometry geometry = getGeometry();
+        final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final int pieceCount = geometry.getPieceCount(partitionIndex);
+        final long e = geometry.getE(partitionIndex);
+        geometry.beginUpdate(partitionIndex);
+        for (int p = 0; p < pieceCount; p++) {
+            final long cumulativeLo = geometry.getPieceCumulativeLo(partitionIndex, p);
+            if (cumulativeLo >= newLiveRows) {
+                break;
+            }
+            final long pieceRowCount = geometry.getPieceRowCount(partitionIndex, p);
+            final long rowCount = Math.min(pieceRowCount, newLiveRows - cumulativeLo);
+            geometry.addPiece(
+                    geometry.getPieceTimestampLo(partitionIndex, p),
+                    rowCount == pieceRowCount ? geometry.getPieceTimestampHi(partitionIndex, p) : newMaxTimestamp,
+                    geometry.getPieceRowOffset(partitionIndex, p),
+                    rowCount,
+                    geometry.getPieceWriterTxn(partitionIndex, p),
+                    geometry.getPieceLastWriteMicros(partitionIndex, p)
+            );
+        }
+        geometry.commitUpdate(partitionIndex, e);
+        // E must not move: assert what commitUpdate's own max() already enforces, defensively.
+        assert geometry.getE(partitionIndex) == e;
+        final long geometryRef = geometry.publish(
+                partitionIndex,
+                txWriter.getTxn() + 1,
+                getCompositePartitionSeqTxn(),
+                configuration.getMicrosecondClock().getTicks(),
+                configuration.getCommitMode()
+        );
+        setGeometryRefRetiringGenerations(partitionTs, geometryRef);
     }
 
     private void truncate(boolean keepSymbolTables) {

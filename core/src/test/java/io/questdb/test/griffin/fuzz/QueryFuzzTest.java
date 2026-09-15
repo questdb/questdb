@@ -749,11 +749,16 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 : TestUtils.generateRandom(LOG);
         FuzzConfig config = new FuzzConfig(rnd);
 
-        // Global prerequisite for FuzzTableFactory's per-table composite-partition
-        // backdate (see its class javadoc). A no-op for any table the coin flip
-        // misses -- merge-append only changes behaviour on a backdated/overlapping
-        // write, which an in-order table never makes.
-        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        // Composite partitions ship OFF; the test defaults (Overrides) turn them ON. A per-run coin
+        // here keeps both configurations fuzzed rather than pinning ON every run: on the runs that
+        // draw false the suite exercises the shipped default write path - the OFF branches in
+        // TableWriter and O3PartitionJob - and FuzzTableFactory's per-table backdate lands as an
+        // ordinary O3 overlap rather than a composite one (its outcome feeds only diagnostics, so the
+        // diff-shadow oracle holds either way). The draw comes from the same seed logged above, so a
+        // red run replays it.
+        boolean mergeAppendEnabled = rnd.nextBoolean();
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, mergeAppendEnabled);
+        LOG.info().$("merge-append coin [mergeAppendEnabled=").$(mergeAppendEnabled).I$();
 
         LOG.info().$("fuzz config: tables=").$(config.getNumTables())
                 .$(", rows=").$(config.getRowsPerTable())

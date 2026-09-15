@@ -1406,6 +1406,69 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
+     * The compaction sweep owns a dedicated single-thread pool precisely so a REWRITE copies its partition
+     * inline on that thread, never fanning the per-column work onto sharedPoolWrite - the pool running WAL
+     * apply and O3 (see ServerMain, where the pool is created). This asserts that dispatch target directly:
+     * the shared column-task publish sequence, which sharedPoolWrite's {@code ColumnTaskJob} drains, must
+     * not advance across a sweep that actually rewrites a multi-column composite partition. If the sweep
+     * built its frames off the engine's shared factory instead, the copy would publish one task per live
+     * column and the sequence would move.
+     */
+    @Test
+    public void testScanRewriteDoesNotPublishColumnTasksToTheSharedWritePool() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            // Two data columns plus the designated timestamp: enough that a shared-factory copy would
+            // dispatch parallel per-column tasks (columnCount > 1), which is exactly what must not happen.
+            execute("CREATE TABLE cx AS (SELECT x::INT i, (x * 2)::LONG j," +
+                    " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later, plain day, so 2020-01-01 is never the active partition and the backfill is O3.
+            execute("INSERT INTO cx SELECT x::INT + 90000 i, (x * 2)::LONG j," +
+                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)");
+            drainWalQueue();
+            execute("INSERT INTO cx SELECT x::INT + 70000 i, (x * 2)::LONG j," +
+                    " timestamp_sequence('2020-01-01T04:00:07', 5*1000000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("cx");
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertTrue("2020-01-01 should be composite", reader.getTxFile().isPartitionComposite(0));
+                Assert.assertTrue("2020-01-01 should have more than one piece", reader.getGeometry().getPieceCount(0) > 1);
+            }
+            engine.releaseAllReaders();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                // The shared column-task producer sequence is the single seam between a frame copy and
+                // sharedPoolWrite: every parallel per-column task passes through it. Nothing else publishes
+                // to it while this single-threaded sweep runs on the test thread.
+                final long pubSeqBefore = engine.getMessageBus().getColumnTaskPubSeq().current();
+                job.run();
+                final long pubSeqAfter = engine.getMessageBus().getColumnTaskPubSeq().current();
+                Assert.assertEquals(
+                        "the compaction REWRITE published per-column tasks to the shared write pool's queue",
+                        pubSeqBefore,
+                        pubSeqAfter
+                );
+            }
+
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertFalse(
+                        "2020-01-01 is idle, the sweep should have REWRITE-compacted it",
+                        reader.getTxFile().isPartitionComposite(0)
+                );
+            }
+            engine.releaseAllReaders();
+            assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n6010\n");
+        });
+    }
+
+    /**
      * A swap handed to a BUSY writer is queued and applied later, on the writer's own thread. The sweep
      * used to record nothing about that, so the next interval built the whole staging copy over again -
      * one redundant full-partition copy per interval, of which only one swap could ever be used.

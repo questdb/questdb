@@ -26,8 +26,10 @@ package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -166,6 +168,63 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The squash appends its folded run as one piece starting at the target's file extent E. When the
+     * target's own extent piece is also its last by timestamp, that new piece is file-adjacent to it
+     * ({@code rowOffset == prevRowOffset + prevRowCount}), hence carries the SAME shift. Every other
+     * publish path folds such a pair (O3PartitionJob.foldAdjacentPieces, the carve republish,
+     * moveTailToFreshPartition); the squash composite-target branch must too, or it commits geometry
+     * no other path ever emits - one extra page frame until the next compaction folds it. The fold
+     * must be result-preserving.
+     * <p>
+     * makeComposite rewrites everything from its insert point to the front sibling's end at the file
+     * tail, so that rewritten piece is BOTH the last by timestamp and the one reaching E - exactly the
+     * extent-piece-last shape. Folding the later siblings onto it then appends one run at E, adjacent to it.
+     */
+    @Test
+    public void testSquashFoldsAdjacentSameShiftTailPiece() throws Exception {
+        assertMemoryLeak(() -> {
+            // A single-day fixture: squashAllPartitionsIntoOne folds ALL partitions into one and is not
+            // day-aware, so a later day would be merged into this one. With only 2024-01-01 present the
+            // squash folds its own siblings alone.
+            createSingleDaySplit();
+            // Rewrite the FRONT sibling's TAIL (200 rows at 1s ending at its max, 04:59:59) to the file
+            // tail, so the piece reaching E is also its last by timestamp - the extent-piece-last shape.
+            makeComposite("T04:56:40");
+            Assert.assertTrue("fixture left the target plain", isComposite(DAY));
+
+            final String before = fingerprintOfDay();
+            final long rowsBefore = rowsOfDay();
+            final long sumBefore = scalar("SELECT sum(i) FROM x WHERE ts IN '" + DAY + "'");
+
+            // Drive the REAL non-force squash straight through the writer. It reaches the same
+            // composite-target publish branch housekeeping's opportunistic squash does, but does NOT run
+            // the compaction net (foldFoldableFolders / foldContiguousPieces) afterwards. That net stands
+            // down only while lagRowCount > 0, which a full drainWalQueue never leaves behind, so it would
+            // otherwise repair the gap within the same pass and hide it. Driving the squash alone is the
+            // one deterministic window in which the squash's own committed geometry is observable.
+            final TableToken tt = engine.verifyTableName("x");
+            try (TableWriter writer = getWriter(tt)) {
+                writer.squashAllPartitionsIntoOne();
+            }
+
+            Assert.assertEquals("squash did not fold the day to one directory", 1, partitionCountOfDay());
+            Assert.assertTrue("the folded target dropped its composite geometry", isComposite(DAY));
+
+            // RED before the squash fold fix: the tail piece landed at E adjacent to the extent piece.
+            assertNoAdjacentSameShiftPair();
+
+            // The fold must be result-preserving.
+            Assert.assertEquals("the fold changed the day's row count", rowsBefore, rowsOfDay());
+            Assert.assertEquals("the fold changed the day's rows or their order", before, fingerprintOfDay());
+            assertQuery("SELECT count(), sum(i) FROM x WHERE ts IN '" + DAY + "'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n" + rowsBefore + "\t" + sumBefore + "\n");
+            assertDayReadsBack();
+        });
+    }
+
     @Test
     public void testPlainSourceIntoCompositeTarget() throws Exception {
         assertMemoryLeak(() -> {
@@ -212,6 +271,36 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
      * count against a fully ordered read, and the partition catalogue's timestamp bounds against the
      * data's own.
      */
+    /**
+     * The write-side fold invariant: no committed composite geometry may hold a file-adjacent piece pair.
+     * Two list-consecutive pieces are file-adjacent - and so share one shift and one linear page frame -
+     * exactly when {@code rowOffset_p == rowOffset_{p-1} + rowCount_{p-1}}. Every publish path folds such
+     * pairs before committing; the squash branch must not be the one exception.
+     */
+    private static void assertNoAdjacentSameShiftPair() throws Exception {
+        final long dayLo = MicrosTimestampDriver.floor(DAY + "T00:00:00.000000Z");
+        final TableToken tt = engine.verifyTableName("x");
+        try (TableReader reader = engine.getReader(tt)) {
+            final TxReader txReader = reader.getTxFile();
+            final PartitionGeometry geometry = reader.getGeometry();
+            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
+                if (txReader.getLogicalPartitionTimestamp(txReader.getPartitionTimestampByIndex(i)) != dayLo) {
+                    continue;
+                }
+                final int pieceCount = geometry.getPieceCount(i);
+                for (int p = 1; p < pieceCount; p++) {
+                    final long prevEnd = geometry.getPieceRowOffset(i, p - 1) + geometry.getPieceRowCount(i, p - 1);
+                    Assert.assertNotEquals(
+                            "squash committed a file-adjacent same-shift piece pair (fold gap) at partition "
+                                    + i + " piece " + p,
+                            prevEnd,
+                            geometry.getPieceRowOffset(i, p)
+                    );
+                }
+            }
+        }
+    }
+
     private static void assertDayReadsBack() throws Exception {
         Assert.assertEquals(
                 "the day's timestamps came back unordered",
@@ -280,6 +369,26 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
         Assert.assertEquals("fixture did not split the day in two", 2, partitionCountOfDay());
         makeComposite("T01:00:00");
         makeComposite("T05:10:00");
+    }
+
+    /**
+     * The day cut into three siblings, with NO later day: the whole table is 2024-01-01. Used by the
+     * squashAllPartitionsIntoOne path, which folds every partition into one and would otherwise pull a
+     * later day into the day under test.
+     */
+    private static void createSingleDaySplit() throws Exception {
+        execute("CREATE TABLE x AS (" +
+                "SELECT cast(x AS int) i, rnd_str(5, 16, 2) s," +
+                " timestamp_sequence('" + DAY + "', 1_000_000L) ts" +
+                " FROM long_sequence(20_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        drainWalQueue();
+
+        splitTheDayAt("T05:00:00");
+        execute("INSERT INTO x SELECT cast(x AS int) + 20_000 i, rnd_str(5, 16, 2) s," +
+                " timestamp_sequence('" + DAY + "T05:33:21', 1_000_000L) ts FROM long_sequence(20_000)");
+        drainWalQueue();
+        splitTheDayAt("T10:30:00");
+        Assert.assertEquals("fixture did not split the day into three", 3, partitionCountOfDay());
     }
 
     /**

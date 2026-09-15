@@ -65,7 +65,7 @@ public final class PurgingOperator {
 
     /**
      * Queues {@code columnVersions} for the column purge job. Static because a caller with nothing else to purge -
-     * {@code TableWriter} handing over the {@code _geometry} generations a rotation retired, see GEOMETRY_PURGE.md -
+     * {@code TableWriter} handing over the {@code _geometry} generations a rotation retired, see COMPOSITE_PARTITIONS.md -
      * needs the queue without needing this operator's per-column bookkeeping.
      */
     public static void purgeColumnVersionAsync(
