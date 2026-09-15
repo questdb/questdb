@@ -175,7 +175,31 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_pf_heap (sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t_pf_heap SELECT rnd_symbol('a','b','c','d','e','f','g','h'), x::DOUBLE, timestamp_sequence(0, 1) FROM long_sequence(5000)");
-            final String q = "SELECT sym, sum(price) FROM t_pf_heap WHERE sym IN ('a','b','c','d','e','f','g','h') ORDER BY sym";
+            // NOTE on query shape -- this must keep taking the k-way MERGE path, not the
+            // per-key path, or the heap-vs-linear parity under test is never exercised:
+            //
+            // A GROUP BY whose aggregates are all order-insensitive (e.g. sum()) is now
+            // offered the opt-out from designated-timestamp order
+            // (SqlCodeGenerator#offerUnorderedScan); CoveringIndexRecordCursorFactory then
+            // emits one frame per key instead of k-way merging the per-key posting cursors,
+            // so openMergeCursors() and MergeObserver#onMergeStrategy never fire and this
+            // test passes vacuously (this happened with `SELECT sym, sum(price) ...
+            // ORDER BY sym`).
+            //
+            // Grouping by sym with first()/last() avoids that TODAY (an order-sensitive
+            // aggregate makes offerUnorderedScan bail out before calling
+            // tryDisableTimestampOrdering()) but is fragile: a future change may -- as
+            // flagged in SqlCodeGenerator's "Deliberately over-conservative" comment --
+            // start offering the per-key path to an order-sensitive aggregate when it is
+            // grouped BY THE INDEX KEY ITSELF, since each group would then draw from one
+            // key's own ascending posting list and first()/last() would stay correct. That
+            // would silently make a `GROUP BY sym` shape vacuous again.
+            //
+            // SAMPLE BY on a TIME BUCKET sidesteps that permanently: each bucket spans rows
+            // from potentially all 8 keys, so a per-key frame layout can never satisfy it --
+            // the per-key opt-out is not just declined, it is structurally never a candidate
+            // for this shape, independent of how the aggregate-sensitivity offer evolves.
+            final String q = "SELECT ts, first(price) FROM t_pf_heap WHERE sym IN ('a','b','c','d','e','f','g','h') SAMPLE BY 500U";
 
             // Guard: the aggregate query must actually route through the covering page-frame cursor.
             assertQuery(q).noLeakCheck().assertsPlanContaining("CoveringIndex");
@@ -190,8 +214,10 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
             // One eight-key min-scan per emitted row, plus the final scan that
             // discovers the partition is drained.
             Assert.assertEquals((5_000L + 1) * 8, linearObserver.pageFrameLinearComparisons);
-            // 8 symbol groups must produce 8 data rows (header + 8); proves results are non-trivial.
-            Assert.assertTrue("expected at least 9 lines (header + 8 groups), got:\n" + linear, linear.split("\n").length >= 9);
+            // ts spans [0, 4999] microseconds in 1us steps; 500us buckets split that into
+            // exactly 10 non-empty buckets -- 10 data rows (header + 10) prove the
+            // aggregate output is non-trivial.
+            Assert.assertEquals("expected 11 lines (header + 10 buckets), got:\n" + linear, 11, linear.split("\n").length);
 
             // Force heap branch (crossover 2 < 8 keys) and require identity.
             CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(2);
