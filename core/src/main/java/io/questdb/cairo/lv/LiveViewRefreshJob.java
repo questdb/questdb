@@ -11674,6 +11674,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
 
+        // The cursor is exhausted, but the completion is not built over a block the view's WAL
+        // holds and its table does not. The head seal below declines over an outstanding apply, so
+        // completing anyway flips the view ACTIVE with no timeline, and the lagging scan's apply
+        // retry skips a table the failed apply suspended, so nothing lands the block either. Stay
+        // SEEDING and re-drive the apply instead: the scan re-enters the sweep, which finds nothing
+        // left to read and arrives back here. Appends earlier in the sweep do not wait - the resume
+        // setup keeps them correct across a restart, and holding every turn on its predecessor's
+        // apply would stall the sweep whenever the writer is busy.
+        if (!isLiveViewWalFullyApplied(instance)) {
+            applyLiveViewWal(instance);
+            if (!isLiveViewWalFullyApplied(instance)) {
+                LOG.debug().$("live view seed sweep reached its end over unapplied blocks, deferring completion [view=")
+                        .$(viewName)
+                        .$(", sweepSeqTxn=").$(sweepSeqTxn).I$();
+                return;
+            }
+        }
+
         // Sweep complete. Seal the steady boundary from the now-complete window
         // state (maxTs = overall latestSeenTs, not this possibly-empty final
         // turn's batchMaxTs) so the ACTIVE phase's restart-restore and O3 resume

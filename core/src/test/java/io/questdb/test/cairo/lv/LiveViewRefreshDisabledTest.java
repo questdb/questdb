@@ -86,7 +86,12 @@ public class LiveViewRefreshDisabledTest extends AbstractBootstrapTest {
                         () -> serverMain.assertSql("SELECT count(*) FROM lv", "count\n3\n"),
                         60
                 );
-                serverMain.assertSql("SELECT view_status FROM live_views()", "view_status\nactive\n");
+                // The rows can be visible a scan ahead of the seed's completion: when the global apply
+                // job lands the sweep's last block, the completion waits for the next turn to find it.
+                TestUtils.assertEventually(
+                        () -> serverMain.assertSql("SELECT view_status FROM live_views()", "view_status\nactive\n"),
+                        60
+                );
             }
 
             try (final TestServerMain serverMain = start("0")) {

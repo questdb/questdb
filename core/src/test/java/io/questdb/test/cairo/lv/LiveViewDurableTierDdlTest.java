@@ -4607,13 +4607,13 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
     @Test
     public void testSuspendWalHoldsASeedSweepsBlocksUntilResumed() throws Exception {
         // The seed sweep under the operator's suspension. Every turn commits its block and applies
-        // nothing, so the sweep runs to completion over its own outstanding WAL: the view flips
-        // ACTIVE holding no row on disk, and the completion's head seal declines over the
-        // outstanding apply, so it holds no timeline either. RESUME WAL lands every block in order,
-        // and the next flush seals a fresh history at the count the table then holds. What this
-        // pins is that a suspension taken before the first turn holds for the whole sweep, where the
-        // first turn's apply used to lift it, and that nothing the sweep derived over the unapplied
-        // blocks survives the resume as a wrong row or a wrong position.
+        // nothing, and once the cursor is exhausted the sweep holds SEEDING rather than complete over
+        // its own outstanding WAL - it used to flip ACTIVE holding no row on disk, with its head seal
+        // declined over the outstanding apply and so no timeline either. RESUME WAL lets the next
+        // turn land every block in order and complete, sealing the head over the table that then
+        // holds them. What this pins is that a suspension taken before the first turn holds for the
+        // whole sweep, where the first turn's apply used to lift it, and that nothing the sweep
+        // derived over the unapplied blocks survives the resume as a wrong row or a wrong position.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
             createSeedBase();
@@ -4621,17 +4621,28 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
             final TableToken lvToken = engine.verifyTableName("lv");
             execute("ALTER LIVE VIEW lv SUSPEND WAL");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveSeedToCompletion(job, "lv");
-                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final LiveViewInstance instance = driveSeedTurnsUntil(
+                        job,
+                        () -> engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal() == 5,
+                        "the sweep never emitted its last row"
+                );
+                for (int i = 0; i < 8; i++) {
+                    job.run();
+                    drainWalQueue();
+                }
                 Assert.assertTrue(engine.isWalApplySuspended(lvToken));
                 Assert.assertEquals("no seed block may apply while the suspension holds", 0, lvRowCount(lvToken));
+                Assert.assertEquals(
+                        "a sweep must not complete over its own unapplied blocks",
+                        LiveViewState.SEED_STATE_SEEDING,
+                        instance.getStateReader().getSeedState()
+                );
                 assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
                         .noLeakCheck().noRandomAccess().returns("view_status\nsuspended\n");
-                assertTimelineExists(lvToken, false);
                 assertNoRefreshFaults("lv");
 
                 execute("ALTER LIVE VIEW lv RESUME WAL");
-                driveLiveViewWalApply(job);
+                driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
                 assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
                         .noLeakCheck().noRandomAccess().returns("view_status\nactive\n");
@@ -4648,9 +4659,11 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                                 1970-01-05T00:00:00.000000Z\t5\t5
                                 """);
                 Assert.assertEquals(5, instance.getLvRowsTotal());
+                // The completion's head, sealed once every block had landed.
+                assertLadder(instance, ts("1970-01-05"), 5);
 
                 flushOneRow(job, "1970-01-06T00:00:00.000000Z", 6, 6);
-                assertLadder(instance, ts("1970-01-06"), 6);
+                assertLadder(instance, ts("1970-01-05"), 5, ts("1970-01-06"), 6);
                 assertQuery("SELECT checkpoint_row_count_mismatches FROM live_views()")
                         .noLeakCheck().noRandomAccess().returns("checkpoint_row_count_mismatches\n0\n");
                 assertNoRefreshFaults("lv");
@@ -7052,6 +7065,85 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
             restartAndAssertRestoredFromTimeline();
             assertSurvivingSeedRows();
+        });
+    }
+
+    @Test
+    public void testSeedCompletionOverAnUnappliedBlockWaitsForItToLand() throws Exception {
+        // Only a reset's replacement held the sweep over an apply that failed. An ordinary block's
+        // failed apply let the next turn append, which the resume guard keeps correct across a
+        // restart, but the sweep also completed over it: the completion's head seal declined over
+        // the outstanding apply, so the view flipped ACTIVE with no timeline, and a restart before
+        // its next cadence seal paid a rebuild from the applied base. The completion now waits for
+        // the view's WAL to land, re-driving the apply each turn.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS, 0); // one row per seed turn
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failLastPartition = new AtomicBoolean();
+        final AtomicInteger lastPartitionFaults = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failLastPartition.get()
+                        && lvDir[0] != null
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "1970-01-05.")
+                        && Utf8s.endsWithAscii(name, "x.d")) {
+                    lastPartitionFaults.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            createSeedBase();
+            createSeedView("");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            failLastPartition.set(true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = driveSeedTurnsUntil(
+                        job,
+                        () -> engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal() == 5,
+                        "the sweep never emitted its last row"
+                );
+                // The sweep has reached the end of its cursor, and the last block is in the view's WAL
+                // but not in its table. More turns must not complete it over that block.
+                for (int i = 0; i < 8; i++) {
+                    job.run();
+                    drainWalQueue();
+                }
+                Assert.assertTrue("the last block's apply must actually have been failed", lastPartitionFaults.get() > 0);
+                Assert.assertEquals("the last block must be sequenced and not applied", 4, lvRowCount(lvToken));
+                Assert.assertEquals(
+                        "a sweep must not complete over its own unapplied block",
+                        LiveViewState.SEED_STATE_SEEDING,
+                        instance.getStateReader().getSeedState()
+                );
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\nsuspended\n");
+
+                failLastPartition.set(false);
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(5, lvRowCount(lvToken));
+                // The completion's head, sealed over the table that now holds every block.
+                assertLadder(instance, ts("1970-01-05"), 5);
+                assertQuery("SELECT view_status, checkpoint_row_count_mismatches FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess().returns("view_status\tcheckpoint_row_count_mismatches\nactive\t0\n");
+            }
+
+            restartAndAssertRestoredFromTimeline();
+            assertQuery("SELECT ts, x, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn
+                            1970-01-01T00:00:00.000000Z\t1\t1
+                            1970-01-02T00:00:00.000000Z\t2\t2
+                            1970-01-03T00:00:00.000000Z\t3\t3
+                            1970-01-04T00:00:00.000000Z\t4\t4
+                            1970-01-05T00:00:00.000000Z\t5\t5
+                            """);
         });
     }
 
