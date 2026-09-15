@@ -10178,9 +10178,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             }
                         }
-                        factory.tryDisableTimestampOrdering(orderSensitive, null);
+                        final boolean accepted = factory.tryDisableTimestampOrdering(orderSensitive, null);
                         try {
-                            validateOrderSensitiveVectorAggregates(factory, tempVaf);
+                            validateOrderSensitiveVectorAggregates(factory, tempVaf, accepted);
                         } catch (Throwable e) {
                             Misc.freeObjList(tempVaf);
                             throw e;
@@ -10353,8 +10353,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         // Not-keyed group by consumes its base to exhaustion too, so
                         // the same rule applies as for the keyed path.
-                        offerUnorderedScan(factory, groupByFunctions0, null);
-                        validateOrderSensitiveAggregates(factory, groupByFunctions0);
+                        final boolean accepted = offerUnorderedScan(factory, groupByFunctions0, null);
+                        validateOrderSensitiveAggregates(factory, groupByFunctions0, accepted);
                         return new AsyncGroupByNotKeyedRecordCursorFactory(
                                 executionContext.getCairoEngine(),
                                 asm,
@@ -10421,8 +10421,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // frame per key -- would silently return "whichever key was scanned
                     // first" instead of the earliest row. Fail closed, matching how
                     // SAMPLE BY ALIGN TO FIRST OBSERVATION already rejects such a base.
-                    offerUnorderedScan(factory, groupByFunctions0, listColumnFilterA);
-                    validateOrderSensitiveAggregates(factory, groupByFunctions0);
+                    final boolean accepted = offerUnorderedScan(factory, groupByFunctions0, listColumnFilterA);
+                    validateOrderSensitiveAggregates(factory, groupByFunctions0, accepted);
                     return generateFill(
                             model,
                             new AsyncGroupByRecordCursorFactory(
@@ -11934,18 +11934,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Reject a parallel GROUP BY / SAMPLE BY whose aggregate depends on row order
-     * when the base cursor does not guarantee designated-timestamp order.
+     * Reject a GROUP BY / SAMPLE BY whose aggregate depends on row order over a base that
+     * does not deliver designated-timestamp order AND did not accept this consumer's offer.
      * <p>
-     * {@code getScanDirection()} is the existing declaration of that guarantee; the
-     * group-by path simply did not consult it, so an unordered base produced silently
-     * wrong {@code first()}/{@code last()} values rather than an error.
+     * A base that accepted has asserted the arrangement is legal for these aggregates and
+     * these grouping columns -- a covering scan grouped by its own index column, say -- and
+     * owns that claim. Firing unconditionally would reject exactly the case the index-key
+     * rule legalises. What remains guarded is an unordered base this consumer did not
+     * arrange, such as a multi-key covering latestBy.
      */
     private static void validateOrderSensitiveAggregates(
             RecordCursorFactory base,
-            ObjList<GroupByFunction> groupByFunctions
+            ObjList<GroupByFunction> groupByFunctions,
+            boolean offerAccepted
     ) throws SqlException {
-        if (base == null || groupByFunctions == null
+        if (offerAccepted || base == null || groupByFunctions == null
                 || base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER) {
             return;
         }
@@ -11963,13 +11966,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * vectorized GROUP BY path carries its aggregates as {@code VectorAggregateFunction}
      * rather than {@link GroupByFunction}, so it cannot share that method's signature (same
      * erasure), but the backstop it provides is identical: reject a base advertising
-     * {@code SCAN_DIRECTION_OTHER} when it feeds an order-sensitive aggregate.
+     * {@code SCAN_DIRECTION_OTHER} when it feeds an order-sensitive aggregate and did not
+     * accept this consumer's offer.
      */
     private static void validateOrderSensitiveVectorAggregates(
             RecordCursorFactory base,
-            ObjList<VectorAggregateFunction> vafs
+            ObjList<VectorAggregateFunction> vafs,
+            boolean offerAccepted
     ) throws SqlException {
-        if (base == null || vafs == null
+        if (offerAccepted || base == null || vafs == null
                 || base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER) {
             return;
         }
