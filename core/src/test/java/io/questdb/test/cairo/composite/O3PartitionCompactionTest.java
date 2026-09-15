@@ -271,6 +271,102 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * The per-commit compaction passes start at {@code compositeFromIndex()} - the first partition at or
+     * after the earliest composite one - rather than at index 0, so they skip the cold plain partitions
+     * below it. This lays down a run of plain partitions BELOW the only composite one and asserts the
+     * composite is still found and reclaimed: a watermark that started the pass too late would walk
+     * straight past it and leave the dead space on disk.
+     */
+    @Test
+    public void testCompactionSkipsColdPlainsButStillReclaimsALaterComposite() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            // Isolate the AGE rule, exactly as testAgeTriggerCompactsAPartitionNothingHasWrittenTo does:
+            // waste and table-pressure off, so only "idle AND still has waste" can fire.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, "99");
+
+            setCurrentMicros(parseMicros("2024-01-20T00:00:00.000000Z"));
+            // A run of plain partitions with no dead space, all below the composite one to come.
+            createDayTable("x", "2024-01-01", 20_000);
+            append("x", "2024-01-02", 50);
+            append("x", "2024-01-03", 50);
+            append("x", "2024-01-04", 50);
+            append("x", "2024-01-05", 50);
+            Assert.assertEquals("the plain run must start clean", 0, deadRows("x"));
+
+            // Make a LATER day composite: fill 2024-01-06, then two rewrites of one stride leave dead rows.
+            execute("insert into x select cast(x as int) + 300000 i," +
+                    " timestamp_sequence('2024-01-06', 1000000L) ts from long_sequence(20000)");
+            drainWalQueue();
+            backdate("x", "2024-01-06T06:00:00", 200);
+            backdate("x", "2024-01-06T06:00:00", 200);
+            Assert.assertTrue("fixture produced no waste on the later day", deadRowsOfDay("x", "2024-01-06") > 0);
+            Assert.assertEquals("only the composite day should carry waste", deadRowsOfDay("x", "2024-01-06"), deadRows("x"));
+
+            // Nothing writes to it for two hours of wall clock, then unrelated commits give housekeeping
+            // its chances.
+            setCurrentMicros(parseMicros("2024-01-20T02:00:00.000000Z"));
+            runCompactionPasses("x");
+
+            Assert.assertEquals(
+                    "the watermark-bounded compaction pass walked past the only composite partition and left" +
+                            " its dead space unreclaimed; dead rows still on disk: " + deadRows("x"),
+                    0,
+                    deadRows("x")
+            );
+        });
+    }
+
+    /**
+     * When the last composite partition is reclaimed, the composite watermark resets to Long.MAX_VALUE, and
+     * a composite that appears later - at a different position - re-narrows it and is still picked up.
+     * Guards the reset-and-re-narrow path of {@code minCompositePartitionTimestamp}.
+     */
+    @Test
+    public void testCompactionFindsAFreshCompositeAfterAllPriorOnesDrained() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, "99");
+
+            setCurrentMicros(parseMicros("2024-01-20T00:00:00.000000Z"));
+            createDayTable("x", "2024-01-01", 20_000);
+            backdate("x", "2024-01-01T06:00:00", 200);
+            backdate("x", "2024-01-01T06:00:00", 200);
+            Assert.assertTrue("fixture produced no waste", deadRows("x") > 0);
+
+            // Drain the first composite: it goes back to plain, dropping the composite count to zero and
+            // resetting the watermark.
+            setCurrentMicros(parseMicros("2024-01-20T02:00:00.000000Z"));
+            runCompactionPasses("x");
+            Assert.assertEquals("first composite not drained", 0, deadRows("x"));
+            Assert.assertFalse("2024-01-01 still composite", isComposite("x", "2024-01-01"));
+
+            // A brand-new composite on a much later day, after the watermark has reset to Long.MAX_VALUE.
+            execute("insert into x select cast(x as int) + 300000 i," +
+                    " timestamp_sequence('2024-01-15', 1000000L) ts from long_sequence(20000)");
+            drainWalQueue();
+            backdate("x", "2024-01-15T06:00:00", 200);
+            backdate("x", "2024-01-15T06:00:00", 200);
+            Assert.assertTrue("no waste on the fresh composite", deadRowsOfDay("x", "2024-01-15") > 0);
+
+            setCurrentMicros(currentMicros + Micros.HOUR_MICROS + 2 * Micros.MINUTE_MICROS);
+            runCompactionPasses("x");
+            Assert.assertEquals(
+                    "the fresh composite that appeared after the watermark reset was never compacted;" +
+                            " dead rows: " + deadRows("x"),
+                    0,
+                    deadRows("x")
+            );
+        });
+    }
+
+    /**
      * TRIM-FILES runs while a reader that resolves the partition's CURRENT, one-piece composite shape is
      * open - and that reader still reads correct rows out of the shortened files.
      * <p>
