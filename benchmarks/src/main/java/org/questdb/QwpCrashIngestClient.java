@@ -26,9 +26,29 @@ import java.time.temporal.ChronoUnit;
  * <h3>The watermark, and what it does NOT mean</h3>
  * {@link QwpWebSocketSender#getAckedFsn()} is the highest frame the SERVER ACKNOWLEDGED -- it
  * advances on OK frames, which acknowledge a server-side COMMIT. It is NOT a durability signal:
- * {@code STATUS_DURABLE_ACK} is a separate frame type handled on a separate path, and the client's
- * per-table durable watermarks are not reachable from the public sender API today (the accessor
- * the WIP tests use, {@code cursorSendLoopForTest()}, does not exist yet).
+ * {@code STATUS_LOCAL_DURABLE_ACK} is a separate frame type handled on a separate path.
+ * <p>
+ * RE-CHECKED 2026-09-15 against client 1.3.10-SNAPSHOT; the previous wording here was stale in
+ * two ways and the corrections matter, because they were the stated reason durable ack is
+ * defaulted off:
+ * <ul>
+ *   <li>{@code cursorSendLoopForTest()} DOES exist and is public
+ *       ({@code QwpWebSocketSender:1879}), so the send loop's counters ARE reachable.</li>
+ *   <li>The LOCAL tier is accepted by the client ({@code Sender:3808} allows
+ *       {@code [on, off, local, replicated, local,replicated]}) AND granted by an OSS server:
+ *       {@code LocalDurableAckRegistry} is the OSS default, its {@code isEnabled()} is true and
+ *       {@code isTierAvailable(LOCAL)} is true. Only REPLICATED is enterprise-only.</li>
+ * </ul>
+ * What remains TRUE, and is the real constraint: {@code getLocalDurableTableWatermark()} is
+ * documented to stay EMPTY in local-only mode ("the local acks feed the trim watermarks directly
+ * and this map stays empty") -- it is meaningful only when BOTH tiers are requested. So a
+ * client-side per-table durable frontier is not readable from a local-only session, and building
+ * a no-loss bar on it would yield a silently-zero watermark: a bar that can never fail.
+ * <p>
+ * Reachable and useful today via {@code cursorSendLoopForTest()}:
+ * {@code getTotalLocalDurableAcks()} (0 unless the local tier was requested -- the assertion that
+ * the server really is emitting the frames), {@code getTotalDurableTrimAdvances()}, and
+ * {@code getTotalFramesReplayed()}. See the durability-ci notes, issues/17.
  * <p>
  * So the no-loss oracle here is sound ONLY under {@code commitMode=SYNC} (W=0), where the server
  * fsyncs as part of the commit before acking -- there, "committed" and "durable" coincide. Under
@@ -62,13 +82,20 @@ public class QwpCrashIngestClient {
     public static void main(String[] args) throws Exception {
         final String dbRoot = args[0];
         final String addr = System.getProperty("qwp.addr", "localhost:9000");
-        // Tier is configurable because it is VERSION-DEPENDENT: the pinned client accepts only
-        // [on, off]; the `local` tier the WIP tests use is not in this build yet and is rejected
-        // at config-parse time. Default to the tier that exists so the arm runs today.
-        // Default OFF: an OSS server REFUSES the websocket upgrade outright when durable ack is
-        // requested ("server does not support durable ack"), so asking for it makes the arm
-        // unrunnable on OSS rather than stricter. Durable ack over QWP is an enterprise / WIP
-        // capability; see the class javadoc for what the resulting watermark does and does not mean.
+        // Tier: [on, off, local, replicated, local,replicated].
+        //
+        // THE DEFAULT IS STILL off, BUT NOT FOR THE REASON PREVIOUSLY RECORDED HERE. The old
+        // comment claimed an OSS server refuses the upgrade outright when durable ack is
+        // requested. That is FALSE as of client 1.3.10-SNAPSHOT / this server: the OSS default
+        // registry is LocalDurableAckRegistry, which reports isEnabled()=true and
+        // isTierAvailable(LOCAL)=true, so `local` is granted out of the box. Only `replicated`
+        // is enterprise-only.
+        //
+        // It stays off because this arm's oracle does not yet USE the acks: the watermark below
+        // is polled from the server's wal_tables(), so requesting the tier would add frames
+        // nobody reads and prove nothing. Turning it on is only meaningful together with an
+        // oracle that asserts on getTotalLocalDurableAcks() and the SF trim -- that is issues/17,
+        // and the default should move there, with the assertion, not before it.
         final String ackTier = System.getProperty("qwp.durable.ack", "off");
         // STORE-AND-FORWARD, the half of the contract the server cannot provide. The server's RPO
         // window legitimately discards txns above Wm; the CLIENT closes that window by holding
