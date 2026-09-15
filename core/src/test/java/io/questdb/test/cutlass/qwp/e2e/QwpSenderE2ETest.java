@@ -1993,6 +1993,31 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testCharToTextPreservesUnicode() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_char_to_text_unicode";
+            execute("CREATE TABLE " + table + " (s STRING, v VARCHAR, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .charColumn("s", '\u03a9')
+                        .charColumn("v", '\u03a9')
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT s, v FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            s\tv
+                            Ω\tΩ
+                            """);
+        });
+    }
+
+    @Test
     public void testSchemaAwareConversionToStringAndVarcharFromIPv4() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_ipv4_to_string_varchar";
