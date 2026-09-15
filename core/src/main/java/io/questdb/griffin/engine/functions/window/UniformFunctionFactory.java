@@ -33,6 +33,7 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.PlanSink;
@@ -132,6 +133,9 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
     // uniform(n) over (order by xxx) - no partition by, no framing.
     static class UniformFunction extends BaseWindowFunction implements Reopenable {
 
+        // Check cancellation every 1024 ordinals; time-throttled checks avoid both a second
+        // count throttle and a connection-probe syscall at every checkpoint.
+        private static final int CIRCUIT_BREAKER_CHECK_MASK = 1023;
         private final DirectLongList selected = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
         private final int functionPosition;
         private final long maxRows;
@@ -139,6 +143,7 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         // init() (before pass1/preparePass2 need it) rather than frozen at newInstance.
         private final Function targetArg;
         private final int targetPosition;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private long count;          // running row counter during pass1; becomes totalRows
         private boolean keepAll;
         private boolean lastKeep;    // last keep-flag computed in pass2; see getBool() below
@@ -184,6 +189,7 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
+            circuitBreaker = executionContext.getCircuitBreaker();
             targetArg.init(symbolTableSource, executionContext);
             if (!targetArg.isConstant()) {
                 // Resolve target for THIS execution: a bind-variable target is re-read (and
@@ -225,10 +231,16 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
             dest.clear();
             if (keepAll) {
                 for (long i = 0; i < count; i++) {
+                    if ((i & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    }
                     dest.add(i);
                 }
             } else {
                 for (long i = 0, n = selected.size(); i < n; i++) {
+                    if ((i & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    }
                     dest.add(selected.get(i));
                 }
             }
@@ -308,6 +320,9 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
             long half = divisor / 2;
             long prev = -1;
             for (long i = 0; i < target; i++) {
+                if ((i & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
                 long pos = (i * range + half) / divisor;
                 if (pos != prev) { // positions are non-decreasing; dedup consecutive repeats
                     selected.add(pos);
