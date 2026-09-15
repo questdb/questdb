@@ -108,6 +108,12 @@ truncate -s 60G "$RUN/log.raw"
 echo "flush-boundary crash sweep — $STAMP"
 echo "  arm=$ARM edition=$EDITION mode=$MODE W=$WINDOW profile=$PROFILE epoch=${EPOCH}ms sibling=${QDB_SIBLING_TABLE:-false} recoverAs=${QDB_RECOVER_AS:-same} ddlEvery=${QDB_DDL_EVERY_ROWS:--1} matView=${QDB_MAT_VIEW:-false} rebaseAt=${QDB_REBASE_AT_ROWS:--1}"
 [ "$ARM" = qwp-sf ] && echo "  qwp-sf: tier=$QWP_TIER sfReplay=$SF_REPLAY sfDurability=${QDB_QWP_SF_DURABILITY:-periodic}"
+# A defanged run is REQUIRED to fail. Say so up front, so a reader of the log cannot mistake
+# the red result for a regression -- and so a GREEN one is immediately visible as the real
+# problem it would be.
+if [ "${QDB_QWP_DEFANG_ACK:-0}" = "1" ]; then
+    echo "  *** NEGATIVE CONTROL: durable ack DEFANGED. This sweep MUST report failures. ***"
+fi
 
 keep() { echo "run state kept at $RUN" >&2; }
 
@@ -149,7 +155,7 @@ vm_ssh "$P" "$KEY" "sudo sync"
 vm_ssh "$P" "$KEY" "bash /opt/vmcrash/guest/prepare-device.sh --mode=log-writes" >/dev/null \
     || { keep; echo "LOUD_FAILURE: could not build the log-writes stack"; exit 1; }
 
-vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false} QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1} QDB_MAT_VIEW=${QDB_MAT_VIEW:-false} QDB_REBASE_AT_ROWS=${QDB_REBASE_AT_ROWS:--1} QDB_QWP_DURABLE_ACK=$QWP_TIER QDB_QWP_BATCH=${QDB_QWP_BATCH:-1000} QDB_EDITION=$EDITION bash /opt/vmcrash/guest/run-workload.sh --arm=$ARM --mode=$MODE \
+vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false} QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1} QDB_MAT_VIEW=${QDB_MAT_VIEW:-false} QDB_REBASE_AT_ROWS=${QDB_REBASE_AT_ROWS:--1} QDB_QWP_DURABLE_ACK=$QWP_TIER QDB_QWP_DEFANG_ACK=${QDB_QWP_DEFANG_ACK:-0} QDB_QWP_BATCH=${QDB_QWP_BATCH:-1000} QDB_EDITION=$EDITION bash /opt/vmcrash/guest/run-workload.sh --arm=$ARM --mode=$MODE \
     --window-us=$WINDOW --epoch-ms=$EPOCH </dev/null >/mnt/qdb/workload.out 2>&1 &" || true
 
 # Let it build a real history: many commits means many flushes means many

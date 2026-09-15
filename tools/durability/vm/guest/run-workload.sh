@@ -204,9 +204,23 @@ case "$ARM" in
             QWP_TIER="${QDB_QWP_DURABLE_ACK:-local}"
             case "$QWP_TIER" in
                 *local*) ;;
-                *) echo "run-workload: arm=qwp-sf requires a tier including 'local' (got '$QWP_TIER')" >&2
-                   echo "run-workload: that is the whole arm; refusing rather than running a qwp arm under an sf label" >&2
-                   exit 64 ;;
+                *)
+                    # QDB_QWP_DEFANG_ACK=1 -- THE NEGATIVE CONTROL, and nothing else. Same role as
+                    # QDB_CUT_DROP_WRITES=0 in arm-cut.sh: deliberately break the thing the arm is
+                    # built on, and require the oracle to NOTICE. Without it, "the ack channel bar
+                    # passes" is unfalsifiable, and an oracle that cannot fail is decoration.
+                    #
+                    # The verifier must report DURABILITY_FAILURE here, because the client holds
+                    # nothing on the strength of an ack it never asked for. Never set in a real run.
+                    if [ "${QDB_QWP_DEFANG_ACK:-0}" = "1" ]; then
+                        echo "run-workload: WARNING — qwp-sf DEFANGED (tier='$QWP_TIER'); the sweep MUST fail" >&2
+                        echo "qwp-sf: DEFANGED negative control, tier=$QWP_TIER" >> /mnt/qdb/writer.log
+                    else
+                        echo "run-workload: arm=qwp-sf requires a tier including 'local' (got '$QWP_TIER')" >&2
+                        echo "run-workload: that is the whole arm; refusing rather than running a qwp arm under an sf label" >&2
+                        exit 64
+                    fi
+                    ;;
             esac
             # sf_dir on the CRASHED device on purpose: the client's buffer must take the same
             # power cut as the server's WAL, or the pairing is never actually tested.

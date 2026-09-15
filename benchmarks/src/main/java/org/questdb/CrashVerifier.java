@@ -316,6 +316,11 @@ public class CrashVerifier {
         // matters: zero is the failure this arm exists to catch, absent is a harness fault.
         long localAcks = -1L;
         long trimAdvances = -1L;
+        // PRESENCE and VALUE are different facts and must not be conflated. The client writes
+        // localAcks=-1 when the tier was never requested, which is the DEFANGED configuration and
+        // a real finding; a MISSING field means an old client wrote the file, which is a harness
+        // fault. Reading both as "< 0" reported the second message for the first case.
+        boolean localAcksPresent = false;
         // The qwp arm's client is a separate process from the server and writes its own
         // watermark file, carrying the SAME C / Wm pair read from the server's wal_tables().
         final File progressFile = QWP ? new File(dbRoot, "_qwp_progress") : new File(dbRoot, "_progress");
@@ -333,6 +338,7 @@ public class CrashVerifier {
                         localDurableSeqTxn = Long.parseLong(t.substring(3).trim());
                     } else if (t.startsWith("localAcks=")) {
                         localAcks = Long.parseLong(t.substring(10).trim());
+                        localAcksPresent = true;
                     } else if (t.startsWith("trimAdv=")) {
                         trimAdvances = Long.parseLong(t.substring(8).trim());
                     }
@@ -355,10 +361,18 @@ public class CrashVerifier {
         // the recovered data -- and a vacuous run must not be allowed to produce a data verdict at
         // all. Measured cadence for reference: 10 local acks over 40 flushes at W=50ms.
         if (QWP_SF) {
-            if (localAcks < 0) {
+            if (!localAcksPresent) {
                 System.out.println("LOUD_FAILURE qwp-sf: _qwp_progress carries no localAcks= field;"
                         + " the client did not record the ack counters (harness fault, not a durability result)");
                 System.exit(1);
+            }
+            if (localAcks < 0) {
+                // The DEFANGED configuration: the arm ran, but never asked for the durable-ack
+                // tier. Everything below would be a qwp run wearing an sf label.
+                System.out.println("DURABILITY_FAILURE qwp-sf: the LOCAL durable-ack tier was never requested"
+                        + " (localAcks=-1), so the client held nothing on the strength of an ack and this arm"
+                        + " tested nothing it claims to test");
+                System.exit(3);
             }
             if (localAcks == 0) {
                 System.out.println("DURABILITY_FAILURE qwp-sf: zero STATUS_LOCAL_DURABLE_ACK frames were"
