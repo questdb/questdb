@@ -136,6 +136,13 @@ def main():
     ap.add_argument("--replay", help="data device to reconstruct onto")
     ap.add_argument("--to-flush", default="last",
                     help="replay up to and including the Nth flush, or 'last'")
+    ap.add_argument("--to-entry", type=int, default=None,
+                    help="replay up to and including entry N (see --list --tail). "
+                         "A FLUSH entry records the cache-flush REQUEST; the jbd2 commit "
+                         "block that makes the transaction valid is written after it, "
+                         "usually with FUA. Stopping at a flush can therefore land just "
+                         "before the commit, leaving recovery nothing to replay -- so a "
+                         "caller that needs an exact durability point addresses the entry.")
     ap.add_argument("--list", action="store_true", help="enumerate flush points and exit")
     ap.add_argument("--tail", type=int, default=0,
                     help="with --list, also dump the last N entries in order")
@@ -176,10 +183,20 @@ def main():
 
     if not args.replay:
         sys.exit("--replay is required unless --list is given")
-    if not flush_idx:
-        sys.exit("log contains no flushes; nothing is durable, refusing to replay")
 
-    if args.to_flush == "last":
+    if args.to_entry is not None:
+        # Entry-addressed replay: no flush is required, because the caller is naming the
+        # durability point directly rather than inferring it from the flush stream.
+        if not entries:
+            sys.exit("log contains no entries; refusing to replay")
+        last_entry = entries[-1][0]
+        if args.to_entry < 0 or args.to_entry > last_entry:
+            sys.exit(f"--to-entry {args.to_entry} out of range (log ends at entry {last_entry})")
+        stop_at = args.to_entry
+        which = None
+    elif not flush_idx:
+        sys.exit("log contains no flushes; nothing is durable, refusing to replay")
+    elif args.to_flush == "last":
         stop_at = flush_idx[-1]
         which = len(flush_idx)
     else:
@@ -208,8 +225,12 @@ def main():
     os.fsync(datafd)
     os.close(datafd)
     os.close(logfd)
-    print(f"replayed to flush {which}/{len(flush_idx)} (entry {stop_at}): "
-          f"{applied} writes applied, {skipped} entries after the boundary discarded")
+    if which is None:
+        print(f"replayed to entry {stop_at}: {applied} writes applied, "
+              f"{skipped} entries after the boundary discarded")
+    else:
+        print(f"replayed to flush {which}/{len(flush_idx)} (entry {stop_at}): "
+              f"{applied} writes applied, {skipped} entries after the boundary discarded")
 
 
 if __name__ == "__main__":
