@@ -310,18 +310,32 @@ Every deviation leans toward **false green**. So the cut has two halves:
 durability during the join window. The two halves join over the serial console: the guest
 writes `CUT-ARMED`, the host is tailing `console.log` and kills on the token.
 
-## The three guards
+## The guards
 
-A crash harness that silently stops crashing is the worst outcome available.
+A crash harness that silently stops crashing is the worst outcome available. So is one
+whose oracle silently stops checking.
 
 | Guard | Frequency | Fails when |
 |---|---|---|
 | **Preflight** | once per run (`run-matrix.sh`, `run-fuzz.sh`) | An fsync'd file is lost, or an un-flushed **device** write survives |
 | **Liveness** | every iteration | The workload was not running at the moment of the cut |
 | **Defanged-cut control** | `test/t04` | The preflight *passes* with `drop_writes` removed, proving it cannot fire |
+| **Boundary discrimination** | `test/t06` | Replaying to boundary N leaks writes issued after it |
+| **Oracle control** | `test/t07` | Corrupt data still verifies clean, proving the oracle cannot fire |
 
 A failing preflight **aborts the run**; a failed liveness check **fails that iteration**.
 Neither is ever downgraded to a warning.
+
+`t04` and `t07` are the matched pair, and neither substitutes for the other: `t04` proves
+the **cut** can fail, `t07` proves the **oracle** can. A harness needs both, because a
+green verdict is the product of a working cut AND a working check, and either one failing
+silently produces the same reassuring output.
+
+**Scope of `t07`, so a green is not over-read.** It corrupts DATA — eight bytes of a
+committed column file, in place, after a real replay and mount — and requires
+`SILENT_CORRUPTION` naming the exact row. It does **not** prove the harness would notice a
+missing durability BARRIER: a product that stops calling `fdatasync` fails in a completely
+different way, and that control does not exist yet.
 
 **NOSYNC is reported, not gated.** The intuitive control — "a no-sync mode must lose data,
 so a `DURABLE` verdict proves the cut broke" — was measured and is **wrong here** (see
@@ -356,8 +370,10 @@ bash build-image.sh         # once — builds the golden qcow2
 bash test/t01-golden-image.sh
 bash test/t02-lifecycle.sh
 bash test/t03-drop-writes.sh
-bash test/t04-preflight.sh    # both directions; the guard must be able to fail
+bash test/t04-preflight.sh    # both directions; the CUT must be able to fail
 bash test/t05-reference-arm.sh
+bash test/t06-log-writes-replay.sh   # boundaries must discriminate, or sweeps are fiction
+bash test/t07-oracle-negative-control.sh  # the ORACLE must be able to fail
 
 bash run-matrix.sh          # the full matrix, one cut per cell
 bash run-fuzz.sh 50         # THE E2E INSTRUMENT: 50 randomly-timed cuts
