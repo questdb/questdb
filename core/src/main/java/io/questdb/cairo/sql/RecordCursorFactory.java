@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -260,8 +261,18 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * After a successful call {@link #getScanDirection()} reports
      * {@link #SCAN_DIRECTION_OTHER}, so anything above that trusts scan direction
      * still sees the truth.
+     * <p>
+     * {@code groupByKeyColumns} carries the consumer's grouping columns, or null when it
+     * does not group (a not-keyed aggregate) or cannot describe them. A base may accept an
+     * order-sensitive consumer when the grouping is provably confined to one of its
+     * ordered runs -- a covering scan grouped by its own index column, where every group
+     * draws from one key's ascending posting list. The filter is shared scratch state:
+     * read it during the call, never retain it.
      */
-    default boolean tryDisableTimestampOrdering() {
+    default boolean tryDisableTimestampOrdering(
+            boolean hasOrderSensitiveAggregates,
+            @Nullable ListColumnFilter groupByKeyColumns
+    ) {
         return false;
     }
 

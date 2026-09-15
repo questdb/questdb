@@ -50,4 +50,24 @@ public class CoveringIndexPlanTest extends AbstractCoveringIndexQueryTest {
                     );
         });
     }
+
+    @Test
+    public void testOrderInsensitiveAggregateStillTakesPerKey() throws Exception {
+        assertMemoryLeak(() -> {
+            createTelemetry();
+
+            // max() is order-insensitive, so the offer is accepted and the plan says per-key.
+            assertQuery("SELECT param_id, max(value) FROM telemetry WHERE param_id IN ('SFID','HOTMIC')")
+                    .noLeakCheck()
+                    .assertsPlan(
+                            "GroupBy vectorized: true workers: 1\n" +
+                                    "  keys: [param_id]\n" +
+                                    "  values: [max(value)]\n" +
+                                    "    CoveringIndex on: param_id with: value\n" +
+                                    "      frames: per-key (unordered)\n" +
+                                    "      filter: param_id IN ['SFID','HOTMIC']\n" +
+                                    "        Frame forward scan on: telemetry\n"
+                    );
+        });
+    }
 }

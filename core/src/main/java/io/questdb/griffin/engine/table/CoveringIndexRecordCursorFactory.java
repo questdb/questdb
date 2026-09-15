@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.ScannedColumnTopProbe;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -587,10 +588,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public boolean tryDisableTimestampOrdering() {
+    public boolean tryDisableTimestampOrdering(
+            boolean hasOrderSensitiveAggregates,
+            @Nullable ListColumnFilter groupByKeyColumns
+    ) {
         // Only the multi-key merge pays for ordering: single-key frames are already
         // per-key, and multi-key latestBy has its own ordering contract.
         if (latestBy || multiKeyPageFrameCursor == null) {
+            return false;
+        }
+        if (hasOrderSensitiveAggregates) {
             return false;
         }
         if (tsOrderedFrames) {

@@ -10162,12 +10162,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw e;
                     }
 
-                    // Vectorized group by: every VectorAggregateFunction is
-                    // order-invariant (count/sum/avg/min/max/ksum/nsum -- there is no
-                    // vector first()/last()), and a group by consumes its base to
-                    // exhaustion, so the base's timestamp ordering is never needed.
+                    // A vectorized group by consumes its base to exhaustion, so the
+                    // base's timestamp ordering is only needed if some
+                    // VectorAggregateFunction is order-sensitive. Check the functions
+                    // rather than trust a comment: today none are (count/sum/avg/min/
+                    // max/ksum/nsum -- there is no vector first()/last()), but a future
+                    // one declares itself via isOrderSensitive() instead of silently
+                    // producing the wrong value over an unordered base.
                     if (factory != null) {
-                        factory.tryDisableTimestampOrdering();
+                        boolean orderSensitive = false;
+                        for (int i = 0, n = tempVaf.size(); i < n; i++) {
+                            final VectorAggregateFunction vaf = tempVaf.getQuick(i);
+                            if (vaf != null && vaf.isOrderSensitive()) {
+                                orderSensitive = true;
+                                break;
+                            }
+                        }
+                        factory.tryDisableTimestampOrdering(orderSensitive, null);
                     }
                     return generateFill(
                             model,
@@ -10336,7 +10347,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         // Not-keyed group by consumes its base to exhaustion too, so
                         // the same rule applies as for the keyed path.
-                        offerUnorderedScan(factory, groupByFunctions0);
+                        offerUnorderedScan(factory, groupByFunctions0, null);
                         validateOrderSensitiveAggregates(factory, groupByFunctions0);
                         return new AsyncGroupByNotKeyedRecordCursorFactory(
                                 executionContext.getCairoEngine(),
@@ -10404,7 +10415,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // frame per key -- would silently return "whichever key was scanned
                     // first" instead of the earliest row. Fail closed, matching how
                     // SAMPLE BY ALIGN TO FIRST OBSERVATION already rejects such a base.
-                    offerUnorderedScan(factory, groupByFunctions0);
+                    offerUnorderedScan(factory, groupByFunctions0, listColumnFilterA);
                     validateOrderSensitiveAggregates(factory, groupByFunctions0);
                     return generateFill(
                             model,
@@ -11897,20 +11908,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * A LIMIT over an ordered scan must NOT do this: it relies on the ordered stream
      * to stop early, and losing that turns O(limit) into O(n log n).
      */
-    private static void offerUnorderedScan(
+    private static boolean offerUnorderedScan(
             RecordCursorFactory base,
-            ObjList<GroupByFunction> groupByFunctions
+            ObjList<GroupByFunction> groupByFunctions,
+            @Nullable ListColumnFilter groupByKeyColumns
     ) {
         if (base == null || groupByFunctions == null) {
-            return;
+            return false;
         }
+        boolean orderSensitive = false;
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             final GroupByFunction f = groupByFunctions.getQuick(i);
             if (f != null && f.isOrderSensitive()) {
-                return;
+                orderSensitive = true;
+                break;
             }
         }
-        base.tryDisableTimestampOrdering();
+        return base.tryDisableTimestampOrdering(orderSensitive, groupByKeyColumns);
     }
 
     /**
