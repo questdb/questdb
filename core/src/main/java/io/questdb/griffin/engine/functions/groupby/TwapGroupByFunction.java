@@ -332,17 +332,17 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         return false;
     }
 
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
     /**
      * Must return false because this function stores a per-worker
      * {@link GroupByAllocator} reference. Returning true would cause the
      * parallel GROUP BY engine to share a single function instance across
      * workers, leading to concurrent access to the non-thread-safe allocator.
      */
-    @Override
-    public boolean isOrderSensitive() {
-        return true;
-    }
-
     @Override
     public boolean isThreadSafe() {
         return false;

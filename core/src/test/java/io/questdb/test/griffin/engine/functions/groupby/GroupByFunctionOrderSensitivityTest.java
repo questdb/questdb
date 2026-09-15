@@ -26,6 +26,8 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -73,9 +75,28 @@ import java.util.stream.Stream;
 public class GroupByFunctionOrderSensitivityTest {
 
     /**
+     * Packages this test is responsible for. A class under one of these that will not load is
+     * an aggregate nobody classified, so the scan refuses to quietly shrink and fails. A class
+     * anywhere else that will not load -- say because a future change makes it unable to
+     * resolve a superclass -- is logged and skipped: it is not an aggregate, and turning this
+     * aggregate test red for it would invite someone to widen
+     * {@link #TOLERATED_UNLOADABLE}, which is the allowlist erosion this test exists to stop.
+     * <p>
+     * functions.test is on the list because it really does hold aggregates -- the three
+     * TestSum* functions below -- not because the scan should be lenient about it.
+     */
+    private static final String[] AGGREGATE_PACKAGES = {
+            "io.questdb.griffin.engine.functions.groupby.",
+            "io.questdb.griffin.engine.functions.test.",
+            "io.questdb.griffin.engine.groupby.vect."
+    };
+    private static final Log LOG = LogFactory.getLog(GroupByFunctionOrderSensitivityTest.class);
+
+    /**
      * Class files that are on the class tree but cannot be loaded reflectively, and are not
-     * aggregates. Anything else that fails to load fails the test rather than being skipped
-     * silently, because a skipped class is an unclassified class.
+     * aggregates. Anything else under {@link #AGGREGATE_PACKAGES} that fails to load fails the
+     * test rather than being skipped silently, because a skipped aggregate is an unclassified
+     * aggregate.
      */
     private static final Set<String> TOLERATED_UNLOADABLE = new TreeSet<>(Arrays.asList(
             "io.questdb.mp.continuation.Fiber$PinnableContinuation",
@@ -93,8 +114,52 @@ public class GroupByFunctionOrderSensitivityTest {
      * them by frame id for the same reason. haversine_dist_deg() accumulates distance
      * between consecutive rows; isOrdered() is itself an order predicate; string_agg() and
      * string_distinct_agg() render in arrival / first-occurrence order.
+     * <p>
+     * arg_min()/arg_max() are here by DECISION rather than by discovered property. They break
+     * ties with a strict {@code >} against the stored key, so among equal keys the first row
+     * seen wins. At a parallel group-by site that is already unspecified -- merge() applies
+     * the same strict comparison across workers in a nondeterministic order -- but at a serial
+     * site there is no merge(), computeNext() makes first-seen deterministic, and per-key
+     * frames change which row is seen first. Three reasons to flag them anyway:
+     * <ul>
+     *   <li>safe beats fast is this change's established principle; the guard is deliberately
+     *       over-conservative elsewhere for exactly this reason.</li>
+     *   <li>the cost is narrow: per-key is lost for arg_min()/arg_max() queries only, and only
+     *       when they group by something the optimisation would otherwise have accelerated.</li>
+     *   <li>the alternative is an internal optimisation silently changing which value a user
+     *       gets back for a tied key. "Unspecified" in the docs is not the same as "changed by
+     *       a patch that claims to be an optimisation".</li>
+     * </ul>
      */
     private static final Set<String> ORDER_SENSITIVE = new TreeSet<>(Arrays.asList(
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxCharDoubleGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxCharLongGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxCharTimestampGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxDoubleDoubleGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxDoubleLongGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxDoubleTimestampGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxLongDoubleGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxLongTimestampGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxTimestampDoubleGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxTimestampLongGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxTimestampUuidGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxUuidTimestampGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxVarcharDoubleGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxVarcharIntGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxVarcharLongGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMaxVarcharTimestampGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMinCharDoubleGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMinCharLongGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMinCharTimestampGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMinDoubleDoubleGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMinDoubleLongGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMinDoubleTimestampGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMinLongDoubleGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMinLongTimestampGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMinTimestampDoubleGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMinTimestampLongGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMinTimestampUuidGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ArgMinUuidTimestampGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.ArrayAggDoubleArrayGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.ArrayAggDoubleGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.FirstArrayGroupByFunction",
@@ -225,14 +290,12 @@ public class GroupByFunctionOrderSensitivityTest {
      * <ul>
      *   <li>vwap() looks like twap() but is notional/volume -- a pure ratio of two sums, so
      *       it is order-invariant despite the name similarity.</li>
-     *   <li>arg_min()/arg_max() break ties with a strict {@code >} against the stored key,
-     *       so the winner among equal keys is the first one seen. That tie-break is already
-     *       unspecified today: merge() applies the same strict comparison across workers in
-     *       a nondeterministic order, so parallel GROUP BY can already return either row.
-     *       Flagging them would disable the optimisation to protect a guarantee the function
-     *       does not make.</li>
-     *   <li>mode() picks the largest count by scanning hash slots, so ties resolve by hash
-     *       probe position, not by arrival order -- also already unspecified.</li>
+     *   <li>mode() counts occurrences per distinct value, and the counts themselves are
+     *       order-invariant, so the winning value is stable whenever one value is strictly
+     *       the most frequent. Ties are decided by which of the tied values the slot scan
+     *       reaches first; probe position in an open-addressed map IS influenced by insertion
+     *       order when keys collide, so that tie-break is unspecified today regardless of
+     *       frame order, and per-key frames cannot make it worse than it already is.</li>
      *   <li>ksum()/nsum() and the floating-point sums are order-dependent only in the last
      *       bits of rounding, which is not a semantic guarantee and already varies with
      *       worker count.</li>
@@ -246,34 +309,6 @@ public class GroupByFunctionOrderSensitivityTest {
             "io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoublePackedGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongPackedGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxCharDoubleGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxCharLongGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxCharTimestampGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxDoubleDoubleGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxDoubleLongGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxDoubleTimestampGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxLongDoubleGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxLongTimestampGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxTimestampDoubleGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxTimestampLongGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxTimestampUuidGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxUuidTimestampGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxVarcharDoubleGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxVarcharIntGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxVarcharLongGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMaxVarcharTimestampGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMinCharDoubleGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMinCharLongGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMinCharTimestampGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMinDoubleDoubleGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMinDoubleLongGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMinDoubleTimestampGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMinLongDoubleGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMinLongTimestampGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMinTimestampDoubleGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMinTimestampLongGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMinTimestampUuidGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ArgMinUuidTimestampGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.AvgDecimal128GroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.AvgDecimal128Rescale256GroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.AvgDecimal16GroupByFunction",
@@ -550,8 +585,14 @@ public class GroupByFunctionOrderSensitivityTest {
             }
             if (!unexpectedOverride.isEmpty()) {
                 sb.append("\n  LISTED IN ").append(insensitiveListName)
-                        .append(" BUT DECLARES isOrderSensitive() -- either the override is wrong")
-                        .append("\n  or the class belongs in ").append(sensitiveListName).append(':');
+                        .append(" BUT DECLARES isOrderSensitive(). This check sees only")
+                        .append("\n  the PRESENCE of the override, never its return value, so an override written")
+                        .append("\n  to return false on purpose -- to record a considered decision at the class --")
+                        .append("\n  fails here exactly like one that wrongly returns true. Not an accusation:")
+                        .append("\n  either move the class to ").append(sensitiveListName)
+                        .append(" if the override returns true, or")
+                        .append("\n  delete the override and record the decision in the ").append(insensitiveListName)
+                        .append("\n  javadoc, which is where this test expects to find it:");
                 for (String name : unexpectedOverride) {
                     sb.append("\n    ").append(name);
                 }
@@ -593,7 +634,12 @@ public class GroupByFunctionOrderSensitivityTest {
                 try {
                     c = Class.forName(binaryName, false, GroupByFunction.class.getClassLoader());
                 } catch (Throwable t) {
-                    unloadable.add(binaryName + " (" + t + ')');
+                    if (inAggregatePackage(binaryName)) {
+                        unloadable.add(binaryName + " (" + t + ')');
+                    } else {
+                        LOG.info().$("skipping unloadable non-aggregate class [class=").$(binaryName)
+                                .$(", error=").$(t.toString()).I$();
+                    }
                     return;
                 }
                 if (c.isInterface() || Modifier.isAbstract(c.getModifiers())) {
@@ -606,13 +652,22 @@ public class GroupByFunctionOrderSensitivityTest {
         } catch (IOException e) {
             throw new AssertionError("could not walk the compiled class tree at " + root, e);
         }
-        // A class skipped because it would not load is a class nobody classified, so refuse
-        // to let the scan quietly shrink.
+        // An AGGREGATE skipped because it would not load is an aggregate nobody classified, so
+        // refuse to let the scan quietly shrink. Classes outside those packages were logged.
         Assert.assertTrue(
-                "classes on the class tree could not be loaded, so the scan is incomplete: " + unloadable,
+                "aggregate classes could not be loaded, so the scan is incomplete: " + unloadable,
                 unloadable.isEmpty()
         );
         return result;
+    }
+
+    private static boolean inAggregatePackage(String binaryName) {
+        for (int i = 0, n = AGGREGATE_PACKAGES.length; i < n; i++) {
+            if (binaryName.startsWith(AGGREGATE_PACKAGES[i])) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
