@@ -453,6 +453,28 @@ systemctl --user enable --now qdb-vmcrash.timer
 loginctl enable-linger "$USER"   # required, or user timers stop at logout
 ```
 
+### A VM-free backend is possible, and is deliberately not built
+
+Worth knowing before anyone proposes it as new work. The flush sweep never uses the machine
+dying as its test mechanism — `kill -9` on QEMU only STOPS THE RECORDING, and every write is
+discarded later, at replay time, by a Python script. On a dedicated agent with root it would
+need only two block devices (files behind `losetup`), one `dmsetup create ... log-writes`, the
+workload, and then replay/mount/verify in a loop.
+
+That would remove the golden image and its 600 MB download, cloud-init, the shipped JDK, two
+VM boots per run, **one SSH round trip per boundary**, and ~700 lines of QEMU/SSH machinery.
+
+It is not built, for one reason that outweighs all of that: **the guest pins the kernel and the
+ext4 version.** A durability result that moves because the agent pool was upgraded is a result
+nobody can act on. The VM also keeps the harness runnable without root on a shared machine,
+which is what the host-safety rules above exist for.
+
+If it is ever revisited, make the execution location a backend (`vm` default, `local` for CI)
+rather than a fork of the sweep, assert `dm-log-writes` in the agent kernel and never skip on
+its absence, and note the trap: after `dmsetup remove` and replay, the block device's buffer
+cache can serve STALE PAGES to the next mount — `blockdev --flushbufs` first, and run `test/t06`
+in that backend too, since t06 is the guard that catches exactly this.
+
 ## Not covered here
 
 - **`dm-log-writes` replay** — enumerated rather than sampled crash points, the real-hardware

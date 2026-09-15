@@ -47,6 +47,30 @@ arm_live_pattern() {
     esac
 }
 
+# arm_sf_capable MODE -> 0 if the LOCAL durable-ack tier can exist at all in this commit mode.
+#
+# ONLY ADAPTIVE. This is a property of the PRODUCT, checked in the code rather than assumed:
+# WalWriter's commit path guards the whole durable-ack bookkeeping with
+#
+#     if (commitMode == CommitMode.ADAPTIVE) { ... seqTxnTracker.setLocalDurableSeqTxn(seqTxn); }
+#
+# so under SYNC the commit IS fdatasync'd but localDurableSeqTxn is never advanced.
+# LocalDurableAckRegistry then returns -1 ("the local-fsync tier ... for ADAPTIVE tables", its
+# own javadoc), and the server emits no STATUS_LOCAL_DURABLE_ACK frames at all.
+#
+# WHY THIS EXISTS AS A FUNCTION. Without it the failure arrives 20,000 rows into a run, after a
+# full boot and device setup, as the client's "the channel is dead" refusal -- which reaches the
+# matrix as `LOUD_FAILURE: workload was not running at cut time`. That names the symptom, blames
+# the wrong layer, and costs a VM cycle per occurrence. Found exactly that way by the first full
+# run-matrix.sh run; qwp-sf reproduced it identically, which is what showed it was not the
+# product arm's doing.
+arm_sf_capable() {
+    case "$(echo "$1" | tr 'A-Z' 'a-z')" in
+        adaptive) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # arm_server_kind ARM -> which SERVER BINARY the arm runs, for callers that must start one.
 #
 #   classpath  java -cp benchmarks.jar io.questdb.ServerMain   (qwp, qwp-sf)
@@ -105,7 +129,12 @@ arm_progress_file() {
 # verify.sh's case statement and fell to `LOUD_FAILURE: unknown arm qwp` -- after a full
 # record, cut and reboot cycle. Third arm-specific divergence between these two callers, and
 # the third to be found only by actually running the path rather than reading it.
+#
+# MODE is the second argument and is NOT optional in spirit: the product arm's oracle depends on
+# it. Defaulted to adaptive only so an old call site fails loudly on the flags rather than on an
+# unbound variable.
 arm_verify_flags() {
+    local mode="${2:-adaptive}"
     case "$1" in
         qwp)    echo "--arm=reference --qwp=true --qwp-sf=false" ;;
         qwp-sf) echo "--arm=reference --qwp=true --qwp-sf=true --sf-replay=compare" ;;
@@ -113,7 +142,19 @@ arm_verify_flags() {
         # makes the recovery pass and the replay server the SHIPPED artifact. Drop it and the
         # run silently degrades into a qwp-sf run wearing a product label -- the same false-green
         # shape as a sweep reporting mode=sync while serving nosync.
-        product) echo "--arm=reference --qwp=true --qwp-sf=true --sf-replay=compare --server=product" ;;
+        #
+        # OUTSIDE ADAPTIVE THE SF HALF CANNOT EXIST (see arm_sf_capable), so the arm drops to the
+        # plain-qwp contract and SAYS SO through its flags. The artifact claim is untouched --
+        # the shipped server still writes, crashes and recovers -- but nothing downstream may
+        # report ack-channel coverage that the product cannot provide in this mode. Asking for
+        # --qwp-sf=true here would fail the run on the absence of a guarantee never on offer.
+        product)
+            if arm_sf_capable "$mode"; then
+                echo "--arm=reference --qwp=true --qwp-sf=true --sf-replay=compare --server=product"
+            else
+                echo "--arm=reference --qwp=true --qwp-sf=false --server=product"
+            fi
+            ;;
         *)      echo "--arm=reference --qwp=false --qwp-sf=false" ;;
     esac
 }

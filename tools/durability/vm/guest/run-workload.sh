@@ -225,7 +225,42 @@ case "$ARM" in
         # without anyone noticing. The plain qwp arm keeps whatever was asked for (default off).
         # Messages below name $ARM rather than a literal: the product arm reaches this block too,
         # and a refusal that names the wrong arm sends the reader to the wrong script.
-        if [ "$ARM" = qwp-sf ] || [ "$ARM" = product ]; then
+        # THE LOCAL DURABLE-ACK TIER EXISTS ONLY FOR ADAPTIVE TABLES. WalWriter guards the whole
+        # durable-ack bookkeeping with `if (commitMode == CommitMode.ADAPTIVE)`, so under SYNC the
+        # commit is fdatasync'd but localDurableSeqTxn never advances, LocalDurableAckRegistry
+        # returns -1, and the server emits no STATUS_LOCAL_DURABLE_ACK frames at all.
+        #
+        #   qwp-sf   REFUSED outside adaptive. The tier is the entire arm; without it there is
+        #            nothing left that the plain qwp arm does not already cover.
+        #   product  DEGRADED to the plain-qwp contract, loudly. This arm is about the ARTIFACT,
+        #            and "the shipped server writes, crashes and recovers under SYNC" is still a
+        #            real and wanted cell -- but it must not be reported as ack-channel coverage.
+        #
+        # Refuse HERE, before the device work, rather than 20,000 rows in: the client's own
+        # "channel is dead" guard fires late and reaches the caller as "workload was not running",
+        # which names the symptom and blames the wrong layer.
+        if { [ "$ARM" = qwp-sf ] || [ "$ARM" = product ]; } \
+           && [ "$(echo "$MODE" | tr A-Z a-z)" != adaptive ]; then
+            if [ "$ARM" = qwp-sf ]; then
+                echo "run-workload: arm=qwp-sf cannot run at mode=$MODE." >&2
+                echo "  The LOCAL durable-ack tier is advanced only on the ADAPTIVE commit path" >&2
+                echo "  (WalWriter: 'if (commitMode == CommitMode.ADAPTIVE)'), so the server emits no" >&2
+                echo "  durable-ack frames and the arm's bar cannot be evaluated. Use --arm=qwp." >&2
+                exit 64
+            fi
+            echo "product: mode=$MODE has no LOCAL durable-ack tier; running the PLAIN QWP contract" >&2
+            echo "product: DEGRADED to plain qwp (tier=off, no store-and-forward) because mode=$MODE" >> /mnt/qdb/writer.log
+            echo "product:   the artifact claim stands; the ack-channel claim is NOT made for this cell" >> /mnt/qdb/writer.log
+            PRODUCT_DEGRADED=1
+        fi
+
+        # The guard below keys on the DEGRADE, not on the tier's value. Keying on
+        # `QDB_QWP_DURABLE_ACK != off` would have silently swallowed the case it exists to catch:
+        # a qwp-sf run asked for with the tier turned off but WITHOUT QDB_QWP_DEFANG_ACK=1, which
+        # must be refused rather than quietly demoted to a qwp run under an sf label. It would
+        # also have skipped the DEFANGED negative control's warning banner, leaving a run that is
+        # REQUIRED to fail looking like an ordinary one.
+        if { [ "$ARM" = qwp-sf ] || [ "$ARM" = product ]; } && [ "${PRODUCT_DEGRADED:-0}" != 1 ]; then
             QWP_TIER="${QDB_QWP_DURABLE_ACK:-local}"
             case "$QWP_TIER" in
                 *local*) ;;

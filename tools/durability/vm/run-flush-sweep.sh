@@ -57,9 +57,29 @@ case "${QDB_ARM:-reference}" in
     # product is qwp-sf with the SERVER ARTIFACT SWAPPED, so every flag here is qwp-sf's. The one
     # difference is carried by --server=product below, which is what makes the shipped launcher --
     # and the JPMS module configuration it starts -- the thing under test.
-    product) QWP_FLAG=true; QWP_SF_FLAG=true;  SF_REPLAY="${QDB_SF_REPLAY:-compare}"; QWP_TIER="${QDB_QWP_DURABLE_ACK:-local}" ;;
+    #
+    # OUTSIDE ADAPTIVE there is no LOCAL durable-ack tier to have (WalWriter advances
+    # localDurableSeqTxn only under CommitMode.ADAPTIVE), so the arm drops to the plain-qwp
+    # contract. The artifact is still the thing under test; the ack channel simply is not part of
+    # the claim in that mode, and the flags say so rather than asserting a guarantee the product
+    # does not offer here.
+    product) QWP_FLAG=true;
+             if arm_sf_capable "$MODE"; then
+                 QWP_SF_FLAG=true;  SF_REPLAY="${QDB_SF_REPLAY:-compare}"; QWP_TIER="${QDB_QWP_DURABLE_ACK:-local}"
+             else
+                 QWP_SF_FLAG=false; SF_REPLAY=false;                      QWP_TIER=off
+             fi ;;
     *)      QWP_FLAG=false; QWP_SF_FLAG=false; SF_REPLAY="${QDB_SF_REPLAY:-false}"; QWP_TIER="${QDB_QWP_DURABLE_ACK:-off}"   ;;
 esac
+# qwp-sf IS the tier, so outside adaptive there is no arm left. Refuse before any disk is
+# created; the alternative is the client's late "the channel is dead" refusal, 20,000 rows and
+# one VM cycle later, which reaches the caller as the misleading "workload was not running".
+if [ "${QDB_ARM:-reference}" = qwp-sf ] && ! arm_sf_capable "$MODE"; then
+    echo "LOUD_FAILURE: arm=qwp-sf cannot run at mode=$MODE -- the LOCAL durable-ack tier is advanced"
+    echo "  only on the ADAPTIVE commit path (WalWriter: 'if (commitMode == CommitMode.ADAPTIVE)'),"
+    echo "  so the server emits no STATUS_LOCAL_DURABLE_ACK frames. Use QDB_ARM=qwp for this mode."
+    exit 1
+fi
 PROFILE="${QDB_SCHEMA_PROFILE:-bitmap}"
 # EPOCH=-1 DISABLES the periodic durable epoch, so the table runs with a
 # SUSTAINED LAZY GAP: columns applied lazily with no epoch cut behind them, and

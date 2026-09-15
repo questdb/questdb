@@ -71,6 +71,16 @@ fi
 # that now can is how a bar quietly stops being a bar.
 RPO_ENFORCEABLE=1
 
+# THE SF ARMS NEED THE ADAPTIVE PATH. Reject here, before 100GB of disks and two VM boots, for
+# the same reason the unknown-arm check above is here. The product arm is NOT rejected: it
+# degrades to the plain-qwp contract and still tests the artifact (see lib/arms.sh).
+if [ "$ARM" = qwp-sf ] && ! arm_sf_capable "$MODE"; then
+    echo "power-cut-vm: arm=qwp-sf cannot run at mode=$MODE -- the LOCAL durable-ack tier is" >&2
+    echo "  advanced only on the ADAPTIVE commit path, so the server emits no durable-ack frames" >&2
+    echo "  and the arm's bar cannot be evaluated. Use --arm=qwp for this mode." >&2
+    exit 64
+fi
+
 # Randomised cut timing is the POINT of this harness, not a detail. The Java
 # sweeps enumerate every durability op; this one samples real wall-clock moments
 # on real hardware, so coverage comes from many iterations at DIFFERENT delays.
@@ -208,6 +218,16 @@ sleep "$(awk "BEGIN{printf \"%.3f\", $CUT_AFTER_MS/1000}")"
 # One definition now, in lib/arms.sh, carrying the bracket idiom and its history with it.
 LIVE_PAT="$(arm_live_pattern "$ARM")"
 if ! vm_ssh "$P" "$KEY" "pgrep -f '$LIVE_PAT' >/dev/null"; then
+    # CAPTURE THE GUEST LOGS BEFORE THE VM DIES. This assertion fires when the workload is
+    # already gone, and the reason is always in writer.log / server.log -- which used to require
+    # booting the VM again to read, or were lost entirely once the disks were reaped.
+    # run-flush-sweep.sh learned this the expensive way (issues/04): a failure path that
+    # discards its own evidence costs three VM boots to diagnose. The same fix belongs here,
+    # and its absence is why the first product-arm SYNC failure said only "not running".
+    vm_ssh "$P" "$KEY" "tail -40 /mnt/qdb/writer.log 2>/dev/null; echo '--- workload.out ---'; tail -20 /mnt/qdb/workload.out 2>/dev/null; echo '--- server.log ---'; tail -20 /mnt/qdb/server.log 2>/dev/null" \
+        > "$RUN/liveness-failure.out" 2>&1 || true
+    echo "guest logs: $RUN/liveness-failure.out" >&2
+    sed -n '1,12p' "$RUN/liveness-failure.out" | sed 's/^/    /' >&2
     bail "LOUD_FAILURE: workload ($LIVE_PAT) was not running at cut time (seed=$SEED delay=${CUT_AFTER_MS}ms) — iteration would be vacuous"
 fi
 
@@ -258,7 +278,7 @@ vm_scp_dir "$P2" "$KEY" "$HERE/guest" /opt/vmcrash/ \
 vm_ssh "$P2" "$KEY" "QDB_FS_MOUNT_OPTS='${QDB_FS_MOUNT_OPTS:-}' bash /opt/vmcrash/guest/prepare-device.sh --reattach --mode=$DEVICE_MODE" >/dev/null \
     || bail "LOUD_FAILURE: could not reattach the device after the cut"
 
-LINE=$(vm_ssh "$P2" "$KEY" "bash /opt/vmcrash/guest/verify.sh $(arm_verify_flags "$ARM") --mode=$MODE \
+LINE=$(vm_ssh "$P2" "$KEY" "bash /opt/vmcrash/guest/verify.sh $(arm_verify_flags "$ARM" "$MODE") --mode=$MODE \
     --window-us=$WINDOW --epoch-ms=$EPOCH" 2>&1 || true)
 vm_kill "$RUN"
 
