@@ -27,6 +27,11 @@ RECOVER_AS="${QDB_RECOVER_AS:-}"
 MATVIEW="${QDB_MAT_VIEW:-false}"
 PROFILE="${QDB_SCHEMA_PROFILE:-bitmap}"
 QWP="${QDB_QWP:-false}"
+# The qwp-sf arm's oracle: identity/contiguity over DISTINCT ids, duplicates counted rather than
+# fatal (store-and-forward replay is at-least-once), plus a hard bar that the durable-ack channel
+# was actually live. Separate from --qwp on purpose: qwp-sf sets BOTH, because everything the
+# server-side oracle checks still applies.
+QWPSF="${QDB_QWP_SF:-false}"
 REBASE="${QDB_REBASE:-false}"
 SFREPLAY="${QDB_SF_REPLAY:-false}"
 
@@ -41,6 +46,7 @@ for a in "$@"; do
         --mat-view=*)  MATVIEW="${a#*=}" ;;
         --profile=*)   PROFILE="${a#*=}" ;;
         --qwp=*)       QWP="${a#*=}" ;;
+        --qwp-sf=*)    QWPSF="${a#*=}" ;;
         --rebase=*)    REBASE="${a#*=}" ;;
         --sf-replay=*) SFREPLAY="${a#*=}" ;;
         *) echo "LOUD_FAILURE: verify.sh unknown argument $a"; exit 0 ;;
@@ -127,7 +133,7 @@ case "$ARM" in
                 -Dsibling.table="$SIBLING" \
                 -Drecover.as="$RECOVER_AS" \
                 -Dmat.view="$MATVIEW" -Drebase="$REBASE" \
-                -Dschema.profile="$PROFILE" -Dqwp="$QWP" \
+                -Dschema.profile="$PROFILE" -Dqwp="$QWP" -Dqwp.sf="$QWPSF" \
                 org.questdb.CrashVerifier "$DB" >"$vout" 2>"$verr" || rc=$?
         out=$(cat "$vout" "$verr")
         line=$(grep -m1 -hE '^(DURABLE|RPO_OK|DURABILITY_FAILURE|SILENT_CORRUPTION|LOUD_FAILURE|CONSISTENT)' \

@@ -82,6 +82,21 @@ import java.util.List;
 public class CrashVerifier {
 
     static final boolean QWP = Boolean.getBoolean("qwp");
+    /**
+     * The qwp-sf arm: a client holding a store-and-forward buffer, replaying after the server
+     * recovers. ADDITIVE -- it does not change the qwp arm, which keeps the server-only bars.
+     * <p>
+     * It needs its OWN oracle for one structural reason: store-and-forward replay is
+     * AT-LEAST-ONCE. The client re-sends rows the server already committed, so duplicate ids
+     * are CORRECT behaviour here, while for every other arm they are {@code SILENT_CORRUPTION}.
+     * Sharing one oracle would either fail this arm on correct behaviour or weaken the bar for
+     * all the others; both are worse than two explicit oracles.
+     * <p>
+     * Everything that is NOT about duplication stays identical and stays fatal: the per-id value
+     * formulas, the profile payload, and timestamp ordering. Only the duplicate rule and the
+     * contiguity domain change.
+     */
+    static final boolean QWP_SF = Boolean.getBoolean("qwp.sf");
     static final boolean REBASE = Boolean.getBoolean("rebase");
 
     public static void main(String[] args) throws Exception {
@@ -248,6 +263,10 @@ public class CrashVerifier {
         long rowsWatermark = 0L;
         long committedSeqTxn = 0L;      // C
         long localDurableSeqTxn = -1L;  // Wm
+        // qwp-sf only. -1 distinguishes "the arm never wrote them" from "they were zero", which
+        // matters: zero is the failure this arm exists to catch, absent is a harness fault.
+        long localAcks = -1L;
+        long trimAdvances = -1L;
         // The qwp arm's client is a separate process from the server and writes its own
         // watermark file, carrying the SAME C / Wm pair read from the server's wal_tables().
         final File progressFile = QWP ? new File(dbRoot, "_qwp_progress") : new File(dbRoot, "_progress");
@@ -263,6 +282,10 @@ public class CrashVerifier {
                         committedSeqTxn = Long.parseLong(t.substring(2).trim());
                     } else if (t.startsWith("Wm=")) {
                         localDurableSeqTxn = Long.parseLong(t.substring(3).trim());
+                    } else if (t.startsWith("localAcks=")) {
+                        localAcks = Long.parseLong(t.substring(10).trim());
+                    } else if (t.startsWith("trimAdv=")) {
+                        trimAdvances = Long.parseLong(t.substring(8).trim());
                     }
                 }
             } catch (NumberFormatException e) {
@@ -274,6 +297,35 @@ public class CrashVerifier {
         System.out.println("watermark rows=" + rowsWatermark
                 + " C=" + committedSeqTxn + " Wm=" + localDurableSeqTxn
                 + " (C=committed seqTxn, Wm=durable-ack frontier, captured pre-cut)");
+
+        // THE ACK CHANNEL MUST HAVE BEEN LIVE. This is the bar that closes the hole this arm
+        // exists for: before it, the client never consumed STATUS_LOCAL_DURABLE_ACK at all, so a
+        // server that stopped emitting the frames entirely would have left every sweep green.
+        //
+        // Checked BEFORE the engine is opened, because it is a statement about the RUN, not about
+        // the recovered data -- and a vacuous run must not be allowed to produce a data verdict at
+        // all. Measured cadence for reference: 10 local acks over 40 flushes at W=50ms.
+        if (QWP_SF) {
+            if (localAcks < 0) {
+                System.out.println("LOUD_FAILURE qwp-sf: _qwp_progress carries no localAcks= field;"
+                        + " the client did not record the ack counters (harness fault, not a durability result)");
+                System.exit(1);
+            }
+            if (localAcks == 0) {
+                System.out.println("DURABILITY_FAILURE qwp-sf: zero STATUS_LOCAL_DURABLE_ACK frames were"
+                        + " received before the cut -- the durable-ack channel was dead, so every bar below"
+                        + " it would be vacuous (trimAdvances=" + trimAdvances + ")");
+                System.exit(3);
+            }
+            if (trimAdvances == 0) {
+                System.out.println("DURABILITY_FAILURE qwp-sf: " + localAcks + " local durable acks arrived but"
+                        + " NONE advanced the store-and-forward trim -- the acks were received and ignored,"
+                        + " so they are not load-bearing on what the client retains");
+                System.exit(3);
+            }
+            System.out.println("qwp-sf ack channel live: localAcks=" + localAcks
+                    + " trimAdvances=" + trimAdvances + " (acks drove the client's trim)");
+        }
 
         // The QWP arm now carries a REAL durable frontier: the client records the server's own
         // localDurableSeqTxn from wal_tables(), which is the same quantity the reference arm reads
@@ -660,6 +712,9 @@ public class CrashVerifier {
             // which the positional check could not see.
             long rowIndex = 0L;
             long prevTs = Long.MIN_VALUE;
+            // Tracked for every arm, but only qwp-sf treats a repeat as anything other than fatal.
+            long distinctIds = 0L;
+            long duplicates = 0L;
             final java.util.BitSet seen = new java.util.BitSet();
             try (RecordCursor cursor = factory.getCursor(ctx)) {
                 final Record rec = cursor.getRecord();
@@ -693,11 +748,22 @@ public class CrashVerifier {
                     }
                     if (actualId <= Integer.MAX_VALUE) {
                         if (seen.get((int) actualId)) {
-                            System.out.printf("SILENT_CORRUPTION duplicate id=%d at row=%d%n",
-                                    actualId, rowIndex);
-                            System.exit(2);
+                            // AT-LEAST-ONCE IS THE CONTRACT for the qwp-sf arm: the client replays
+                            // rows the server already committed, so a duplicate is correct
+                            // behaviour, not corruption. Count it so the run can REPORT how much
+                            // the replay re-sent -- silence would hide the cost of the guarantee.
+                            // For every other arm this is still a hard failure.
+                            if (QWP_SF) {
+                                duplicates++;
+                            } else {
+                                System.out.printf("SILENT_CORRUPTION duplicate id=%d at row=%d%n",
+                                        actualId, rowIndex);
+                                System.exit(2);
+                            }
+                        } else {
+                            seen.set((int) actualId);
+                            distinctIds++;
                         }
-                        seen.set((int) actualId);
                     }
                     if (actualTs < prevTs) {
                         System.out.printf(
@@ -710,17 +776,31 @@ public class CrashVerifier {
                     rowIndex++;
                 }
             }
-            // Contiguity: the surviving ids must be {0..rowIndex-1} exactly. A gap
-            // means a row vanished from the middle of committed history.
-            if (rowIndex <= Integer.MAX_VALUE) {
+            // Contiguity. The domain differs by arm, and only the domain.
+            //
+            //   normal  the surviving ids must be {0..rowIndex-1} exactly -- rows and ids are 1:1,
+            //           so a gap means a row vanished from the middle of committed history.
+            //   qwp-sf  rows > distinct ids by construction (replay re-sends), so the bar is over
+            //           DISTINCT ids: {0..distinctIds-1}. A gap is still fatal -- a hole in the
+            //           middle is exactly what store-and-forward exists to prevent, and the whole
+            //           point of this arm is that the client refills it.
+            final long contiguityBound = QWP_SF ? distinctIds : rowIndex;
+            if (contiguityBound <= Integer.MAX_VALUE) {
                 final int nextClear = seen.nextClearBit(0);
-                if (nextClear < rowIndex) {
-                    System.out.printf("SILENT_CORRUPTION id gap: %d missing but count=%d%n",
-                            nextClear, rowIndex);
+                if (nextClear < contiguityBound) {
+                    System.out.printf("SILENT_CORRUPTION id gap: %d missing but %s=%d%n",
+                            nextClear, QWP_SF ? "distinctIds" : "count", contiguityBound);
                     System.exit(2);
                 }
             }
-            return rowIndex;
+            if (QWP_SF) {
+                // Reported, never asserted away. The duplicate count IS the measured cost of
+                // at-least-once delivery, and it is the number a reader wants when judging
+                // whether the replay behaved sanely.
+                System.out.printf("qwp-sf rows=%d distinctIds=%d duplicates=%d (at-least-once replay)%n",
+                        rowIndex, distinctIds, duplicates);
+            }
+            return QWP_SF ? distinctIds : rowIndex;
         }
     }
 

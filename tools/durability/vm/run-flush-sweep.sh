@@ -38,6 +38,19 @@ WINDOW="${2:-0}"
 # point. Raise freely for a thorough run; the per-point cost grows with table size because the
 # oracle scans every recovered row.
 MAX_POINTS="${3:-${QDB_SWEEP_POINTS:-40}}"
+# Derived once, so the long ssh command lines below stay readable and cannot drift apart.
+# qwp-sf is a qwp run for everything the SERVER-side oracle does -- hence QWP_FLAG true for both --
+# and additionally turns on the client-side replay and its own duplicate-tolerant bar.
+# QWP_TIER is derived here too. The arm NAME has to imply the tier: leaving it to the shared
+# QDB_QWP_DURABLE_ACK default of `off` made the sweep launch qwp-sf with durable ack disabled,
+# and the arm correctly refused to run -- a label promising a guarantee the configuration did not
+# request. Defaulted, not forced: an explicit QDB_QWP_DURABLE_ACK still wins, and run-workload.sh
+# rejects any value for this arm that does not include `local`.
+case "${QDB_ARM:-reference}" in
+    qwp)    QWP_FLAG=true;  QWP_SF_FLAG=false; SF_REPLAY="${QDB_SF_REPLAY:-false}"; QWP_TIER="${QDB_QWP_DURABLE_ACK:-off}"   ;;
+    qwp-sf) QWP_FLAG=true;  QWP_SF_FLAG=true;  SF_REPLAY="${QDB_SF_REPLAY:-true}";  QWP_TIER="${QDB_QWP_DURABLE_ACK:-local}" ;;
+    *)      QWP_FLAG=false; QWP_SF_FLAG=false; SF_REPLAY="${QDB_SF_REPLAY:-false}"; QWP_TIER="${QDB_QWP_DURABLE_ACK:-off}"   ;;
+esac
 PROFILE="${QDB_SCHEMA_PROFILE:-bitmap}"
 # EPOCH=-1 DISABLES the periodic durable epoch, so the table runs with a
 # SUSTAINED LAZY GAP: columns applied lazily with no epoch cut behind them, and
@@ -76,8 +89,12 @@ STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"
 BASE="$STATE_DIR/base"
 KEY="$BASE/id_ed25519"
 LOG="$STATE_DIR/flush-sweep.log"
-OUTDIR="$STATE_DIR/sweep-out/$MODE-w$WINDOW-$PROFILE-e${QDB_EPOCH_MS:-1000}-$$"
-RUN="$STATE_DIR/sweep-$MODE-w$WINDOW-$PROFILE-e$EPOCH-$$"
+# THE ARM IS PART OF THE RUN'S IDENTITY. It was missing from both names, so a reference sweep
+# and a qwp sweep at the same mode/window/profile landed in directories distinguishable only by
+# PID -- and with a third arm that is worse. Evidence that cannot be attributed to the run that
+# produced it is not evidence.
+OUTDIR="$STATE_DIR/sweep-out/$ARM-$MODE-w$WINDOW-$PROFILE-e${QDB_EPOCH_MS:-1000}-$$"
+RUN="$STATE_DIR/sweep-$ARM-$MODE-w$WINDOW-$PROFILE-e$EPOCH-$$"
 STAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 mkdir -p "$RUN"
@@ -87,6 +104,7 @@ truncate -s 60G "$RUN/log.raw"
 
 echo "flush-boundary crash sweep — $STAMP"
 echo "  arm=$ARM edition=$EDITION mode=$MODE W=$WINDOW profile=$PROFILE epoch=${EPOCH}ms sibling=${QDB_SIBLING_TABLE:-false} recoverAs=${QDB_RECOVER_AS:-same} ddlEvery=${QDB_DDL_EVERY_ROWS:--1} matView=${QDB_MAT_VIEW:-false} rebaseAt=${QDB_REBASE_AT_ROWS:--1}"
+[ "$ARM" = qwp-sf ] && echo "  qwp-sf: tier=$QWP_TIER sfReplay=$SF_REPLAY sfDurability=${QDB_QWP_SF_DURABILITY:-periodic}"
 
 keep() { echo "run state kept at $RUN" >&2; }
 
@@ -128,7 +146,7 @@ vm_ssh "$P" "$KEY" "sudo sync"
 vm_ssh "$P" "$KEY" "bash /opt/vmcrash/guest/prepare-device.sh --mode=log-writes" >/dev/null \
     || { keep; echo "LOUD_FAILURE: could not build the log-writes stack"; exit 1; }
 
-vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false} QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1} QDB_MAT_VIEW=${QDB_MAT_VIEW:-false} QDB_REBASE_AT_ROWS=${QDB_REBASE_AT_ROWS:--1} QDB_QWP_DURABLE_ACK=${QDB_QWP_DURABLE_ACK:-off} QDB_QWP_BATCH=${QDB_QWP_BATCH:-1000} QDB_EDITION=$EDITION bash /opt/vmcrash/guest/run-workload.sh --arm=$ARM --mode=$MODE \
+vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false} QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1} QDB_MAT_VIEW=${QDB_MAT_VIEW:-false} QDB_REBASE_AT_ROWS=${QDB_REBASE_AT_ROWS:--1} QDB_QWP_DURABLE_ACK=$QWP_TIER QDB_QWP_BATCH=${QDB_QWP_BATCH:-1000} QDB_EDITION=$EDITION bash /opt/vmcrash/guest/run-workload.sh --arm=$ARM --mode=$MODE \
     --window-us=$WINDOW --epoch-ms=$EPOCH </dev/null >/mnt/qdb/workload.out 2>&1 &" || true
 
 # Let it build a real history: many commits means many flushes means many
@@ -144,7 +162,7 @@ sleep 8
 # would abort as "workload not running" -- a guard that fails closed on a healthy run is as
 # useless as one that never fires. Bracket idiom avoids pgrep matching its own ssh cmdline.
 LIVE_PAT="[C]rashIngestWriter"
-[ "$ARM" = qwp ] && LIVE_PAT="[Q]wpCrashIngestClient"
+case "$ARM" in qwp|qwp-sf) LIVE_PAT="[Q]wpCrashIngestClient" ;; esac
 vm_ssh "$P" "$KEY" "pgrep -f '$LIVE_PAT' >/dev/null" || {
     # CAPTURE THE GUEST LOGS. This assertion fires when the workload died, and the
     # reason is always in writer.log -- which used to require booting the VM again to
@@ -212,7 +230,7 @@ for n in $points; do
         sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
         sudo mkdir -p /mnt/qdb; \
         if sudo mount /dev/vdb /mnt/qdb 2>/dev/null; then \
-            bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --qwp=$([ "$ARM" = qwp ] && echo true || echo false) --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --sf-replay=${QDB_SF_REPLAY:-false} --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
+            bash /opt/vmcrash/guest/verify.sh --arm=reference --mode=$MODE --qwp=$QWP_FLAG --qwp-sf=$QWP_SF_FLAG --window-us=$WINDOW --epoch-ms=$EPOCH --sibling=${QDB_SIBLING_TABLE:-false} --recover-as=${QDB_RECOVER_AS:-} --profile=$PROFILE --sf-replay=${SF_REPLAY} --mat-view=${QDB_MAT_VIEW:-false} --rebase=$([ "${QDB_REBASE_AT_ROWS:--1}" -gt 0 ] && echo true || echo false); \
         else echo 'MOUNT_FAILED'; fi")
     # Archive the FULL per-boundary output. The one-line verdict in $LOG is a summary,
     # not evidence: every time a result needed explaining, the explanation was in the

@@ -47,6 +47,26 @@ DB=/mnt/qdb/db
 # rather than with a filesystem error from setup it should never have reached.
 case "$ARM" in
     reference) ;;
+    qwp-sf)
+        # THE STORE-AND-FORWARD ARM. Additive: it shares the qwp arm's server and client binaries
+        # and changes only what the CLIENT is asked to guarantee.
+        #
+        #   qwp     the SERVER tracks and recovers. The client is a plain producer; its watermark
+        #           is polled from the server's wal_tables(). Bar: F >= Wm.
+        #   qwp-sf  the server does all of the above AND the client requests the LOCAL durable-ack
+        #           tier, holds everything not yet locally-durable-acked in its store-and-forward
+        #           buffer, and replays it after the server comes back. Bar: F >= Wm, PLUS the ack
+        #           channel was live, PLUS the replay refills what the server's RPO window dropped.
+        #
+        # The two are kept separate rather than folded behind a flag because their ORACLES differ:
+        # store-and-forward replay is at-least-once, so duplicate ids are correct here and are
+        # SILENT_CORRUPTION everywhere else. One shared oracle would have to either fail this arm
+        # on correct behaviour or weaken the bar for every other arm.
+        #
+        # Runs on OSS: LocalDurableAckRegistry is the default registry and grants
+        # DurabilityTier.LOCAL out of the box. Only `replicated` needs enterprise.
+        :
+        ;;
     qwp)
         # Same reasoning as the product arm's W=0 restriction, for the same underlying reason:
         # the client can observe only the COMMIT-ack frontier. Under SYNC a commit fsyncs before
@@ -100,7 +120,7 @@ case "$ARM" in
             org.questdb.CrashIngestWriter "$DB" > /mnt/qdb/writer.log 2>&1
         ;;
 
-    qwp)
+    qwp|qwp-sf)
         # QWP arm: a REAL server plus a REAL WebSocket client, so the cut lands on the wire
         # protocol's write path -- frame decode, ingress buffering, server-side commit -- none of
         # which the embedded-engine arm touches. The server owns the engine; the client only speaks
@@ -177,12 +197,34 @@ case "$ARM" in
             echo "run-workload: server is in '$actual_mode' but the run claims '$MODE' -- refusing." >> /mnt/qdb/writer.log
             exit 64
         fi
+        # qwp-sf FORCES the local tier and an SF buffer on the crashed device; they are what the
+        # arm IS, so they are not left to an environment variable that could be unset without
+        # anyone noticing. The plain qwp arm keeps whatever was asked for (default off).
+        if [ "$ARM" = qwp-sf ]; then
+            QWP_TIER="${QDB_QWP_DURABLE_ACK:-local}"
+            case "$QWP_TIER" in
+                *local*) ;;
+                *) echo "run-workload: arm=qwp-sf requires a tier including 'local' (got '$QWP_TIER')" >&2
+                   echo "run-workload: that is the whole arm; refusing rather than running a qwp arm under an sf label" >&2
+                   exit 64 ;;
+            esac
+            # sf_dir on the CRASHED device on purpose: the client's buffer must take the same
+            # power cut as the server's WAL, or the pairing is never actually tested.
+            # `periodic` is the strongest IMPLEMENTED durability (`flush`/`append` parse but are
+            # not implemented), so the client's own guarantee extends only to its last sync.
+            QWP_SF_DIR="${QDB_QWP_SF_DIR:-/mnt/qdb/sf}"
+            mkdir -p "$QWP_SF_DIR"
+            echo "qwp-sf: tier=$QWP_TIER sf_dir=$QWP_SF_DIR durability=${QDB_QWP_SF_DURABILITY:-periodic}" >> /mnt/qdb/writer.log
+        else
+            QWP_TIER="${QDB_QWP_DURABLE_ACK:-off}"
+            QWP_SF_DIR="${QDB_QWP_SF_DIR:-/mnt/qdb/sf}"
+        fi
         exec java $QDB_JVM -cp "$JAR" \
             -Dqwp.addr=localhost:9000 \
-            -Dqwp.durable.ack="${QDB_QWP_DURABLE_ACK:-local}" \
+            -Dqwp.durable.ack="$QWP_TIER" \
             -Dqwp.user="$([ "${QDB_EDITION:-oss}" = ent ] && echo "${QDB_ENT_USER:-admin}" || echo "")" \
             -Dqwp.password="$([ "${QDB_EDITION:-oss}" = ent ] && echo "${QDB_ENT_PASSWORD:-quest}" || echo "")" \
-            -Dqwp.sf.dir="${QDB_QWP_SF_DIR:-/mnt/qdb/sf}" \
+            -Dqwp.sf.dir="$QWP_SF_DIR" \
             -Dqwp.sf.durability="${QDB_QWP_SF_DURABILITY:-periodic}" \
             -Dqwp.batch="${QDB_QWP_BATCH:-1000}" \
             -Dmax.rows="${QDB_QWP_ROWS:-2000000000}" \

@@ -177,6 +177,11 @@ public class QwpCrashIngestClient {
             return;
         }
 
+        // Whether the LOCAL durable-ack tier was requested. Granted by an OSS server out of the
+        // box (LocalDurableAckRegistry is the default); only `replicated` is enterprise-only.
+        final boolean localTier = ackTier.contains("local");
+        boolean ackPremiseChecked = false;
+
         long id = 0;
         long ackedRowsHighWater = 0L;
         try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig(conf)) {
@@ -234,12 +239,67 @@ public class QwpCrashIngestClient {
                 final long ackedRows = Math.max(ackedRowsHighWater, serverRows);
                 ackedRowsHighWater = ackedRows;
                 final long ackedFsn = sender.getAckedFsn();
+
+                // THE DURABLE-ACK COUNTERS, when the local tier was requested. These are what make
+                // the qwp-sf arm non-vacuous: without them nothing anywhere asserts that
+                // STATUS_LOCAL_DURABLE_ACK frames actually ARRIVE, so a server that stopped
+                // emitting them would leave every sweep green.
+                //
+                // Read from cursorSendLoopForTest(), which is the only route to them -- the
+                // per-table watermark accessor is documented to stay EMPTY in local-only mode
+                // ("the local acks feed the trim watermarks directly"), so it cannot serve here.
+                // Measured cadence at W=50ms: 10 acks over 40 flushes, trimAdvances == localAcks.
+                long localAcks = -1L;
+                long trimAdvances = -1L;
+                if (localTier) {
+                    final var loop = sender.cursorSendLoopForTest();
+                    if (loop != null) {
+                        localAcks = loop.getTotalLocalDurableAcks();
+                        trimAdvances = loop.getTotalDurableTrimAdvances();
+                    }
+                }
+
+                // ASSERT THE FSN->ROW MAPPING rather than assume it. Every batch is one flush is
+                // one frame, so rows should be exactly (ackedFsn + 1) * BATCH. Measured at 1000.0
+                // with no drift over 40 batches -- but an assumed ratio is a proxy, and this
+                // harness has been bitten three times by proxies standing in for the real
+                // property. Report a violation loudly instead of quietly computing from it.
+                if (localTier && ackedFsn >= 0) {
+                    final long impliedRows = (ackedFsn + 1) * BATCH;
+                    if (impliedRows > id) {
+                        System.out.println("qwp-sf WARN: ackedFsn implies " + impliedRows
+                                + " rows but only " + id + " were sent -- one flush is not one frame,"
+                                + " so any FSN->row mapping in the oracle is unsound");
+                        System.out.flush();
+                    }
+                }
+
                 writeProgressDurably(dbRoot, progressPath, progressTmp,
-                        (ackedRows + "\nC=" + c + "\nWm=" + wm + "\nrows=" + ackedRows + "\n")
+                        (ackedRows + "\nC=" + c + "\nWm=" + wm + "\nrows=" + ackedRows
+                                + "\nackedFsn=" + ackedFsn
+                                + "\nlocalAcks=" + localAcks + "\ntrimAdv=" + trimAdvances + "\n")
                                 .getBytes(StandardCharsets.US_ASCII));
                 System.out.println("qwp sent=" + id + " serverCommitted=" + ackedRows
-                        + " C=" + c + " Wm=" + wm + " ackedFsn=" + ackedFsn);
+                        + " C=" + c + " Wm=" + wm + " ackedFsn=" + ackedFsn
+                        + (localTier ? " localAcks=" + localAcks + " trimAdv=" + trimAdvances : ""));
                 System.out.flush();
+
+                // LIVE PREMISE ASSERTION, once, after a warmup long enough for the group-commit
+                // window to have produced acks. The verifier also checks this post-cut, but
+                // failing HERE is worth the duplication: it kills a doomed run in seconds instead
+                // of spending a full record/replay/verify cycle to conclude the same thing.
+                if (localTier && !ackPremiseChecked && id >= BATCH * 20L) {
+                    ackPremiseChecked = true;
+                    if (localAcks <= 0) {
+                        System.out.println("LOUD_FAILURE qwp-sf: no STATUS_LOCAL_DURABLE_ACK frames after "
+                                + id + " rows. The tier was requested but the channel is dead, so this run"
+                                + " would prove nothing. Refusing to continue.");
+                        System.out.flush();
+                        System.exit(64);
+                    }
+                    System.out.println("qwp-sf premise OK: ack channel live after " + id + " rows");
+                    System.out.flush();
+                }
             }
         }
         System.out.println("reached maxRows=" + MAX_ROWS + " without kill; exiting normally");
