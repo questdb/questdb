@@ -3756,6 +3756,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(startPos, "SELECT query expected");
                 }
                 queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                final SqlExecutionRequirements executionRequirements = functionParser.getExecutionRequirements();
+                final int securityContextPosition = executionRequirements.getPosition(
+                        SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                );
+                if (securityContextPosition > -1) {
+                    throw SqlException.position(securityContextPosition)
+                            .put("function requires an enterprise security context and cannot be used in materialized view: ")
+                            .put(executionRequirements.getFunctionName(
+                                    SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                            ));
+                }
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
