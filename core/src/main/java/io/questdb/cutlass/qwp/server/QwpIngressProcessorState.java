@@ -152,6 +152,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private final StringSink rejectMsg = new StringSink();
     private final StringSink roleChangeCloseReason = new StringSink();
     private final CharSequenceLongHashMap resumeAckSeqTxns = new CharSequenceLongHashMap();
+    // scratch for the table name decoded from a DESCRIBE control message
+    private final StringSink schemaControlTableName = new StringSink();
     private final ConnectionSymbolCache symbolCache = new ConnectionSymbolCache();
     private final CharSequenceObjHashMap<String> tableDirNames = new CharSequenceObjHashMap<>();
     private long bufferAddress;
@@ -514,16 +516,20 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return pendingAckSeqTxns;
     }
 
-    SecurityContext getSecurityContext() {
-        return securityContext;
-    }
-
     LowerCaseCharSequenceObjHashMap<String> getPendingAckSchemaFeedback() {
         return pendingAckSchemaFeedback;
     }
 
     LowerCaseCharSequenceObjHashMap<String> getPendingErrorSchemaFeedback() {
         return pendingErrorSchemaFeedback;
+    }
+
+    StringSink getSchemaControlTableName() {
+        return schemaControlTableName;
+    }
+
+    SecurityContext getSecurityContext() {
+        return securityContext;
     }
 
     public int getPendingHandshakeBytes() {
