@@ -59,8 +59,17 @@ ARM="${QDB_ARM:-reference}"
 # QDB_EDITION=ent runs the ENTERPRISE server (qwp arm only -- the reference arm embeds the OSS
 # engine in-process). The edition is ASSERTED at runtime via build(), never assumed.
 EDITION="${QDB_EDITION:-oss}"
-ENT_ROOT="${QDB_ENT_ROOT:-/home/nick/claude/wt/ent/adaptive}"
-ENT_JAR="${QDB_ENT_JAR:-$ENT_ROOT/questdb-ent/target/questdb-enterprise-4.0.2-SNAPSHOT.jar}"
+# DERIVED, not hardcoded. This tree is questdb-enterprise/questdb/tools/durability/vm, so
+# the enterprise root is four levels up -- but the OSS repo is ALSO checked out standalone,
+# where that path is something else entirely. So derive, then VERIFY it looks like an ENT
+# checkout, and demand QDB_ENT_ROOT explicitly when it does not. The previous default was
+# one developer's home directory, which silently produced "jar is missing" for everyone else.
+ENT_ROOT="${QDB_ENT_ROOT:-$(cd "$HERE/../../../.." 2>/dev/null && pwd)}"
+# The jar version is not pinned here: it moves with the POM, and a hardcoded
+# questdb-enterprise-4.0.2-SNAPSHOT.jar becomes wrong at the next version bump without
+# anyone noticing until an ENT run fails. Glob, and require EXACTLY one match so an
+# ambiguous target dir is reported rather than silently resolved.
+ENT_JAR="${QDB_ENT_JAR:-}"
 ENT_DEPS="${QDB_ENT_DEPS:-$ENT_ROOT/questdb-ent/target/deps}"
 
 STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"
@@ -95,6 +104,21 @@ vm_scp_dir "$P" "$KEY" "$HERE/guest" /opt/vmcrash/
 # ENT ships as a jar PLUS its runtime deps: it is not a fat jar, and without entlib/ the server
 # dies with io/questdb/jar/jni/LoadException.
 if [ "${QDB_EDITION:-oss}" = "ent" ]; then
+    # Resolve the jar now, loudly. Three distinguishable failures, because "ent run did not
+    # work" is not a diagnosis: the root is not an ENT checkout, the module was never built,
+    # or the target dir holds more than one candidate jar.
+    [ -d "$ENT_ROOT/questdb-ent" ] || { keep; echo "LOUD_FAILURE: QDB_EDITION=ent but '$ENT_ROOT' is not an enterprise checkout (no questdb-ent/); set QDB_ENT_ROOT"; exit 1; }
+    if [ -z "$ENT_JAR" ]; then
+        # Exclude sources/javadoc/original- classifiers; only the runnable artifact counts.
+        mapfile -t _ent_jars < <(find "$ENT_ROOT/questdb-ent/target" -maxdepth 1 -name 'questdb-enterprise-*.jar' \
+            ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name 'original-*' 2>/dev/null | sort)
+        case ${#_ent_jars[@]} in
+            0) keep; echo "LOUD_FAILURE: QDB_EDITION=ent but no questdb-enterprise-*.jar in $ENT_ROOT/questdb-ent/target (build questdb-ent first)"; exit 1 ;;
+            1) ENT_JAR="${_ent_jars[0]}" ;;
+            *) keep; echo "LOUD_FAILURE: ${#_ent_jars[@]} candidate ENT jars in $ENT_ROOT/questdb-ent/target; set QDB_ENT_JAR to choose:"; printf '    %s\n' "${_ent_jars[@]}"; exit 1 ;;
+        esac
+        echo "  ent jar: $ENT_JAR"
+    fi
     [ -f "$ENT_JAR" ] || { keep; echo "LOUD_FAILURE: QDB_EDITION=ent but $ENT_JAR is missing (build questdb-ent first)"; exit 1; }
     vm_scp "$P" "$KEY" "$ENT_JAR" /opt/vmcrash/questdb-enterprise.jar
     vm_ssh "$P" "$KEY" "mkdir -p /opt/vmcrash/entlib"

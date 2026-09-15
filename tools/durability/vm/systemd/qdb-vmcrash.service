@@ -3,6 +3,16 @@ Description=QuestDB adaptive-commit VM crash matrix
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/claude/wt/oss/adaptive-commit
-ExecStart=/usr/bin/bash tools/durability/vm/run-matrix.sh
-# Failures keep their disks under /data/qdb-vmcrash for inspection.
+# The repo location is NOT guessable, so it is not guessed. Create the file below with
+# the checkout this unit should run against:
+#
+#   echo 'QDB_VMCRASH_REPO=%h/path/to/questdb' > %h/.config/qdb-vmcrash.env
+#
+# A hardcoded WorkingDirectory here was one developer's worktree, which meant the unit
+# was wrong for everyone else and failed with a bare "no such directory" that named the
+# wrong owner's path. systemd expands ${VAR} in ExecStart ARGUMENTS (the binary itself
+# must stay literal), so the checkout is supplied rather than assumed.
+EnvironmentFile=%h/.config/qdb-vmcrash.env
+ExecStart=/usr/bin/bash ${QDB_VMCRASH_REPO}/tools/durability/vm/run-matrix.sh
+# Failures keep their disks under $QDB_VMCRASH_STATE for inspection.
+# Set QDB_VMCRASH_STATE in the same env file to override the default.
