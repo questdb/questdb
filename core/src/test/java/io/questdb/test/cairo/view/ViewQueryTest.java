@@ -1463,17 +1463,36 @@ public class ViewQueryTest extends AbstractViewTest {
             final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 5";
             createView(VIEW1, query1, TABLE1);
 
-            assertQueryAndPlan(
-                    """
+            final String query = "(select v1.ts, v1.v_max from " + VIEW1 + " v1 where v_max > 6) timestamp(ts)";
+            // What this test is about is the timestamp(ts) clause: it must re-designate ts as the
+            // result's designated timestamp even though the view's own select has none. That part is
+            // asserted exactly as before, by pinning "ts" as the metadata's timestamp index.
+            //
+            // It is spelled out here instead of going through assertQueryAndPlan because the order
+            // part of the claim had to change, and assertQueryAndPlan's timestamp parameter is
+            // hard-wired to the ascending variant for all of its other callers. The base of this
+            // query is a KEYED group by (plan below: "Async Group By ... keys: [ts,k]"), whose cursor
+            // walks its hash map and therefore emits rows in map order, not in designated-timestamp
+            // order - having ts among the keys does not make the map iterate in ts order. So the
+            // factory declares SCAN_DIRECTION_OTHER and timestampUnordered is the true expectation.
+            // The two rows below do come out ascending, which is why the old FORWARD assertion
+            // passed; with two groups in a map that is coincidence, not a guarantee.
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestampUnordered("ts")
+                    .supportsRandomAccess(true)
+                    .expectSize(false)
+                    .returns("""
                             ts\tv_max
                             1970-01-01T00:01:10.000000Z\t7
                             1970-01-01T00:01:20.000000Z\t8
-                            """,
-                    "(select v1.ts, v1.v_max from " + VIEW1 + " v1 where v_max > 6) timestamp(ts)",
-                    "ts",
-                    true,
-                    false,
-                    """
+                            """);
+            assertReferencedViews(query, VIEW1);
+            assertQuery("explain " + query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             QUERY PLAN
                             SelectedRecord
                                 SelectedRecord
@@ -1485,9 +1504,7 @@ public class ViewQueryTest extends AbstractViewTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: table1
-                            """,
-                    VIEW1
-            );
+                            """);
         });
     }
 

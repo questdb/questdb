@@ -1130,6 +1130,18 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         // page frames (downgrading to the single-threaded path) nor random access (triggering the
         // post-assembly failure), while timestamp(ts) re-designates the timestamp so the
         // pre-assembly master validation passes.
+        //
+        // The UNION ALL master is refused both before and after the scan-direction correction; only
+        // the wording moved. It used to reach the random-access check and report "left-hand side of
+        // HORIZON JOIN can only be a table with an optional filter". Now the union reports
+        // SCAN_DIRECTION_OTHER (its cursor concatenates the branches, so the designated timestamp
+        // restarts at the branch boundary) and the master-order validation rejects it first, with
+        // "ASC order over TIMESTAMP column is required but not provided". The new message is the
+        // accurate one: a HORIZON JOIN master must supply ascending designated-timestamp order, and
+        // that - not the random-access capability - is the property this master lacks. The leak the
+        // test exists to catch is unaffected: the refusal still happens after the projection
+        // (including the resource-bearing key sub-query) has been assembled, so the generator's
+        // catch must still free the extracted owner key functions or assertMemoryLeak() fires.
         assertMemoryLeak(() -> {
             execute("create table trades (sym symbol, qty double, ts timestamp) timestamp(ts) partition by day");
             execute("create table prices (ts timestamp, sym symbol, price double) timestamp(ts)");
@@ -1137,7 +1149,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     "from ((select * from trades union all select * from trades) timestamp(ts)) t " +
                     "horizon join prices p on (t.sym = p.sym) list (0) as h " +
                     "group by k")
-                    .fails(-1, "left-hand side of HORIZON JOIN can only be a table with an optional filter");
+                    .fails(-1, "ASC order over TIMESTAMP column is required but not provided");
         });
     }
 
@@ -1148,6 +1160,13 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         // before the single-threaded path validates that the master supports random access. The
         // catch must free the extracted owner key functions. alloc() places tracked native memory
         // inside the key chain so assertMemoryLeak() sees the leak.
+        //
+        // Message-only change, for the same reason as the single-slave test above: the UNION ALL
+        // master was refused before and is refused now, but the union's honest SCAN_DIRECTION_OTHER
+        // makes the master-order validation fire first, so "left-hand side of HORIZON JOIN can only
+        // be a table with an optional filter" became "ASC order over TIMESTAMP column is required but
+        // not provided". The refusal still lands after projection assembly, which is what this test
+        // checks the cleanup path for.
         assertMemoryLeak(() -> {
             execute("create table trades (sym symbol, qty double, ts timestamp) timestamp(ts) partition by day");
             execute("create table prices (ts timestamp, sym symbol, price double) timestamp(ts)");
@@ -1156,7 +1175,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     "from ((select * from trades union all select * from trades) timestamp(ts)) t " +
                     "horizon join prices p on (t.sym = p.sym) horizon join asks a2 on (t.sym = a2.sym) list (0) as h " +
                     "group by k")
-                    .fails(-1, "left-hand side of HORIZON JOIN can only be a table with an optional filter");
+                    .fails(-1, "ASC order over TIMESTAMP column is required but not provided");
         });
     }
 
