@@ -41,9 +41,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
-import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_DATE;
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_DOUBLE_ARRAY;
-import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
 
 /**
  * End-to-end integration tests for QWP v1 WebSocket sender and receiver.
@@ -980,23 +978,23 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE ws_test_date (" +
                     "event_date DATE, " +
                     "ts TIMESTAMP" +
-                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
-                QwpTableBuffer buf = sender.getTableBuffer("ws_test_date");
-                QwpTableBuffer.ColumnBuffer dateCol = buf.getOrCreateColumn("event_date", TYPE_DATE, false);
-
                 // Row 1: 2024-01-01 00:00:00 UTC (epoch millis)
-                dateCol.addLong(1_704_067_200_000L);
-                sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+                sender.table("ws_test_date")
+                        .longColumn("event_date", 1_704_067_200_000L)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
 
                 // Row 2: 2024-06-15 12:30:00 UTC (epoch millis)
-                dateCol.addLong(1_718_454_600_000L);
-                sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
+                sender.table("ws_test_date")
+                        .longColumn("event_date", 1_718_454_600_000L)
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
 
                 // Row 3: 1970-01-01 00:00:00 UTC (epoch zero)
-                dateCol.addLong(0L);
-                sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
+                sender.table("ws_test_date")
+                        .longColumn("event_date", 0L)
+                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
 
                 sender.flush();
             }
@@ -1774,23 +1772,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         });
     }
 
-    /**
-     * Tests that in async mode (window > 1) a server error from a bad batch
-     * does not surface until the user thread calls flush().
-     * <p>
-     * With autoFlushRows=1, each at() call triggers an auto-flush that enqueues
-     * the batch to the I/O thread without waiting for ACKs. The user thread
-     * keeps producing rows obliviously. The error only surfaces when flush()
-     * calls awaitEmpty(), which checks the in-flight window's lastError.
-     * <p>
-     * This is fundamentally different from sync mode where flush() blocks for
-     * each batch's ACK inline, so the error surfaces on the flush() that sent
-     * the bad data.
-     * <p>
-     * The bad row targets a pre-existing table via a fresh connection so the
-     * client doesn't know the server-side schema of this table and cannot
-     * detect the mismatch locally — only the server can reject it.
-     */
     @Test
     public void testErrorPropagation_asyncMultipleBatchesInFlight() throws Exception {
         runInContext(this::assertErrorPropagationAsyncMultipleBatchesInFlight);
@@ -1802,27 +1783,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     }
 
     private void assertErrorPropagationAsyncMultipleBatchesInFlight(int port) throws Exception {
-        // Pre-create a table with a LONG column
-        try (QwpWebSocketSender setupSender = connectWs(port)) {
-            setupSender.table("ws_async_multi_err")
-                    .longColumn("value", 0)
-                    .at(1_000_000_000_000L, ChronoUnit.MICROS);
-            setupSender.flush();
-        }
-        drainWalQueue();
+        execute("CREATE TABLE ws_async_multi_err (value LONG, ts TIMESTAMP) " +
+                "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
 
-        // Fresh async sender: autoFlushRows=1 so each row is enqueued
-        // immediately, window=8. The sender doesn't know the server-side
-        // schema of "ws_async_multi_err", so it cannot detect the type
-        // mismatch. NACK policy v2: the server-side type mismatch is
-        // SCHEMA_MISMATCH -- deterministic under byte-identical replay, so
-        // the client latches a TERMINAL on the NACK instead of dropping the
-        // frame. Rows flushed before the bad row land; rows queued after it
-        // are head-of-line blocked behind the latched terminal (whether an
-        // already-in-flight successor was applied is timing-dependent), so
-        // only the pre-error prefix is asserted dense. The rejection arrives
-        // asynchronously through the error handler and the latched terminal
-        // surfaces loudly on close unless the handler already owns it.
         CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
         CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
         QwpWebSocketSender sender = connectWs(port,
@@ -1837,7 +1800,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 });
         SenderError.Category expectedTerminalCategory = null;
         try {
-            // Good rows to a separate table — auto-flushed, no ACK wait
+            // These rows are auto-flushed before the server-owned rejection.
             for (int i = 1; i <= 3; i++) {
                 sender.table("ws_async_multi_ok")
                         .longColumn("v", i)
@@ -1845,49 +1808,41 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             try {
-                // Bad row to the pre-existing table — STRING into LONG.
-                // Client doesn't know the server-side schema, so this passes
-                // client-side validation. The I/O thread sends it; the server
-                // rejects it.
+                // Schema validation succeeds, but QWP cannot write to a non-WAL table.
                 sender.table("ws_async_multi_err")
-                        .stringColumn("value", "not a number")
+                        .longColumn("value", 1)
                         .at(1_000_000_000_001L, ChronoUnit.MICROS);
 
-                // More good rows racing the NACK — they may ship before the
-                // terminal latches or stay head-of-line blocked behind it;
-                // either way they must not disturb the settled prefix or
-                // resurrect the rejected frame.
                 for (int i = 4; i <= 6; i++) {
                     sender.table("ws_async_multi_ok")
                             .longColumn("v", i)
                             .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
-
                 sender.flush();
             } catch (LineSenderServerException ignored) {
-                // the I/O thread can latch the terminal while the tail is
-                // still being published -- any producer call may throw it
+                // Any producer call may observe the terminal latched by the I/O thread.
             }
 
             SenderError err = firstErrFut.get(10, TimeUnit.SECONDS);
             Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
             Assert.assertSame(SenderError.Policy.TERMINAL, err.getAppliedPolicy());
+            Assert.assertTrue(err.getServerMessage(),
+                    err.getServerMessage().contains("cannot insert into non-WAL table"));
             expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
         } finally {
-            assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory);
+            assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory,
+                    "cannot insert into non-WAL table", "ws_async_multi_err");
         }
+
         drainWalQueue();
-        // Dense prefix: every row flushed before the bad one landed.
         assertQuery("SELECT v FROM ws_async_multi_ok WHERE v <= 3 ORDER BY v")
                 .noLeakCheck()
                 .returns("v\n1\n2\n3\n");
-        // Frame-drop atomicity: the rejected row never landed — the err
-        // table still holds only the initial setup row.
         assertQuery("SELECT count() FROM ws_async_multi_err")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
-                .returns("count\n1\n");
+                .returns("count\n0\n");
     }
 
     @Test
@@ -2062,12 +2017,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
 
             try (QwpWebSocketSender sender = createSender(port)) {
-                QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_byte");
-                QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
-
                 for (int i = 0; i < 30; i++) {
-                    geoCol.addGeoHash(GeoHashes.fromString(String.valueOf(geoAlphabet.charAt(i))), 5);
-                    sender.at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    sender.table("ws_geohash_byte")
+                            .geoHashColumn("geo", GeoHashes.fromString(String.valueOf(geoAlphabet.charAt(i))), 5)
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -2099,13 +2052,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
 
             try (QwpWebSocketSender sender = createSender(port)) {
-                QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_int");
-                QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
-
                 for (int i = 0; i < 30; i++) {
                     String hash = String.valueOf(geoAlphabet.charAt(i)).repeat(6);
-                    geoCol.addGeoHash(GeoHashes.fromString(hash), 30);
-                    sender.at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    sender.table("ws_geohash_int")
+                            .geoHashColumn("geo", GeoHashes.fromString(hash), 30)
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -2137,13 +2088,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
 
             try (QwpWebSocketSender sender = createSender(port)) {
-                QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_long");
-                QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
-
                 for (int i = 0; i < 30; i++) {
                     String hash = String.valueOf(geoAlphabet.charAt(i)).repeat(12);
-                    geoCol.addGeoHash(GeoHashes.fromString(hash), 60);
-                    sender.at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    sender.table("ws_geohash_long")
+                            .geoHashColumn("geo", GeoHashes.fromString(hash), 60)
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -2176,17 +2125,15 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
 
             try (QwpWebSocketSender sender = createSender(port)) {
-                QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_multi");
-                QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
-
                 for (int i = 0; i < 30; i++) {
                     // Build 6-char geohash rotating through the alphabet
                     StringBuilder hash = new StringBuilder(6);
                     for (int j = 0; j < 6; j++) {
                         hash.append(geoAlphabet.charAt((i + j) % 32));
                     }
-                    geoCol.addGeoHash(GeoHashes.fromString(hash.toString()), 30);
-                    sender.at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    sender.table("ws_geohash_multi")
+                            .geoHashColumn("geo", GeoHashes.fromString(hash.toString()), 30)
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -2219,16 +2166,12 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
 
             try (QwpWebSocketSender sender = createSender(port)) {
-                QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_null");
-                QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, true);
-
                 // 30 rows: even-indexed rows get a geohash, odd-indexed rows get null
                 for (int i = 0; i < 30; i++) {
+                    sender.table("ws_geohash_null");
                     if (i % 2 == 0) {
                         String hash = String.valueOf(geoAlphabet.charAt(i / 2)).repeat(6);
-                        geoCol.addGeoHash(GeoHashes.fromString(hash), 30);
-                    } else {
-                        geoCol.addNull();
+                        sender.geoHashColumn("geo", GeoHashes.fromString(hash), 30);
                     }
                     sender.at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
@@ -2262,13 +2205,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
 
             try (QwpWebSocketSender sender = createSender(port)) {
-                QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_short");
-                QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
-
                 for (int i = 0; i < 30; i++) {
                     String hash = String.valueOf(geoAlphabet.charAt(i)).repeat(4);
-                    geoCol.addGeoHash(GeoHashes.fromString(hash), 20);
-                    sender.at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    sender.table("ws_geohash_short")
+                            .geoHashColumn("geo", GeoHashes.fromString(hash), 20)
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -2351,78 +2292,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             assertQuery("SELECT count() FROM ws_ack_test")
                     .noLeakCheck()
                     .returnsOnce("count\n" + totalRows + "\n");
-        });
-    }
-
-    /**
-     * Tests that a type-mismatch error surfaces on flush() in both sync and
-     * async modes.
-     * <p>
-     * Creates a table with a LONG column, then sends a STRING into it via a
-     * fresh connection. The server NACKs SCHEMA_MISMATCH; under NACK policy
-     * v2 the client latches a TERMINAL that reaches the error handler and
-     * surfaces loudly on close (or from flush() when its error poll wins the
-     * race against the handler dispatch).
-     */
-    @Test
-    public void testImmediateErrorPropagation_typeMismatchOnFlush() throws Exception {
-        runInContext((port) -> {
-            // First sender: create table with long column
-            try (QwpWebSocketSender sender = createSender(port)) {
-                sender.table("ws_error_propagation_test")
-                        .longColumn("value", 42)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-
-            // Second sender: fresh connection, no client-side column cache.
-            // NACK policy v2: the server-side string-to-numeric mismatch is
-            // classified as SCHEMA_MISMATCH -- deterministic under
-            // byte-identical replay, so the client latches a TERMINAL on the
-            // first NACK (no drop, no replay). The rejection arrives
-            // asynchronously through the error handler; the latched terminal
-            // surfaces loudly on close unless the handler already owns it.
-            CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
-            CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
-            QwpWebSocketSender sender = connectWs(port,
-                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,
-                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
-                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
-                    err -> {
-                        if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
-                            terminalFut.complete(err);
-                        }
-                        firstErrFut.complete(err);
-                    });
-            SenderError.Category expectedTerminalCategory = null;
-            try {
-                sender.table("ws_error_propagation_test")
-                        .stringColumn("value", "not a number")
-                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
-                try {
-                    sender.flush();
-                } catch (LineSenderServerException ignored) {
-                    // the I/O thread latched the terminal before flush()'s
-                    // own error poll ran
-                }
-
-                SenderError err = firstErrFut.get(10, TimeUnit.SECONDS);
-                Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
-                Assert.assertSame(SenderError.Policy.TERMINAL, err.getAppliedPolicy());
-                String msg = err.getServerMessage();
-                Assert.assertTrue("Error message should indicate server error: " + msg,
-                        msg != null && (msg.contains("WRITE_ERROR")
-                                || msg.contains("Processing failed")
-                                || msg.contains("Server error")
-                                || msg.contains("inconvertible")
-                                || msg.contains("not a number")
-                                || msg.contains("cannot")));
-                expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
-            } finally {
-                assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory);
-            }
         });
     }
 
