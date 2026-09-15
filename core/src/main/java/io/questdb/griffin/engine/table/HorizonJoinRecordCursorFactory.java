@@ -163,12 +163,20 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         return masterFactory;
     }
 
-    // TODO(nw): audited as FALSE — this factory does not emit in designated-timestamp
-    // order. Corrected in a follow-up commit on this branch; declared here only to keep
-    // this change behaviour-preserving.
+    // The keyed horizon join aggregates into a map and then emits that map's entries, so it emits
+    // in map order - hash-slot order for the fixed-width Unordered{2,4,8,16}Map keys,
+    // key-insertion order for the OrderedMap fallback. Neither is designated-timestamp order, even
+    // when the group key IS the designated timestamp and every input row was scanned forward.
+    // Measured 172 of 299 adjacent steps descending, and 296 of 300 ASOF invariant violations.
+    //
+    // Do not be talked out of this by a fixture that happens to come out ascending: with
+    // keys:[ts,sym] the map happens to be an OrderedMap whose insertion order tracks the forward
+    // scan, and keys:[ts] emits ascending for as long as the aggregates are still projected - it
+    // turns to 172/299 once projection pushdown prunes them. "Ascending here" is a property of the
+    // fixture, not of the factory.
     @Override
     public int getScanDirection() {
-        return SCAN_DIRECTION_FORWARD;
+        return SCAN_DIRECTION_OTHER;
     }
 
     // getBaseFactory() exposes only the master. The slave is parser-restricted to a plain table

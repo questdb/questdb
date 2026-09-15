@@ -62,6 +62,22 @@ public class ScanDirectionContractTest extends AbstractCairoTest {
                     " ('2024-01-01T00:00:02.000000Z','c',3)," +
                     " ('2024-01-01T00:00:03.000000Z','d',4)," +
                     " ('2024-01-01T00:00:04.000000Z','e',5)";
+    private static final String HORIZON_SLAVE_DDL =
+            "create table p (ts timestamp, sym symbol, price double) timestamp(ts) partition by day";
+    private static final String HORIZON_SLAVE_ROWS =
+            "insert into p values" +
+                    " ('2024-01-01T00:00:00.000000Z','a',10.0)," +
+                    " ('2024-01-01T00:00:01.000000Z','b',20.0)," +
+                    " ('2024-01-01T00:00:02.000000Z','c',30.0)," +
+                    " ('2024-01-01T00:00:03.000000Z','d',40.0)," +
+                    " ('2024-01-01T00:00:04.000000Z','e',50.0)";
+    private static final String HORIZON_SLAVE2_DDL =
+            "create table q (ts timestamp, sym symbol, ask double) timestamp(ts) partition by day";
+    private static final String HORIZON_SLAVE2_ROWS =
+            "insert into q values" +
+                    " ('2024-01-01T00:00:00.000000Z','a',11.0)," +
+                    " ('2024-01-01T00:00:02.000000Z','c',31.0)," +
+                    " ('2024-01-01T00:00:04.000000Z','e',51.0)";
 
     /**
      * Positive control for the two not-keyed group-by tests: a not-keyed aggregate is the one
@@ -539,6 +555,251 @@ public class ScanDirectionContractTest extends AbstractCairoTest {
                         2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
                         2024-01-01T00:00:01.000000Z\t2024-01-01T00:00:01.000000Z
                         2024-01-01T00:00:02.000000Z\t2024-01-01T00:00:02.000000Z
+                        """);
+    }
+
+    /**
+     * Positive control for {@link #testParallelKeyedHorizonJoinRefusedAsAsofJoinMaster}. The
+     * parallel keyed horizon join is what serves this shape by default, so this is the fixture the
+     * refusal below is really about, and it must keep compiling and returning every row.
+     * <p>
+     * The ORDER BY is not decoration. The factory's own emission order here was measured as ts 00,
+     * 02, 01, 04, 03 - the aggregation map's order, not ascending timestamp order, even though the
+     * group key IS the designated timestamp and every input row was scanned forward. It is not
+     * asserted literally because it is a property of the map's capacity and of how many per-worker
+     * shards a ShardedMapCursor concatenates, neither of which a test should pin.
+     */
+    @Test
+    public void testParallelKeyedHorizonJoinAloneStillReturnsAllRows() throws Exception {
+        sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+        assertQuery("""
+                select t.ts, avg(p.price) ap
+                from t horizon join p on (t.sym = p.sym) range from 0s to 0s step 1s as h
+                order by ts
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS, HORIZON_SLAVE_DDL, HORIZON_SLAVE_ROWS)
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .withPlanContaining("Async Horizon Join", "keys: [ts]")
+                .returns("""
+                        ts\tap
+                        2024-01-01T00:00:00.000000Z\t10.0
+                        2024-01-01T00:00:01.000000Z\t20.0
+                        2024-01-01T00:00:02.000000Z\t30.0
+                        2024-01-01T00:00:03.000000Z\t40.0
+                        2024-01-01T00:00:04.000000Z\t50.0
+                        """);
+    }
+
+    /**
+     * AsyncHorizonJoinRecordCursorFactory aggregates into a map and emits that map's entries, so it
+     * emits in map order within a shard and shard order across them - never designated-timestamp
+     * order. As elsewhere in this class, {@code timestamp(ts)} re-attaches by column NAME a
+     * designated timestamp the cursor cannot honour, and getScanDirection() is the only thing left
+     * standing. Measured 172 of 299 adjacent steps descending and 296 of 300 ASOF invariant
+     * violations; on the five-row fixture here, 2 of 5 rows matched a slave row ahead of the master
+     * (master ts 01 matched b.ts=02, master ts 03 matched b.ts=04) across 2 descending steps.
+     * <p>
+     * A fixture that comes out ascending is not evidence against this: with keys:[ts,sym] the map
+     * happens to be an OrderedMap whose insertion order tracks the forward scan, and keys:[ts]
+     * stays ascending for as long as the aggregates are still projected. Revert the fix and this
+     * test must fail.
+     */
+    @Test
+    public void testParallelKeyedHorizonJoinRefusedAsAsofJoinMaster() throws Exception {
+        sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+        assertQuery("""
+                select a.ts ats, b.ts bts
+                from ((select t.ts, avg(p.price) ap
+                       from t horizon join p on (t.sym = p.sym) range from 0s to 0s step 1s as h) timestamp(ts)) a
+                asof join t b
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS, HORIZON_SLAVE_DDL, HORIZON_SLAVE_ROWS)
+                .noLeakCheck()
+                .failsWith("ASC order over TIMESTAMP column is required but not provided");
+    }
+
+    /**
+     * Positive control for {@link #testSerialKeyedHorizonJoinRefusedAsAsofJoinMaster}. The serial
+     * HorizonJoinRecordCursorFactory is only reachable with parallel horizon joins switched off, so
+     * the switch is part of the fixture - without it this test would silently be a second copy of
+     * the parallel one. The plan assertion is paired with withPlanNotContaining("Async") because
+     * "Horizon Join" is a substring of "Async Horizon Join": a fragment check alone cannot tell the
+     * two factories apart.
+     */
+    @Test
+    public void testSerialKeyedHorizonJoinAloneStillReturnsAllRows() throws Exception {
+        sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+        assertQuery("""
+                select t.ts, avg(p.price) ap
+                from t horizon join p on (t.sym = p.sym) range from 0s to 0s step 1s as h
+                order by ts
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS, HORIZON_SLAVE_DDL, HORIZON_SLAVE_ROWS)
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .withPlanContaining("Horizon Join offsets: 1", "keys: [ts]")
+                .withPlanNotContaining("Async")
+                .returns("""
+                        ts\tap
+                        2024-01-01T00:00:00.000000Z\t10.0
+                        2024-01-01T00:00:01.000000Z\t20.0
+                        2024-01-01T00:00:02.000000Z\t30.0
+                        2024-01-01T00:00:03.000000Z\t40.0
+                        2024-01-01T00:00:04.000000Z\t50.0
+                        """);
+    }
+
+    /**
+     * HorizonJoinRecordCursorFactory, the serial keyed horizon join: same map-order emission as its
+     * parallel sibling, minus the sharding. Same measured evidence - 172 of 299 descending steps,
+     * 296 of 300 ASOF violations - and the same 2-of-5 violation on this fixture. Revert the fix
+     * and this test must fail.
+     */
+    @Test
+    public void testSerialKeyedHorizonJoinRefusedAsAsofJoinMaster() throws Exception {
+        sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+        assertQuery("""
+                select a.ts ats, b.ts bts
+                from ((select t.ts, avg(p.price) ap
+                       from t horizon join p on (t.sym = p.sym) range from 0s to 0s step 1s as h) timestamp(ts)) a
+                asof join t b
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS, HORIZON_SLAVE_DDL, HORIZON_SLAVE_ROWS)
+                .noLeakCheck()
+                .failsWith("ASC order over TIMESTAMP column is required but not provided");
+    }
+
+    /**
+     * Positive control for {@link #testParallelKeyedMultiHorizonJoinRefusedAsAsofJoinMaster}. A
+     * second HORIZON JOIN clause switches to the multi-table factory ("tables: 2" in the plan),
+     * which keeps its own state per slave table but still funnels everything into one aggregation
+     * map - so joining more slaves changes which aggregates land in an entry, not the order the
+     * entries come out in. The nulls are real: table q has no rows for sym b or d.
+     */
+    @Test
+    public void testParallelKeyedMultiHorizonJoinAloneStillReturnsAllRows() throws Exception {
+        sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+        assertQuery("""
+                select t.ts, avg(p.price) ap, avg(q.ask) aq
+                from t horizon join p on (t.sym = p.sym) horizon join q on (t.sym = q.sym) list (0) as h
+                order by ts
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS, HORIZON_SLAVE_DDL, HORIZON_SLAVE_ROWS, HORIZON_SLAVE2_DDL, HORIZON_SLAVE2_ROWS)
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .withPlanContaining("Async Multi Horizon Join", "tables: 2", "keys: [ts]")
+                .returns("""
+                        ts\tap\taq
+                        2024-01-01T00:00:00.000000Z\t10.0\t11.0
+                        2024-01-01T00:00:01.000000Z\t20.0\tnull
+                        2024-01-01T00:00:02.000000Z\t30.0\t31.0
+                        2024-01-01T00:00:03.000000Z\t40.0\tnull
+                        2024-01-01T00:00:04.000000Z\t50.0\t51.0
+                        """);
+    }
+
+    /**
+     * AsyncMultiHorizonJoinRecordCursorFactory: as
+     * {@link #testParallelKeyedHorizonJoinRefusedAsAsofJoinMaster}, over two slave tables. Same
+     * 2-of-5 violation on this fixture (master ts 01 matched b.ts=02, master ts 03 matched
+     * b.ts=04). Revert the fix and this test must fail.
+     */
+    @Test
+    public void testParallelKeyedMultiHorizonJoinRefusedAsAsofJoinMaster() throws Exception {
+        sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+        assertQuery("""
+                select a.ts ats, b.ts bts
+                from ((select t.ts, avg(p.price) ap, avg(q.ask) aq
+                       from t horizon join p on (t.sym = p.sym) horizon join q on (t.sym = q.sym) list (0) as h) timestamp(ts)) a
+                asof join t b
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS, HORIZON_SLAVE_DDL, HORIZON_SLAVE_ROWS, HORIZON_SLAVE2_DDL, HORIZON_SLAVE2_ROWS)
+                .noLeakCheck()
+                .failsWith("ASC order over TIMESTAMP column is required but not provided");
+    }
+
+    /**
+     * Positive control for {@link #testSerialKeyedMultiHorizonJoinRefusedAsAsofJoinMaster}; as the
+     * parallel multi control, with parallel horizon joins switched off so the serial
+     * MultiHorizonJoinRecordCursorFactory is the one under test.
+     */
+    @Test
+    public void testSerialKeyedMultiHorizonJoinAloneStillReturnsAllRows() throws Exception {
+        sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+        assertQuery("""
+                select t.ts, avg(p.price) ap, avg(q.ask) aq
+                from t horizon join p on (t.sym = p.sym) horizon join q on (t.sym = q.sym) list (0) as h
+                order by ts
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS, HORIZON_SLAVE_DDL, HORIZON_SLAVE_ROWS, HORIZON_SLAVE2_DDL, HORIZON_SLAVE2_ROWS)
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .withPlanContaining("Multi Horizon Join offsets: 1", "tables: 2", "keys: [ts]")
+                .withPlanNotContaining("Async")
+                .returns("""
+                        ts\tap\taq
+                        2024-01-01T00:00:00.000000Z\t10.0\t11.0
+                        2024-01-01T00:00:01.000000Z\t20.0\tnull
+                        2024-01-01T00:00:02.000000Z\t30.0\t31.0
+                        2024-01-01T00:00:03.000000Z\t40.0\tnull
+                        2024-01-01T00:00:04.000000Z\t50.0\t51.0
+                        """);
+    }
+
+    /**
+     * MultiHorizonJoinRecordCursorFactory, the serial multi-table keyed horizon join. Revert the
+     * fix and this test must fail.
+     */
+    @Test
+    public void testSerialKeyedMultiHorizonJoinRefusedAsAsofJoinMaster() throws Exception {
+        sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+        assertQuery("""
+                select a.ts ats, b.ts bts
+                from ((select t.ts, avg(p.price) ap, avg(q.ask) aq
+                       from t horizon join p on (t.sym = p.sym) horizon join q on (t.sym = q.sym) list (0) as h) timestamp(ts)) a
+                asof join t b
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS, HORIZON_SLAVE_DDL, HORIZON_SLAVE_ROWS, HORIZON_SLAVE2_DDL, HORIZON_SLAVE2_ROWS)
+                .noLeakCheck()
+                .failsWith("ASC order over TIMESTAMP column is required but not provided");
+    }
+
+    /**
+     * The boundary of this commit, and the mirror image of the four horizon-join refusals. Dropping
+     * the group key leaves a not-keyed horizon join, which emits exactly one aggregated row
+     * (size() is 1), so no pair of emitted rows exists that could be out of ascending order and its
+     * FORWARD claim is trivially true. The four *NotKeyed* siblings were audited and re-verified by
+     * execution on that basis and deliberately left alone.
+     * <p>
+     * The boundary is thinner than it looks: projecting {@code h.offset} alongside the aggregates
+     * makes the same query keyed and switches it to the factory this commit corrects. That is why
+     * the refusals above are not evidence about HORIZON JOIN in general - only about the keyed
+     * factories - and why this acceptance test has to exist alongside them.
+     */
+    @Test
+    public void testNotKeyedHorizonJoinAcceptedAsAsofJoinMaster() throws Exception {
+        sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+        assertQuery("""
+                select a.ts ats, b.ts bts
+                from ((select max(t.ts) ts, avg(p.price) ap
+                       from t horizon join p range from 0s to 0s step 1s as h) timestamp(ts)) a
+                asof join t b
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS, HORIZON_SLAVE_DDL, HORIZON_SLAVE_ROWS)
+                .noLeakCheck()
+                .timestamp("ats")
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Async Horizon Join", "AsOf Join")
+                .withPlanNotContaining("keys:")
+                .returns("""
+                        ats\tbts
+                        2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:04.000000Z
                         """);
     }
 }
