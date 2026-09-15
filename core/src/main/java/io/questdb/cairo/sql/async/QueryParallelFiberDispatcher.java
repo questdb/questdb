@@ -63,6 +63,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigurationListener, FiberRuntimeQuiesceListener, QuietCloseable {
     public static final long OWNER_YIELD_UNSET = Long.MIN_VALUE;
+    private static final long OWNER_HELP_YIELD_INTERVAL_NANOS = 1_000_000L;
     private static final long PUBLICATION_OPEN = Long.MIN_VALUE;
     private static final long PUBLICATION_PERMIT_MASK = Long.MAX_VALUE;
     private static final int QUIESCE_DRAINED = 3;
@@ -74,6 +75,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     private final FiberTaskPool<GroupByLongTopKFiberTask> longTopKTaskPool;
     private final FiberTaskPool<GroupByMergeShardFiberTask> mergeShardTaskPool;
     private final MessageBus messageBus;
+    private final NanosecondClock nanosecondClock;
     private final AtomicLong progressVersion = new AtomicLong();
     private final FiberEventWaitQueue progressWaitQueue = new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
     private final AtomicLong publicationAdmission = new AtomicLong(PUBLICATION_OPEN);
@@ -86,7 +88,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     private volatile boolean isClosed;
 
     public QueryParallelFiberDispatcher(CairoEngine engine, MessageBus messageBus, FiberRuntime runtime) {
-        this(engine, messageBus, runtime, System::nanoTime);
+        this(engine, messageBus, runtime, engine.getConfiguration().getNanosecondClock());
     }
 
     @TestOnly
@@ -97,7 +99,8 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             NanosecondClock nanosecondClock
     ) {
         this.messageBus = messageBus;
-        this.batchPolicy = new PageFrameReduceDispatcher.BatchPolicy(runtime, nanosecondClock);
+        this.batchPolicy = new PageFrameReduceDispatcher.BatchPolicy(engine.getConfiguration().getSqlPageFrameMaxRows());
+        this.nanosecondClock = nanosecondClock;
         this.runtime = runtime;
         this.timerClock = engine.getConfiguration().getMillisecondClock();
         this.timerIntervalMillis = Math.max(1, engine.getConfiguration().getQueryContinuationWakeIntervalMillis());
@@ -485,47 +488,48 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     }
 
     /**
-     * Throttles the cooperative yield of a Fiber owner that helps with its own unpublished work:
-     * the owner gives the carrier up at most once per interval while its own runtime has another
-     * Fiber queued, not for that reason while a time-sliced dispatch ticket governs the mount, and
-     * in any case once the batch budget has elapsed so the host worker's Jobs run. A ticket poll
-     * that remounted the owner restarts the interval. Start with {@link #OWNER_YIELD_UNSET} and
-     * pass the returned value back on every call.
+     * Retains the owner's ordinary one-millisecond helping interval across dispatch preemption.
+     * Time spent suspended for another group does not consume that interval.
      */
     public long cooperateFiberOwner(long lastOwnerYieldNanos) {
         final Fiber fiber = Fiber.current();
         if (fiber == null || !Fiber.isMounted()) {
             return lastOwnerYieldNanos;
         }
+        long now = nanosecondClock.getTicks();
         final long mountVersion = fiber.getMountVersion();
         Fiber.pollMountedDispatchTicket();
-        if (lastOwnerYieldNanos == OWNER_YIELD_UNSET || fiber.getMountVersion() != mountVersion) {
-            return batchPolicy.ticks();
+        if (fiber.getMountVersion() != mountVersion) {
+            final long resumedAt = nanosecondClock.getTicks();
+            if (lastOwnerYieldNanos != OWNER_YIELD_UNSET) {
+                lastOwnerYieldNanos += resumedAt - now;
+            }
+            now = resumedAt;
         }
-        final long elapsedNanos = batchPolicy.ticks() - lastOwnerYieldNanos;
-        if (elapsedNanos < 0) {
-            return batchPolicy.ticks();
+        if (lastOwnerYieldNanos == OWNER_YIELD_UNSET) {
+            return now;
         }
-        if (elapsedNanos < batchPolicy.getNanos()
-                && (elapsedNanos < batchPolicy.getSliceNanos()
-                || Fiber.isMountedDispatchTimeSliced()
-                || !Fiber.hasQueuedRuntimeWork())) {
-            return lastOwnerYieldNanos;
+        final long elapsed = now - lastOwnerYieldNanos;
+        if (elapsed < 0) {
+            return now;
         }
-        Fiber.yieldCooperatively();
-        return batchPolicy.ticks();
+        if (elapsed >= OWNER_HELP_YIELD_INTERVAL_NANOS) {
+            Fiber.yieldCooperatively();
+            return nanosecondClock.getTicks();
+        }
+        return lastOwnerYieldNanos;
     }
 
     public long getBatchCheckRows() {
         return batchPolicy.getCheckRows();
     }
 
-    public long getBatchSliceYieldCount() {
-        return batchPolicy.getSliceYieldCount();
+    public int getBatchLimit() {
+        return PageFrameReduceDispatcher.DEFAULT_BATCH_LIMIT;
     }
 
-    public long getBatchTimeoutCount() {
-        return batchPolicy.getTimeoutCount();
+    public long getBatchRowBudget() {
+        return batchPolicy.getRowBudget();
     }
 
     @TestOnly
@@ -620,13 +624,8 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     }
 
     @TestOnly
-    public void setBatchNanosForTesting(long batchNanos) {
-        batchPolicy.setNanos(batchNanos);
-    }
-
-    @TestOnly
-    public void setBatchSliceNanosForTesting(long batchSliceNanos) {
-        batchPolicy.setSliceNanos(batchSliceNanos);
+    public void setBatchRowBudgetForTesting(long batchRowBudget) {
+        batchPolicy.setRowBudget(batchRowBudget);
     }
 
     public void signalOwnerProgress(@Nullable AsyncQueryProgressState progressState) {

@@ -90,153 +90,15 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
+
     @Test
-    public void testBatchCheckWaitsForRowThreshold() throws Exception {
-        assertMemoryLeak(() -> {
-            final FiberRuntime runtime = new FiberRuntime(1);
-            final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
-                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
-                    4
-            );
-            final MPSequence pubSeq = new MPSequence(queue.getCycle());
-            final MCSequence subSeq = new MCSequence(queue.getCycle());
-            pubSeq.then(subSeq).then(pubSeq);
-            final long reduceNanos = TimeUnit.MICROSECONDS.toNanos(10);
-            final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
-                    engine,
-                    configuration,
-                    engine.getMessageBus(),
-                    new StatefulAtom() {
-                    },
-                    (_, _, _, _, _) -> {
-                        final long startNanos = System.nanoTime();
-                        while (System.nanoTime() - startNanos < reduceNanos) {
-                            Thread.onSpinWait();
-                        }
-                    },
-                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
-                    1,
-                    PageFrameReduceTask.TYPE_FILTER
-            ) {
-                @Override
-                public SqlExecutionCircuitBreaker getCircuitBreaker() {
-                    return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-                }
-
-                @Override
-                public long getFrameRowCount(int frameIndex) {
-                    return 1;
-                }
-            };
-            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
-                    engine,
-                    engine.getMessageBus(),
-                    runtime
-            );
-            try {
-                dispatcher.setBatchNanosForTesting(1);
-                dispatcher.setBatchCheckRowsForTesting(3);
-                for (int i = 0; i < 4; i++) {
-                    final long cursor = pubSeq.next();
-                    Assert.assertTrue(cursor > -1);
-                    queue.get(cursor).of(frameSequence, i, false);
-                    pubSeq.done(cursor);
-                }
-
-                // every batch check trips the 1 ns budget, but one-row frames reach a check only
-                // after three of them, so the direct-mounted batch reduces three frames before it
-                // returns to the host
-                Assert.assertFalse(dispatcher.consumeOrdered(0, queue, subSeq, null));
-                Assert.assertEquals(2, subSeq.current());
-                Assert.assertEquals(3, frameSequence.getReduceFinishedCounter().get());
-
-                Assert.assertFalse(dispatcher.consumeOrdered(0, queue, subSeq, null));
-                Assert.assertEquals(3, subSeq.current());
-                Assert.assertEquals(4, frameSequence.getReduceFinishedCounter().get());
-
-                dispatcher.setBatchCheckRowsForTesting(-1);
-                Assert.assertEquals(262_144L, dispatcher.getBatchCheckRows());
-            } finally {
-                close(runtime);
-                Misc.free(dispatcher);
-                Misc.free(frameSequence);
-                Misc.free(queue);
-            }
-        });
+    public void testBatchFrameLimitRetainsMasterBoundary() throws Exception {
+        assertBatchFrameLimit(false);
     }
 
     @Test
-    public void testBatchNanosStopsDrainAfterFirstFrame() throws Exception {
-        assertMemoryLeak(() -> {
-            final FiberRuntime runtime = new FiberRuntime(1);
-            final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
-                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
-                    2
-            );
-            final MPSequence pubSeq = new MPSequence(queue.getCycle());
-            final MCSequence subSeq = new MCSequence(queue.getCycle());
-            pubSeq.then(subSeq).then(pubSeq);
-            final long reduceNanos = TimeUnit.MILLISECONDS.toNanos(1);
-            final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
-                    engine,
-                    configuration,
-                    engine.getMessageBus(),
-                    new StatefulAtom() {
-                    },
-                    (_, _, _, _, _) -> {
-                        final long startNanos = System.nanoTime();
-                        while (System.nanoTime() - startNanos < reduceNanos) {
-                            Thread.onSpinWait();
-                        }
-                    },
-                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
-                    1,
-                    PageFrameReduceTask.TYPE_FILTER
-            ) {
-                @Override
-                public SqlExecutionCircuitBreaker getCircuitBreaker() {
-                    return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-                }
-
-                @Override
-                public long getFrameRowCount(int frameIndex) {
-                    return 1;
-                }
-            };
-            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
-                    engine,
-                    engine.getMessageBus(),
-                    runtime
-            );
-            try {
-                dispatcher.setBatchNanosForTesting(reduceNanos);
-                dispatcher.setBatchCheckRowsForTesting(0);
-                for (int i = 0; i < 2; i++) {
-                    final long cursor = pubSeq.next();
-                    Assert.assertTrue(cursor > -1);
-                    queue.get(cursor).of(frameSequence, i, false);
-                    pubSeq.done(cursor);
-                }
-
-                // the first frame runs for the whole batch time budget, so the direct-mounted batch
-                // must return to the host without claiming the second cursor
-                Assert.assertFalse(dispatcher.consumeOrdered(0, queue, subSeq, null));
-                Assert.assertEquals(0, subSeq.current());
-                Assert.assertEquals(1, frameSequence.getReduceFinishedCounter().get());
-
-                Assert.assertFalse(dispatcher.consumeOrdered(0, queue, subSeq, null));
-                Assert.assertEquals(1, subSeq.current());
-                Assert.assertEquals(2, frameSequence.getReduceFinishedCounter().get());
-
-                dispatcher.setBatchNanosForTesting(0);
-                Assert.assertEquals(TimeUnit.MILLISECONDS.toNanos(10), dispatcher.getBatchNanos());
-            } finally {
-                close(runtime);
-                Misc.free(dispatcher);
-                Misc.free(frameSequence);
-                Misc.free(queue);
-            }
-        });
+    public void testBatchFrameLimitSurvivesPreemption() throws Exception {
+        assertBatchFrameLimit(true);
     }
 
     @Test
@@ -330,29 +192,24 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBatchSliceRestartsAfterRemount() throws Exception {
+    public void testBatchRowBudgetStopsDrainAfterFirstFrame() throws Exception {
         assertMemoryLeak(() -> {
-            final AtomicLong batchClock = new AtomicLong();
-            final FiberDispatchContext context = new FiberDispatchContext() {
-            };
-            final RecordingFiberDispatchController controller = new RecordingFiberDispatchController();
-            controller.setCooperativePollAction(() -> Assert.assertTrue(Fiber.yieldForDispatch()));
-            final FiberRuntime runtime = controller.createRuntime(2);
+            final FiberRuntime runtime = new FiberRuntime(1);
             final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
                     () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
-                    4
+                    2
             );
             final MPSequence pubSeq = new MPSequence(queue.getCycle());
             final MCSequence subSeq = new MCSequence(queue.getCycle());
             pubSeq.then(subSeq).then(pubSeq);
-            final long sliceNanos = 1_000;
             final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
                     engine,
                     configuration,
                     engine.getMessageBus(),
                     new StatefulAtom() {
                     },
-                    (_, _, _, _, _) -> batchClock.incrementAndGet(),
+                    (_, _, _, _, _) -> {
+                    },
                     () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
                     1,
                     PageFrameReduceTask.TYPE_FILTER
@@ -363,51 +220,35 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public FiberDispatchContext getDispatchContext() {
-                    return context;
-                }
-
-                @Override
                 public long getFrameRowCount(int frameIndex) {
-                    return 1;
+                    return 1_000;
                 }
             };
             final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
                     engine,
                     engine.getMessageBus(),
-                    runtime,
-                    batchClock::get
+                    runtime
             );
             try {
-                dispatcher.setBatchNanosForTesting(Long.MAX_VALUE);
-                dispatcher.setBatchSliceNanosForTesting(sliceNanos);
-                dispatcher.setBatchCheckRowsForTesting(0);
-                for (int i = 0; i < 3; i++) {
+                dispatcher.setBatchRowBudgetForTesting(1_000);
+                for (int i = 0; i < 2; i++) {
                     final long cursor = pubSeq.next();
                     Assert.assertTrue(cursor > -1);
                     queue.get(cursor).of(frameSequence, i, false);
                     pubSeq.done(cursor);
                 }
-                // Every ticket poll parks the reducer behind a competitor that advances the clock
-                // beyond the slice. Remounting must exclude that parked time from the batch.
-                final RelaunchingTask competitor = new RelaunchingTask(
-                        runtime,
-                        3,
-                        () -> batchClock.addAndGet(2 * sliceNanos)
-                );
-                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(competitor));
-                dispatcher.consumeOrdered(0, queue, subSeq, null);
-                final long deadline = System.nanoTime() + 5_000_000_000L;
-                while (runtime.getOutstandingTaskCount() > 0 && System.nanoTime() < deadline) {
-                    runtime.drain(64);
-                }
-                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
-                Assert.assertEquals(3, competitor.runCount);
-                Assert.assertEquals(6 * sliceNanos + 3, batchClock.get());
-                Assert.assertEquals(3, frameSequence.getReduceFinishedCounter().get());
-                Assert.assertEquals(2, subSeq.current());
-                Assert.assertEquals(0, dispatcher.getBatchSliceYieldCount());
-                Assert.assertEquals(0, dispatcher.getBatchTimeoutCount());
+
+                // the first frame fills the budget, so the direct-mounted batch must not claim the second cursor
+                Assert.assertFalse(dispatcher.consumeOrdered(0, queue, subSeq, null));
+                Assert.assertEquals(0, subSeq.current());
+                Assert.assertEquals(1, frameSequence.getReduceFinishedCounter().get());
+
+                Assert.assertFalse(dispatcher.consumeOrdered(0, queue, subSeq, null));
+                Assert.assertEquals(1, subSeq.current());
+                Assert.assertEquals(2, frameSequence.getReduceFinishedCounter().get());
+
+                dispatcher.setBatchRowBudgetForTesting(0);
+                Assert.assertEquals(configuration.getSqlPageFrameMaxRows(), dispatcher.getBatchRowBudget());
             } finally {
                 close(runtime);
                 Misc.free(dispatcher);
@@ -506,8 +347,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
                     engine,
                     engine.getMessageBus(),
-                    runtime,
-                    () -> 0L
+                    runtime
             );
             dispatcher.setBatchCheckRowsForTesting(0);
             try {
@@ -643,8 +483,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
                     engine,
                     engine.getMessageBus(),
-                    runtime,
-                    () -> 0L
+                    runtime
             );
             dispatcher.setBatchCheckRowsForTesting(0);
             try {
@@ -834,106 +673,6 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Assert.assertFalse(dispatcher.consumeUnordered(0, queue, subSeq, null));
                 Assert.assertEquals(-2, frameSequence.getDoneLatch().getCount());
                 Assert.assertEquals(0, runtime.getOutstandingTaskCount());
-            } finally {
-                close(runtime);
-                Misc.free(dispatcher);
-                Misc.free(frameSequence);
-                Misc.free(queue);
-            }
-        });
-    }
-
-    @Test
-    public void testBatchYieldsToQueuedFiberOnlyAfterSlice() throws Exception {
-        assertMemoryLeak(() -> {
-            final FiberRuntime runtime = new FiberRuntime(2);
-            final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
-                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
-                    4
-            );
-            final MPSequence pubSeq = new MPSequence(queue.getCycle());
-            final MCSequence subSeq = new MCSequence(queue.getCycle());
-            pubSeq.then(subSeq).then(pubSeq);
-            final long sliceNanos = TimeUnit.MILLISECONDS.toNanos(1);
-            final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
-                    engine,
-                    configuration,
-                    engine.getMessageBus(),
-                    new StatefulAtom() {
-                    },
-                    (_, _, _, _, _) -> {
-                        final long startNanos = System.nanoTime();
-                        while (System.nanoTime() - startNanos < sliceNanos) {
-                            Thread.onSpinWait();
-                        }
-                    },
-                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
-                    1,
-                    PageFrameReduceTask.TYPE_FILTER
-            ) {
-                @Override
-                public SqlExecutionCircuitBreaker getCircuitBreaker() {
-                    return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-                }
-
-                @Override
-                public long getFrameRowCount(int frameIndex) {
-                    return 1;
-                }
-            };
-            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
-                    engine,
-                    engine.getMessageBus(),
-                    runtime
-            );
-            try {
-                dispatcher.setBatchNanosForTesting(Long.MAX_VALUE);
-                dispatcher.setBatchSliceNanosForTesting(sliceNanos);
-                dispatcher.setBatchCheckRowsForTesting(0);
-                for (int i = 0; i < 2; i++) {
-                    final long cursor = pubSeq.next();
-                    Assert.assertTrue(cursor > -1);
-                    queue.get(cursor).of(frameSequence, i, false);
-                    pubSeq.done(cursor);
-                }
-                final OneShotTask competitor = new OneShotTask();
-                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(competitor));
-
-                // every frame uses up the slice, so the batch yields to the queued competitor after
-                // one frame and stays queued behind it with the ring cursor released
-                Assert.assertFalse(dispatcher.consumeOrdered(0, queue, subSeq, null));
-                Assert.assertEquals(0, subSeq.current());
-                Assert.assertEquals(1, frameSequence.getReduceFinishedCounter().get());
-                Assert.assertFalse(competitor.isDone());
-                Assert.assertEquals(1, dispatcher.getBatchSliceYieldCount());
-                Assert.assertEquals(2, runtime.getQueuedCount());
-
-                Assert.assertEquals(1, runtime.drain(1));
-                Assert.assertTrue(competitor.isDone());
-                Assert.assertEquals(1, frameSequence.getReduceFinishedCounter().get());
-
-                // the same batch resumes and drains the rest of the ring
-                Assert.assertEquals(1, runtime.drain(1));
-                Assert.assertEquals(1, subSeq.current());
-                Assert.assertEquals(2, frameSequence.getReduceFinishedCounter().get());
-                Assert.assertEquals(0, runtime.getQueuedCount());
-
-                // with nothing queued the batch keeps the carrier past the slice
-                for (int i = 2; i < 4; i++) {
-                    final long cursor = pubSeq.next();
-                    Assert.assertTrue(cursor > -1);
-                    queue.get(cursor).of(frameSequence, i, false);
-                    pubSeq.done(cursor);
-                }
-                Assert.assertFalse(dispatcher.consumeOrdered(0, queue, subSeq, null));
-                Assert.assertEquals(3, subSeq.current());
-                Assert.assertEquals(4, frameSequence.getReduceFinishedCounter().get());
-                Assert.assertEquals(1, dispatcher.getBatchSliceYieldCount());
-                Assert.assertEquals(0, dispatcher.getBatchTimeoutCount());
-
-                dispatcher.setBatchSliceNanosForTesting(0);
-                dispatcher.setBatchNanosForTesting(0);
-                Assert.assertEquals(TimeUnit.MILLISECONDS.toNanos(2), dispatcher.getBatchSliceNanos());
             } finally {
                 close(runtime);
                 Misc.free(dispatcher);
@@ -4673,6 +4412,78 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         }
     }
 
+    private void assertBatchFrameLimit(boolean isPreempted) throws Exception {
+        assertMemoryLeak(() -> {
+            final RecordingFiberDispatchController controller = new RecordingFiberDispatchController();
+            final FiberRuntime runtime = controller.createRuntime(2);
+            final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD), 128
+            );
+            final MPSequence pubSeq = new MPSequence(queue.getCycle());
+            final MCSequence subSeq = new MCSequence(queue.getCycle());
+            pubSeq.then(subSeq).then(pubSeq);
+            final AtomicInteger reduced = new AtomicInteger();
+            final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
+                    engine, configuration, engine.getMessageBus(), new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> Assert.assertEquals(reduced.getAndIncrement() / 10, controller.getCooperativePollCount()),
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD), 1, PageFrameReduceTask.TYPE_FILTER
+            ) {
+                @Override
+                public SqlExecutionCircuitBreaker getCircuitBreaker() {
+                    return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+                }
+
+                @Override
+                public long getFrameRowCount(int frameIndex) {
+                    return 1;
+                }
+            };
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(engine, engine.getMessageBus(), runtime);
+            dispatcher.setBatchCheckRowsForTesting(10);
+            dispatcher.setBatchRowBudgetForTesting(Long.MAX_VALUE);
+            controller.setCooperativePollAction(() -> {
+                Assert.assertEquals(controller.getCooperativePollCount() * 10, reduced.get());
+                if (isPreempted && controller.getCooperativePollCount() == 1) {
+                    Assert.assertTrue(Fiber.yieldForPreemption());
+                }
+            });
+            try {
+                for (int index = 0; index < 65; index++) {
+                    final long cursor = pubSeq.next();
+                    Assert.assertTrue(cursor >= 0);
+                    queue.get(cursor).of(frameSequence, index, false);
+                    pubSeq.done(cursor);
+                }
+                final OneShotTask competitor = new OneShotTask();
+                Assert.assertFalse(dispatcher.consumeOrdered(-1, queue, subSeq, null));
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(competitor));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertEquals(isPreempted ? 10 : 64, reduced.get());
+                Assert.assertFalse(competitor.isDone());
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertTrue(competitor.isDone());
+                if (isPreempted) {
+                    Assert.assertEquals(1, runtime.drain(1));
+                }
+                Assert.assertEquals(64, reduced.get());
+                Assert.assertEquals(63, subSeq.current());
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                Assert.assertFalse(dispatcher.consumeOrdered(-1, queue, subSeq, null));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertEquals(65, reduced.get());
+                Assert.assertEquals(65, frameSequence.getReduceFinishedCounter().get());
+                Assert.assertEquals(6, controller.getCooperativePollCount());
+                Assert.assertTrue(frameSequence.isActive());
+            } finally {
+                close(runtime);
+                Misc.free(dispatcher);
+                Misc.free(frameSequence);
+                Misc.free(queue);
+            }
+        });
+    }
+
     private void assertProgressBeforeTimer(boolean isSequenceWait, ProgressBeforeTimerScenario scenario) throws Exception {
         assertMemoryLeak(() -> {
             final TimerShards progressTimerShards = new TimerShards(1, "test-progress-before-timer", LOG);
@@ -5235,40 +5046,6 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         @Override
         protected boolean runStep() {
             return true;
-        }
-    }
-
-    private static final class RelaunchingTask extends FiberTask {
-        private final Runnable onRun;
-        private final FiberRuntime runtime;
-        private int remainingRuns;
-        private int runCount;
-
-        private RelaunchingTask(FiberRuntime runtime, int runs, long spinNanos) {
-            this(runtime, runs, () -> {
-                final long startNanos = System.nanoTime();
-                while (System.nanoTime() - startNanos < spinNanos) {
-                    Thread.onSpinWait();
-                }
-            });
-        }
-
-        private RelaunchingTask(FiberRuntime runtime, int runs, Runnable onRun) {
-            this.onRun = onRun;
-            this.runtime = runtime;
-            this.remainingRuns = runs;
-        }
-
-        @Override
-        protected void onParked() {
-            runtime.launch(this);
-        }
-
-        @Override
-        protected boolean runStep() {
-            onRun.run();
-            runCount++;
-            return --remainingRuns == 0;
         }
     }
 }

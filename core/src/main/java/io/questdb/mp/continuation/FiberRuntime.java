@@ -513,7 +513,7 @@ public final class FiberRuntime {
             final int processResult = process(fiber, false, null);
             // Capture the yield reason before finalization can republish the fiber to another carrier.
             final boolean isCooperativeYield = processResult == PROCESS_OWNED
-                    && fiber.getYieldReason() == Fiber.YIELD_DISPATCH;
+                    && fiber.isDispatchYield();
             if (processResult != PROCESS_TERMINATED) {
                 finishProcessingAfterUnmount(fiber, processResult == PROCESS_OWNED, null);
             }
@@ -1730,7 +1730,7 @@ public final class FiberRuntime {
                 finalizeOutcome(outcome);
             } else if (fiber.getYieldReason() == Fiber.YIELD_WAIT) {
                 fiber.publishWaiting();
-            } else if (fiber.getYieldReason() == Fiber.YIELD_DISPATCH) {
+            } else if (fiber.isDispatchYield()) {
                 fiber.publishDispatchYield();
             } else {
                 fiber.takeOutcome(outcome);
@@ -1923,7 +1923,7 @@ public final class FiberRuntime {
                     cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
                 }
                 if (cleanupFailure == null && wasMounted
-                        && fiber.getYieldReason() == Fiber.YIELD_DISPATCH && !fiber.isShutdownRequested()) {
+                        && fiber.isDispatchYield() && !fiber.isShutdownRequested()) {
                     // Publication is not safe until finishProcessing has handed off notification
                     // ownership. Keep only the completed ticket identity across that boundary.
                     fiber.setPendingDispatchTicket(settledTicket, settledEpoch);
@@ -2227,9 +2227,11 @@ public final class FiberRuntime {
             }
             final FiberDispatchRoute route = fiber.isShutdownRequested()
                     ? FiberDispatchRoute.SHUTDOWN_CLEANUP
-                    : fiber.getYieldReason() == Fiber.YIELD_DISPATCH
-                      ? FiberDispatchRoute.DISPATCH_YIELD
-                      : FiberDispatchRoute.POST_PROCESS_RESIGNAL;
+                    : switch (fiber.getYieldReason()) {
+                        case Fiber.YIELD_DISPATCH -> FiberDispatchRoute.DISPATCH_YIELD;
+                        case Fiber.YIELD_PREEMPTED -> FiberDispatchRoute.PREEMPTED;
+                        default -> FiberDispatchRoute.POST_PROCESS_RESIGNAL;
+                    };
             final long nextDispatchEpoch = request.begin(route, ownerContext);
             submitDispatch(request, nextDispatchEpoch);
             return;

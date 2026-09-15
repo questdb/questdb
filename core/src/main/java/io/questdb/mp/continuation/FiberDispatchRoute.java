@@ -29,6 +29,7 @@ public enum FiberDispatchRoute {
     DIRECT_PENDING(true, false),
     DISPATCH_YIELD(true, false),
     POST_PROCESS_RESIGNAL(true, false),
+    PREEMPTED(true, false),
     REQUEST_RUN(true, true),
     SHUTDOWN_CLEANUP(false, false);
 

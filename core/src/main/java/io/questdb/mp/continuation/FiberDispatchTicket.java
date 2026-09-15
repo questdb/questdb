@@ -33,14 +33,6 @@ package io.questdb.mp.continuation;
  */
 public interface FiberDispatchTicket {
     /**
-     * Whether {@link #onCooperativePoll()} ends the mounted segment on the ticket's own time
-     * slice. Batching loops then leave slice fairness to the ticket.
-     */
-    default boolean isTimeSliced() {
-        return false;
-    }
-
-    /**
      * Invoked from an explicitly cooperative execution boundary while this ticket owns the
      * currently mounted Fiber segment. Implementations must keep the ordinary path allocation-free.
      */

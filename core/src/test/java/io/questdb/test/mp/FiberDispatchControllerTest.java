@@ -256,58 +256,17 @@ public class FiberDispatchControllerTest {
 
     @Test
     public void testDispatchYieldUnmountsBeforeRedispatch() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final TestController controller = new TestController();
-            final FiberRuntime runtime = newRuntime(1, controller);
-            final DispatchYieldTask task = new DispatchYieldTask();
-
-            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
-            controller.session.grantNext();
-            Assert.assertEquals(1, runtime.drain(1));
-            Assert.assertEquals(FiberDispatchRoute.DISPATCH_YIELD, controller.session.peekRoute());
-            Assert.assertEquals(1, controller.ticket.redispatchCount);
-            Assert.assertEquals(1, controller.ticket.completionCount);
-            Assert.assertEquals(1, controller.ticket.unmountCount);
-
-            controller.session.grantNext();
-            Assert.assertEquals(1, runtime.drain(1));
-            Assert.assertTrue(task.isDone());
-            Assert.assertEquals(1, controller.ticket.redispatchCount);
-            Assert.assertEquals(2, controller.ticket.completionCount);
-            Assert.assertEquals(2, controller.ticket.unmountCount);
-
-            close(runtime);
-        });
+        assertDispatchYieldUnmountsBeforeRedispatch(false);
     }
 
     @Test
     public void testDriverFailureAfterDispatchYieldCompletesWithoutRedispatch() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final TestController controller = new TestController();
-            final FiberRuntime runtime = newRuntime(1, controller);
-            final RuntimeException failure = new RuntimeException("driver failure after dispatch yield");
-            final DispatchYieldTask task = new DispatchYieldTask();
+        assertDriverFailureAfterDispatchYieldCompletesWithoutRedispatch(false);
+    }
 
-            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
-            controller.session.grantNext();
-            runtime.setAfterProcessForTesting(() -> {
-                runtime.setAfterProcessForTesting(null);
-                Assert.assertEquals(1, controller.ticket.unmountCount);
-                Assert.assertEquals(0, controller.ticket.completionCount);
-                throw failure;
-            });
-            Assert.assertEquals(1, runtime.drain(1));
-            Assert.assertEquals(1, task.runCount);
-            Assert.assertEquals(0, task.resumeCount);
-            Assert.assertSame(failure, task.error);
-            Assert.assertEquals(0, controller.ticket.redispatchCount);
-            Assert.assertEquals(1, controller.ticket.completionCount);
-            Assert.assertEquals(1, controller.ticket.unmountCount);
-            Assert.assertTrue(controller.session.pending.isEmpty());
-            Assert.assertEquals(0, runtime.getQueuedCount());
-
-            close(runtime);
-        });
+    @Test
+    public void testDriverFailureAfterPreemptionCompletesWithoutRedispatch() throws Exception {
+        assertDriverFailureAfterDispatchYieldCompletesWithoutRedispatch(true);
     }
 
     @Test
@@ -665,22 +624,17 @@ public class FiberDispatchControllerTest {
 
     @Test
     public void testPinnedDispatchYieldRestoresMountedStateAndContext() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final TestController controller = new TestController();
-            final FiberRuntime runtime = newRuntime(1, controller);
-            final PinnedDispatchYieldTask task = new PinnedDispatchYieldTask();
+        assertPinnedDispatchYieldRestoresMountedStateAndContext(false);
+    }
 
-            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
-            controller.session.grantNext();
-            Assert.assertEquals(1, runtime.drain(1));
-            Assert.assertTrue(task.refusalObserved);
-            Assert.assertNull(controller.session.pending.element().request.getDispatchContext());
+    @Test
+    public void testPinnedPreemptionRestoresMountedStateAndContext() throws Exception {
+        assertPinnedDispatchYieldRestoresMountedStateAndContext(true);
+    }
 
-            controller.session.grantNext();
-            Assert.assertEquals(1, runtime.drain(1));
-            Assert.assertTrue(task.resumedAfterRefusal);
-            close(runtime, 1);
-        });
+    @Test
+    public void testPreemptionUnmountsBeforeRedispatch() throws Exception {
+        assertDispatchYieldUnmountsBeforeRedispatch(true);
     }
 
     @Test
@@ -827,6 +781,80 @@ public class FiberDispatchControllerTest {
             Assert.assertTrue(task.hasResumedAfterRefusal);
             Assert.assertEquals(2, controller.ticket.mountCount);
             Assert.assertEquals(2, controller.ticket.unmountCount);
+            close(runtime, 1);
+        });
+    }
+
+    private static void assertDispatchYieldUnmountsBeforeRedispatch(boolean isPreemption) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestController controller = new TestController();
+            final FiberRuntime runtime = newRuntime(1, controller);
+            final DispatchYieldTask task = new DispatchYieldTask(isPreemption);
+
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertEquals(isPreemption ? FiberDispatchRoute.PREEMPTED : FiberDispatchRoute.DISPATCH_YIELD, controller.session.peekRoute());
+            Assert.assertEquals(1, controller.ticket.redispatchCount);
+            Assert.assertEquals(1, controller.ticket.completionCount);
+            Assert.assertEquals(1, controller.ticket.unmountCount);
+
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertTrue(task.isDone());
+            Assert.assertEquals(1, controller.ticket.redispatchCount);
+            Assert.assertEquals(2, controller.ticket.completionCount);
+            Assert.assertEquals(2, controller.ticket.unmountCount);
+
+            close(runtime);
+        });
+    }
+
+    private static void assertDriverFailureAfterDispatchYieldCompletesWithoutRedispatch(boolean isPreemption) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestController controller = new TestController();
+            final FiberRuntime runtime = newRuntime(1, controller);
+            final RuntimeException failure = new RuntimeException("driver failure after dispatch yield");
+            final DispatchYieldTask task = new DispatchYieldTask(isPreemption);
+
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            controller.session.grantNext();
+            runtime.setAfterProcessForTesting(() -> {
+                runtime.setAfterProcessForTesting(null);
+                Assert.assertEquals(1, controller.ticket.unmountCount);
+                Assert.assertEquals(0, controller.ticket.completionCount);
+                throw failure;
+            });
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertEquals(1, task.runCount);
+            Assert.assertEquals(0, task.resumeCount);
+            Assert.assertSame(failure, task.error);
+            Assert.assertEquals(0, controller.ticket.redispatchCount);
+            Assert.assertEquals(1, controller.ticket.completionCount);
+            Assert.assertEquals(1, controller.ticket.unmountCount);
+            Assert.assertTrue(controller.session.pending.isEmpty());
+            Assert.assertEquals(0, runtime.getQueuedCount());
+
+            close(runtime);
+        });
+    }
+
+    private static void assertPinnedDispatchYieldRestoresMountedStateAndContext(boolean isPreemption) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestController controller = new TestController();
+            final FiberRuntime runtime = newRuntime(1, controller);
+            final PinnedDispatchYieldTask task = new PinnedDispatchYieldTask(isPreemption);
+
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertTrue(task.refusalObserved);
+            Assert.assertEquals(FiberDispatchRoute.DISPATCH_YIELD, controller.session.peekRoute());
+            Assert.assertNull(controller.session.pending.element().request.getDispatchContext());
+
+            controller.session.grantNext();
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertTrue(task.resumedAfterRefusal);
             close(runtime, 1);
         });
     }
@@ -1006,9 +1034,18 @@ public class FiberDispatchControllerTest {
     }
 
     private static class DispatchYieldTask extends FiberTask {
+        private final boolean isPreemption;
         private Throwable error;
         private int resumeCount;
         private int runCount;
+
+        private DispatchYieldTask() {
+            this(false);
+        }
+
+        private DispatchYieldTask(boolean isPreemption) {
+            this.isPreemption = isPreemption;
+        }
 
         @Override
         protected void onError(Throwable th) {
@@ -1018,7 +1055,7 @@ public class FiberDispatchControllerTest {
         @Override
         protected boolean runStep() {
             runCount++;
-            Assert.assertTrue(Fiber.yieldForDispatch());
+            Assert.assertTrue(isPreemption ? Fiber.yieldForPreemption() : Fiber.yieldForDispatch());
             resumeCount++;
             return true;
         }
@@ -1103,14 +1140,19 @@ public class FiberDispatchControllerTest {
     }
 
     private static class PinnedDispatchYieldTask extends FiberTask {
+        private final boolean isPreemption;
         private boolean refusalObserved;
         private boolean resumedAfterRefusal;
+
+        private PinnedDispatchYieldTask(boolean isPreemption) {
+            this.isPreemption = isPreemption;
+        }
 
         @Override
         protected boolean runStep() {
             Continuation.pin();
             try {
-                Assert.assertFalse(Fiber.yieldForDispatch(TestDispatchContext.INSTANCE));
+                Assert.assertFalse(isPreemption ? Fiber.yieldForPreemption() : Fiber.yieldForDispatch(TestDispatchContext.INSTANCE));
                 refusalObserved = true;
                 Assert.assertNull(Fiber.getDispatchContext());
             } finally {

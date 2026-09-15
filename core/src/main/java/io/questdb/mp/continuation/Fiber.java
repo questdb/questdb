@@ -42,6 +42,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     public static final long TOKEN_REFUSED = 0;
     public static final int YIELD_DISPATCH = 2;
     public static final int YIELD_FREE = 0;
+    public static final int YIELD_PREEMPTED = 3;
     public static final int YIELD_WAIT = 1;
     static final int EXECUTION_DONE = 6;
     static final int EXECUTION_FREE = 0;
@@ -165,15 +166,6 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return Continuation.getCurrentContinuation(SCOPE) != null;
     }
 
-    public static boolean isMountedDispatchTimeSliced() {
-        final Fiber fiber = mountedOrNull();
-        if (fiber != null) {
-            final FiberDispatchTicket ticket = fiber.mountedDispatchTicket;
-            return ticket != null && ticket.isTimeSliced();
-        }
-        return false;
-    }
-
     /**
      * Polls the reusable dispatch ticket that owns the current mounted segment. Uncontrolled
      * Fibers and ordinary non-Fiber execution have no ticket and therefore make this a no-op.
@@ -262,6 +254,15 @@ public final class Fiber implements FiberWaitCoordinator.Target {
      */
     public static boolean yieldForDispatch(@Nullable FiberDispatchContext nextDispatchContext) {
         return yieldForDispatch(requireControlledMountedFiber(), nextDispatchContext);
+    }
+
+    /**
+     * Suspends an expired dispatch grant without voluntarily giving up the task's scheduling
+     * position. The controller may resume this work before tasks that have not started yet.
+     */
+    public static boolean yieldForPreemption() {
+        final Fiber fiber = requireControlledMountedFiber();
+        return yieldForDispatch(fiber, fiber.dispatchContext, YIELD_PREEMPTED);
     }
 
     @Override
@@ -530,6 +531,10 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     private static boolean yieldForDispatch(Fiber fiber, @Nullable FiberDispatchContext nextDispatchContext) {
+        return yieldForDispatch(fiber, nextDispatchContext, YIELD_DISPATCH);
+    }
+
+    private static boolean yieldForDispatch(Fiber fiber, @Nullable FiberDispatchContext nextDispatchContext, int yieldReason) {
         if (!Unsafe.cas(
                 fiber,
                 EXECUTION_STATE_OFFSET,
@@ -541,7 +546,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         final FiberDispatchContext previousDispatchContext = fiber.dispatchContext;
         final int previousYieldReason = fiber.yieldReason;
         fiber.dispatchContext = nextDispatchContext;
-        fiber.yieldReason = YIELD_DISPATCH;
+        fiber.yieldReason = yieldReason;
         boolean isSuspended = false;
         try {
             isSuspended = suspend();
@@ -849,6 +854,10 @@ public final class Fiber implements FiberWaitCoordinator.Target {
             throw new IllegalStateException("mounted Fiber already owns a dispatch ticket");
         }
         mountedDispatchTicket = ticket;
+    }
+
+    boolean isDispatchYield() {
+        return yieldReason == YIELD_DISPATCH || yieldReason == YIELD_PREEMPTED;
     }
 
     boolean isDone() {

@@ -181,11 +181,10 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
     }
 
     /**
-     * Rows processed by the task that just ran; the batch check runs once this many rows accumulate.
-     * Tasks whose size is not measured in rows count as a full check interval.
+     * Rows processed by the task that just ran. Non-row tasks use only the entry-count budget.
      */
     protected long batchRowCount() {
-        return dispatcher.getBatchCheckRows();
+        return 0;
     }
 
     protected abstract void cancelOwner();
