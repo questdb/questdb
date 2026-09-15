@@ -62,7 +62,7 @@ public class PartitionGeometry implements Closeable, Mutable {
     private static final int RES_COMMITTED_RECORD_SIZE = 7;
     private static final int RES_PARTITION_TS = 0;
     private static final int RES_E = 4;
-    private static final int RES_PARTITION_TABLE_VERSION = 11;
+    private static final int RES_GEOMETRY_VERSION = 11;
     private static final int RES_FLAGS = 9;
     private static final int RES_GEOMETRY_REF = 8;
     private static final int RES_LAST_WRITE_MICROS = 5;
@@ -466,7 +466,7 @@ public class PartitionGeometry implements Closeable, Mutable {
             resolved.setQuick(slot + RES_GEOMETRY_REF, -1L);
             resolved.setQuick(slot + RES_WRITER_TXN, -1L);
             resolved.setQuick(slot + RES_SEQ_TXN, -1L);
-            resolved.setQuick(slot + RES_PARTITION_TABLE_VERSION, txReader.getPartitionTableVersion());
+            resolved.setQuick(slot + RES_GEOMETRY_VERSION, txReader.getGeometryVersion());
         } else {
             pieceHoles += (int) resolved.getQuick(slot + RES_PIECE_COUNT) * LONGS_PER_PIECE;
         }
@@ -560,7 +560,7 @@ public class PartitionGeometry implements Closeable, Mutable {
                 | ((long) generation << TxReader.PARTITION_GEOMETRY_GENERATION_BIT_OFFSET)
                 | packedOffset;
         resolved.setQuick(slot + RES_GEOMETRY_REF, ref);
-        resolved.setQuick(slot + RES_PARTITION_TABLE_VERSION, txReader.getPartitionTableVersion());
+        resolved.setQuick(slot + RES_GEOMETRY_VERSION, txReader.getGeometryVersion());
         if ((resolved.getQuick(slot + RES_FLAGS) & FLAG_DIRTY) != 0) {
             resolved.setQuick(slot + RES_FLAGS, resolved.getQuick(slot + RES_FLAGS) & ~FLAG_DIRTY);
             dirtyCount--;
@@ -724,7 +724,7 @@ public class PartitionGeometry implements Closeable, Mutable {
         resolved.setQuick(slot + RES_COMMITTED_RECORD_SIZE, PartitionGeometryFile.recordSize(count));
         resolved.setQuick(slot + RES_GEOMETRY_REF, ref);
         resolved.setQuick(slot + RES_FLAGS, 0);
-        resolved.setQuick(slot + RES_PARTITION_TABLE_VERSION, txReader.getPartitionTableVersion());
+        resolved.setQuick(slot + RES_GEOMETRY_VERSION, txReader.getGeometryVersion());
         return slot;
     }
 
@@ -747,18 +747,19 @@ public class PartitionGeometry implements Closeable, Mutable {
         final int slot = findResolved(partitionTimestamp, nameTxn);
         if (slot > -1) {
             if (resolved.getQuick(slot + RES_GEOMETRY_REF) == ref) {
-                if (resolved.getQuick(slot + RES_PARTITION_TABLE_VERSION) == txReader.getPartitionTableVersion()) {
+                if (resolved.getQuick(slot + RES_GEOMETRY_VERSION) == txReader.getGeometryVersion()) {
                     return slot;
                 }
                 if (resolved.getQuick(slot + RES_WRITER_TXN) == readWriterTxn(partitionTimestamp, nameTxn, ref)) {
-                    resolved.setQuick(slot + RES_PARTITION_TABLE_VERSION, txReader.getPartitionTableVersion());
+                    resolved.setQuick(slot + RES_GEOMETRY_VERSION, txReader.getGeometryVersion());
                     return slot;
                 }
             }
             // Resident at a superseded or potentially reused geometry: re-read in place, and the old
-            // piece span becomes a hole. A header writer txn check catches a composite/plain/composite
-            // cycle that reuses both the directory and the geometry reference without re-reading pieces
-            // for unaffected partitions.
+            // piece span becomes a hole. The geometry version changes when a geometry file chain is
+            // created or rotated; the header writer txn check catches a composite/plain/composite cycle
+            // that reuses both the directory and the geometry reference without re-reading pieces for
+            // unaffected partitions.
             pieceHoles += (int) resolved.getQuick(slot + RES_PIECE_COUNT) * LONGS_PER_PIECE;
         }
         return readInto(slot, partitionTimestamp, nameTxn, ref);

@@ -229,6 +229,7 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
+    public static final long TX_OFFSET_GEOMETRY_VERSION_32 = TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8;
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
@@ -803,6 +804,7 @@ public final class TableUtils {
                 seqTxn,
                 dataVersion,
                 partitionTableVersion,
+                0,
                 structureVersion,
                 columnVersion,
                 truncateVersion
@@ -2493,6 +2495,7 @@ public final class TableUtils {
             long seqTxn,
             long dataVersion,
             long partitionTableVersion,
+            int geometryVersion,
             long structureVersion,
             long columnVersion,
             long truncateVersion
@@ -2520,6 +2523,7 @@ public final class TableUtils {
         txMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         // sequencer txn
         txMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
+        txMem.putInt(baseOffset + TX_OFFSET_GEOMETRY_VERSION_32, geometryVersion);
 
         txMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolMapCount);
 

@@ -11709,24 +11709,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /**
-     * True if this composite directory holds two neighbouring pieces that TOUCH - the earlier one's {@code tsHi} equal
-     * to the next one's {@code tsLo}.
-     */
-    private boolean partitionHasTouchingPieces(int partitionIndex) {
-        final PartitionGeometry geometry = getGeometry();
-        final int pieceCount = geometry.getPieceCount(partitionIndex);
-        long previousTsHi = geometry.getPieceTimestampHi(partitionIndex, 0);
-        for (int p = 1; p < pieceCount; p++) {
-            final long tsLo = geometry.getPieceTimestampLo(partitionIndex, p);
-            if (tsLo == previousTsHi) {
-                return true;
-            }
-            previousTsHi = geometry.getPieceTimestampHi(partitionIndex, p);
-        }
-        return false;
-    }
-
     private void performRecovery() {
         rollbackIndexes();
         rollbackSymbolTables(false);
@@ -12112,14 +12094,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     srcOoo = srcOooHi + 1;
 
                     final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
-
-                    // A composite directory built while the table had no DEDUP key can hold two pieces that TOUCH at
-                    // one timestamp, and a dedup MERGE compares an incoming row against only the piece computeActions.
-                    if (partitionIndexRaw > -1 && isCommitDedupMode()
-                            && txWriter.isPartitionCompositeByRawIndex(partitionIndexRaw)
-                            && partitionHasTouchingPieces(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION)) {
-                        compactPartitionToPlain(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION, "dedup touching pieces");
-                    }
 
                     final long srcDataMax;
                     final long srcNameTxn;

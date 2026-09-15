@@ -496,6 +496,209 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
     }
 
     /**
+     * A new earlier partition is dispatched before the later partition whose dedup write flattens touching
+     * pieces. Both task results must publish in one WAL transaction, preserving the earlier task's directory.
+     */
+    @Test
+    public void testDedupCompactionDoesNotChangeEarlierNewPartitionNameTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+            execute("CREATE TABLE x (i INT, sym SYMBOL INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x::INT + 90000, 's'::SYMBOL, timestamp_sequence('2020-02-06', 60*1000000L) ts FROM long_sequence(1)");
+            drainWalQueue();
+            execute("INSERT INTO x SELECT x::INT, 's'::SYMBOL, timestamp_sequence('2020-02-03', 15*1000000L) ts FROM long_sequence(5760)");
+            drainWalQueue();
+            execute("INSERT INTO x SELECT x::INT + 70000, 's'::SYMBOL, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            final long tieTs;
+            try (TableReader reader = engine.getReader(xt)) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                Assert.assertTrue("fixture must create multiple pieces: " + describePieces(reader, 0), geometry.getPieceCount(0) > 1);
+                tieTs = geometry.getPieceTimestampHi(0, 0);
+            }
+
+            execute("INSERT INTO x SELECT (-1)::INT, 's'::SYMBOL, " + tieTs + "::TIMESTAMP FROM long_sequence(1)");
+            drainWalQueue();
+            execute("ALTER TABLE x DEDUP ENABLE UPSERT KEYS(ts)");
+            drainWalQueue();
+
+            // Prove ALTER and its housekeeping did not erase the state needed for the combined WAL commit.
+            try (TableReader reader = engine.getReader(xt)) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                boolean hasTouchingPieces = false;
+                for (int p = 1, n = geometry.getPieceCount(0); p < n; p++) {
+                    if (geometry.getPieceTimestampLo(0, p) == geometry.getPieceTimestampHi(0, p - 1)) {
+                        hasTouchingPieces = true;
+                        break;
+                    }
+                }
+                Assert.assertTrue("fixture lost its touching pieces before the combined INSERT: " + describePieces(reader, 0), hasTouchingPieces);
+            }
+
+            // The 2020-02-02 task is dispatched first. The tie update flattens 2020-02-03 inside its own
+            // partition task, so neither task can advance the writer transaction before sink publication.
+            execute("INSERT INTO x SELECT 42::INT, 's'::SYMBOL, '2020-02-02T00:00:00'::TIMESTAMP " +
+                    "UNION ALL SELECT (-2)::INT, 's'::SYMBOL, " + tieTs + "::TIMESTAMP");
+            drainWalQueue();
+
+            Assert.assertFalse("the combined commit suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+            assertQuery("SELECT i FROM x WHERE ts IN ('2020-02-02T00:00:00'::TIMESTAMP, " + tieTs + "::TIMESTAMP) ORDER BY ts, i")
+                    .returns("i\n42\n-2\n-2\n");
+            assertQuery("SELECT count() c FROM x WHERE sym = 's'")
+                    .noRandomAccess().expectSize().returns("c\n5963\n");
+
+            // Force a new reader to resolve the _txn partition-name transaction and open that directory.
+            engine.releaseAllReaders();
+            assertQuery("SELECT i FROM x WHERE ts = '2020-02-02T00:00:00'::TIMESTAMP")
+                    .returns("i\n42\n");
+        });
+    }
+
+    /**
+     * The dedup write that flattens touching pieces stages the flat image in its own directory, and that image
+     * carries its OWN column tops: the flatten reorders the pieces into timestamp order, so a column added while
+     * the day was already composite - whose top {@code CompositeAddColumnThenMergeTest} records at the physical
+     * extent {@code E} - no longer has its NULLs in one leading run. Reading the staged image back with the
+     * original directory's tops resolves every row of {@code v} as absent and publishes that as the fresh
+     * directory's own top, losing the column's data for the whole partition.
+     */
+    @Test
+    public void testDedupFlattenOfTouchingPiecesKeepsDataBelowAColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x::INT + 90_000, timestamp_sequence('2020-02-06', 60*1_000_000L) ts FROM long_sequence(1)");
+            drainWalQueue();
+            execute("INSERT INTO x SELECT x::INT, timestamp_sequence('2020-02-03', 15*1_000_000L) ts FROM long_sequence(5_760)");
+            drainWalQueue();
+            execute("INSERT INTO x SELECT x::INT + 70_000, timestamp_sequence('2020-02-03T04:00:07', 5*1_000_000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+
+            // 2020-02-03 is composite by now, so this column's top lands at the partition's physical extent.
+            execute("ALTER TABLE x ADD COLUMN v LONG");
+            drainWalQueue();
+
+            // Backdated rows that DO carry v, landing in the middle of that composite day.
+            execute("INSERT INTO x (i, ts, v) SELECT x::INT + 80_000, timestamp_sequence('2020-02-03T08:00:07', 5*1_000_000L) ts, x::LONG + 500 FROM long_sequence(100)");
+            drainWalQueue();
+
+            assertQuery("SELECT count() c, sum(v) s FROM x WHERE v IS NOT NULL")
+                    .noRandomAccess().expectSize().returns("c\ts\n100\t55050\n");
+
+            final TableToken xt = engine.verifyTableName("x");
+            final long tieTs;
+            try (TableReader reader = engine.getReader(xt)) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                Assert.assertTrue("fixture must create multiple pieces: " + describePieces(reader, 0), geometry.getPieceCount(0) > 1);
+                tieTs = geometry.getPieceTimestampHi(0, 0);
+            }
+
+            execute("INSERT INTO x (i, ts) SELECT (-1)::INT, " + tieTs + "::TIMESTAMP FROM long_sequence(1)");
+            drainWalQueue();
+            execute("ALTER TABLE x DEDUP ENABLE UPSERT KEYS(ts)");
+            drainWalQueue();
+
+            try (TableReader reader = engine.getReader(xt)) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                boolean hasTouchingPieces = false;
+                for (int p = 1, n = geometry.getPieceCount(0); p < n; p++) {
+                    if (geometry.getPieceTimestampLo(0, p) == geometry.getPieceTimestampHi(0, p - 1)) {
+                        hasTouchingPieces = true;
+                        break;
+                    }
+                }
+                Assert.assertTrue("fixture lost its touching pieces before the dedup commit: " + describePieces(reader, 0), hasTouchingPieces);
+            }
+
+            // The dedup commit on the touching composite day: this is the flatten path under test.
+            execute("INSERT INTO x (i, ts) SELECT (-2)::INT, " + tieTs + "::TIMESTAMP FROM long_sequence(1)");
+            drainWalQueue();
+
+            Assert.assertFalse("the dedup commit suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT count() c, sum(v) s FROM x WHERE v IS NOT NULL")
+                    .noRandomAccess().expectSize().returns("c\ts\n100\t55050\n");
+            assertQuery("SELECT i, v FROM x WHERE ts = '2020-02-03T08:00:07'::TIMESTAMP")
+                    .returns("i\tv\n80001\t501\n");
+        });
+    }
+
+    /**
+     * The dedup key comparison of the same flatten reads the staged image too, so a NON-timestamp dedup key
+     * column carrying a column top has to be read with the staged image's top as well. Read with the original
+     * directory's top, the whole data side compares as NULL and an incoming row that duplicates an existing
+     * key lands as a second row instead of upserting it.
+     */
+    @Test
+    public void testDedupFlattenOfTouchingPiecesComparesDedupKeyBelowAColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x::INT + 90_000, timestamp_sequence('2020-02-06', 60*1_000_000L) ts FROM long_sequence(1)");
+            drainWalQueue();
+            execute("INSERT INTO x SELECT x::INT, timestamp_sequence('2020-02-03', 15*1_000_000L) ts FROM long_sequence(5_760)");
+            drainWalQueue();
+            execute("INSERT INTO x SELECT x::INT + 70_000, timestamp_sequence('2020-02-03T04:00:07', 5*1_000_000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+
+            // The dedup key column itself is added while 2020-02-03 is already composite, so its top is the
+            // partition's physical extent and the rows carrying it sit in the middle of the day.
+            execute("ALTER TABLE x ADD COLUMN k LONG");
+            drainWalQueue();
+            execute("INSERT INTO x (i, ts, k) SELECT x::INT + 80_000, timestamp_sequence('2020-02-03T08:00:07', 5*1_000_000L) ts, x::LONG + 500 FROM long_sequence(100)");
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            final long tieTs;
+            try (TableReader reader = engine.getReader(xt)) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                Assert.assertTrue("fixture must create multiple pieces: " + describePieces(reader, 0), geometry.getPieceCount(0) > 1);
+                tieTs = geometry.getPieceTimestampHi(0, 0);
+            }
+
+            execute("INSERT INTO x (i, ts) SELECT (-1)::INT, " + tieTs + "::TIMESTAMP FROM long_sequence(1)");
+            drainWalQueue();
+            execute("ALTER TABLE x DEDUP ENABLE UPSERT KEYS(ts, k)");
+            drainWalQueue();
+
+            try (TableReader reader = engine.getReader(xt)) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                boolean hasTouchingPieces = false;
+                for (int p = 1, n = geometry.getPieceCount(0); p < n; p++) {
+                    if (geometry.getPieceTimestampLo(0, p) == geometry.getPieceTimestampHi(0, p - 1)) {
+                        hasTouchingPieces = true;
+                        break;
+                    }
+                }
+                Assert.assertTrue("fixture lost its touching pieces before the dedup commit: " + describePieces(reader, 0), hasTouchingPieces);
+            }
+
+            // (ts, k) repeats the row already at 08:00:07, so this row must UPSERT it, not join it.
+            execute("INSERT INTO x (i, ts, k) SELECT (-2)::INT, '2020-02-03T08:00:07'::TIMESTAMP, 501::LONG FROM long_sequence(1)");
+            drainWalQueue();
+
+            Assert.assertFalse("the dedup commit suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT i, k FROM x WHERE ts = '2020-02-03T08:00:07'::TIMESTAMP")
+                    .returns("i\tk\n-2\t501\n");
+            assertQuery("SELECT count() c, sum(k) s FROM x WHERE k IS NOT NULL")
+                    .noRandomAccess().expectSize().returns("c\ts\n100\t55050\n");
+        });
+    }
+
+    /**
      * A day is built into a composite partition, the table is TRUNCATEd, and the same day is built into a
      * composite partition again from nothing - each round's backdated batches submitted without a drain
      * between them, so {@code ApplyWal2TableJob} replays them as ONE bundled WAL transaction block, letting

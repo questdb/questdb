@@ -115,6 +115,7 @@ public class TxReader implements Closeable, Mutable {
     protected long columnVersion;
     protected long dataVersion;
     protected long fixedRowCount;
+    protected int geometryVersion;
     protected long lagMaxTimestamp;
     protected long lagMinTimestamp;
     protected boolean lagOrdered;
@@ -183,6 +184,7 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         mem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         mem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
+        mem.putInt(baseOffset + TX_OFFSET_GEOMETRY_VERSION_32, geometryVersion);
         mem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, lagRowCount);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
@@ -475,6 +477,10 @@ public class TxReader implements Closeable, Mutable {
         return getPartitionSquashCountByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
+    public int getGeometryVersion() {
+        return geometryVersion;
+    }
+
     public long getPartitionTableVersion() {
         return partitionTableVersion;
     }
@@ -716,6 +722,7 @@ public class TxReader implements Closeable, Mutable {
         this.structureVersion = srcReader.structureVersion;
         this.dataVersion = srcReader.dataVersion;
         this.partitionTableVersion = srcReader.partitionTableVersion;
+        this.geometryVersion = srcReader.geometryVersion;
         this.columnVersion = srcReader.columnVersion;
         this.truncateVersion = srcReader.truncateVersion;
         this.seqTxn = srcReader.seqTxn;
@@ -789,6 +796,7 @@ public class TxReader implements Closeable, Mutable {
         sink.put("', dataVersion: ").put(dataVersion);
         sink.put(", structureVersion: ").put(structureVersion);
         sink.put(", partitionTableVersion: ").put(partitionTableVersion);
+        sink.put(", geometryVersion: ").put(geometryVersion);
         sink.put(", columnVersion: ").put(columnVersion);
         sink.put(", truncateVersion: ").put(truncateVersion);
         sink.put(", seqTxn: ").put(seqTxn);
@@ -823,6 +831,7 @@ public class TxReader implements Closeable, Mutable {
             columnVersion = unsafeReadColumnVersion();
             truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
             seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
+            geometryVersion = getInt(TX_OFFSET_GEOMETRY_VERSION_32);
             symbolColumnCount = symbolsSize / Long.BYTES;
             lagRowCount = getInt(TX_OFFSET_LAG_ROW_COUNT_32);
             lagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
@@ -1035,6 +1044,7 @@ public class TxReader implements Closeable, Mutable {
         baseOffset = 0;
         size = 0;
         partitionTableVersion = -1;
+        geometryVersion = -1;
         attachedPartitionsSize = -1;
         attachedPartitions.clear();
         version = -1;

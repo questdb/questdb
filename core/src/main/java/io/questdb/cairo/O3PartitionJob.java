@@ -346,6 +346,31 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
         }
 
+        // A DEDUP merge at a timestamp shared by two physical pieces must compare the incoming key against
+        // their flattened rows, not only against the first piece computeActions assigned it to. Build and
+        // merge that flat image inside this task; TableWriter must not compact and commit mid-block while
+        // another partition task owns an earlier directory publication.
+        if (tableWriter.isCommitDedupMode() && hasTouchingPieces(geometry, partitionIndex)) {
+            assembleFreshDedupTouchingPartitionVersion(
+                    pathToTable,
+                    partitionIndex,
+                    partitionTimestamp,
+                    srcNameTxn,
+                    oooColumns,
+                    srcOooLo,
+                    srcOooHi,
+                    srcOooMax,
+                    sortedTimestampsAddr,
+                    tableWriter,
+                    dedupColSinkAddr,
+                    ctx,
+                    partitionUpdateSinkAddr,
+                    oldPartitionSize,
+                    o3TimestampLo
+            );
+            return;
+        }
+
         // The chain has nowhere left to grow, or the debug force-rewrite flag is on: assemble a fresh,
         // ordinary directory instead of letting the normal path write bytes for a plan nothing publishes.
         if (shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, ctx.bounds, plan.actions, plan.actions.size())) {
@@ -361,6 +386,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     ctx.bounds,
                     plan,
                     ctx,
+                    false,
                     partitionUpdateSinkAddr,
                     oldPartitionSize,
                     o3TimestampLo
@@ -844,6 +870,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     mergeRows = getDedupRows(
                                             partitionTimestamp,
                                             srcNameTxn,
+                                            tableWriter.getColumnVersionWriter(),
                                             pieceTimestampAddr,
                                             pieceLo,
                                             pieceHi - 1,
@@ -945,9 +972,147 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
+     * Flattens a touching composite partition into a task-local staging directory, then performs one dedup merge of
+     * the flat image and the O3 slice.  The staging directory uses a future name transaction only as an addressable
+     * scratch path; the final directory still uses this task's normal new-name transaction and the staging directory
+     * is removed before the sink publishes anything.
+     */
+    private static void assembleFreshDedupTouchingPartitionVersion(
+            Path pathToTable,
+            int partitionIndex,
+            long partitionTimestamp,
+            long srcNameTxn,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long sortedTimestampsAddr,
+            TableWriter tableWriter,
+            long dedupColSinkAddr,
+            O3CompositeContext ctx,
+            long partitionUpdateSinkAddr,
+            long oldPartitionSize,
+            long o3TimestampLo
+    ) {
+        final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
+        final FrameFactory frameFactory = tableWriter.getFrameFactory();
+        final FilesFacade ff = tableWriter.getFilesFacade();
+        final int commitMode = tableWriter.getConfiguration().getCommitMode();
+        final long upcomingTableTxn = tableWriter.getTxn() + 1;
+        final long stagingNameTxn = tableWriter.getTxn() + 1;
+        final int columnCount = metadata.getColumnCount();
+        final long sourceExtent = ctx.geometry.getE(partitionIndex);
+        final long sourceTimestampLo = O3CompositeMergeStrategy.getTsLo(ctx.bounds, 0);
+        long sourceRows = 0;
+        for (int i = 0, n = ctx.bounds.size(); i < n; i += O3CompositeMergeStrategy.LONGS_PER_BOUND) {
+            sourceRows += O3CompositeMergeStrategy.getRowCount(ctx.bounds, i / O3CompositeMergeStrategy.LONGS_PER_BOUND);
+        }
+
+        boolean stagingCreated = false;
+        try (Path stagingPath = new Path()) {
+            stagingPath.of(pathToTable);
+            setPathForNativePartition(
+                    stagingPath,
+                    metadata.getTimestampType(),
+                    tableWriter.getPartitionBy(),
+                    partitionTimestamp,
+                    stagingNameTxn
+            );
+            createDirsOrFail(ff, stagingPath, tableWriter.getConfiguration().getMkDirMode());
+            stagingCreated = true;
+
+            ctx.ofColumnCount(columnCount);
+            ctx.sinkPartitionTimestamp = partitionTimestamp;
+            ctx.srcColumnVersions.readFrom(tableWriter.getColumnVersionWriter());
+            ctx.transientVersions.readFrom(tableWriter.getColumnVersionWriter());
+            final Path sourcePath = ctx.srcPath.of(pathToTable);
+            setPathForNativePartition(
+                    sourcePath,
+                    metadata.getTimestampType(),
+                    tableWriter.getPartitionBy(),
+                    partitionTimestamp,
+                    srcNameTxn
+            );
+            try (
+                    Frame target = frameFactory.openRW(stagingPath, partitionTimestamp, metadata, ctx.transientVersions, ctx, 0);
+                    Frame source = frameFactory.openRO(sourcePath, partitionTimestamp, metadata, ctx.srcColumnVersions, sourceExtent)
+            ) {
+                for (int i = 0, n = ctx.bounds.size(); i < n; i += O3CompositeMergeStrategy.LONGS_PER_BOUND) {
+                    final int pieceIndex = i / O3CompositeMergeStrategy.LONGS_PER_BOUND;
+                    final long rowCount = O3CompositeMergeStrategy.getRowCount(ctx.bounds, pieceIndex);
+                    final long rowOffset = O3CompositeMergeStrategy.getRowOffset(ctx.bounds, pieceIndex);
+                    FrameAlgebra.append(target, source, rowOffset, rowOffset + rowCount, upcomingTableTxn, commitMode);
+                    tableWriter.addPhysicallyWrittenRows(rowCount);
+                }
+            }
+
+            // The flatten put the pieces in timestamp order and left the dead rows behind, so the leading NULL
+            // run of a column added to this partition after it went composite is not the run the original
+            // directory records. The staged image's OWN tops - the ones ctx staged while writing it - are what
+            // the merge below has to read it back with.
+            ctx.srcColumnVersions.readFrom(ctx.transientVersions);
+
+            // The staging image is timestamp-ordered and physically contiguous, so one MERGE compares every
+            // matching key exactly once, including copies that used to straddle a touching-piece boundary.
+            ctx.bounds.clear();
+            O3CompositeMergeStrategy.addPieceBounds(
+                    ctx.bounds,
+                    sourceTimestampLo,
+                    Numbers.LONG_NULL,
+                    0,
+                    sourceRows,
+                    upcomingTableTxn,
+                    tableWriter.getConfiguration().getMicrosecondClock().getTicks()
+            );
+            ctx.plan.actions.clear();
+            final O3CompositeMergeStrategy.Action action = new O3CompositeMergeStrategy.Action();
+            action.setMerge(0, srcOooLo, srcOooHi);
+            ctx.plan.actions.add(action);
+            ctx.plan.appendActionIndex = -1;
+            assembleFreshPartitionVersion(
+                    pathToTable,
+                    partitionTimestamp,
+                    stagingNameTxn,
+                    oooColumns,
+                    srcOooMax,
+                    sortedTimestampsAddr,
+                    tableWriter,
+                    dedupColSinkAddr,
+                    ctx.bounds,
+                    ctx.plan,
+                    ctx,
+                    true,
+                    partitionUpdateSinkAddr,
+                    oldPartitionSize,
+                    o3TimestampLo
+            );
+        } finally {
+            if (stagingCreated) {
+                final Path stagingPath = Path.getThreadLocal(pathToTable);
+                setPathForNativePartition(
+                        stagingPath,
+                        metadata.getTimestampType(),
+                        tableWriter.getPartitionBy(),
+                        partitionTimestamp,
+                        stagingNameTxn
+                );
+                if (ff.exists(stagingPath.slash().$()) && !ff.rmdir(stagingPath, false)) {
+                    LOG.error().$("could not remove touching-dedup staging directory [path=").$(stagingPath).I$();
+                }
+            }
+        }
+    }
+
+    /**
      * Merges the incoming O3 batch into a partition whose {@code _geometry} chain has no generation left by folding
      * every existing piece plus this commit's rows into ONE fresh directory in timestamp order - merging and compacting
      * in the one pass, off the same plan {@link O3CompositeMergeStrategy} already produced.
+     *
+     * @param hasPreloadedSrcColumnVersions true when the caller has already loaded {@code ctx.srcColumnVersions} with
+     *                                      the view that describes {@code srcNameTxn}'s directory. The live {@code
+     *                                      ColumnVersionWriter} describes the partition's COMMITTED directory, so a
+     *                                      caller reading anything else - a task-local staging image, whose tops are
+     *                                      its own - has to load that view itself and pass true here.
      */
     private static void assembleFreshPartitionVersion(
             Path pathToTable,
@@ -961,6 +1126,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             LongList bounds,
             O3CompositeMergeStrategy.Plan plan,
             O3CompositeContext ctx,
+            boolean hasPreloadedSrcColumnVersions,
             long partitionUpdateSinkAddr,
             long oldPartitionSize,
             long o3TimestampLo
@@ -998,7 +1164,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             createDirsOrFail(tableWriter.getFilesFacade(), dstPath, tableWriter.getConfiguration().getMkDirMode());
 
             // Neither frame may touch the live tableWriter.getColumnVersionWriter(), which worker threads share.
-            ctx.srcColumnVersions.readFrom(tableWriter.getColumnVersionWriter());
+            if (!hasPreloadedSrcColumnVersions) {
+                ctx.srcColumnVersions.readFrom(tableWriter.getColumnVersionWriter());
+            }
             ctx.transientVersions.readFrom(tableWriter.getColumnVersionWriter());
             try (
                     Frame target = frameFactory.openRW(dstPath, partitionTimestamp, metadata, ctx.transientVersions, ctx, 0);
@@ -1090,6 +1258,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             mergeRows = getDedupRows(
                                                     partitionTimestamp,
                                                     srcNameTxn,
+                                                    ctx.srcColumnVersions,
                                                     pieceTimestampAddr,
                                                     pieceLo,
                                                     pieceHi - 1,
@@ -3425,9 +3594,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return timestampIndexAddr;
     }
 
+    /**
+     * @param srcColumnVersions the view that describes {@code srcNameTxn}'s directory, which the non-timestamp dedup
+     *                          key columns are read back with. The live {@code ColumnVersionWriter} describes the
+     *                          partition's COMMITTED directory, so a caller comparing against anything else - a
+     *                          task-local staging image, whose tops are its own - has to pass that image's view here.
+     */
     private static long getDedupRows(
             long partitionTimestamp,
             long srcNameTxn,
+            ColumnVersionReader srcColumnVersions,
             long srcTimestampAddr,
             long mergeDataLo,
             long mergeDataHi,
@@ -3455,6 +3631,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             return getDedupRowsWithAdditionalKeys(
                     partitionTimestamp,
                     srcNameTxn,
+                    srcColumnVersions,
                     srcTimestampAddr,
                     mergeDataLo,
                     mergeDataHi,
@@ -3474,6 +3651,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static long getDedupRowsWithAdditionalKeys(
             long partitionTimestamp,
             long srcNameTxn,
+            ColumnVersionReader srcColumnVersions,
             long srcTimestampAddr,
             long mergeDataLo,
             long mergeDataHi,
@@ -3503,9 +3681,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 int columnType = metadata.getColumnType(i);
                 if (columnType > 0 && metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
                     final int columnSize = !ColumnType.isVarSize(columnType) ? ColumnType.sizeOf(columnType) : -1;
-                    final long columnTop = tableWriter.getColumnTop(partitionTimestamp, i, mergeDataHi + 1);
+                    final long srcColumnTop = srcColumnVersions.getColumnTop(partitionTimestamp, i);
+                    // -1 is "this partition has no record for the column at all", which puts its top above every
+                    // row the merge reads and makes the whole data side NULL.
+                    final long columnTop = srcColumnTop > -1L ? srcColumnTop : mergeDataHi + 1;
                     CharSequence columnName = metadata.getColumnName(i);
-                    long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
+                    long columnNameTxn = srcColumnVersions.getColumnNameTxn(partitionTimestamp, i);
 
                     long addr = DedupColumnCommitAddresses.setColValues(
                             dedupColSinkAddr,
@@ -3730,6 +3911,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     return true;
                 }
             }
+        }
+        return false;
+    }
+
+    private static boolean hasTouchingPieces(PartitionGeometry geometry, int partitionIndex) {
+        final int pieceCount = geometry.getPieceCount(partitionIndex);
+        long previousTsHi = geometry.getPieceTimestampHi(partitionIndex, 0);
+        for (int p = 1; p < pieceCount; p++) {
+            final long tsLo = geometry.getPieceTimestampLo(partitionIndex, p);
+            if (tsLo == previousTsHi) {
+                return true;
+            }
+            previousTsHi = geometry.getPieceTimestampHi(partitionIndex, p);
         }
         return false;
     }
@@ -4739,6 +4933,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final long dedupRows = getDedupRows(
                             oldPartitionTimestamp,
                             srcNameTxn,
+                            tableWriter.getColumnVersionWriter(),
                             srcTimestampAddr,
                             mergeDataLo,
                             mergeDataHi,
