@@ -5745,7 +5745,10 @@ public class WalWriterTest extends AbstractCairoTest {
             // the dir on the next boot - which is exactly when the real failure happens, a whole restart
             // before the replication uploader gets to read the marker. Hard-suspension lives on the
             // SeqTxnTracker and a fresh process rebuilds it unsuspended.
-            engine.getTableSequencerAPI().getTxnTracker(oldToken).setHardSuspended(false);
+            // setHardSuspended(false) became a release at the operator-DDL priority: the suspend this
+            // clears was taken by the SUSPEND WAL that REBASE requires, which is DDL-priority.
+            Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(oldToken)
+                    .trySetSuspend(SeqTxnTracker.SUSPEND_PRIORITY_DDL, 0));
 
             // WalPurgeJob now sees a live-looking dropped table and pings ApplyWal2TableJob, whose sweep
             // runs on the next drain.

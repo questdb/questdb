@@ -50,6 +50,7 @@ public class SeqTxnTrackerTest {
     private static final int F_APPLY = SeqTxnTracker.SUSPEND_FLAG_APPLY;
     private static final int F_APPLY_WRITE = SeqTxnTracker.SUSPEND_FLAG_APPLY | SeqTxnTracker.SUSPEND_FLAG_WRITE;
     // Every hard-suspend flavour + release, for looping over combos.
+    private static final int[] FLAVOURS = {F_APPLY, F_APPLY_WRITE};
     private static final Log LOG = LogFactory.getLog(SeqTxnTrackerTest.class);
     private static final int P_DDL = SeqTxnTracker.SUSPEND_PRIORITY_DDL;
     private static final int P_REC = SeqTxnTracker.SUSPEND_PRIORITY_RECONCILE;
