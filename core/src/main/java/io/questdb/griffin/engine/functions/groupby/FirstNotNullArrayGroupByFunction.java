@@ -37,15 +37,6 @@ public class FirstNotNullArrayGroupByFunction extends FirstArrayGroupByFunction 
     }
 
     @Override
-
-    public boolean isOrderSensitive() {
-
-        return true;
-
-    }
-
-
-    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         ArrayView array = arg.getArray(record);
         if (array != null && !array.isNull()) {
@@ -62,6 +53,11 @@ public class FirstNotNullArrayGroupByFunction extends FirstArrayGroupByFunction 
     @Override
     public String getName() {
         return "first_not_null";
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
     }
 
     @Override

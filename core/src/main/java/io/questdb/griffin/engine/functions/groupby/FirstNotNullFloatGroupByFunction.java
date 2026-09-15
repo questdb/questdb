@@ -41,15 +41,6 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
     }
 
     @Override
-
-    public boolean isOrderSensitive() {
-
-        return true;
-
-    }
-
-
-    @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
             final long hi = dataAddr + rowCount * (long) Float.BYTES;
@@ -139,6 +130,11 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
     @Override
     public String getName() {
         return "first_not_null";
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
     }
 
     @Override

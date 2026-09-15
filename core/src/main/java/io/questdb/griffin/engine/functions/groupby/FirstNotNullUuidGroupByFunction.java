@@ -37,15 +37,6 @@ public class FirstNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
     }
 
     @Override
-
-    public boolean isOrderSensitive() {
-
-        return true;
-
-    }
-
-
-    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         long lo = arg.getLong128Lo(record);
         long hi = arg.getLong128Hi(record);
@@ -60,6 +51,11 @@ public class FirstNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
     @Override
     public String getName() {
         return "first_not_null";
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
     }
 
     @Override

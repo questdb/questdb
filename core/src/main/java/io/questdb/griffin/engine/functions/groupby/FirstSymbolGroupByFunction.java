@@ -47,15 +47,6 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
-
-    public boolean isOrderSensitive() {
-
-        return true;
-
-    }
-
-
-    @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
         mapValue.putInt(valueIndex + 1, arg.getInt(record));
@@ -118,6 +109,11 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
     }
 
     @Override

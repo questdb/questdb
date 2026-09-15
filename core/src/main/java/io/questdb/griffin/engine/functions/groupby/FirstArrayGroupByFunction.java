@@ -52,15 +52,6 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
     }
 
     @Override
-
-    public boolean isOrderSensitive() {
-
-        return true;
-
-    }
-
-
-    @Override
     public void close() {
         Misc.free(arg);
     }
@@ -145,6 +136,11 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
     }
 
     @Override

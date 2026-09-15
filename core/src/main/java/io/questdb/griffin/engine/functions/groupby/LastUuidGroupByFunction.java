@@ -36,15 +36,6 @@ public final class LastUuidGroupByFunction extends FirstUuidGroupByFunction {
     }
 
     @Override
-
-    public boolean isOrderSensitive() {
-
-        return true;
-
-    }
-
-
-    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (rowId > mapValue.getLong(valueIndex)) {
             computeFirst(mapValue, record, rowId);
@@ -54,6 +45,11 @@ public final class LastUuidGroupByFunction extends FirstUuidGroupByFunction {
     @Override
     public String getName() {
         return "last";
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
     }
 
     @Override

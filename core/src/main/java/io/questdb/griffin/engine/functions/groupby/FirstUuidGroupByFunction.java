@@ -43,15 +43,6 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
     }
 
     @Override
-
-    public boolean isOrderSensitive() {
-
-        return true;
-
-    }
-
-
-    @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
         mapValue.putLong128(valueIndex + 1, arg.getLong128Lo(record), arg.getLong128Hi(record));
@@ -104,6 +95,11 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
     }
 
     @Override

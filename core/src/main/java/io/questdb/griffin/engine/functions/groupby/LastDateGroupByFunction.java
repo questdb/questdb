@@ -40,15 +40,6 @@ public class LastDateGroupByFunction extends FirstDateGroupByFunction {
     }
 
     @Override
-
-    public boolean isOrderSensitive() {
-
-        return true;
-
-    }
-
-
-    @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
             long lastRowId = startRowId + rowCount - 1;
@@ -118,6 +109,11 @@ public class LastDateGroupByFunction extends FirstDateGroupByFunction {
     @Override
     public String getName() {
         return "last";
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
     }
 
     @Override

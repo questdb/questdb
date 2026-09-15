@@ -239,6 +239,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      *
      * @return the scan direction
      */
+    int getScanDirection();
+
     /**
      * Asks this factory to stop guaranteeing designated-timestamp order, in exchange
      * for whatever that guarantee costs it. Returns true if it did.
@@ -262,8 +264,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default boolean tryDisableTimestampOrdering() {
         return false;
     }
-
-    int getScanDirection();
 
     /**
      * Returns an independent cursor for the given consumer ID. Idempotent —

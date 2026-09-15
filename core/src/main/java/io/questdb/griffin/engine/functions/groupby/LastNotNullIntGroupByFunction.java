@@ -40,15 +40,6 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     }
 
     @Override
-
-    public boolean isOrderSensitive() {
-
-        return true;
-
-    }
-
-
-    @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
             long hi = dataAddr + (rowCount - 1) * 4L;
@@ -139,6 +130,11 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     @Override
     public String getName() {
         return "last_not_null";
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
     }
 
     @Override

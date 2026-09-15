@@ -37,15 +37,6 @@ public class LastNotNullSymbolGroupByFunction extends FirstSymbolGroupByFunction
     }
 
     @Override
-
-    public boolean isOrderSensitive() {
-
-        return true;
-
-    }
-
-
-    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (arg.getInt(record) != SymbolTable.VALUE_IS_NULL) {
             if (mapValue.getInt(valueIndex + 1) == SymbolTable.VALUE_IS_NULL || rowId > mapValue.getLong(valueIndex)) {
@@ -57,6 +48,11 @@ public class LastNotNullSymbolGroupByFunction extends FirstSymbolGroupByFunction
     @Override
     public String getName() {
         return "last_not_null";
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
     }
 
     @Override

@@ -51,15 +51,6 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
     }
 
     @Override
-
-    public boolean isOrderSensitive() {
-
-        return true;
-
-    }
-
-
-    @Override
     public void clear() {
         sink.of(0);
     }
@@ -129,6 +120,11 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
     }
 
     @Override

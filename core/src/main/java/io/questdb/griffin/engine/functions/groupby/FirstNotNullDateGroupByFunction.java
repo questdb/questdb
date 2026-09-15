@@ -41,15 +41,6 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
     }
 
     @Override
-
-    public boolean isOrderSensitive() {
-
-        return true;
-
-    }
-
-
-    @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
             final long hi = dataAddr + rowCount * (long) Long.BYTES;
@@ -138,6 +129,11 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
     @Override
     public String getName() {
         return "first_not_null";
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
     }
 
     @Override

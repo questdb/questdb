@@ -38,15 +38,6 @@ public class FirstNotNullSymbolGroupByFunction extends FirstSymbolGroupByFunctio
     }
 
     @Override
-
-    public boolean isOrderSensitive() {
-
-        return true;
-
-    }
-
-
-    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         int val = arg.getInt(record);
         if (val != SymbolTable.VALUE_IS_NULL) {
@@ -60,6 +51,11 @@ public class FirstNotNullSymbolGroupByFunction extends FirstSymbolGroupByFunctio
     @Override
     public String getName() {
         return "first_not_null";
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
     }
 
     @Override

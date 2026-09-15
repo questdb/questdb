@@ -1601,28 +1601,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         /**
-         * Produce up to {@code rowCap} rows for {@code rawSymbolKey} in the given
-         * partition's row range. If the key has more rows than the cap, the open
-         * {@link RowCursor} is parked in {@link #pendingRowCursor}; the caller is
-         * expected to call {@code fillFrameForKey} again with the SAME
-         * key/partition until it returns {@code null} (or {@link #pendingRowCursor}
-         * clears) before advancing to the next partition.
-         * {@link SingleKeyCoveringPageFrameCursor#nextImpl} /
-         * {@link MultiKeyCoveringPageFrameCursor#nextImpl} drive that loop.
-         * <p>
-         * Single-key frame production is METADATA-ONLY: it traverses the covering
-         * cursor (to count the chunk's rows, record its absolute posting span, and
-         * -- critically -- WARM the per-key genLookup cache on natural exhaustion,
-         * so the workers' detached cursors run read-only under the freeze) but does
-         * NOT materialize covered values. The covered columns and the symbol key
-         * are decoded on the async workers
-         * ({@link PageFrameMemoryPool#patchCoveredFrameMemory}); the frame's covered
-         * page addresses are emitted as placeholders ({@link #finalizeFrame} with
-         * {@code materialized == false}), which the worker arm overrides. No
-         * per-frame value buffers are allocated. (The multi-key merge still
-         * materializes eagerly -- see {@code fillMergedFrame}.)
-         */
-        /**
          * True while a (key, partition) is mid-drain. This is ONE logical state with
          * TWO representations -- the cheap O(genCount) path records a chunk to resume
          * ({@link #cheapChunkActive}), the MIXED/fallback traverse parks a cursor
@@ -1661,6 +1639,28 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     resumeRowLo, resumeRowLo, maxRowsPerFrame, true);
         }
 
+        /**
+         * Produce up to {@code rowCap} rows for {@code rawSymbolKey} in the given
+         * partition's row range. If the key has more rows than the cap, the open
+         * {@link RowCursor} is parked in {@link #pendingRowCursor}; the caller is
+         * expected to call {@code fillFrameForKey} again with the SAME
+         * key/partition until it returns {@code null} (or {@link #pendingRowCursor}
+         * clears) before advancing to the next partition.
+         * {@link SingleKeyCoveringPageFrameCursor#nextImpl} /
+         * {@link MultiKeyCoveringPageFrameCursor#nextImpl} drive that loop.
+         * <p>
+         * Single-key frame production is METADATA-ONLY: it traverses the covering
+         * cursor (to count the chunk's rows, record its absolute posting span, and
+         * -- critically -- WARM the per-key genLookup cache on natural exhaustion,
+         * so the workers' detached cursors run read-only under the freeze) but does
+         * NOT materialize covered values. The covered columns and the symbol key
+         * are decoded on the async workers
+         * ({@link PageFrameMemoryPool#patchCoveredFrameMemory}); the frame's covered
+         * page addresses are emitted as placeholders ({@link #finalizeFrame} with
+         * {@code materialized == false}), which the worker arm overrides. No
+         * per-frame value buffers are allocated. (The multi-key merge still
+         * materializes eagerly -- see {@code fillMergedFrame}.)
+         */
         protected @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap, boolean cheapEligible) {
             // Open (or continue) the covering cursor. KEEPING this is load-bearing
             // even on the cheap path: getCursor -> reloadConditionally pre-extends
