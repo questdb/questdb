@@ -201,15 +201,19 @@ public class LiveViewRegistry implements QuietCloseable {
     public LiveViewInstance registerViewIfAbsent(LiveViewInstance instance) {
         DepList list = viewsByBaseTable.computeIfAbsent(instance.getDefinition().getBaseTableName(), createDepList);
         ObjList<LiveViewInstance> views = list.lockForWrite();
+        final LiveViewInstance owner;
         try {
-            final LiveViewInstance owner = viewsByName.putIfAbsent(instance.getDefinition().getViewName(), instance);
+            owner = viewsByName.putIfAbsent(instance.getDefinition().getViewName(), instance);
             if (owner == null) {
                 views.add(instance);
             }
-            return owner;
         } finally {
             list.unlockAfterWrite();
         }
+        if (owner == null) {
+            republishViews();
+        }
+        return owner;
     }
 
     /**
@@ -266,7 +270,11 @@ public class LiveViewRegistry implements QuietCloseable {
         if (definition == null) {
             // A definition-less stub only ever lived in the name map (registerStubView),
             // so there is no fan-out list to lock or clean.
-            return viewsByName.remove(name, expected);
+            if (!viewsByName.remove(name, expected)) {
+                return false;
+            }
+            republishViews();
+            return true;
         }
         DepList list = viewsByBaseTable.computeIfAbsent(definition.getBaseTableName(), createDepList);
         ObjList<LiveViewInstance> views = list.lockForWrite();
@@ -280,10 +288,11 @@ public class LiveViewRegistry implements QuietCloseable {
                     break;
                 }
             }
-            return true;
         } finally {
             list.unlockAfterWrite();
         }
+        republishViews();
+        return true;
     }
 
     /**
