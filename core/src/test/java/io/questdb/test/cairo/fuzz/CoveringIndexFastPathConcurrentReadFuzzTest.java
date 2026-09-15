@@ -349,7 +349,16 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
                 }
             }
 
-            Assert.assertNull("concurrent covered reader failed: " + bgError.get(), bgError.get());
+            // Rethrow rather than assertNull: the reader threads are where this fuzz finds its
+            // bugs, and assertNull renders the captured Throwable through toString(), so CI kept
+            // only the message. A concurrent mmap failure then reported its sizes but not one
+            // frame of the path that asked for them, which is the whole diagnosis. Chaining it
+            // under an AssertionError keeps the failure a test failure while handing the stack
+            // to the report.
+            final Throwable readerError = bgError.get();
+            if (readerError != null) {
+                throw new AssertionError("concurrent covered reader failed: " + readerError, readerError);
+            }
             Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             Assert.assertTrue("fast path must fire (fastLag=" + PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.get() + ")",
                     PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.get() > 0);

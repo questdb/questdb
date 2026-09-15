@@ -91,6 +91,10 @@ public class TableWriterMetrics implements Mutable {
         return rollbackCounter.getValue();
     }
 
+    public long getSuspendedTables() {
+        return suspendedTablesGauge.getValue();
+    }
+
     public void incSuspendedTables() {
         suspendedTablesGauge.inc();
     }

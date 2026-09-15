@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
@@ -183,6 +184,86 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
                             view_name\tview_status
                             price_1h\tvalid
                             """);
+        });
+    }
+
+    @Test
+    public void testReconcileReadLockDefersRefreshNeverInvalidates() throws Exception {
+        // M1: while a RECONCILE TABLE apply holds the base table's reconcile read-lock,
+        // engine.getReader(baseTableToken) throws EntryLockedException. The mat-view refresh used to
+        // treat that as a refresh failure -> refreshFailState -> INVALIDATE the view (and cascade to
+        // dependents). The lock is transient, so the refresh must instead DEFER (view_status
+        // "retrying") and, unlike an OOM, must NEVER invalidate -- not even past the retry limit --
+        // then recover once the lock releases.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 0); // re-drive immediately
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 2);   // low: an OOM would invalidate fast
+        assertMemoryLeak(() -> {
+            CharSequence sqlText = "create table base_price (" +
+                    "sym varchar, price double, ts #TIMESTAMP" +
+                    ") timestamp(ts) partition by DAY WAL;";
+            sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType.getTypeName());
+            engine.execute(sqlText, sqlExecutionContext);
+
+            execute("insert into base_price values ('a', 1.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            execute("create materialized view price_1h as (" +
+                    "  select ts, sym, avg(price) as avg_price from base_price sample by 10s" +
+                    ") partition by hour");
+            drainWalAndMatViewQueues();
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_name\tview_status
+                            price_1h\tvalid
+                            """);
+
+            // A new base row drives an incremental refresh of the view. Take the reconcile read-lock
+            // FIRST (applying base WAL uses a writer, which the lock does not block), so when the
+            // refresh opens getReader(base) it hits EntryLockedException.
+            execute("insert into base_price values ('a', 2.0, '2024-01-01T01:00:00.000000Z')");
+            final TableToken baseToken = engine.verifyTableName("base_price");
+            engine.lockReconcileReads(baseToken);
+            try {
+                final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+                // First attempt: applies the base WAL and runs the refresh, which defers on
+                // EntryLockedException. Then re-drive well past the retry LIMIT of 2 to prove the
+                // lock is EXEMPT from the invalidation counter: the view must stay "retrying" and
+                // NEVER go "invalid".
+                drainWalAndMatViewQueues();
+                for (int i = 0; i < 5; i++) {
+                    drainMatViewTimerQueue(timerJob); // re-arm the immediately-due retry
+                    drainMatViewQueue(engine);        // re-attempt -> EntryLockedException -> defer
+                }
+                assertQuery("select view_name, view_status from materialized_views")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                view_name\tview_status
+                                price_1h\tretrying
+                                """);
+            } finally {
+                engine.unlockReconcileReads(baseToken);
+            }
+
+            // Once the lock releases, the deferred refresh recovers: the view returns to valid and
+            // picks up the new row.
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainWalAndMatViewQueues();
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_name\tview_status
+                            price_1h\tvalid
+                            """);
+            assertQuery("select count() from price_1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
         });
     }
 }
