@@ -4770,6 +4770,30 @@ public class CairoEngine implements Closeable, WriterSource {
                         Misc.getThreadLocalSink()
                 );
 
+                // Dependent live views hold a watermark they reached against the OLD base sequencer,
+                // which the rebase restarts near zero. They cannot recover by refreshing:
+                // refreshViewsForBaseTable only advances a view when seqTxn exceeds its
+                // lastProcessedSeqTxn, so every post-rebase commit up to that watermark falls below the
+                // gate. Invalidate them here, ahead of the registry commit, and not after it: a process
+                // that died between a committed rebase and the invalidation left every dependent view
+                // recorded valid in its _lv.s, and a view's definition records nothing a load could
+                // compare a rebased base against - it names its base, and the name, the WAL flag and
+                // the referenced columns all survive a rebase. The restart restored the view from its
+                // timeline, and once post-rebase commits reached its watermark before a scan caught it
+                // ahead of the base, it resumed mid-stream: rows missing and window values wrong, with
+                // no fault.
+                //
+                // A throw refuses the rebase - the catch below discards the clone while the old table
+                // is intact - rather than committing one no view was told about. The other way round,
+                // a view invalidated for a rebase that then fails, is the cost: the next REBASE WAL
+                // would have invalidated it anyway, and only a rebase abandoned for RESUME WAL leaves a
+                // view invalidated for nothing. Ahead of the move below, not just ahead of the registry
+                // drop, so the _lv.s writes do not lengthen the window between the two, whose startup
+                // recovery the rebase does not have yet. invalidateLiveViewsForBaseTable resolves
+                // dependents by base table name, which the rebase preserves. Mat views keep their
+                // refresh-queue invalidation past the commit, below.
+                invalidateLiveViewsForBaseTable(oldToken, "base table rebase");
+
                 // Atomically move the completed clone into its final location.
                 if (ff.rename(src.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken).$(), dst.of(root).concat(newToken).$()) != Files.FILES_RENAME_OK) {
                     throw CairoException.critical(ff.errno()).put("could not move rebased table into place [from=").put(src).put(", to=").put(dst).put(']');
@@ -4871,32 +4895,6 @@ public class CairoEngine implements Closeable, WriterSource {
             // so their watermarks no longer map onto the new base. Force a full refresh of any dependents
             // (covers a rebased base table, and a rebased mat view that is itself a base of another).
             matViewStateStore.enqueueInvalidateDependentViews(newToken, "base table rebase");
-            // Dependent live views hold the same kind of stale watermark, but they cannot recover by
-            // refreshing: refreshViewsForBaseTable only advances a view when seqTxn exceeds its
-            // lastProcessedSeqTxn, so a sequencer restarted near zero drops every post-rebase commit
-            // below that gate. Without this the view serves indefinitely stale data while live_views()
-            // still reports it healthy. invalidateLiveViewsForBaseTable resolves dependents by base
-            // table name, which the rebase preserves, so either token finds the same set.
-            // Best-effort for the same reason as the mat view registration above: this call sits past
-            // the registry commit, so a throw would skip the rebase-source marker, the _txn/_meta
-            // tombstone, the sequencer drop and the pool eviction below, stranding the old directory
-            // where WalPurgeJob can never reclaim it. Unlike the queue publish on the line before,
-            // this one can throw: invalidateLiveViewsForBaseTable0's per-view catch covers only the
-            // _lv.s write, leaving the BlockFileWriter/Path try-with-resources and
-            // tryFreeRuntimeStateIfInvalid unguarded.
-            //
-            // A view left valid because this failed does NOT self-heal. buildViewGraphs only
-            // synthesizes an invalidation when the base is missing or non-WAL, and a rebase keeps
-            // both; scanForLaggingViews' ahead-of-base guard catches the view only while its stale
-            // watermark still exceeds the rebased sequencer's lastTxn, and goes quiet for good once
-            // new commits climb past it - resuming mid-stream and skipping everything in between.
-            // This log line is the operator's only signal.
-            try {
-                invalidateLiveViewsForBaseTable(newToken, "base table rebase");
-            } catch (Throwable lvEx) {
-                LOG.error().$("could not invalidate live views after base table rebase, they may need manual recreation [base=")
-                        .$(newToken).$(", e=").$(lvEx).I$();
-            }
 
             // Committed. Tear down the old table (data survives via new dir hard links). Mark the dir as
             // the rebase SOURCE first: the uploader stats this marker as the dir winds down and records
