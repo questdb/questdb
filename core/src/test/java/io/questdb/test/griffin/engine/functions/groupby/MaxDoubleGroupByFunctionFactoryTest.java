@@ -285,45 +285,77 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         """);
     }
 
+    /**
+     * SAMPLE BY ... FILL(LINEAR) over a UNION ALL used to compile and return rows, and the rows it
+     * returned were wrong. This test used to assert those wrong rows; it now asserts the refusal,
+     * plus the correct answer over an equivalent genuinely ordered input.
+     * <p>
+     * {@code (x where b = 'PEHN' union all x where b = 'VTJW') timestamp(k)} emits every PEHN row in
+     * ascending k, then restarts at the first VTJW row - k goes 00:18, 00:42, ... 08:06, then back to
+     * 00:06. SAMPLE BY consumes its input as a single ascending run, so with that input it anchored
+     * the bucket grid on the first row it happened to see (PEHN's 00:18) rather than on the earliest
+     * row in the data (VTJW's 00:06), and folded the restarted VTJW rows into whatever bucket the
+     * walk had already reached. The result was maxima that no grouping of the input can produce:
+     * the old expectation had VTJW 00:00 -> 0.9125204540487346 and VTJW 03:00 -> 0.8660879643164553,
+     * where the same rows fed in ascending order give 0.8685154305419587 and 0.9441658975532605.
+     * <p>
+     * So the compile-time refusal is a fix, not a regression: it removes an answer that was silently
+     * incorrect. The ordered half of this test pins what the correct answer actually is, using the
+     * exact same rows materialised into a designated-timestamp table, and keeps the fill(linear)
+     * random-access coverage the test is named for.
+     */
     @Test
     public void testSampleInterpolateRandomAccessConsistency() throws Exception {
+        final String ddl = "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0) a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(172800000000, 360000000) k" +
+                " from" +
+                " long_sequence(100)" +
+                ") timestamp(k) partition by NONE";
+
+        // The union restarts the designated timestamp, so it cannot feed SAMPLE BY.
         assertQuery("select b, max(a), k from " +
                 " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
                 "sample by 3h fill(linear) align to first observation order by 3, 2, 1")
-                .ddl("create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0) a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE")
+                .ddl(ddl)
+                .fails(0, "base query does not provide ASC order over designated TIMESTAMP column");
+
+        assertQuery("select b, max(a), k from " +
+                " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
+                "sample by 3h fill(linear) align to calendar order by 3, 2, 1")
+                .fails(0, "base query does not provide ASC order over designated TIMESTAMP column");
+
+        // Same rows, genuinely ascending: this is the answer the union form should have produced.
+        assertQuery("select b, max(a), k from xc " +
+                "sample by 3h fill(linear) align to first observation order by 3, 2, 1")
+                .ddl("create table xc as (select a, b, k from x where b = 'PEHN' or b = 'VTJW') timestamp(k) partition by NONE")
                 .timestamp("k")
                 .expectSize()
                 .returns("""
                         b\tmax\tk
-                        PEHN\t0.8445258177211064\t1970-01-03T00:18:00.000000Z
-                        VTJW\t0.9125204540487346\t1970-01-03T00:18:00.000000Z
-                        PEHN\t0.7365115215570027\t1970-01-03T03:18:00.000000Z
-                        VTJW\t0.8660879643164553\t1970-01-03T03:18:00.000000Z
-                        PEHN\t0.4346135812930124\t1970-01-03T06:18:00.000000Z
-                        VTJW\t0.8196554745841765\t1970-01-03T06:18:00.000000Z
-                        PEHN\t0.13271564102902209\t1970-01-03T09:18:00.000000Z
-                        VTJW\t0.7732229848518976\t1970-01-03T09:18:00.000000Z
+                        PEHN\t0.8445258177211064\t1970-01-03T00:06:00.000000Z
+                        VTJW\t0.8685154305419587\t1970-01-03T00:06:00.000000Z
+                        PEHN\t0.7365115215570027\t1970-01-03T03:06:00.000000Z
+                        VTJW\t0.9441658975532605\t1970-01-03T03:06:00.000000Z
+                        PEHN\t0.4346135812930124\t1970-01-03T06:06:00.000000Z
+                        VTJW\t0.8196554745841765\t1970-01-03T06:06:00.000000Z
+                        PEHN\t0.13271564102902209\t1970-01-03T09:06:00.000000Z
+                        VTJW\t0.7732229848518976\t1970-01-03T09:06:00.000000Z
                         """);
 
-        assertQuery("select b, max(a), k from " +
-                " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
+        assertQuery("select b, max(a), k from xc " +
                 "sample by 3h fill(linear) align to calendar order by 3, 2, 1")
                 .timestamp("k")
                 .expectSize()
                 .returns("""
                         b\tmax\tk
                         PEHN\t0.8445258177211064\t1970-01-03T00:00:00.000000Z
-                        VTJW\t0.9125204540487346\t1970-01-03T00:00:00.000000Z
+                        VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z
                         PEHN\t0.7365115215570027\t1970-01-03T03:00:00.000000Z
-                        VTJW\t0.8660879643164553\t1970-01-03T03:00:00.000000Z
+                        VTJW\t0.9441658975532605\t1970-01-03T03:00:00.000000Z
                         PEHN\t0.4346135812930124\t1970-01-03T06:00:00.000000Z
                         VTJW\t0.8196554745841765\t1970-01-03T06:00:00.000000Z
                         PEHN\t0.13271564102902209\t1970-01-03T09:00:00.000000Z
