@@ -239,9 +239,15 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         }
     }
 
+    // Emits exactly one row - AsyncGroupByNotKeyedRecordCursor.hasNext() yields the single
+    // aggregated record once and then reports exhaustion, and size() is 1 - so no pair of emitted
+    // rows exists that could be out of ascending order and the FORWARD claim holds vacuously.
+    // Declared here rather than delegated to the base: the base's direction says nothing about a
+    // cursor that replaces the base's rows with one aggregate, and it would answer BACKWARD for a
+    // descending base while this cursor's single row is still trivially ascending.
     @Override
     public int getScanDirection() {
-        return base.getScanDirection();
+        return SCAN_DIRECTION_FORWARD;
     }
 
     @Override

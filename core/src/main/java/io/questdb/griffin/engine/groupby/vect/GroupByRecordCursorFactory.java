@@ -215,9 +215,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    // Emits the Rosti hash table's occupied slots, not the base cursor's rows: RostiRecordCursor
+    // walks the control bytes from slot 0 upwards and yields whichever symbol key happens to hash
+    // there, so the emission order is hash-slot order over the single group-by key. Any timestamp
+    // in the output is an aggregate value (max(ts), first(ts), ...) carried along for the ride, so
+    // it comes out in key-hash order, not ascending order. Same defect and same reasoning as the
+    // serial and parallel keyed group-bys; there is no source fix, because ordering the output by
+    // timestamp would mean sorting output the query never asked to sort.
     @Override
     public int getScanDirection() {
-        return SCAN_DIRECTION_FORWARD;
+        return SCAN_DIRECTION_OTHER;
     }
 
     // Vector aggregates are column-bound builtins (sum/min/max/avg/count/...) with no argument
