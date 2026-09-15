@@ -61,6 +61,9 @@ public class ExpressionNode implements Mutable, Sinkable {
     public boolean innerPredicate = false;
     public int intrinsicValue = IntrinsicModel.UNDEFINED;
     public boolean isConstantExpression;
+    // A synthetic timestamp reference keeps the column live without declaring output order.
+    // Code generation inherits the input factory's designation, including no designation.
+    public boolean isTimestampOrderInherited;
     public int lateralDepth;
     public ExpressionNode lhs;
     // The expression parser (ExpressionParser.onNode) guarantees:
@@ -225,6 +228,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         // their own copy, which they need anyway - a sub-query factory is not thread-safe
         copy.scalarBoundCompileCache = node.scalarBoundCompileCache;
         copy.isConstantExpression = node.isConstantExpression;
+        copy.isTimestampOrderInherited = node.isTimestampOrderInherited;
         copy.innerPredicate = node.innerPredicate;
         copy.implemented = node.implemented;
         copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
@@ -313,6 +317,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         paramCount = 0;
         intrinsicValue = IntrinsicModel.UNDEFINED;
         isConstantExpression = false;
+        isTimestampOrderInherited = false;
         queryModel = null;
         innerPredicate = false;
         implemented = false;
@@ -342,6 +347,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.scalarBoundHolder = other.scalarBoundHolder;
         this.scalarBoundCompileCache = other.scalarBoundCompileCache;
         this.isConstantExpression = other.isConstantExpression;
+        this.isTimestampOrderInherited = other.isTimestampOrderInherited;
         this.innerPredicate = other.innerPredicate;
         this.windowExpression = other.windowExpression;
         this.lateralDepth = other.lateralDepth;

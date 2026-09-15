@@ -13014,7 +13014,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (!isTimestamp(metadata.getColumnType(timestampIndex))) {
                 throw SqlException.$(timestamp.position, "not a TIMESTAMP");
             }
-            return timestampIndex;
+            // SUBSAMPLE's synthetic references preserve column liveness, not output order.
+            // User TIMESTAMP() declarations still designate the named column.
+            return timestamp.isTimestampOrderInherited ? metadata.getTimestampIndex() : timestampIndex;
         }
         return metadata.getTimestampIndex();
     }

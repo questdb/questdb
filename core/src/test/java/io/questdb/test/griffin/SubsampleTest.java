@@ -1308,8 +1308,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     timestampDropped.indexOf("SUBSAMPLE"),
                     "SUBSAMPLE requires a designated timestamp column"
             );
+            // Hash GROUP BY does not guarantee timestamp order, even when these rows match it.
+            // SubsampleOrderTest also covers shuffled PIVOT groups under an outer ORDER BY ts.
             assertQuery("SELECT * FROM t PIVOT (sum(v) FOR c IN ('a','b') GROUP BY ts) SUBSAMPLE uniform(2)")
-                    .timestamp("ts")
                     .returns("""
                             ts\ta\tb
                             2024-01-01T00:00:00.000000Z\t10.0\t11.0

@@ -1265,8 +1265,9 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
                     .timestamp("ts").returns("ts\tvalue\n1970-01-01T00:00:00.000010Z\t1.0\n1970-01-01T00:00:00.000010Z\t9.0\n");
             execute("CREATE TABLE pivoted (ts TIMESTAMP, c SYMBOL, v INT) TIMESTAMP(ts)");
             execute("INSERT INTO pivoted VALUES (10, 'a', 1), (20, 'a', 9), (30, 'a', 2), (40, 'a', 3)");
+            // Hash GROUP BY does not guarantee timestamp order, even when these rows match it.
             assertQuery("SELECT * FROM pivoted PIVOT (sum(v) FOR c IN ('a') GROUP BY ts) SUBSAMPLE minmax(a, 2)")
-                    .timestamp("ts").returns("ts\ta\n1970-01-01T00:00:00.000010Z\t1\n1970-01-01T00:00:00.000020Z\t9\n");
+                    .returns("ts\ta\n1970-01-01T00:00:00.000010Z\t1\n1970-01-01T00:00:00.000020Z\t9\n");
         });
     }
 

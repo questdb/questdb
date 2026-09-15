@@ -6006,7 +6006,9 @@ public class SqlOptimiser implements Mutable {
     private ExpressionNode makeModelAlias(CharSequence modelAlias, ExpressionNode node) {
         CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
         characterStoreEntry.put(modelAlias).put('.').put(node.token);
-        return nextLiteral(characterStoreEntry.toImmutable(), node.position);
+        final ExpressionNode alias = nextLiteral(characterStoreEntry.toImmutable(), node.position);
+        alias.isTimestampOrderInherited = node.isTimestampOrderInherited;
+        return alias;
     }
 
     private ExpressionNode makeOperation(CharSequence token, ExpressionNode lhs, ExpressionNode rhs) {
@@ -6449,7 +6451,9 @@ public class SqlOptimiser implements Mutable {
                         if (Chars.equalsIgnoreCase(alias, timestamp.token)
                                 || Chars.equalsIgnoreCase(SqlUtil.toColumnName(alias), timestamp.token)) {
                             // Preserve the output alias's protective quotes, e.g. s."clock.ts".
-                            timestamp = nextLiteral(alias, timestamp.position);
+                            final ExpressionNode timestampAlias = nextLiteral(alias, timestamp.position);
+                            timestampAlias.isTimestampOrderInherited = timestamp.isTimestampOrderInherited;
+                            timestamp = timestampAlias;
                             break;
                         }
                     }
@@ -11381,7 +11385,11 @@ public class SqlOptimiser implements Mutable {
         final IQueryModel keepFilterWrap = wrapInSubQuery(windowModel);
         keepFilterWrap.setWhereClause(expressionNodePool.next().of(LITERAL, keepAlias, 0, 0));
         if (!aggregation && timestamp != null) {
+            // Keep ts live for outer temporal consumers and retain the input's ordering boundary.
+            // This synthetic reference must not declare timestamp order: the keep window returns
+            // rows in input order, which can differ from its OVER (ORDER BY ts) traversal.
             keepFilterWrap.setTimestamp(nextLiteral(windowTsToken, timestamp.position));
+            keepFilterWrap.getTimestamp().isTimestampOrderInherited = true;
             keepFilterWrap.setExplicitTimestamp(true);
         }
 
@@ -11392,7 +11400,7 @@ public class SqlOptimiser implements Mutable {
         filterModel.setNestedModelIsSubQuery(true);
         filterModel.setModelPosition(model.getModelPosition());
 
-        // Final projection: preserve exactly the completed input columns and designation, dropping keep.
+        // Final projection: preserve the completed input columns and actual designation, dropping keep.
         final IQueryModel outerModel = queryModelPool.next();
         outerModel.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
         outerModel.setNestedModel(wrapInSubQuery(filterModel));
@@ -11411,6 +11419,7 @@ public class SqlOptimiser implements Mutable {
         }
         if (!aggregation && timestamp != null) {
             outerModel.setTimestamp(nextLiteral(windowTsToken, timestamp.position));
+            outerModel.getTimestamp().isTimestampOrderInherited = true;
             outerModel.setExplicitTimestamp(true);
         }
 
