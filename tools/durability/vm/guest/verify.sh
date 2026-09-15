@@ -107,26 +107,38 @@ case "$ARM" in
         # The ORDER IS THE REAL SEQUENCE, not a trick: the server recovers first, then the client
         # reconnects. Pass A runs the production recovery and measures the server's own result;
         # the replay then happens on top of that, exactly as it would in a deployment.
+        # Results come from a FILE, never from the shared stdout. See CrashVerifier's
+        # RESULT_FILE javadoc: the engine logs to the same stream and a spliced line yielded
+        # `distinctIds=2026` (a YEAR) and a false DURABILITY_FAILURE. Reading key=value from a
+        # file removes the entire class of fault rather than hardening one regex against it.
+        read_result() {  # FILE KEY -> value, or -1
+            local v
+            v=$(grep -oE "^$2=-?[0-9]+$" "$1" 2>/dev/null | head -1 | cut -d= -f2)
+            echo "${v:--1}"
+        }
+
         sfa_distinct=-1; sfa_f=-1; sfa_c=-1
         if [ "$SFREPLAY" = "compare" ]; then
-            paout=$(mktemp)
+            pares="/mnt/qdb/verify-armA.properties"; rm -f "$pares"
             java $QDB_JVM -cp "$JAR" \
                 -DcommitMode="$MODE" -Dgroup.window.us="$WINDOW" -Depoch.interval.ms="$EPOCH" \
                 -Dsibling.table="$SIBLING" -Drecover.as="$RECOVER_AS" \
                 -Dmat.view="$MATVIEW" -Drebase="$REBASE" \
                 -Dschema.profile="$PROFILE" -Dqwp="$QWP" -Dqwp.sf="$QWPSF" \
-                org.questdb.CrashVerifier "$DB" >"$paout" 2>&1 || true
-            # ANCHORED TO THE WHOLE LINE SHAPE, not to the token. The engine logs to stdout on
-            # the same stream, and a log line can interleave mid-line -- observed producing
-            # `distinctIds=2026`, which is the YEAR from a timestamp, and a DURABILITY_FAILURE
-            # that was pure parse error. Requiring the full `qwp-sf rows=N distinctIds=N` shape
-            # makes a spliced line fail to match instead of yielding a plausible-looking number.
-            sfa_distinct=$(grep -oE '^qwp-sf rows=[0-9]+ distinctIds=[0-9]+' "$paout" | head -1 | grep -oE 'distinctIds=[0-9]+' | cut -d= -f2)
-            sfa_f=$(grep -oE '^recovered: count=[0-9]+ F=[0-9]+' "$paout" | grep -oE 'F=[0-9]+' | cut -d= -f2)
-            sfa_c=$(grep -oE ' C=[0-9]+' "$paout" | head -1 | tr -dc '0-9')
-            : "${sfa_distinct:=-1}"; : "${sfa_f:=-1}"; : "${sfa_c:=-1}"
+                -Dresult.file="$pares" \
+                org.questdb.CrashVerifier "$DB" >/mnt/qdb/verify-armA.log 2>&1 || true
+            sfa_distinct=$(read_result "$pares" distinctIds)
+            sfa_f=$(read_result "$pares" F)
+            sfa_c=$(read_result "$pares" C)
             echo "DETAIL SF_ARM_A serverAlone distinctIds=$sfa_distinct F=$sfa_f C=$sfa_c"
-            rm -f "$paout"
+            # PASS A OPENED THE DATABASE. The replay server below opens the SAME root, and a
+            # still-held lock makes it fail to start -- which is the likeliest cause of the
+            # boundaries that produced no verdict at all (2 of 7 in the first compare run).
+            # Wait for the JVM to be gone rather than assuming the shell's return implies it.
+            for _ in $(seq 1 40); do
+                pgrep -f '[C]rashVerifier' >/dev/null 2>&1 || break
+                sleep 0.25
+            done
         fi
 
         if [ "$SFREPLAY" = "true" ] || [ "$SFREPLAY" = "compare" ]; then
@@ -160,7 +172,9 @@ case "$ARM" in
         # no verdict at all, which is the failure mode the hardening existed to
         # remove.
         rc=0
+        vbres="/mnt/qdb/verify-armB.properties"; rm -f "$vbres"
         java $QDB_JVM -cp "$JAR" \
+                -Dresult.file="$vbres" \
                 -DcommitMode="$MODE" \
                 -Dgroup.window.us="$WINDOW" \
                 -Depoch.interval.ms="$EPOCH" \
@@ -190,8 +204,7 @@ case "$ARM" in
         # PASS B vs PASS A. The delta is what the CLIENT put back, and it is the only number
         # that distinguishes the mechanism working from nothing having happened.
         if [ "$SFREPLAY" = "compare" ] && [ "${sfa_distinct:--1}" -ge 0 ] 2>/dev/null; then
-            sfb_distinct=$(grep -oE '^qwp-sf rows=[0-9]+ distinctIds=[0-9]+' "$vout" | head -1 | grep -oE 'distinctIds=[0-9]+' | cut -d= -f2)
-            : "${sfb_distinct:=-1}"
+            sfb_distinct=$(read_result "$vbres" distinctIds)
             if [ "$sfb_distinct" -ge 0 ] 2>/dev/null; then
                 delta=$(( sfb_distinct - sfa_distinct ))
                 # SANITY GATE, and it fails LOUD rather than safe. Pass B verifies the same data

@@ -81,6 +81,55 @@ import java.util.List;
  */
 public class CrashVerifier {
 
+    /**
+     * MACHINE-READABLE RESULTS GO TO A FILE, NOT TO STDOUT.
+     * <p>
+     * The engine logs to the same stdout this class prints to, and a log line can splice into
+     * ours mid-line. That is not cosmetic: it produced {@code distinctIds=2026} -- the YEAR from
+     * a timestamp -- and a false {@code DURABILITY_FAILURE} at a single boundary whose neighbours
+     * were green, which is precisely the signature of a real isolated defect. It cost a full
+     * investigation to establish it was a parse error.
+     * <p>
+     * Human-readable output on stdout is unchanged. Anything a SCRIPT reads is written here
+     * instead, as {@code key=value} lines, which no interleaving can corrupt. Written by a
+     * shutdown hook so it lands on EVERY exit path, including the {@code System.exit} calls the
+     * verdicts use and a JVM killed by a signal.
+     */
+    private static final java.util.LinkedHashMap<String, String> RESULT = new java.util.LinkedHashMap<>();
+    private static final String RESULT_FILE = System.getProperty("result.file", "");
+
+    static {
+        if (!RESULT_FILE.isEmpty()) {
+            Runtime.getRuntime().addShutdownHook(new Thread(CrashVerifier::writeResultFile));
+        }
+    }
+
+    static void putResult(String key, Object value) {
+        RESULT.put(key, String.valueOf(value));
+    }
+
+    private static void writeResultFile() {
+        if (RESULT_FILE.isEmpty()) {
+            return;
+        }
+        final StringBuilder sb = new StringBuilder();
+        for (java.util.Map.Entry<String, String> e : RESULT.entrySet()) {
+            sb.append(e.getKey()).append('=').append(e.getValue()).append('\n');
+        }
+        try {
+            // Atomic: a reader must never see a half-written result and treat the missing half
+            // as a measurement. Same discipline the harness applies to its own watermark files.
+            final java.nio.file.Path tmp = java.nio.file.Paths.get(RESULT_FILE + ".tmp");
+            Files.write(tmp, sb.toString().getBytes(StandardCharsets.US_ASCII));
+            Files.move(tmp, java.nio.file.Paths.get(RESULT_FILE),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } catch (Exception ignored) {
+            // Best effort: the caller treats an absent result file as "not evaluated", which is
+            // the correct reading and is already handled loudly.
+        }
+    }
+
     static final boolean QWP = Boolean.getBoolean("qwp");
     /**
      * The qwp-sf arm: a client holding a store-and-forward buffer, replaying after the server
@@ -532,6 +581,11 @@ public class CrashVerifier {
         final long F = lastTxn;
         System.out.printf("recovered: count=%d F=%d lastTxn=%d C=%d Wm=%d W=%d suspended=%b%n",
                 count, F, lastTxn, committedSeqTxn, localDurableSeqTxn, W, suspended);
+        putResult("count", count);
+        putResult("F", F);
+        putResult("C", committedSeqTxn);
+        putResult("Wm", localDurableSeqTxn);
+        putResult("suspended", suspended);
 
         // REBASE WAL: a DESTRUCTIVE operation that deliberately discards pending WAL
         // transactions, so the F >= Wm durability bar does not apply and asserting it
@@ -793,6 +847,11 @@ public class CrashVerifier {
                     System.exit(2);
                 }
             }
+            // To the RESULT FILE for scripts, and to stdout for humans. The file is what
+            // verify.sh reads; the printed line is no longer load-bearing.
+            putResult("rows", rowIndex);
+            putResult("distinctIds", distinctIds);
+            putResult("duplicates", duplicates);
             if (QWP_SF) {
                 // Reported, never asserted away. The duplicate count IS the measured cost of
                 // at-least-once delivery, and it is the number a reader wants when judging
