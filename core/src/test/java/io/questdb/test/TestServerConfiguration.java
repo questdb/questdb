@@ -41,7 +41,10 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.Numbers;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.datetime.NanosecondClock;
@@ -53,6 +56,7 @@ import org.jetbrains.annotations.NotNull;
 import java.util.function.LongSupplier;
 
 public class TestServerConfiguration extends DefaultServerConfiguration {
+    private static final Log LOG = LogFactory.getLog(TestServerConfiguration.class);
 
     public static final long importID = 100L;
 
@@ -202,11 +206,22 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             }
         };
 
-        this.confMatViewRefreshPool = () -> 0; // shared pool
-        this.confViewCompilerPool = () -> 0; // shared pool
-        this.confExportPool = () -> 2; // default export pool worker count
+        this.confMatViewRefreshPool = () -> 0;
+        this.confViewCompilerPool = () -> 0;
+        this.confExportPool = () -> 2;
         this.confWalApplyPool = () -> 0;
-        this.confSharedPool = () -> workerCountShared;
+        final WorkerPoolMode sharedWorkerPoolMode = TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG));
+        this.confSharedPool = new WorkerPoolConfiguration() {
+            @Override
+            public int getWorkerCount() {
+                return workerCountShared;
+            }
+
+            @Override
+            public WorkerPoolMode getWorkerPoolMode() {
+                return sharedWorkerPoolMode;
+            }
+        };
         this.confLineTcpIOPool = () -> workerCountLineTcpIO;
         this.confLineTcpWriterPool = () -> workerCountLineTcpWriter;
     }

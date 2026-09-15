@@ -4800,17 +4800,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final ObjList<Function> bindVarFunctions = new ObjList<>();
                     try {
                         int jitOptions;
-                        try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
-                            final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
-                            jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
-                            jitOptions = jitIRSerializer.serialize(filterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
+                        Throwable jitScratchFailure = null;
+                        try {
+                            try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
+                                final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
+                                jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
+                                jitOptions = jitIRSerializer.serialize(filterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
+                            }
+
+                            compiledFilter = new CompiledFilter();
+                            compiledFilter.compile(jitIRMem, jitOptions);
+
+                            compiledCountOnlyFilter = new CompiledCountOnlyFilter();
+                            compiledCountOnlyFilter.compile(jitIRMem, jitOptions);
+                        } catch (Throwable th) {
+                            jitScratchFailure = th;
+                            throw th;
+                        } finally {
+                            final boolean hasPrimaryFailure = jitScratchFailure != null;
+                            jitScratchFailure = Misc.clearBestEffort(jitScratchFailure, jitIRSerializer);
+                            try {
+                                jitIRMem.truncate();
+                            } catch (Throwable cleanupFailure) {
+                                jitScratchFailure = Misc.foldCleanupFailure(jitScratchFailure, cleanupFailure);
+                            }
+                            if (!hasPrimaryFailure) {
+                                CairoException.rethrowCleanupFailure(jitScratchFailure);
+                            }
                         }
-
-                        compiledFilter = new CompiledFilter();
-                        compiledFilter.compile(jitIRMem, jitOptions);
-
-                        compiledCountOnlyFilter = new CompiledCountOnlyFilter();
-                        compiledCountOnlyFilter.compile(jitIRMem, jitOptions);
 
                         limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                         final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
@@ -4827,12 +4844,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 filterCompileMetadata
                         );
                         final ExpressionNode jitFilterClone = deepClone(expressionNodePool, filterExpr);
-                        // Ownership of the per-worker filters passes to the factory constructor, which
-                        // frees them on its own failure path; null the catch-visible copy so the
-                        // enclosing catch does not double-free.
+                        // Keep the per-worker filters catch-visible until construction succeeds. The
+                        // constructor nulls every slot it releases, so the enclosing catch can safely
+                        // close only entries that a pre-body or partial-construction failure left owned
+                        // by this method.
                         final ObjList<Function> jitPerWorkerFilters = perWorkerFilters;
-                        perWorkerFilters = null;
-                        return new AsyncJitFilteredRecordCursorFactory(
+                        final AsyncJitFilteredRecordCursorFactory asyncJitFilterFactory = new AsyncJitFilteredRecordCursorFactory(
                                 executionContext.getCairoEngine(),
                                 configuration,
                                 executionContext.getMessageBus(),
@@ -4850,6 +4867,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 executionContext.getSharedQueryWorkerCount(),
                                 enablePreTouch
                         );
+                        perWorkerFilters = null;
+                        return asyncJitFilterFactory;
                     } catch (SqlException | LimitOverflowException ex) {
                         // for these errors we are intentionally **not** rethrowing the exception
                         // if a JIT filter cannot be used, we will simply use a Java filter
@@ -4865,14 +4884,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 .$(", fd=").$(executionContext.getRequestFd()).I$();
                     } catch (Throwable t) {
                         // other errors are fatal -> rethrow them
-                        Misc.free(compiledFilter);
-                        Misc.free(compiledCountOnlyFilter);
-                        Misc.freeObjList(bindVarFunctions);
-                        limitLoFunction = Misc.free(limitLoFunction);
+                        Misc.free(compiledFilter, t);
+                        Misc.free(compiledCountOnlyFilter, t);
+                        Misc.freeObjList(bindVarFunctions, t);
+                        final Function limitLoFunctionToFree = limitLoFunction;
+                        limitLoFunction = null;
+                        Misc.free(limitLoFunctionToFree, t);
                         throw t;
-                    } finally {
-                        jitIRSerializer.clear();
-                        jitIRMem.truncate();
                     }
                 }
 
@@ -4888,8 +4906,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
                 final ExpressionNode javaFilterClone = deepClone(expressionNodePool, filterExpr);
                 final ObjList<Function> javaPerWorkerFilters = perWorkerFilters;
-                perWorkerFilters = null;
-                return new AsyncFilteredRecordCursorFactory(
+                final AsyncFilteredRecordCursorFactory asyncFilterFactory = new AsyncFilteredRecordCursorFactory(
                         executionContext.getCairoEngine(),
                         configuration,
                         executionContext.getMessageBus(),
@@ -4904,17 +4921,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         executionContext.getSharedQueryWorkerCount(),
                         enablePreTouch
                 );
+                perWorkerFilters = null;
+                return asyncFilterFactory;
             }
             return new FilteredRecordCursorFactory(factory, filter);
         } catch (Throwable e) {
-            // Non-null only when deepClone() (or another step) threw after the per-worker filters were
-            // built but before the constructor adopted them; the null-transfer above keeps the
-            // constructor's own cleanup from double-freeing.
+            // Non-null when a construction step or an async factory constructor threw. Both async
+            // constructors null every per-worker filter slot they release, so retaining the list until
+            // one returns lets this catch close only the entries that still need cleanup.
             Misc.freeObjList(perWorkerFilters, e);
             // Null on every path that transferred it; non-null when a construction step threw.
             Misc.free(limitLoFunction, e);
-            Misc.free(filter);
-            Misc.free(factory);
+            Misc.free(filter, e);
+            Misc.free(factory, e);
             throw e;
         }
     }
@@ -6497,7 +6516,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 final boolean parallelWindowJoinEnabled = executionContext.isParallelWindowJoinEnabled();
                                 final boolean masterSupportsPageFrames = master.supportsPageFrameCursor()
                                         || (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor());
-                                if (parallelWindowJoinEnabled && masterSupportsPageFrames && slaveToFree.supportsTimeFrameCursor()) {
+                                if (parallelWindowJoinEnabled
+                                        && masterSupportsPageFrames
+                                        && GroupByUtils.isParallelismSupported(groupByFunctions)
+                                        && slaveToFree.supportsTimeFrameCursor()) {
                                     // try to steal master filter
                                     CompiledFilter compiledFilter = null;
                                     MemoryCARW bindVarMemory = null;
@@ -7004,9 +7026,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final Function filter = compileJoinFilter(filterExpr, postJoinFilterMetadata, executionContext);
                     // deepClone() runs after compileWorkerFiltersConditionally() (which restores the
                     // filter models) and can throw a node-pool OOM before the constructor adopts the
-                    // filter and per-worker filters. The catch below frees both; the null-transfer
-                    // keeps the constructor's own failure-path cleanup from double-freeing the
-                    // per-worker filters.
+                    // filter and per-worker filters. Keep the list catch-visible until construction
+                    // succeeds; constructor cleanup nulls every released slot, so the catch safely
+                    // closes only the remaining entries on failure.
                     ObjList<Function> postFilterPerWorkerFilters = null;
                     try {
                         if (filter.isRuntimeConstant()) {
@@ -7033,7 +7055,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                             final ExpressionNode postFilterClone = deepClone(expressionNodePool, filterExpr);
                             final ObjList<Function> postFilterPerWorkerFilters0 = postFilterPerWorkerFilters;
-                            postFilterPerWorkerFilters = null;
                             master = new AsyncFilteredRecordCursorFactory(
                                     executionContext.getCairoEngine(),
                                     configuration,
@@ -7049,6 +7070,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     executionContext.getSharedQueryWorkerCount(),
                                     SqlHints.hasEnablePreTouchHint(model, masterAlias)
                             );
+                            postFilterPerWorkerFilters = null;
                         } else {
                             master = new FilteredRecordCursorFactory(master, filter);
                         }
@@ -7118,10 +7140,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
                             collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
 
-                            // See the post-join-filter path above: deepClone() can throw a node-pool OOM
-                            // after the per-worker filters were built but before the constructor adopts the
-                            // filter and per-worker filters. The null-transfer keeps the constructor's own
-                            // failure-path cleanup from double-freeing the per-worker filters.
+                            // See the post-join-filter path above: keep the list catch-visible until
+                            // construction succeeds; constructor cleanup nulls every released slot.
                             constFilterPerWorkerFilters = compileWorkerFiltersConditionally(
                                     executionContext,
                                     filter,
@@ -7131,7 +7151,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                             final ExpressionNode constFilterClone = deepClone(expressionNodePool, constFilterExpr);
                             final ObjList<Function> constFilterPerWorkerFilters0 = constFilterPerWorkerFilters;
-                            constFilterPerWorkerFilters = null;
                             master = new AsyncFilteredRecordCursorFactory(
                                     executionContext.getCairoEngine(),
                                     configuration,
@@ -7147,6 +7166,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     executionContext.getSharedQueryWorkerCount(),
                                     SqlHints.hasEnablePreTouchHint(model, masterAlias)
                             );
+                            constFilterPerWorkerFilters = null;
                         } else {
                             master = new FilteredRecordCursorFactory(master, filter);
                         }
@@ -7160,7 +7180,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             return master;
         } catch (Throwable e) {
-            Misc.free(master);
+            Misc.free(master, e);
             executionContext.popIntervalModel();
             executionContext.popHasInterval();
             throw e;
@@ -8598,6 +8618,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
         // several levels up from the model that holds the join clause.
         boolean pushed = false;
+        final ExpressionNode originatingViewNameExpr = model.getOriginatingViewNameExpr();
+        final int previousExecutionRequirementPosition = originatingViewNameExpr != null
+                ? functionParser.enterExecutionRequirementPosition(originatingViewNameExpr.position)
+                : -1;
         final IQueryModel savedOrderByModel = lastSeenOrderByModel;
         try {
             final ObjList<ExpressionNode> orderBy = model.getOrderBy();
@@ -8619,6 +8643,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             return factory;
         } finally {
+            if (originatingViewNameExpr != null) {
+                functionParser.restoreExecutionRequirementPosition(previousExecutionRequirementPosition);
+            }
             lastSeenOrderByModel = savedOrderByModel;
             if (pushed) {
                 executionContext.popTimestampRequiredFlag();
@@ -13804,9 +13831,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
                     // deepClone() runs after compileWorkerFiltersConditionally() (which restores the
                     // filter models) and can throw a node-pool OOM before the constructor adopts the
-                    // per-worker filters. The outer catch frees filter/coveringFactory but not these,
-                    // so free them here; the null-transfer avoids double-freeing on a constructor
-                    // failure, where the constructor already releases them.
+                    // per-worker filters. Keep the list catch-visible until construction succeeds;
+                    // constructor cleanup nulls every released slot, so the catch safely closes only
+                    // the remaining entries on failure.
                     ObjList<Function> coveringPerWorkerFilters = null;
                     try {
                         coveringPerWorkerFilters = compileWorkerFiltersConditionally(
@@ -13818,8 +13845,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                         final ExpressionNode coveringFilterClone = deepClone(expressionNodePool, filterExpr);
                         final ObjList<Function> coveringPerWorkerFilters0 = coveringPerWorkerFilters;
-                        coveringPerWorkerFilters = null;
-                        return new AsyncFilteredRecordCursorFactory(
+                        final AsyncFilteredRecordCursorFactory asyncFilterFactory = new AsyncFilteredRecordCursorFactory(
                                 executionContext.getCairoEngine(),
                                 configuration,
                                 executionContext.getMessageBus(),
@@ -13834,6 +13860,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 executionContext.getSharedQueryWorkerCount(),
                                 SqlHints.hasEnablePreTouchHint(model, model.getName())
                         );
+                        coveringPerWorkerFilters = null;
+                        return asyncFilterFactory;
                     } catch (Throwable th) {
                         Misc.freeObjList(coveringPerWorkerFilters, th);
                         throw th;
@@ -13852,9 +13880,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // the serial fallback freed it, and otherwise still owned here: the factory takes it
             // over only by returning, and every throw between the push decision and that return
             // lands right here. So this free is reached exactly when nothing else owns it.
-            Misc.free(limitLoFunction);
-            Misc.free(filter);
-            Misc.free(coveringFactory);
+            Misc.free(limitLoFunction, th);
+            Misc.free(filter, th);
+            Misc.free(coveringFactory, th);
             throw th;
         }
     }

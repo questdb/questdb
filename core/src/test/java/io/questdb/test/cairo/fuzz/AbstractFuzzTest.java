@@ -56,8 +56,17 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL = 20000;
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN = 200;
     protected final FuzzRunner fuzzer = new FuzzRunner();
-    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, node1.getMetrics());
+    protected final WorkerPool sharedWorkerPool;
     private final Rnd setUpRnd = TestUtils.generateRandom(LOG);
+
+    protected AbstractFuzzTest() {
+        sharedWorkerPool = new TestWorkerPool(
+                "testing",
+                4,
+                node1.getMetrics(),
+                TestUtils.getWorkerPoolMode(setUpRnd)
+        );
+    }
 
     public static int getRndO3PartitionSplit(Rnd rnd) {
         return MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN + rnd.nextInt(MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL - MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN);

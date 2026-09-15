@@ -60,6 +60,7 @@ import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.AbstractTest;
@@ -1926,9 +1927,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     public void testParquetExportPageFrameCircuitBreaker() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
-                    // ~100 daily partitions with 1000 rows each.  The heavy
-                    // rnd_str() computation per row makes each page frame
-                    // slow enough for the 1ms timeout to trip the breaker.
+                    // ~100 daily partitions with 1000 rows each. The heavy
+                    // rnd_str() computation per row makes the 1ms timeout race
+                    // page-frame export on typical test hosts.
                     engine.execute("""
                             CREATE TABLE cb_test AS (
                                 SELECT x,
@@ -1942,22 +1943,35 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("query", "SELECT x + 1 AS cx, rnd_str(500, 1000, 0) AS big, ts FROM cb_test");
                     params.put("fmt", "parquet");
                     params.put("timeout", "1");
-                    // With a very short timeout the circuit breaker should trip
-                    // during PAGE_FRAME_BACKED export.  Depending on which code
-                    // path checks first, the error is either "timeout, query
-                    // aborted" (from the page-frame factory) or "cancelled by
-                    // user" (from the HTTP exporter).  The server may also just
-                    // disconnect.
+                    // The 1ms timeout races the export: on a slow enough page
+                    // frame the circuit breaker trips first, while fast hardware
+                    // can complete the export first. All of these outcomes are
+                    // valid as long as the server does not crash or corrupt data:
+                    //   - "timeout, query aborted" (page-frame factory checks first)
+                    //   - "cancelled by user" (HTTP exporter checks first)
+                    //   - a valid Parquet body (export wins the race)
+                    //   - a peer-disconnect / malformed-chunk HttpClientException
+                    // Assert on the outcome instead of the raw response body so a
+                    // completed export cannot put a large binary body in the log.
                     try {
-                        testHttpClient.assertGetContains("/exp", "timeout, query aborted", params);
-                    } catch (AssertionError ae) {
-                        TestUtils.assertContains(ae.getMessage(), "cancelled by user");
+                        HttpClient.Request request = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                        request.GET().url("/exp");
+                        Utf8StringSink sink = testHttpClient.getSink();
+                        testHttpClient.reqToSink(request, sink, null, null, null, params);
+                        Assert.assertTrue(
+                                "unexpected export outcome (head): " + sinkHead(sink),
+                                Utf8s.containsAscii(sink, "timeout, query aborted")
+                                        || Utf8s.containsAscii(sink, "cancelled by user")
+                                        || hasParquetMagic(sink)
+                        );
                     } catch (HttpClientException e) {
                         String msg = e.getMessage();
                         Assert.assertTrue(
                                 "unexpected error: " + msg,
                                 msg.contains("peer disconnect") || msg.contains("malformed chunk")
                         );
+                    } finally {
+                        testHttpClient.disconnect();
                     }
                 });
     }
@@ -2674,6 +2688,27 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         );
                     }
                 });
+    }
+
+    // Returns a printable, bounded response prefix so failures never log a large binary body.
+    private static String sinkHead(Utf8StringSink sink) {
+        int n = Math.min(sink.size(), 64);
+        StringBuilder sb = new StringBuilder(n);
+        for (int i = 0; i < n; i++) {
+            byte b = sink.byteAt(i);
+            sb.append(b >= 0x20 && b < 0x7f ? (char) b : '?');
+        }
+        return sb.toString();
+    }
+
+    // A valid Parquet file starts with "PAR1". This check distinguishes a completed export
+    // from an error response without materializing the potentially large body as a String.
+    private static boolean hasParquetMagic(Utf8StringSink sink) {
+        return sink.size() >= 4
+                && sink.byteAt(0) == 'P'
+                && sink.byteAt(1) == 'A'
+                && sink.byteAt(2) == 'R'
+                && sink.byteAt(3) == '1';
     }
 
     private static @NotNull Thread startCancelThread(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {

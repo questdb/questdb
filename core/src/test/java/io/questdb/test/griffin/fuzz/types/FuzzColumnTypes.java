@@ -75,6 +75,32 @@ public final class FuzzColumnTypes {
     }
 
     /**
+     * One instance of every registered type family, in random order.
+     * {@code FuzzTableFactory} deals a table's columns off the deck before it
+     * falls back to {@link #pickRandom(Rnd)}, so the leading columns carry
+     * distinct types instead of repeating a handful.
+     * <p>
+     * Drawing with replacement left a rare type out of a whole run often
+     * enough to matter: over 16 singletons and two parameterised families, a
+     * narrow single-table run missed any given type most of the time, and
+     * every filter over that type went ungenerated with it. That is how an
+     * ordering predicate over CHAR stayed unexercised.
+     */
+    public static ObjList<FuzzColumnType> shuffledDeck(Rnd rnd) {
+        ObjList<FuzzColumnType> deck = new ObjList<>();
+        deck.addAll(SINGLETONS);
+        deck.add(DecimalType.random(rnd));
+        deck.add(DoubleArrayType.random(rnd));
+        for (int i = deck.size() - 1; i > 0; i--) {
+            int j = rnd.nextInt(i + 1);
+            FuzzColumnType swap = deck.getQuick(i);
+            deck.setQuick(i, deck.getQuick(j));
+            deck.setQuick(j, swap);
+        }
+        return deck;
+    }
+
+    /**
      * Pick a random column type whose {@link ColumnKind} matches. Used by
      * cast generation to land on a specific kind regardless of the inner
      * expression's type. Returns {@code null} if no registered singleton
