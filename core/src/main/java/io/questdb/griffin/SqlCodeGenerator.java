@@ -10185,7 +10185,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         final boolean accepted = factory.tryDisableTimestampOrdering(orderSensitive, null);
                         try {
-                            validateOrderSensitiveVectorAggregates(factory, tempVaf, accepted);
+                            validateOrderSensitiveVectorAggregates(factory, tempVaf, accepted, model.getModelPosition());
                         } catch (Throwable e) {
                             Misc.freeObjList(tempVaf);
                             throw e;
@@ -10346,7 +10346,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
 
                         // Not-keyed group by consumes its base to exhaustion too, so
-                        // the same rule applies as for the keyed path.
+                        // the same rule applies as for the keyed path. There is no grouping
+                        // filter to share here: this site passes null and
+                        // AsyncGroupByNotKeyedRecordCursorFactory adopts none, so the keyed
+                        // site's shared-object hazard has no counterpart to defend against.
                         //
                         // This must stay ABOVE the ownership transfer below. The guard
                         // throws, and the transfer nulls innerProjectionFunctions and
@@ -10356,7 +10359,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // a no-op, so a throw between transfer and adoption leaks every
                         // assembled projection function.
                         final boolean accepted = offerUnorderedScan(factory, groupByFunctions, null);
-                        validateOrderSensitiveAggregates(factory, groupByFunctions, accepted);
+                        validateOrderSensitiveAggregates(factory, groupByFunctions, accepted, model.getModelPosition());
 
                         // Transfer ownership to the factory constructor.
                         final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
@@ -10424,12 +10427,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // instead of the earliest row, so it fails closed, matching how
                     // SAMPLE BY ALIGN TO FIRST OBSERVATION already rejects such a base.
                     //
-                    // Pass listColumnFilterCopy, NOT the live listColumnFilterA: the calls
-                    // above (compilePerWorkerInnerProjectionFunctions,
+                    // keyColumns, NOT the live listColumnFilterA: the calls above
+                    // (compilePerWorkerInnerProjectionFunctions,
                     // compileWorkerFiltersConditionally) re-enter function parsing and may
                     // clear and repopulate listColumnFilterA -- that is exactly why the copy
-                    // was taken. The copy is also what the factory below adopts as its key
-                    // filter, so the offer reads the same grouping the factory will execute.
+                    // was taken. The offer and the factory MUST read the same object, so the
+                    // offer decides against the grouping the factory will actually execute;
+                    // a one-line edit back to listColumnFilterA here compiles, passes the
+                    // whole suite, and silently re-arms a corruption reproduced by injection
+                    // (a clobbered entry factoring to the index key's query position makes a
+                    // time-bucket grouping take per-key). Binding it once below makes such an
+                    // edit change a visibly shared name instead of swapping one identifier
+                    // for a similar-looking one.
                     //
                     // This must stay ABOVE the ownership transfer below. The guard throws,
                     // and the transfer nulls innerProjectionFunctions and
@@ -10437,8 +10446,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // this method can free the assembled functions through. With both null,
                     // freeAssembledProjectionFunctions is a no-op, so a throw between
                     // transfer and adoption leaks every assembled projection function.
-                    final boolean accepted = offerUnorderedScan(factory, groupByFunctions, listColumnFilterCopy);
-                    validateOrderSensitiveAggregates(factory, groupByFunctions, accepted);
+                    final ListColumnFilter keyColumns = listColumnFilterCopy;
+                    final boolean accepted = offerUnorderedScan(factory, groupByFunctions, keyColumns);
+                    validateOrderSensitiveAggregates(factory, groupByFunctions, accepted, model.getModelPosition());
 
                     // Transfer ownership to the factory constructor. The factory adopts the
                     // per-worker projection clones through the disjoint group-by/key views.
@@ -10464,7 +10474,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     executionContext.getMessageBus(),
                                     factory,
                                     outerProjectionMetadata,
-                                    listColumnFilterCopy,
+                                    // Same object the offer above decided against -- see keyColumns.
+                                    keyColumns,
                                     keyTypesCopy,
                                     valueTypesCopy,
                                     groupByFunctions0,
@@ -11974,11 +11985,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * owns that claim. Firing unconditionally would reject exactly the case the index-key
      * rule legalises. What remains guarded is an unordered base this consumer did not
      * arrange, such as a multi-key covering latestBy.
+     *
+     * @param position the query model's position, reported with the error -- the same
+     *                 {@code model.getModelPosition()} the sibling ordering guards in this
+     *                 class already pass, rather than a hard-coded 0
      */
     private static void validateOrderSensitiveAggregates(
             RecordCursorFactory base,
             ObjList<GroupByFunction> groupByFunctions,
-            boolean offerAccepted
+            boolean offerAccepted,
+            int position
     ) throws SqlException {
         // keep in sync with validateOrderSensitiveVectorAggregates(): same short-circuit terms,
         // same scan-direction test, same message.
@@ -11995,7 +12011,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             final GroupByFunction f = groupByFunctions.getQuick(i);
             if (f != null && f.isOrderSensitive()) {
-                throw SqlException.$(0, ORDER_SENSITIVE_UNORDERED_BASE_MSG);
+                throw SqlException.$(position, ORDER_SENSITIVE_UNORDERED_BASE_MSG);
             }
         }
     }
@@ -12011,7 +12027,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static void validateOrderSensitiveVectorAggregates(
             RecordCursorFactory base,
             ObjList<VectorAggregateFunction> vafs,
-            boolean offerAccepted
+            boolean offerAccepted,
+            int position
     ) throws SqlException {
         // keep in sync with validateOrderSensitiveAggregates(): same short-circuit terms,
         // same scan-direction test, same message -- including asking
@@ -12023,7 +12040,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0, n = vafs.size(); i < n; i++) {
             final VectorAggregateFunction f = vafs.getQuick(i);
             if (f != null && f.isOrderSensitive()) {
-                throw SqlException.$(0, ORDER_SENSITIVE_UNORDERED_BASE_MSG);
+                throw SqlException.$(position, ORDER_SENSITIVE_UNORDERED_BASE_MSG);
             }
         }
     }

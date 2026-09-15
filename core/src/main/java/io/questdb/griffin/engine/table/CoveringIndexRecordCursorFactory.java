@@ -608,26 +608,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public boolean tryDisableTimestampOrdering(
-            boolean hasOrderSensitiveAggregates,
-            @Nullable ListColumnFilter groupByKeyColumns
-    ) {
-        // Only the multi-key merge pays for ordering: single-key frames are already
-        // per-key, and multi-key latestBy has its own ordering contract.
-        if (latestBy || multiKeyPageFrameCursor == null) {
-            return false;
-        }
-        if (hasOrderSensitiveAggregates && !groupsByIndexKeyOnly(groupByKeyColumns)) {
-            return false;
-        }
-        if (tsOrderedFrames) {
-            tsOrderedFrames = false;
-            multiKeyPageFrameCursor.setTsOrderedFrames(false);
-        }
-        return true;
-    }
-
-    @Override
     public int getScanDirection() {
         // Non-latestBy: partition iteration is ASC, and within each
         // partition rows are emitted in row-id ascending order (single
@@ -693,10 +673,25 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * DIRECT_PAGE_FRAME parquet reader would export all-null covered columns. Reporting
      * false routes the single-key parquet export through the row-wise cursor path, which
      * decodes the covered columns the same way the query path does.
+     * <p>
+     * {@code tsOrderedFrames} is part of the answer for the same reason. Per-key mode is
+     * metadata-only BY CONSTRUCTION: {@code nextImplPerKey()} reuses the single-key fill
+     * precisely so every frame carries a real resolved symbol key and stays decodable on the
+     * worker arm. Reporting true there would hand a DIRECT_PAGE_FRAME reader the very
+     * placeholder addresses the single-key branch exists to keep away from it. Reading the
+     * flag here is sound: it is written once, by {@link #tryDisableTimestampOrdering}, during
+     * code generation, and this method is consulted by
+     * {@code ParquetExportMode.determineExportMode} at execution time -- the same ordering
+     * {@link #getScanDirection()} and {@link #toPlan} already rely on.
+     * <p>
+     * No consumer can reach the contradiction today: the flag only flips under a GROUP BY,
+     * and the export path does not look through one. That is a reason to state the contract
+     * correctly, not a reason to leave it stated wrongly -- the failure mode is a silent
+     * all-null column, not an error.
      */
     @Override
     public boolean producesMaterializedPageFrames() {
-        return backup == null && multiKeyPageFrameCursor != null;
+        return backup == null && multiKeyPageFrameCursor != null && tsOrderedFrames;
     }
 
     @Override
@@ -726,6 +721,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         if (!tsOrderedFrames && multiKeyPageFrameCursor != null) {
             sink.attr("frames").val("per-key (unordered)");
         }
+        // The decode strategy is intentionally derivable from the filter shape below rather than
+        // emitted as a separate attr (which would churn every covering-plan golden test): a single
+        // equality ("sym = 'x'") is produced metadata-only at frame production and decoded in
+        // parallel on the reduce workers, whereas an IN-list ("sym IN (...)") is decoded eagerly via
+        // the multi-key merge. The parallelism itself surfaces on the parent async operator's plan.
+        // The "frames" attr above is the one exception: per-key reuses the single-key fill, so an
+        // IN-list printed with it is metadata-only too, which the filter shape alone cannot say.
         if (patternKeys != null) {
             sink.attr("filter").putColumnName(keyQueryPosition).val(" matches pattern");
         } else if (keyValueFuncs != null) {
@@ -740,6 +742,26 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // resolves intervals against the execution context, so bounds derived from a bind
         // variable or scalar subquery print as concrete timestamps.
         sink.child(dfcFactory);
+    }
+
+    @Override
+    public boolean tryDisableTimestampOrdering(
+            boolean hasOrderSensitiveAggregates,
+            @Nullable ListColumnFilter groupByKeyColumns
+    ) {
+        // Only the multi-key merge pays for ordering: single-key frames are already
+        // per-key, and multi-key latestBy has its own ordering contract.
+        if (latestBy || multiKeyPageFrameCursor == null) {
+            return false;
+        }
+        if (hasOrderSensitiveAggregates && !groupsByIndexKeyOnly(groupByKeyColumns)) {
+            return false;
+        }
+        if (tsOrderedFrames) {
+            tsOrderedFrames = false;
+            multiKeyPageFrameCursor.setTsOrderedFrames(false);
+        }
+        return true;
     }
 
     private static int[] buildRequiredIncludeIndices(int[] queryColToIncludeIdx) {
@@ -830,27 +852,29 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     /**
-     * True when the consumer's grouping includes this scan's index column -- whether
-     * that is the only column it groups by, or the index key plus other grouping terms
-     * (e.g. a SAMPLE BY time bucket).
+     * True when the consumer's grouping-column FILTER contains exactly this scan's index
+     * column and nothing else.
      * <p>
-     * Per-key mode delivers each key's rows partition-ascending with ascending row ids
-     * inside, so every group produced by a grouping that includes the index key draws
-     * its rows from exactly one key's already-ordered posting list. Any additional
-     * grouping term only narrows those groups further -- it cannot reorder rows drawn
-     * from a single key's stream. That is what makes an order-sensitive aggregate
-     * (first()/last()) safe over an otherwise unordered (per-key) scan: it is the
-     * grouping being a superset of {@code {index key}} that matters, not it being
-     * exactly equal.
+     * <b>Why that is the safe condition.</b> Per-key mode delivers each key's rows
+     * partition-ascending with ascending row ids inside, so a grouping that includes the
+     * index key confines every group to one key's already-ordered posting list. Additional
+     * grouping terms only narrow those groups further -- they cannot reorder rows drawn from
+     * a single key's stream. That is what makes an order-sensitive aggregate
+     * (first()/last()) safe over an otherwise unordered (per-key) scan.
      * <p>
-     * This inspects the {@link ListColumnFilter}, which carries only grouping COLUMNS.
-     * A SAMPLE BY bucket is a key FUNCTION, not a column, and never enters that filter --
-     * so {@code SELECT ts, first(value), param_id FROM t WHERE param_id IN (...) SAMPLE
-     * BY 10s}, grouped by both the bucket and the index key, is ACCEPTED here: the filter
-     * contains exactly {@code [param_id]}. That is intentional, not an oversight -- do
-     * not tighten this to require the filter equal exactly the index key at the SQL
-     * grouping level, or the SAMPLE BY case above (which is safe, and works today) will
-     * start being rejected.
+     * <b>What this method actually accepts, which is narrower.</b> It inspects the
+     * {@link ListColumnFilter}, which carries grouping COLUMNS only, and requires a column
+     * count of exactly one. A SAMPLE BY bucket is a key FUNCTION, not a column, and never
+     * enters the filter -- so {@code SELECT ts, first(value), param_id FROM t WHERE
+     * param_id IN (...) SAMPLE BY 10s}, grouped by the bucket AND the index key, presents
+     * here as {@code [param_id]} and is ACCEPTED. That is intentional: do not "fix" this to
+     * compare against the SQL-level grouping, or that case (which is safe, and works today)
+     * starts being rejected.
+     * <p>
+     * By the same count check, grouping by the index key plus another COLUMN --
+     * {@code GROUP BY param_id, sensor} -- is REJECTED today. Accepting it would be sound by
+     * the argument above, but this method does not do it, and nothing here should be read as
+     * a general superset rule. Relaxing it is a separate change with its own tests.
      * <p>
      * The filter indexes this reads are positions in the consumer's base metadata, which
      * is this factory's own metadata, the same space {@link #keyQueryPosition} lives in.
@@ -3021,6 +3045,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                                 : fillFrameForKey(
                                         multiKeys.getQuick(perKeyIdx), perKeyPartitionIndex,
                                         perKeyRowLo, perKeyRowHi, maxRowsPerFrame, true);
+                        // A null frame must mean the key finished, because only
+                        // !isKeyMidDrain() advances perKeyIdx. A fill that returned null
+                        // while still claiming to be mid-drain would spin this inner loop
+                        // forever on the same key -- a hung query with no error, which is
+                        // far harder to diagnose than a failed assertion.
+                        assert result != null || !isKeyMidDrain();
                         // See isKeyMidDrain(): this -- NOT a null return -- is what
                         // says the key is finished in this partition.
                         if (!isKeyMidDrain()) {
