@@ -176,7 +176,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     }
                     continue;
                 } else {
-                    return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
+                    return computeNativeFrame(reenterPartitionLo, reenterPartitionHi, skipTarget);
                 }
             }
 
@@ -203,7 +203,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
                     return frame;
                 }
-                final TableReaderPageFrame result = nextSlow(partitionFrame, lo, hi);
+                final TableReaderPageFrame result = nextSlow(partitionFrame, lo, hi, skipTarget);
                 if (result != null) {
                     return result;
                 }
@@ -278,7 +278,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         pageSizes.setAll(2 * columnCount, -1);
     }
 
-    private TableReaderPageFrame computeNativeFrame(long partitionLo, long partitionHi) {
+    private TableReaderPageFrame computeNativeFrame(long partitionLo, long partitionHi, long skipTarget) {
+        if (skipTarget > 0) {
+            return computeNativeSkipFrame(partitionLo, partitionHi, skipTarget);
+        }
+
         final int base = reader.getColumnBase(reenterPartitionIndex);
 
         // we may need to split this partition frame either along "top" lines, or along
@@ -385,6 +389,51 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         return frame;
     }
 
+    /**
+     * One skip-only skeleton over {@code [partitionLo, skipHi)}, standing in for every frame the caller would
+     * otherwise have to walk and discard. The caller reads nothing but the row span off such a frame, so the
+     * span does not have to respect the piece, column-top or page-frame-size boundaries a readable frame is cut
+     * at - and not respecting them is the point. A COMPOSITE partition emits one readable frame per PIECE, and
+     * pricing each one probes the aux vector of every var-size column ({@code getDataVectorSizeAt}), faulting in
+     * a page of the mmapped aux file per column per frame. On a partition of thousands of pieces that walk, not
+     * the ten rows LIMIT -10 returns, is what the query spends its time on. Collapsed here, the skip over a
+     * partition costs one frame whatever its geometry.
+     * <p>
+     * The skeleton stops exactly at the skip target rather than one row past it, so the caller's
+     * {@code frameSize > skipTarget} landing test does not fire on it: it charges the whole skeleton against the
+     * skip, arrives with nothing left to skip, and the next call hands it a fully populated frame starting at the
+     * landing row.
+     */
+    private TableReaderPageFrame computeNativeSkipFrame(long partitionLo, long partitionHi, long skipTarget) {
+        final long skipHi = Math.min(partitionHi, partitionLo + skipTarget);
+        // Publish no addresses at all rather than the previous frame's: a skip-only frame still reaches
+        // PageFrameAddressCache, and a stale-but-plausible address there would read the wrong rows if anything
+        // ever navigated to it, whereas a zero address cannot be mistaken for a live one.
+        clearAddresses();
+
+        if (skipHi < partitionHi) {
+            reenterPartitionLo = skipHi;
+            reenterPartitionHi = partitionHi;
+            reenterPartitionFrame = true;
+        } else {
+            reenterPartitionFrame = false;
+        }
+        remainingRowsInInterval = partitionHi - skipHi;
+
+        frame.partitionLo = partitionLo;
+        frame.partitionHi = skipHi;
+        // A skeleton may span several pieces, so no single shift describes it. Nothing reads a shift off a frame
+        // the caller discards, and 0 is what the whole-partition skeleton in next(long) publishes.
+        frame.pieceShift = 0;
+        frame.format = PartitionFormat.NATIVE;
+        frame.parquetMetaDecoder = null;
+        frame.rowGroupIndex = -1;
+        frame.rowGroupLo = -1;
+        frame.rowGroupHi = -1;
+        frame.partitionIndex = reenterPartitionIndex;
+        return frame;
+    }
+
     private @Nullable TableReaderPageFrame computeParquetFrame(long partitionLo, long partitionHi) {
         final ParquetMetaFileReader metadata = reenterParquetDecoder.metadata();
         final int rowGroupCount = metadata.getRowGroupCount();
@@ -452,7 +501,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         return null;
     }
 
-    private @Nullable TableReaderPageFrame nextSlow(PartitionFrame partitionFrame, long lo, long hi) {
+    private @Nullable TableReaderPageFrame nextSlow(PartitionFrame partitionFrame, long lo, long hi, long skipTarget) {
         final byte format = partitionFrame.getPartitionFormat();
         if (format == PartitionFormat.PARQUET) {
             clearAddresses();
@@ -479,7 +528,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         assert format == PartitionFormat.NATIVE;
         reenterParquetDecoder = null;
         reenterPageFrameRowLimit = NativeFrameBoundaries.calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
-        return computeNativeFrame(lo, hi);
+        return computeNativeFrame(lo, hi, skipTarget);
     }
 
     public static long calculatePageFrameRowLimit(
