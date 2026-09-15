@@ -21,6 +21,16 @@ fail() { echo "NOT READY: $*" >&2; exit 1; }
 #    is slow enough to change the timing of every crash point.
 grep -qE '(vmx|svm)' /proc/cpuinfo || fail "CPU exposes neither vmx nor svm — hardware virtualisation unavailable"
 
+# 2b. The disk cache mode. lib/qemu.sh refuses a bad value at boot time; this is the
+#     same check at the GATE, so the run stops before it creates disks and boots a VM.
+#     Both non-default values produce a FALSE GREEN that no other guard can detect --
+#     see the long comment in lib/qemu.sh. Checked here because check-host.sh is the
+#     documented "names the first thing wrong" entry point.
+if [ -n "${QDB_VM_DATA_CACHE:-}" ] && [ "${QDB_VM_DATA_CACHE}" != "none" ] \
+   && [ "${QDB_VM_ALLOW_UNSAFE_CACHE:-0}" != "1" ]; then
+    fail "QDB_VM_DATA_CACHE=${QDB_VM_DATA_CACHE} produces a false green (see lib/qemu.sh); unset it, or set QDB_VM_ALLOW_UNSAFE_CACHE=1 to demonstrate the broken configuration"
+fi
+
 # 3. Tooling. genisoimage builds the cloud-init seed, so cloud-image-utils is
 #    not required.
 for c in qemu-system-x86_64 qemu-img ssh scp ssh-keygen genisoimage curl; do

@@ -64,10 +64,29 @@ vm_boot() {
         fi
     fi
 
-    # Overridable ONLY so test/t04-preflight.sh can prove the preflight guard
-    # actually fires under a knowingly-broken configuration. Never override in
-    # a real run.
+    # Overridable ONLY so a deliberately-broken configuration can be demonstrated.
+    #
+    # REFUSE ANY OTHER VALUE. t04 no longer mutates this (it mutates drop_writes, which is
+    # what actually discriminates), so nothing in the harness sets it any more -- yet the
+    # variable stayed reachable, and the two values it accepts both produce a FALSE GREEN:
+    #
+    #   cache=writeback   un-flushed guest writes land in the HOST page cache, which
+    #                     survives `kill -9` on the VMM because the host kept its power.
+    #   cache=directsync  every guest write becomes durable at once, so even NOSYNC
+    #                     survives.
+    #
+    # And the preflight CANNOT catch either: pf_ranged is discarded by dm-flakey inside the
+    # guest and never reaches QEMU's cache layer, so it returns PREFLIGHT_OK under all three
+    # modes. An operator setting this to speed CI up would get a green run with no guard
+    # firing anywhere. So the guard has to live here, at the point of use.
     local dcache="${QDB_VM_DATA_CACHE:-none}"
+    if [ "$dcache" != "none" ] && [ "${QDB_VM_ALLOW_UNSAFE_CACHE:-0}" != "1" ]; then
+        echo "REFUSING: QDB_VM_DATA_CACHE=$dcache produces a FALSE GREEN and no guard detects it." >&2
+        echo "  cache=none is required: the guest page cache must die with the VMM, and a guest" >&2
+        echo "  fsync must mean 'the bytes reached host storage', not 'a host cache accepted them'." >&2
+        echo "  Set QDB_VM_ALLOW_UNSAFE_CACHE=1 only to demonstrate the broken configuration." >&2
+        return 64
+    fi
 
     # aio=threads, not aio=native: native requires O_DIRECT and fails outright
     # under cache=writeback, which would make t04's second direction fail for
