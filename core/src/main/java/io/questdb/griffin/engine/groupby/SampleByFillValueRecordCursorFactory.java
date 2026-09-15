@@ -142,6 +142,11 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
     }
 
     @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("Sample By");
         sink.attr("fill").val("value");

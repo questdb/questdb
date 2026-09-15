@@ -99,6 +99,11 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
     }
 
     @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
+    @Override
     public boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
         return true;
     }

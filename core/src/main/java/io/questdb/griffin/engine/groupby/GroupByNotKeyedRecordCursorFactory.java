@@ -95,6 +95,11 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         return base;
     }
 
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
     // Stable iff every aggregate (which may evaluate arbitrary argument expressions, for example
     // max(rnd_timestamp(...))) and the base are stable.
     @Override

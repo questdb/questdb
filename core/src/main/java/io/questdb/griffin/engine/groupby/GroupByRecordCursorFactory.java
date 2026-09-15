@@ -134,6 +134,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    // TODO(nw): audited as FALSE — this factory does not emit in designated-timestamp
+    // order. Corrected in a follow-up commit on this branch; declared here only to keep
+    // this change behaviour-preserving.
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
     // Stable iff every key function and aggregate (either may evaluate arbitrary expressions,
     // for example rnd_timestamp(...) as a group key) and the base are stable.
     @Override

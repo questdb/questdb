@@ -2751,6 +2751,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
             GenericRecordMetadata cursorMetadata = new GenericRecordMetadata();
             cursorMetadata.add(new TableColumnMetadata("s", ColumnType.STRING));
             constFuncs.put(ColumnType.CURSOR, list(new CursorFunction(new EmptyTableRecordCursorFactory(cursorMetadata) {
+                @Override
+                public int getScanDirection() {
+                    return SCAN_DIRECTION_FORWARD;
+                }
+
                 public boolean supportsPageFrameCursor() {
                     return true;
                 }

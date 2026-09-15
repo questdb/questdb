@@ -215,6 +215,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
     // Vector aggregates are column-bound builtins (sum/min/max/avg/count/...) with no argument
     // expressions, hence deterministic by construction; stability is the base's.
     @Override

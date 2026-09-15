@@ -113,6 +113,14 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
+    // TODO(nw): audited as FALSE — this factory does not emit in designated-timestamp
+    // order. Corrected in a follow-up commit on this branch; declared here only to keep
+    // this change behaviour-preserving.
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();

@@ -163,6 +163,14 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         return masterFactory;
     }
 
+    // TODO(nw): audited as FALSE — this factory does not emit in designated-timestamp
+    // order. Corrected in a follow-up commit on this branch; declared here only to keep
+    // this change behaviour-preserving.
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
     // getBaseFactory() exposes only the master. The slave is parser-restricted to a plain table
     // today, but propagate both sides explicitly so the external-source guard stays honest if that
     // restriction is ever relaxed. Guards against a null child during teardown.

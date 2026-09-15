@@ -2487,6 +2487,11 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         public ConcurrentTimeFrameCursor newTimeFrameCursor() {
             if (cursorFailure != null) {
                 throw cursorFailure;
