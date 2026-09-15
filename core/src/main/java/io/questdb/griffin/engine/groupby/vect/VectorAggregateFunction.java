@@ -80,16 +80,16 @@ public interface VectorAggregateFunction extends Function, Mutable {
      * True when this aggregate's RESULT depends on the order rows arrive in, the vector
      * counterpart of {@link io.questdb.griffin.engine.functions.GroupByFunction#isOrderSensitive()}.
      * <p>
-     * Every implementation here today (count/sum/avg/min/max/ksum/nsum) is order-invariant,
-     * so the default is false. A vectorized group by consumes its base to exhaustion and
-     * relies on this to decide whether it may ask the base to stop guaranteeing
-     * designated-timestamp order -- a future vector {@code first()}/{@code last()} must
-     * override this to true, or it will silently compute the wrong value over an
-     * unordered base.
+     * Every implementation must declare this explicitly rather than inherit a default,
+     * because a vectorized group by consumes its base to exhaustion and relies on the
+     * answer to decide whether it may ask the base to stop guaranteeing
+     * designated-timestamp order. A wrong answer here silently computes the wrong value
+     * over an unordered base, so an implementation that says nothing must not compile.
+     *
+     * @return true if row order affects the result (e.g. a future vector {@code first()}/
+     * {@code last()}), false if the aggregate is order-invariant (e.g. {@code sum()}, {@code count()})
      */
-    default boolean isOrderSensitive() {
-        return false;
-    }
+    boolean isOrderSensitive();
 
     /**
      * Merge rosti instance pointed to by pRostiB into rosti instance pointed to by pRostiA.
