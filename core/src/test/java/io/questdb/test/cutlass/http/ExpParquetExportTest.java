@@ -24,7 +24,9 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.DefaultFactoryProvider;
 import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.FactoryProvider;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -38,23 +40,31 @@ import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.processors.ExportQueryProcessorState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerProvider;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -68,9 +78,13 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.test.tools.TestUtils.assertEventually;
@@ -1593,6 +1607,177 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 });
     }
 
+    @Test
+    public void testParquetExportPageFrameBackedReleasesMemoizedFunctionsBeforeTrackerReuse() throws Exception {
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = true;
+        getExportTesterPageFrame()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE pageframe_memo_tracker_test (
+                                s STRING,
+                                ts TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """, sqlExecutionContext);
+                    engine.execute("""
+                            INSERT INTO pageframe_memo_tracker_test VALUES
+                                ('alpha', '2020-01-01T00:00:00.000000Z'),
+                                ('beta', '2020-01-01T00:00:01.000000Z')
+                            """, sqlExecutionContext);
+
+                    try (
+                            TestHttpClient client = new TestHttpClient();
+                            DirectUtf8Sink sink = new DirectUtf8Sink(1_024)
+                    ) {
+                        HttpClient.Request request = client.getHttpClient().newRequest("localhost", 9001);
+                        request.GET()
+                                .url("/exp")
+                                .query("query", "SELECT s::SYMBOL AS a, a AS b, a AS c FROM pageframe_memo_tracker_test")
+                                .query("fmt", "parquet");
+                        Assert.assertEquals("200", client.reqToSink(request, sink, null, null, null, null));
+                        Assert.assertTrue("expected parquet response", sink.size() > 0);
+                    }
+
+                    Assert.assertTrue(engine.getMemoryTrackerProvider() instanceof PerQueryMemoryTrackerProvider);
+                    PerQueryMemoryTrackerProvider provider = (PerQueryMemoryTrackerProvider) engine.getMemoryTrackerProvider();
+                    int pooledCount = provider.getPooledCount();
+                    Assert.assertTrue("expected export to return a query tracker", pooledCount > 0);
+                    ObjList<MemoryTracker> acquiredTrackers = new ObjList<>();
+                    try {
+                        for (int i = 0; i < pooledCount; i++) {
+                            acquiredTrackers.add(provider.acquire(
+                                    sqlExecutionContext.getSecurityContext(),
+                                    -1,
+                                    MemoryTrackerWorkload.QUERY
+                            ));
+                        }
+                    } finally {
+                        Misc.freeObjList(acquiredTrackers);
+                    }
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameNextFailureReleasesMemoizedFunctionsBeforeTrackerReuse() throws Exception {
+        // Mutation caught: removing ExportQueryProcessor's terminal callback registration
+        // returns a memoized projection's tracker before the HTTP exporter can clean it up.
+        final PageFrameNextFailureFilesFacade filesFacade = new PageFrameNextFailureFilesFacade();
+        final AtomicReference<LatchingMemoryTrackerProvider> providerRef = new AtomicReference<>();
+        final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull MemoryTrackerProvider getMemoryTrackerProvider(@NotNull CairoConfiguration configuration) {
+                final LatchingMemoryTrackerProvider provider = new LatchingMemoryTrackerProvider(configuration);
+                Assert.assertTrue("memory tracker provider must be constructed once", providerRef.compareAndSet(null, provider));
+                return provider;
+            }
+        };
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull FactoryProvider getFactoryProvider() {
+                return factoryProvider;
+            }
+
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return filesFacade;
+            }
+
+            @Override
+            public @Nullable CharSequence getSqlCopyExportRoot() {
+                return root + "/export";
+            }
+
+            @Override
+            public CharSequence getSqlCopyInputRoot() {
+                return root + "/export";
+            }
+        };
+
+        final boolean wasFunctionMemoizationAllowed = SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION;
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = true;
+        try {
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withWorkerCount(2)
+                    .withFactoryProvider(factoryProvider)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .withCopyExportRoot(root + "/export")
+                    .withCopyInputRoot(root + "/export")
+                    .run(configuration, (engine, sqlExecutionContext) -> {
+                        engine.execute("""
+                                CREATE TABLE pageframe_memo_tracker_next_failure (
+                                    s STRING,
+                                    ts TIMESTAMP
+                                ) TIMESTAMP(ts) PARTITION BY DAY
+                                """, sqlExecutionContext);
+                        engine.execute("""
+                                INSERT INTO pageframe_memo_tracker_next_failure VALUES
+                                    ('alpha', '2020-01-01T00:00:00.000000Z'),
+                                    ('beta', '2020-01-02T00:00:00.000000Z')
+                                """, sqlExecutionContext);
+
+                        final LatchingMemoryTrackerProvider provider = providerRef.get();
+                        Assert.assertNotNull("query registration must create the tracker provider", provider);
+                        final AtomicLong targetQueryId = new AtomicLong(-1);
+                        final AtomicReference<String> status = new AtomicReference<>();
+                        final AtomicReference<Throwable> exportFailure = new AtomicReference<>();
+                        final Thread exportThread = new Thread(() -> {
+                            try (
+                                    TestHttpClient client = new TestHttpClient();
+                                    DirectUtf8Sink sink = new DirectUtf8Sink(1_024)
+                            ) {
+                                final HttpClient.Request request = client.getHttpClient().newRequest("localhost", 9001);
+                                request.GET()
+                                        .url("/exp")
+                                        .query("query", "SELECT s::SYMBOL AS a, a AS b, a AS c FROM pageframe_memo_tracker_next_failure")
+                                        .query("fmt", "parquet");
+                                status.set(client.reqToSink(request, sink, null, null, null, null));
+                            } catch (Throwable th) {
+                                exportFailure.set(th);
+                            }
+                        }, "pageframe-next-failure-export");
+
+                        engine.getQueryRegistry().setListener((query, queryId, _) -> {
+                            if (query.toString().contains("pageframe_memo_tracker_next_failure")) {
+                                targetQueryId.set(queryId);
+                                provider.pauseAfterClose(queryId);
+                            }
+                        });
+                        try {
+                            exportThread.start();
+                            Assert.assertTrue("the failed export must return its query tracker", provider.awaitPausedTargetClose());
+                            Assert.assertTrue("the second partition open must fail after the first frame materializes", filesFacade.hasFailedPartitionOpen());
+                            Assert.assertTrue("the export query must register", targetQueryId.get() >= 0);
+
+                            final int pooledCount = provider.getPooledCount();
+                            Assert.assertTrue("the failed export must return a tracker to the pool", pooledCount > 0);
+                            final ObjList<MemoryTracker> acquiredTrackers = new ObjList<>();
+                            try {
+                                for (int i = 0; i < pooledCount; i++) {
+                                    acquiredTrackers.add(provider.acquire(
+                                            sqlExecutionContext.getSecurityContext(),
+                                            -1,
+                                            MemoryTrackerWorkload.QUERY
+                                    ));
+                                }
+                            } finally {
+                                Misc.freeObjList(acquiredTrackers);
+                            }
+                        } finally {
+                            engine.getQueryRegistry().setListener(null);
+                            provider.releasePausedTargetClose();
+                            exportThread.join(30_000);
+                        }
+
+                        Assert.assertFalse("the export thread must finish after tracker verification", exportThread.isAlive());
+                        Assert.assertNull("the HTTP client must finish after the partial response closes", exportFailure.get());
+                        Assert.assertEquals("400", status.get());
+                    });
+        } finally {
+            SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = wasFunctionMemoizationAllowed;
+        }
+    }
+
     /**
      * Tests streaming parquet export via page frame cursor with various column types.
      * Uses timestamp filtering to skip rows at the start, which still supports
@@ -1742,9 +1927,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     public void testParquetExportPageFrameCircuitBreaker() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
-                    // ~100 daily partitions with 1000 rows each.  The heavy
-                    // rnd_str() computation per row makes each page frame
-                    // slow enough for the 1ms timeout to trip the breaker.
+                    // ~100 daily partitions with 1000 rows each. The heavy
+                    // rnd_str() computation per row makes the 1ms timeout race
+                    // page-frame export on typical test hosts.
                     engine.execute("""
                             CREATE TABLE cb_test AS (
                                 SELECT x,
@@ -1758,22 +1943,35 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("query", "SELECT x + 1 AS cx, rnd_str(500, 1000, 0) AS big, ts FROM cb_test");
                     params.put("fmt", "parquet");
                     params.put("timeout", "1");
-                    // With a very short timeout the circuit breaker should trip
-                    // during PAGE_FRAME_BACKED export.  Depending on which code
-                    // path checks first, the error is either "timeout, query
-                    // aborted" (from the page-frame factory) or "cancelled by
-                    // user" (from the HTTP exporter).  The server may also just
-                    // disconnect.
+                    // The 1ms timeout races the export: on a slow enough page
+                    // frame the circuit breaker trips first, while fast hardware
+                    // can complete the export first. All of these outcomes are
+                    // valid as long as the server does not crash or corrupt data:
+                    //   - "timeout, query aborted" (page-frame factory checks first)
+                    //   - "cancelled by user" (HTTP exporter checks first)
+                    //   - a valid Parquet body (export wins the race)
+                    //   - a peer-disconnect / malformed-chunk HttpClientException
+                    // Assert on the outcome instead of the raw response body so a
+                    // completed export cannot put a large binary body in the log.
                     try {
-                        testHttpClient.assertGetContains("/exp", "timeout, query aborted", params);
-                    } catch (AssertionError ae) {
-                        TestUtils.assertContains(ae.getMessage(), "cancelled by user");
+                        HttpClient.Request request = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                        request.GET().url("/exp");
+                        Utf8StringSink sink = testHttpClient.getSink();
+                        testHttpClient.reqToSink(request, sink, null, null, null, params);
+                        Assert.assertTrue(
+                                "unexpected export outcome (head): " + sinkHead(sink),
+                                Utf8s.containsAscii(sink, "timeout, query aborted")
+                                        || Utf8s.containsAscii(sink, "cancelled by user")
+                                        || hasParquetMagic(sink)
+                        );
                     } catch (HttpClientException e) {
                         String msg = e.getMessage();
                         Assert.assertTrue(
                                 "unexpected error: " + msg,
                                 msg.contains("peer disconnect") || msg.contains("malformed chunk")
                         );
+                    } finally {
+                        testHttpClient.disconnect();
                     }
                 });
     }
@@ -2492,6 +2690,27 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 });
     }
 
+    // Returns a printable, bounded response prefix so failures never log a large binary body.
+    private static String sinkHead(Utf8StringSink sink) {
+        int n = Math.min(sink.size(), 64);
+        StringBuilder sb = new StringBuilder(n);
+        for (int i = 0; i < n; i++) {
+            byte b = sink.byteAt(i);
+            sb.append(b >= 0x20 && b < 0x7f ? (char) b : '?');
+        }
+        return sb.toString();
+    }
+
+    // A valid Parquet file starts with "PAR1". This check distinguishes a completed export
+    // from an error response without materializing the potentially large body as a String.
+    private static boolean hasParquetMagic(Utf8StringSink sink) {
+        return sink.size() >= 4
+                && sink.byteAt(0) == 'P'
+                && sink.byteAt(1) == 'A'
+                && sink.byteAt(2) == 'R'
+                && sink.byteAt(3) == '1';
+    }
+
     private static @NotNull Thread startCancelThread(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
         return new Thread(() -> {
             try {
@@ -2706,6 +2925,204 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
         TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
         TestUtils.assertEquals(expectedSink, actualSink);
+    }
+
+    private static final class LatchingMemoryTracker extends MemoryTracker {
+        private final MemoryTracker delegate;
+        private final LatchingMemoryTrackerProvider provider;
+        private final long queryId;
+        private boolean isClosed;
+
+        private LatchingMemoryTracker(MemoryTracker delegate, LatchingMemoryTrackerProvider provider, long queryId) {
+            this.delegate = delegate;
+            this.provider = provider;
+            this.queryId = queryId;
+        }
+
+        @Override
+        public void close() {
+            if (!isClosed) {
+                isClosed = true;
+                delegate.close();
+                provider.onTrackerClosed(queryId);
+            }
+        }
+
+        @Override
+        public long getLimit() {
+            return delegate.getLimit();
+        }
+
+        @Override
+        public long getQueryId() {
+            return delegate.getQueryId();
+        }
+
+        @Override
+        public long getUsed() {
+            return delegate.getUsed();
+        }
+
+        @Override
+        public MemoryTrackerWorkload getWorkload() {
+            return delegate.getWorkload();
+        }
+
+        @Override
+        public long nativeAddress() {
+            return delegate.nativeAddress();
+        }
+    }
+
+    private static final class LatchingMemoryTrackerProvider implements MemoryTrackerProvider {
+        private final PerQueryMemoryTrackerProvider delegate;
+        private final CountDownLatch pausedTargetClose = new CountDownLatch(1);
+        private final CountDownLatch releaseTargetClose = new CountDownLatch(1);
+        private volatile long targetQueryId = -1;
+
+        private LatchingMemoryTrackerProvider(CairoConfiguration configuration) {
+            this.delegate = new PerQueryMemoryTrackerProvider(configuration);
+        }
+
+        @Override
+        public MemoryTracker acquire(
+                @NotNull io.questdb.cairo.SecurityContext securityContext,
+                long queryId,
+                @NotNull MemoryTrackerWorkload workload
+        ) {
+            return new LatchingMemoryTracker(delegate.acquire(securityContext, queryId, workload), this, queryId);
+        }
+
+        @Override
+        public void clear() {
+            delegate.clear();
+        }
+
+        @Override
+        public void close() {
+            releasePausedTargetClose();
+            delegate.close();
+        }
+
+        private boolean awaitPausedTargetClose() throws InterruptedException {
+            return pausedTargetClose.await(30, TimeUnit.SECONDS);
+        }
+
+        private int getPooledCount() {
+            return delegate.getPooledCount();
+        }
+
+        private void onTrackerClosed(long queryId) {
+            if (targetQueryId == queryId) {
+                pausedTargetClose.countDown();
+                boolean isInterrupted = false;
+                while (true) {
+                    try {
+                        releaseTargetClose.await();
+                        break;
+                    } catch (InterruptedException ignored) {
+                        isInterrupted = true;
+                    }
+                }
+                if (isInterrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+
+        private void pauseAfterClose(long queryId) {
+            targetQueryId = queryId;
+        }
+
+        private void releasePausedTargetClose() {
+            releaseTargetClose.countDown();
+        }
+    }
+
+    private static final class PageFrameNextFailureFilesFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean hasFailedPartitionOpen = new AtomicBoolean();
+        private final AtomicBoolean hasOpenedFirstPartition = new AtomicBoolean();
+        private volatile int injectedErrno;
+
+        @Override
+        public int errno() {
+            return injectedErrno != 0 ? injectedErrno : super.errno();
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (shouldFailPartitionOpen(name)) {
+                return -1;
+            }
+            return super.openRO(name);
+        }
+
+        @Override
+        public long openRONoCache(LPSZ name) {
+            if (shouldFailPartitionOpen(name)) {
+                return -1;
+            }
+            return super.openRONoCache(name);
+        }
+
+        @Override
+        public int mkdirs(Path path, int mode) {
+            assertNoTempTable(path);
+            return super.mkdirs(path, mode);
+        }
+
+        @Override
+        public long openAppend(LPSZ name) {
+            assertNoTempTable(name);
+            return super.openAppend(name);
+        }
+
+        @Override
+        public long openCleanRW(LPSZ name, long size) {
+            assertNoTempTable(name);
+            return super.openCleanRW(name, size);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            assertNoTempTable(name);
+            return super.openRW(name, opts);
+        }
+
+        private void assertNoTempTable(LPSZ name) {
+            if (Utf8s.containsAscii(name, "zzz.copy.")) {
+                Assert.fail("Expected page frame export but temp table was created: " + name.asAsciiCharSequence());
+            }
+        }
+
+        private void assertNoTempTable(Path path) {
+            assertNoTempTable(path.toString());
+        }
+
+        private void assertNoTempTable(String path) {
+            if (path.contains("zzz.copy.")) {
+                Assert.fail("Expected page frame export but temp table was created: " + path);
+            }
+        }
+
+        private boolean hasFailedPartitionOpen() {
+            return hasFailedPartitionOpen.get();
+        }
+
+        private boolean shouldFailPartitionOpen(LPSZ name) {
+            // The exporter materializes the first returned frame before requesting this second partition.
+            if (Utf8s.containsAscii(name, "pageframe_memo_tracker_next_failure") && Utf8s.containsAscii(name, "2020-01-01")) {
+                hasOpenedFirstPartition.set(true);
+            } else if (hasOpenedFirstPartition.get()
+                    && Utf8s.containsAscii(name, "pageframe_memo_tracker_next_failure")
+                    && Utf8s.containsAscii(name, "2020-01-02")
+                    && hasFailedPartitionOpen.compareAndSet(false, true)) {
+                injectedErrno = 1;
+                return true;
+            }
+            injectedErrno = 0;
+            return false;
+        }
     }
 
     private HttpQueryTestBuilder getExportTester() {

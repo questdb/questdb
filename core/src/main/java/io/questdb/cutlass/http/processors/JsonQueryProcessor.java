@@ -307,6 +307,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     public void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
         final JsonQueryProcessorState state = LV.get(context);
         if (state != null) {
+            state.suspendExecutionTimer();
             state.setPausedQuery(pausedQuery);
             // preserve random when we park the context
             SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
@@ -337,6 +338,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             } else {
                 state.setPausedQuery(false);
             }
+            state.resumeExecutionTimer();
             try {
                 doResumeSend(state, context);
             } catch (CairoError e) {
