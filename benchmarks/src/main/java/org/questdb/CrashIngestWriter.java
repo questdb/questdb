@@ -567,18 +567,45 @@ public class CrashIngestWriter {
         try (FileChannel ch = FileChannel.open(progressTmp,
                 StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
             ch.write(ByteBuffer.wrap(content));
-            ch.force(true); // fsync tmp content+size BEFORE the rename
+            if (WITNESS_FSYNC) {
+                ch.force(true); // fsync tmp content+size BEFORE the rename
+            }
         }
         // rename(2) is atomic on POSIX — verifier sees either old or new value, never torn.
         Files.move(progressTmp, progressPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         // fsync the directory so the rename (the new dirent) is itself durable. Best-effort:
         // opening a directory channel is unsupported on some platforms (e.g. Windows) → ignore.
-        try (FileChannel dir = FileChannel.open(Path.of(dbRoot), StandardOpenOption.READ)) {
-            dir.force(true);
-        } catch (IOException ignore) {
-            // directory fsync not supported here; the content fsync above is the essential part
+        if (WITNESS_FSYNC) {
+            try (FileChannel dir = FileChannel.open(Path.of(dbRoot), StandardOpenOption.READ)) {
+                dir.force(true);
+            } catch (IOException ignore) {
+                // directory fsync not supported here; the content fsync above is the essential part
+            }
         }
     }
+
+    /**
+     * -Dwitness.fsync=false — DIAGNOSTIC ONLY, never a real run. Keeps the watermark WRITE but
+     * skips both fsyncs.
+     * <p>
+     * It exists to MEASURE how many of a recording's flush boundaries the harness itself
+     * manufactures. Every witness fsync is a device flush, and therefore a crash point this
+     * sweep will enumerate — a crash point that exists because the harness is present. A NOSYNC
+     * run, whose engine issues no fsync at all, still recorded 2262 boundaries; all of them were
+     * this method's. Running the same workload with and without these fsyncs isolates the share
+     * exactly, instead of comparing runs of different lengths.
+     * <p>
+     * The second, worse effect this measures indirectly: on default ext4 ({@code data=ordered})
+     * each of these fsyncs forces a journal commit that writes back OTHER inodes' pending data,
+     * including the engine's. So a witness-generated boundary can show the data as more durable
+     * than it would have been — a false green, and the same {@code modelSharedJournal} mechanism
+     * QuestDB's own crash model relies on for batched flush.
+     * <p>
+     * A run with this set FALSE cannot be trusted for durability verdicts: the watermark itself
+     * may be lost or stale after a cut, which under-claims and weakens every bar built on it.
+     * Use it to count boundaries, nothing else. See durability-ci issues/08.
+     */
+    static final boolean WITNESS_FSYNC = !"false".equalsIgnoreCase(System.getProperty("witness.fsync", "true"));
 
     /**
      * Parse the -DcommitMode property value into a CommitMode int constant.

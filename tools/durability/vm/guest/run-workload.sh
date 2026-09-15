@@ -114,6 +114,7 @@ case "$ARM" in
             -Depoch.interval.ms="$EPOCH" \
             -Dmax.rows="$ROWS" \
             -Dschema.profile="$PROFILE" \
+            -Dwitness.fsync="${QDB_WITNESS_FSYNC:-true}" \
             -Dsibling.table="${QDB_SIBLING_TABLE:-false}" \
             -Dddl.every.rows="${QDB_DDL_EVERY_ROWS:--1}" \
             -Drebase.at.rows="${QDB_REBASE_AT_ROWS:--1}" -Dmat.view="${QDB_MAT_VIEW:-false}" \

@@ -157,7 +157,7 @@ vm_ssh "$P" "$KEY" "sudo sync"
 vm_ssh "$P" "$KEY" "bash /opt/vmcrash/guest/prepare-device.sh --mode=log-writes" >/dev/null \
     || { keep; echo "LOUD_FAILURE: could not build the log-writes stack"; exit 1; }
 
-vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false} QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1} QDB_MAT_VIEW=${QDB_MAT_VIEW:-false} QDB_REBASE_AT_ROWS=${QDB_REBASE_AT_ROWS:--1} QDB_QWP_DURABLE_ACK=$QWP_TIER QDB_QWP_DEFANG_ACK=${QDB_QWP_DEFANG_ACK:-0} QDB_QWP_BATCH=${QDB_QWP_BATCH:-1000} QDB_EDITION=$EDITION bash /opt/vmcrash/guest/run-workload.sh --arm=$ARM --mode=$MODE \
+vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false} QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1} QDB_MAT_VIEW=${QDB_MAT_VIEW:-false} QDB_REBASE_AT_ROWS=${QDB_REBASE_AT_ROWS:--1} QDB_WITNESS_FSYNC=${QDB_WITNESS_FSYNC:-true} QDB_QWP_DURABLE_ACK=$QWP_TIER QDB_QWP_DEFANG_ACK=${QDB_QWP_DEFANG_ACK:-0} QDB_QWP_BATCH=${QDB_QWP_BATCH:-1000} QDB_EDITION=$EDITION bash /opt/vmcrash/guest/run-workload.sh --arm=$ARM --mode=$MODE \
     --window-us=$WINDOW --epoch-ms=$EPOCH </dev/null >/mnt/qdb/workload.out 2>&1 &" || true
 
 # Let it build a real history: many commits means many flushes means many
