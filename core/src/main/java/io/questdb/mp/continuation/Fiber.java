@@ -99,7 +99,8 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private Throwable outcomeError;
     private FiberTask outcomeTask;
     private int outcomeType;
-    private @Nullable FiberDispatchTicket pendingRedispatchTicket;
+    private long pendingDispatchEpoch;
+    private @Nullable FiberDispatchTicket pendingDispatchTicket;
     private int registryIndex = -1;
     private volatile long reservationEpoch;
     @SuppressWarnings("unused")
@@ -818,6 +819,10 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return outcomeScratch;
     }
 
+    long getPendingDispatchEpoch() {
+        return pendingDispatchEpoch;
+    }
+
     int getRegistryIndex() {
         return registryIndex;
     }
@@ -1102,8 +1107,10 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         lastMountWorkerId = workerId;
     }
 
-    void setPendingRedispatchTicket(@Nullable FiberDispatchTicket ticket) {
-        pendingRedispatchTicket = ticket;
+    void setPendingDispatchTicket(FiberDispatchTicket ticket, long epoch) {
+        assert pendingDispatchTicket == null;
+        pendingDispatchEpoch = epoch;
+        pendingDispatchTicket = ticket;
     }
 
     void setRegistryIndex(int registryIndex) {
@@ -1193,9 +1200,9 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     @Nullable
-    FiberDispatchTicket takePendingRedispatchTicket() {
-        final FiberDispatchTicket ticket = pendingRedispatchTicket;
-        pendingRedispatchTicket = null;
+    FiberDispatchTicket takePendingDispatchTicket() {
+        final FiberDispatchTicket ticket = pendingDispatchTicket;
+        pendingDispatchTicket = null;
         return ticket;
     }
 

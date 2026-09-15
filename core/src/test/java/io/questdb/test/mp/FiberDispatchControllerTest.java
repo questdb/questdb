@@ -265,22 +265,23 @@ public class FiberDispatchControllerTest {
             controller.session.grantNext();
             Assert.assertEquals(1, runtime.drain(1));
             Assert.assertEquals(FiberDispatchRoute.DISPATCH_YIELD, controller.session.peekRoute());
-            Assert.assertEquals(1, controller.ticket.redispatchUnmountCount);
+            Assert.assertEquals(1, controller.ticket.redispatchCount);
+            Assert.assertEquals(1, controller.ticket.completionCount);
             Assert.assertEquals(1, controller.ticket.unmountCount);
 
             controller.session.grantNext();
             Assert.assertEquals(1, runtime.drain(1));
             Assert.assertTrue(task.isDone());
-            Assert.assertEquals(1, controller.ticket.redispatchUnmountCount);
+            Assert.assertEquals(1, controller.ticket.redispatchCount);
+            Assert.assertEquals(2, controller.ticket.completionCount);
             Assert.assertEquals(2, controller.ticket.unmountCount);
-            Assert.assertEquals(0, controller.ticket.abandonedRedispatchCount);
 
             close(runtime);
         });
     }
 
     @Test
-    public void testDriverFailureAfterDispatchYieldAbandonsRedispatch() throws Exception {
+    public void testDriverFailureAfterDispatchYieldCompletesWithoutRedispatch() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final TestController controller = new TestController();
             final FiberRuntime runtime = newRuntime(1, controller);
@@ -291,14 +292,17 @@ public class FiberDispatchControllerTest {
             controller.session.grantNext();
             runtime.setAfterProcessForTesting(() -> {
                 runtime.setAfterProcessForTesting(null);
+                Assert.assertEquals(1, controller.ticket.unmountCount);
+                Assert.assertEquals(0, controller.ticket.completionCount);
                 throw failure;
             });
             Assert.assertEquals(1, runtime.drain(1));
             Assert.assertEquals(1, task.runCount);
             Assert.assertEquals(0, task.resumeCount);
             Assert.assertSame(failure, task.error);
-            Assert.assertEquals(1, controller.ticket.redispatchUnmountCount);
-            Assert.assertEquals(1, controller.ticket.abandonedRedispatchCount);
+            Assert.assertEquals(0, controller.ticket.redispatchCount);
+            Assert.assertEquals(1, controller.ticket.completionCount);
+            Assert.assertEquals(1, controller.ticket.unmountCount);
             Assert.assertTrue(controller.session.pending.isEmpty());
             Assert.assertEquals(0, runtime.getQueuedCount());
 
@@ -1163,6 +1167,26 @@ public class FiberDispatchControllerTest {
             grantAll();
         }
 
+        @Override
+        public synchronized void completeDispatch(
+                FiberDispatchRequest request,
+                FiberDispatchTicket ticket,
+                long completedEpoch,
+                boolean wasMounted,
+                boolean isRedispatch
+        ) {
+            if (ticket == this.ticket) {
+                Assert.assertTrue(this.ticket.unmountCount > this.ticket.completionCount);
+                this.ticket.completionCount++;
+                if (isRedispatch) {
+                    Assert.assertTrue(wasMounted);
+                    Assert.assertTrue(request.getDispatchEpoch() > completedEpoch);
+                    this.ticket.redispatchCount++;
+                }
+            }
+            FiberDispatchSession.super.completeDispatch(request, ticket, completedEpoch, wasMounted, isRedispatch);
+        }
+
         private void grantAll() {
             Pending pending;
             while ((pending = this.pending.poll()) != null) {
@@ -1227,10 +1251,10 @@ public class FiberDispatchControllerTest {
     }
 
     private static class TestTicket implements FiberDispatchTicket {
-        private int abandonedRedispatchCount;
+        private int completionCount;
         private final List<FiberDispatchContext> mountContexts = new ArrayList<>();
         protected int mountCount;
-        private int redispatchUnmountCount;
+        private int redispatchCount;
         protected int unmountCount;
         protected boolean wasMounted;
 
@@ -1241,21 +1265,11 @@ public class FiberDispatchControllerTest {
         }
 
         @Override
-        public void onRedispatchAbandoned(FiberDispatchRequest request) {
-            abandonedRedispatchCount++;
-        }
-
-        @Override
         public void onUnmount(FiberDispatchRequest request, boolean wasMounted) {
             unmountCount++;
             this.wasMounted = wasMounted;
         }
 
-        @Override
-        public void onUnmountBeforeRedispatch(FiberDispatchRequest request) {
-            redispatchUnmountCount++;
-            FiberDispatchTicket.super.onUnmountBeforeRedispatch(request);
-        }
     }
 
     private static class WaitingTask extends FiberTask {

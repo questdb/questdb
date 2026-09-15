@@ -26,9 +26,10 @@ package io.questdb.mp.continuation;
 
 /**
  * Single-use authorization for one Fiber mount segment. The runtime calls {@link #onMount} before
- * changing the Fiber to MOUNTED and always follows it with one {@link #onUnmount} call. The latter
- * receives false when mounting or the pre-mount callback failed, allowing reservations to be
- * refunded exactly once.
+ * changing the Fiber to MOUNTED and always follows it with one {@link #onUnmount} call on the
+ * same carrier. The latter receives false when mounting or the pre-mount callback failed.
+ * The session then completes accounting and, if appropriate, requests the next dispatch through
+ * {@link FiberDispatchSession#completeDispatch}.
  */
 public interface FiberDispatchTicket {
     /**
@@ -48,21 +49,5 @@ public interface FiberDispatchTicket {
 
     void onMount(FiberDispatchRequest request);
 
-    /**
-     * Replaces the re-submission promised by {@link #onUnmountBeforeRedispatch} when a driver
-     * failure retires the Fiber before the runtime re-submits its request.
-     */
-    default void onRedispatchAbandoned(FiberDispatchRequest request) {
-    }
-
     void onUnmount(FiberDispatchRequest request, boolean wasMounted);
-
-    /**
-     * Replaces {@link #onUnmount} when the mounted Fiber yielded for dispatch and the runtime
-     * re-submits its request to the same session right after. A session may settle this unmount
-     * inside that request instead of separately.
-     */
-    default void onUnmountBeforeRedispatch(FiberDispatchRequest request) {
-        onUnmount(request, true);
-    }
 }

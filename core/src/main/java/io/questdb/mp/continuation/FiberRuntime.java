@@ -466,10 +466,10 @@ public final class FiberRuntime {
     }
 
     /**
-     * Consumes one virtual mount from the current owned Worker turn. Dispatch controllers use
-     * this to renew a mounted Fiber without letting renewals extend the Worker's configured mount
-     * budget. Returns the number of remaining mounts, or -1 outside an owned drain or when the
-     * current turn has exhausted its budget.
+     * Consumes one additional ticket mount from the current owned Worker turn. Dispatch controllers
+     * use this for in-place dispatch switches, which mount a new ticket without returning through
+     * the drain loop. Renewing the current ticket does not consume a mount. Returns the number of
+     * remaining mounts, or -1 outside an owned drain or when the turn has exhausted its budget.
      */
     public int consumeCurrentMountBudget() {
         final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
@@ -1133,21 +1133,6 @@ public final class FiberRuntime {
         mountCount.increment();
     }
 
-    private static void abandonPendingRedispatch(Fiber fiber, Throwable driverFailure) {
-        final FiberDispatchTicket ticket = fiber.takePendingRedispatchTicket();
-        if (ticket == null) {
-            return;
-        }
-        try {
-            ticket.onRedispatchAbandoned(requireDispatchRequest(fiber));
-        } catch (Throwable th) {
-            LOG.critical().$("fiber dispatch settlement abandonment failed [error=").$(th).I$();
-            if (th != driverFailure) {
-                driverFailure.addSuppressed(th);
-            }
-        }
-    }
-
     private static void clearOwnedDrain(SuspensionScope.CarrierScope scope) {
         scope.fiberDrainLocalQueue = null;
         scope.fiberDrainMountCount = 0;
@@ -1311,6 +1296,42 @@ public final class FiberRuntime {
         notifyDone(task);
     }
 
+    private void completePendingDispatch(Fiber fiber, Throwable driverFailure) {
+        final long completedEpoch = fiber.getPendingDispatchEpoch();
+        final FiberDispatchTicket ticket = fiber.takePendingDispatchTicket();
+        if (ticket == null) {
+            return;
+        }
+        try {
+            dispatchSession.completeDispatch(requireDispatchRequest(fiber), ticket, completedEpoch, true, false);
+        } catch (Throwable th) {
+            LOG.critical().$("fiber dispatch completion failed [error=").$(th).I$();
+            if (th != driverFailure) {
+                driverFailure.addSuppressed(th);
+            }
+        }
+    }
+
+    private @Nullable Throwable completeUnmount(
+            FiberDispatchRequest request,
+            FiberDispatchTicket ticket,
+            long epoch,
+            boolean wasMounted,
+            @Nullable Throwable failure
+    ) {
+        try {
+            dispatchSession.completeDispatch(request, ticket, epoch, wasMounted, false);
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        try {
+            request.complete(epoch, ticket);
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        return failure;
+    }
+
     private @Nullable OwnerContext currentOwnerContext() {
         final Worker worker = Worker.current();
         if (worker == null) {
@@ -1436,7 +1457,7 @@ public final class FiberRuntime {
             boolean hasFiberOwnership,
             Throwable th
     ) {
-        abandonPendingRedispatch(fiber, th);
+        completePendingDispatch(fiber, th);
         if (!hasFiberOwnership) {
             return false;
         }
@@ -1609,11 +1630,7 @@ public final class FiberRuntime {
                 } catch (Throwable th) {
                     cleanupFailure = th;
                 }
-                try {
-                    request.complete(dispatchEpoch, ticket);
-                } catch (Throwable th) {
-                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
-                }
+                cleanupFailure = completeUnmount(request, ticket, dispatchEpoch, false, cleanupFailure);
                 if (cleanupFailure != null) {
                     LOG.critical().$("in-place Fiber dispatch cleanup failed [error=").$(cleanupFailure).I$();
                 }
@@ -1901,19 +1918,22 @@ public final class FiberRuntime {
             }
             if (settledTicket != null) {
                 try {
-                    if (wasMounted && fiber.getYieldReason() == Fiber.YIELD_DISPATCH && !fiber.isShutdownRequested()) {
-                        settledTicket.onUnmountBeforeRedispatch(request);
-                        fiber.setPendingRedispatchTicket(settledTicket);
-                    } else {
-                        settledTicket.onUnmount(request, wasMounted);
-                    }
+                    settledTicket.onUnmount(request, wasMounted);
                 } catch (Throwable th) {
                     cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
                 }
-                try {
-                    request.complete(settledEpoch, settledTicket);
-                } catch (Throwable th) {
-                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+                if (cleanupFailure == null && wasMounted
+                        && fiber.getYieldReason() == Fiber.YIELD_DISPATCH && !fiber.isShutdownRequested()) {
+                    // Publication is not safe until finishProcessing has handed off notification
+                    // ownership. Keep only the completed ticket identity across that boundary.
+                    fiber.setPendingDispatchTicket(settledTicket, settledEpoch);
+                    try {
+                        request.complete(settledEpoch, settledTicket);
+                    } catch (Throwable th) {
+                        cleanupFailure = th;
+                    }
+                } else {
+                    cleanupFailure = completeUnmount(request, settledTicket, settledEpoch, wasMounted, cleanupFailure);
                 }
             }
             if (cleanupFailure != null) {
@@ -2042,9 +2062,15 @@ public final class FiberRuntime {
     }
 
     private void submitDispatch(FiberDispatchRequest request, long dispatchEpoch) {
-        request.getFiber().takePendingRedispatchTicket();
+        final Fiber fiber = request.getFiber();
+        final long completedEpoch = fiber.getPendingDispatchEpoch();
+        final FiberDispatchTicket completedTicket = fiber.takePendingDispatchTicket();
         try {
-            dispatchSession.requestDispatch(request);
+            if (completedTicket != null) {
+                dispatchSession.completeDispatch(request, completedTicket, completedEpoch, true, true);
+            } else {
+                dispatchSession.requestDispatch(request);
+            }
         } catch (Throwable th) {
             if (!request.grantFailureAndPublish(dispatchEpoch, th, FAILED_DISPATCH_TICKET)) {
                 LOG.critical().$("Fiber dispatch controller failed after resolving request [error=").$(th).I$();
@@ -2297,9 +2323,27 @@ public final class FiberRuntime {
         final FiberDispatchRequest request = requireDispatchRequest(fiber);
         final long mountedEpoch = request.getDispatchEpoch();
         fiber.clearMountedDispatchTicket(mountedTicket);
-        MemoryTracker.publishResourceMemoryCurrentThread();
-        mountedTicket.onUnmount(request, true);
-        request.complete(mountedEpoch, mountedTicket);
+        Throwable failure = null;
+        try {
+            MemoryTracker.publishResourceMemoryCurrentThread();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        try {
+            mountedTicket.onUnmount(request, true);
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        failure = completeUnmount(request, mountedTicket, mountedEpoch, true, failure);
+        if (failure instanceof RuntimeException runtimeException) {
+            throw runtimeException;
+        }
+        if (failure instanceof Error error) {
+            throw error;
+        }
+        if (failure != null) {
+            throw new IllegalStateException("Fiber dispatch completion failed", failure);
+        }
         final long dispatchEpoch = request.begin(FiberDispatchRoute.DIRECT, currentOwnerContext());
         if (!resolveDirectDispatch(request, dispatchEpoch)) {
             return dispatchEpoch;

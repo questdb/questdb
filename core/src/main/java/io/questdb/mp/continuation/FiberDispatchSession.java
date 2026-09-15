@@ -32,6 +32,29 @@ import org.jetbrains.annotations.Nullable;
  * later shutdown-cleanup requests must continue to be granted without policy delay.
  */
 public interface FiberDispatchSession extends FiberRuntimeQuiesceListener {
+    /**
+     * Completes the ticket after its carrier-local {@link FiberDispatchTicket#onUnmount} callback.
+     * When redispatching, the request already describes the next epoch and the Fiber is safe to
+     * publish. Implementations can settle the old ticket, enqueue the next request and select
+     * grants in one transition. Otherwise this call only settles the old ticket, including when
+     * driver failure prevented redispatch. The ticket and completedEpoch identify the old dispatch,
+     * even when the request has advanced. Completion must not resample carrier CPU time.
+     * <p>
+     * The runtime invokes this once even if onUnmount threw. Implementations must settle captured
+     * accounting before returning or throwing, including when requesting the next dispatch fails.
+     */
+    default void completeDispatch(
+            FiberDispatchRequest request,
+            FiberDispatchTicket ticket,
+            long completedEpoch,
+            boolean wasMounted,
+            boolean isRedispatch
+    ) {
+        if (isRedispatch) {
+            requestDispatch(request);
+        }
+    }
+
     default @Nullable FiberDispatchRequestState createRequestState() {
         return null;
     }
