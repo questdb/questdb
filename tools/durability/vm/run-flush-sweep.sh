@@ -162,6 +162,14 @@ truncate -s 60G "$RUN/log.raw"
 
 echo "flush-boundary crash sweep — $STAMP"
 echo "  arm=$ARM edition=$EDITION mode=$MODE W=$WINDOW profile=$PROFILE epoch=${EPOCH}ms sibling=${QDB_SIBLING_TABLE:-false} recoverAs=${QDB_RECOVER_AS:-same} ddlEvery=${QDB_DDL_EVERY_ROWS:--1} matView=${QDB_MAT_VIEW:-false} rebaseAt=${QDB_REBASE_AT_ROWS:--1}"
+# NAME THE TABLE KIND. "mode=NOSYNC" alone does not say whether the run exercised the WAL path
+# or the bypass-WAL one, and the barrier control is only a control on the WAL path -- archived
+# evidence that cannot distinguish the two says nothing about which half of the product was
+# tested. Flagged loudly when the run IS the control, so a reader never mistakes its required
+# red for a regression.
+WAL_TABLE="$(harness_wal_table "$MODE")"
+echo "  walTable=$WAL_TABLE$([ "$WAL_TABLE" = true ] && [ "$(echo "$MODE" | tr 'A-Z' 'a-z')" = nosync ] \
+    && echo "  *** BARRIER CONTROL: a WAL table with no durability barrier. This sweep MUST report failures. ***")"
 { [ "$ARM" = qwp-sf ] || [ "$ARM" = product ]; } && echo "  $ARM: tier=$QWP_TIER sfReplay=$SF_REPLAY sfDurability=${QDB_QWP_SF_DURABILITY:-periodic}"
 # NAME THE ARTIFACT IN THE RUN'S OWN OUTPUT. "arm=product" says which code path ran; only the
 # tarball's name says WHICH BUILD was under test, and a report that cannot say that is not

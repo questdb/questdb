@@ -28,8 +28,13 @@
 #
 # SCOPE — read this before citing a green t07. This proves the oracle catches corrupt
 # DATA. It does NOT prove it catches a missing DURABILITY BARRIER: a product that stops
-# calling fdatasync fails in a completely different way, and that control still does not
-# exist. See the durability-ci notes (issues/09).
+# calling fdatasync fails in a completely different way — every byte that arrives is
+# correct, there are simply fewer of them than were acknowledged.
+#
+# THAT CONTROL NOW EXISTS: t10-wal-barrier-control.sh, which takes the barrier away on the
+# WAL path (WAL table + NOSYNC) and requires the sweep to go red. The set is now three:
+# t04 the cut can fail, t07 the oracle can fail, t10 the barrier control. Cite all three or
+# name which one you mean.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

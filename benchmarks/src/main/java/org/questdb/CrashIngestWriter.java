@@ -90,8 +90,18 @@ import java.nio.file.StandardOpenOption;
  * dm-flakey with drop_writes discards un-fsync'd writes at the block layer, exactly
  * modelling a power failure.  SYNC- / adaptive-durable data should survive; NOSYNC data may be lost.
  * <p>
+ * TABLE KIND (via -Dwal.table=true|false, default: true iff commitMode=adaptive):
+ * Orthogonal to the commit mode, so every combination is expressible. The default reproduces
+ * the historical routing exactly (SYNC/NOSYNC -> bypass wal, adaptive -> WAL).
+ * The combination this exists for is WAL + NOSYNC: a WAL table whose commit path issues NO
+ * durability barrier, which is the BARRIER CONTROL for the WAL path (issues/09). It is a real
+ * supported product configuration -- WalWriter.syncIfRequired0 gates on
+ * commitMode != CommitMode.NOSYNC -- not a test-only mutation, so it is coverage as well as a
+ * control. A sweep run that way MUST go red; if it does not, the sweep cannot detect a missing
+ * WAL fdatasync and every green adaptive run is green for unknown reasons.
+ * <p>
  * SCHEMA: t (id long, v long, s symbol index, ts timestamp) partition by DAY.
- * NON-WAL (bypass wal) for SYNC/NOSYNC; WAL for adaptive. Same deterministic values either way.
+ * NON-WAL (bypass wal) or WAL per -Dwal.table. Same deterministic values either way.
  * <p>
  * DETERMINISTIC VALUES:
  * row[i].id = i
@@ -105,8 +115,8 @@ import java.nio.file.StandardOpenOption;
  * The first line stays the bare row count so `head -1 _progress` works in all modes.
  * <p>
  * Usage: java -cp benchmarks/target/benchmarks.jar \
- * [-DcommitMode=SYNC|NOSYNC|adaptive] [-Dgroup.window.us=W] [-Depoch.interval.ms=N] \
- * [-Dmax.rows=N] \
+ * [-DcommitMode=SYNC|NOSYNC|adaptive] [-Dwal.table=BOOL] [-Dgroup.window.us=W] \
+ * [-Depoch.interval.ms=N] [-Dmax.rows=N] \
  * org.questdb.CrashIngestWriter <db-root>
  */
 public class CrashIngestWriter {
@@ -220,7 +230,8 @@ public class CrashIngestWriter {
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
             System.err.println("Usage: CrashIngestWriter [-DcommitMode=SYNC|NOSYNC|adaptive]"
-                    + " [-Dgroup.window.us=W] [-Depoch.interval.ms=N] [-Dmax.rows=N] <db-root>");
+                    + " [-Dwal.table=BOOL] [-Dgroup.window.us=W] [-Depoch.interval.ms=N]"
+                    + " [-Dmax.rows=N] <db-root>");
             System.exit(1);
         }
         final String dbRoot = args[0];
@@ -236,6 +247,30 @@ public class CrashIngestWriter {
         final int commitModeFinal = commitModeInt;
         System.out.println("commitMode=" + commitModeProp + " (" + commitModeInt + ")");
 
+        // TABLE KIND, ORTHOGONAL TO COMMIT MODE (-Dwal.table=true|false).
+        //
+        // The two used to be one decision: SYNC/NOSYNC always meant a bypass-WAL table and
+        // adaptive always meant a WAL table. That made "WAL table, no durability barrier"
+        // unreachable -- and that combination is the BARRIER CONTROL for the WAL path.
+        // WalWriter.syncIfRequired0 already gates the barrier on commitMode != NOSYNC, so the
+        // product has always supported it; only the harness could not ask for it. Without the
+        // control, nothing shows the sweep would notice if the WAL fdatasync vanished, and a
+        // green nightly on the adaptive path is green for unknown reasons (issues/09).
+        //
+        // NOT a fifth commit mode: modes are PRODUCT vocabulary, and inventing one here would
+        // dress a harness concept as a product one.
+        //
+        // The default reproduces the old routing exactly, so every existing run is unchanged.
+        final boolean walTable = Boolean.parseBoolean(
+                System.getProperty("wal.table", Boolean.toString(requestedMode == CommitMode.ADAPTIVE)));
+        // Echoed so a run's own output says which table kind it used. A NOSYNC run that
+        // silently took the bypass-WAL path would look exactly like a passing barrier control
+        // while testing the half of the product that was already covered.
+        System.out.println("wal.table=" + walTable
+                + (walTable && requestedMode == CommitMode.NOSYNC
+                ? " (BARRIER CONTROL: WAL table with no durability barrier; this run MUST lose data)"
+                : ""));
+
         // -Dbatched=false forces the per-file msync(MS_SYNC) path (the proven baseline);
         // default true uses the batched flush optimization (sync_file_range + _cv device flush).
         final boolean batchedSync = Boolean.parseBoolean(System.getProperty("batched", "true"));
@@ -248,7 +283,7 @@ public class CrashIngestWriter {
         final long epochIntervalMs = Long.getLong("epoch.interval.ms", 1000L);
         // -Dmax.rows caps the run so the smoke can exit cleanly without a kill.
         final long maxRows = Long.getLong("max.rows", MAX_ROWS);
-        if (requestedMode == CommitMode.ADAPTIVE) {
+        if (walTable) {
             System.out.println("group.window.us=" + groupWindowUs + " epoch.interval.ms=" + epochIntervalMs);
         }
         System.out.println("max.rows=" + maxRows);
@@ -283,12 +318,16 @@ public class CrashIngestWriter {
             }
         };
 
-        // requestedMode, NOT commitModeInt: under per.table.mode the INSTANCE is
-        // nosync but the workload must still run the WAL/adaptive path, because
-        // the whole point is that the TABLE's override carries durability on a
-        // nosync instance. Dispatching on the lowered instance mode created a
-        // bypass-WAL table with no sequencer at all.
-        if (requestedMode == CommitMode.ADAPTIVE) {
+        // Dispatch on the TABLE KIND, not on the commit mode. Historically this read
+        // `requestedMode == CommitMode.ADAPTIVE`, which welded the two together; walTable
+        // defaults to exactly that expression, so the routing is unchanged unless -Dwal.table
+        // is passed explicitly.
+        //
+        // Dispatching on a lowered mode has bitten this code before: under the old per-table
+        // commit mode the INSTANCE was nosync while the workload still had to run the WAL path,
+        // and dispatching on the instance mode created a bypass-WAL table with no sequencer at
+        // all. Keying on the table kind removes that class of mistake outright.
+        if (walTable) {
             runAdaptiveWal(cfg, dbRoot, maxRows);
         } else {
             runBypassWal(cfg, dbRoot, maxRows);
@@ -296,9 +335,10 @@ public class CrashIngestWriter {
     }
 
     /**
-     * SYNC / NOSYNC path — the ORIGINAL, proven harness: a NON-WAL (bypass wal) table driven by a
-     * direct TableWriter, committing every K rows and recording a bare row-count watermark. Unchanged
-     * behavior (the regression guard on the existing path); the pkill harness parses this bare number.
+     * NON-WAL path (-Dwal.table=false; the default for SYNC / NOSYNC) — the ORIGINAL, proven
+     * harness: a bypass-wal table driven by a direct TableWriter, committing every K rows and
+     * recording a bare row-count watermark. Unchanged behavior (the regression guard on the
+     * existing path); the pkill harness parses this bare number.
      */
     private static void runBypassWal(CairoConfiguration cfg, String dbRoot, long maxRows) throws Exception {
         // Step 1: create the NON-WAL table via DDL engine (same pattern as SyncCostProfiler)
@@ -355,7 +395,15 @@ public class CrashIngestWriter {
     }
 
     /**
-     * ADAPTIVE / WAL path (the SP-D4 extension). Rows flow through a WalWriter into the WAL sequencer;
+     * WAL path (-Dwal.table=true; the default for adaptive) — the SP-D4 extension.
+     * <p>
+     * Usually run at commitMode=adaptive, which is what the C/Wm bookkeeping below is written
+     * for. It also serves the BARRIER CONTROL at commitMode=NOSYNC, where the product advances
+     * no durable frontier at all (WalWriter only calls setLocalDurableSeqTxn under ADAPTIVE), so
+     * Wm stays -1 for the whole run and the recorded pair degenerates to (C, -1). That is the
+     * configuration under test, not a fault: see CrashVerifier's NOSYNC-on-WAL bar.
+     * <p>
+     * Rows flow through a WalWriter into the WAL sequencer;
      * after each commit the apply job materializes them and fires durable epochs, and the group-commit
      * flush (WalPurgeJob, age-gated by W) advances the durable-ack frontier. This mirrors a running
      * server: WAL commits + a background apply worker + the group-commit flusher coexist.

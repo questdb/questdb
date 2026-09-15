@@ -193,7 +193,8 @@ arm_qwp_tier() {
 # time -- two call sites, one vocabulary -- so it is built once here and referenced twice.
 harness_workload_env() {
     local arm="$1" mode="${2:-adaptive}"
-    echo "QDB_SCHEMA_PROFILE=${QDB_SCHEMA_PROFILE:-bitmap}" \
+    echo "QDB_WAL_TABLE=$(harness_wal_table "$mode")" \
+         "QDB_SCHEMA_PROFILE=${QDB_SCHEMA_PROFILE:-bitmap}" \
          "QDB_SIBLING_TABLE=${QDB_SIBLING_TABLE:-false}" \
          "QDB_DDL_EVERY_ROWS=${QDB_DDL_EVERY_ROWS:--1}" \
          "QDB_MAT_VIEW=${QDB_MAT_VIEW:-false}" \
@@ -205,6 +206,38 @@ harness_workload_env() {
          "QDB_EDITION=${QDB_EDITION:-oss}"
 }
 
+# harness_wal_table MODE -> whether THIS run uses a WAL table, as `true`/`false`.
+#
+# The table kind and the commit mode used to be a single decision: SYNC/NOSYNC meant a
+# bypass-WAL table, adaptive meant a WAL table. That left "WAL table, no durability barrier"
+# unreachable, and that combination is the BARRIER CONTROL for the WAL path -- the last self-test
+# the set is missing, beside t04 (the cut can fail) and t07 (the oracle can fail). See issues/09.
+#
+# The default reproduces the historical coupling exactly, so every existing invocation routes as
+# it always did; QDB_WAL_TABLE=true with mode=NOSYNC is what makes the control expressible.
+#
+# Defined here, next to the two functions that use it, because the writer and the verifier MUST
+# receive the SAME value -- computing it twice at two call sites is how the four known drifts
+# between the sweep and the live cut happened.
+# NOT expressed via arm_sf_capable, even though both currently reduce to "is the mode adaptive".
+# They are different questions -- one is "can this mode supply a durable-ack tier", this one is
+# "which table kind does this mode default to" -- and they are about to diverge: if the pending
+# durable-ack decision (scratch/questdb/qwp-durable-ack-sync/issues/01) grants the tier under
+# SYNC, arm_sf_capable starts answering yes for SYNC and a shared predicate would silently flip
+# every SYNC run onto a WAL table. Spell the mode check out here.
+harness_wal_table() {
+    case "$(echo "${QDB_WAL_TABLE:-}" | tr 'A-Z' 'a-z')" in
+        true)  echo true ;;
+        false) echo false ;;
+        "")    case "$(echo "${1:-adaptive}" | tr 'A-Z' 'a-z')" in
+                   adaptive) echo true ;;
+                   *)        echo false ;;
+               esac ;;
+        *)     echo "harness_wal_table: QDB_WAL_TABLE must be true or false (got '$QDB_WAL_TABLE')" >&2
+               return 64 ;;
+    esac
+}
+
 # harness_verify_cmd ARM MODE WINDOW EPOCH -> the complete guest verify.sh command.
 #
 # Same rule as above, and the same history: the sweep's densify pass once carried a hand-copied
@@ -214,7 +247,11 @@ harness_workload_env() {
 # assemble their own.
 harness_verify_cmd() {
     local arm="$1" mode="${2:-adaptive}" window="${3:-0}" epoch="${4:-1000}"
+    # QDB_WAL_TABLE travels to the VERIFIER as well, and it is the same value the workload got.
+    # CrashVerifier re-reads every -D in its own JVM, so passing it to only one of the two is
+    # silently lost -- the failure that made a whole sweep skip the sibling-table check.
     echo "env QDB_PRODUCT_RECOVERY_PASS=${QDB_PRODUCT_RECOVERY_PASS:-true}" \
+         "QDB_WAL_TABLE=$(harness_wal_table "$mode")" \
          "QDB_QWP_DURABLE_ACK=$(arm_qwp_tier "$arm" "$mode")" \
          "QDB_QWP_SF_DIR=${QDB_QWP_SF_DIR:-/mnt/qdb/sf}" \
          "QDB_QWP_SF_DURABILITY=${QDB_QWP_SF_DURABILITY:-periodic}" \

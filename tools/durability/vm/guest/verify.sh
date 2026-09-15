@@ -208,7 +208,8 @@ case "$ARM" in
         if [ "$SFREPLAY" = "compare" ]; then
             pares="/mnt/qdb/verify-armA.properties"; rm -f "$pares"
             java $QDB_JVM -cp "$JAR" \
-                -DcommitMode="$MODE" -Dgroup.window.us="$WINDOW" -Depoch.interval.ms="$EPOCH" \
+                -DcommitMode="$MODE" ${QDB_WAL_TABLE:+-Dwal.table="$QDB_WAL_TABLE"} \
+                -Dgroup.window.us="$WINDOW" -Depoch.interval.ms="$EPOCH" \
                 -Dsibling.table="$SIBLING" -Drecover.as="$RECOVER_AS" \
                 -Dmat.view="$MATVIEW" -Drebase="$REBASE" \
                 -Dschema.profile="$PROFILE" -Dqwp="$QWP" -Dqwp.sf="$QWPSF" \
@@ -281,9 +282,16 @@ case "$ARM" in
         # remove.
         rc=0
         vbres="/mnt/qdb/verify-armB.properties"; rm -f "$vbres"
+        # -Dwal.table ON BOTH PASSES. Pass A (the server-alone compare run) and pass B (the main
+        # verdict) are separate JVMs, and CrashVerifier re-reads every -D from scratch in each --
+        # so a flag added to one and not the other is lost silently, exactly as -Dsibling.table
+        # once was. Under the barrier control the omission is worse than a skipped check: the
+        # verifier would grade a WAL table with the non-WAL oracle, which never runs the recovery
+        # triple, and report the control as passing.
         java $QDB_JVM -cp "$JAR" \
                 -Dresult.file="$vbres" \
                 -DcommitMode="$MODE" \
+                ${QDB_WAL_TABLE:+-Dwal.table="$QDB_WAL_TABLE"} \
                 -Dgroup.window.us="$WINDOW" \
                 -Depoch.interval.ms="$EPOCH" \
                 -Dsibling.table="$SIBLING" \

@@ -369,20 +369,53 @@ whose oracle silently stops checking.
 | **Defanged-cut control** | `test/t04` | The preflight *passes* with `drop_writes` removed, proving it cannot fire |
 | **Boundary discrimination** | `test/t06` | Replaying to boundary N leaks writes issued after it |
 | **Oracle control** | `test/t07` | Corrupt data still verifies clean, proving the oracle cannot fire |
+| **Barrier control** | `test/t10` | A WAL table committing with NO durability barrier still verifies clean |
 
 A failing preflight **aborts the run**; a failed liveness check **fails that iteration**.
 Neither is ever downgraded to a warning.
 
-`t04` and `t07` are the matched pair, and neither substitutes for the other: `t04` proves
-the **cut** can fail, `t07` proves the **oracle** can. A harness needs both, because a
-green verdict is the product of a working cut AND a working check, and either one failing
+`t04`, `t07` and `t10` are a set of three, and none substitutes for another: `t04` proves
+the **cut** can fail, `t07` proves the **oracle** can, `t10` proves a missing **barrier** is
+noticed. A harness needs all three, because a green verdict is the product of a working cut
+AND a working check AND a product that is actually flushing — and any one of them failing
 silently produces the same reassuring output.
 
 **Scope of `t07`, so a green is not over-read.** It corrupts DATA — eight bytes of a
 committed column file, in place, after a real replay and mount — and requires
-`SILENT_CORRUPTION` naming the exact row. It does **not** prove the harness would notice a
-missing durability BARRIER: a product that stops calling `fdatasync` fails in a completely
-different way, and that control does not exist yet.
+`SILENT_CORRUPTION` naming the exact row. It says nothing about a missing durability
+BARRIER: a product that stops calling `fdatasync` fails in a completely different way —
+every byte that arrives is correct, there are simply fewer of them than were acknowledged.
+That is `t10`'s job.
+
+**`t10`, the barrier control.** Runs the same workload twice with one variable changed:
+
+| arm | configuration | required outcome |
+|---|---|---|
+| A | WAL table, `commitMode=SYNC` — barriered | every boundary green, and `count >= watermark` |
+| B | WAL table, `commitMode=NOSYNC` — no barrier | every boundary **red** |
+
+It needs no production change and no test-only mutation: `WalWriter.syncIfRequired0` gates
+the barrier on `commitMode != NOSYNC`, so `NOSYNC` **is** the mutation, and it is a
+supported product configuration — the control doubles as coverage. What it did need was
+`-Dwal.table` (`QDB_WAL_TABLE`), because the table kind used to be implied by the commit
+mode (`SYNC`/`NOSYNC` → bypass wal, `adaptive` → WAL), which made "WAL table, no barrier"
+inexpressible.
+
+The non-WAL half of the same experiment was measured first and discriminates completely:
+`SYNC` 9/9 `DURABLE` with `count == watermark` exactly, `NOSYNC` 9/9 `SILENT_CORRUPTION`
+with `count=0`.
+
+`t10` checks every verification reports `wal.table=true` before counting its verdict. A
+`NOSYNC` run that quietly fell back to the bypass-WAL path would go red for the reason
+`t07` already covers and would look like a passing control.
+
+**A WAL table at `SYNC` or `NOSYNC` has no durable frontier at all.** `WalWriter` advances
+`localDurableSeqTxn` only under `ADAPTIVE`, so `Wm` stays `-1` and the RPO bar cannot be
+drawn from it. `CrashVerifier` grades both against the acknowledged frontier `C` instead and
+ignores `W`, which only `ADAPTIVE` reads. Without that branch the `W>0` bar would find
+`Wm=-1`, skip its comparison and print `RPO_OK` — a pass produced precisely *because* the
+durability under test is absent, which is the exact false negative this control exists to
+rule out.
 
 **NOSYNC is reported, not gated.** The intuitive control — "a no-sync mode must lose data,
 so a `DURABLE` verdict proves the cut broke" — was measured and is **wrong here** (see

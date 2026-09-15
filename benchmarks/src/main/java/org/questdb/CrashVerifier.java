@@ -53,8 +53,13 @@ import java.util.List;
  * this tool reopens the same QuestDB database root and verifies consistency / durability against the
  * deterministic row formulas and the acknowledged watermark recorded in _progress.
  * <p>
+ * TABLE KIND (via -Dwal.table=true|false, default: true iff commitMode=adaptive — matching the
+ * writer, and it MUST match: this runs in its own JVM and re-reads every -D, so a flag passed to
+ * the writer alone is silently lost and a WAL table would be graded by the NON-WAL oracle).
+ * The oracle below is chosen by the TABLE KIND; the commit mode then selects the BAR.
+ * <p>
  * COMMIT MODE (via -DcommitMode=SYNC|NOSYNC|adaptive, default SYNC — matching the writer):
- * SYNC / NOSYNC — the NON-WAL (bypass wal) path. Reopen, bit-check every row, and assert
+ * SYNC / NOSYNC on a NON-WAL (bypass wal) table — the original path. Reopen, bit-check every row, and assert
  * count % K == 0 (no torn commit) and count >= watermark (acked rows survived). Verdicts:
  * CONSISTENT / LOUD_FAILURE / SILENT_CORRUPTION. Unchanged from the original harness.
  * adaptive — the WAL path. On reopen run the PRODUCTION ADAPTIVE RECOVERY TRIPLE
@@ -65,6 +70,12 @@ import java.util.List;
  * - Clean reopen — a suspend that never clears is a DURABILITY_FAILURE.
  * - W=0 (adaptive == SYNC, zero loss): recovered frontier F >= C ⇒ DURABLE.
  * - W>0 (RPO contract): every acked txn survives (F >= Wm) ⇒ RPO_OK; else DURABILITY_FAILURE.
+ * SYNC / NOSYNC on a WAL table (-Dwal.table=true) — same recovery triple and the same row
+ * oracle, but the bar is F >= C and W is ignored: only ADAPTIVE reads the group window, and
+ * neither of these modes advances Wm, so it stays -1 and no RPO bar can be drawn from it.
+ * SYNC must survive (every commit is barriered). NOSYNC is the BARRIER CONTROL of issues/09 and
+ * is REQUIRED to lose data; a sweep of it that stays green means the harness cannot detect a
+ * missing WAL fdatasync.
  * <p>
  * VERDICTS (printed to stdout; the harness parses the first word):
  * CONSISTENT count=<n> watermark=<w>       — SYNC/NOSYNC path, all bars hold.
@@ -75,8 +86,8 @@ import java.util.List;
  * SILENT_CORRUPTION ...                    — wrong value / gap / torn commit boundary (exit 2, SERIOUS).
  * <p>
  * Usage: java -cp benchmarks/target/benchmarks.jar \
- * [-DcommitMode=SYNC|NOSYNC|adaptive] [-Dgroup.window.us=W] [-Depoch.interval.ms=N] \
- * [-Droll.forward.enabled=true|false] \
+ * [-DcommitMode=SYNC|NOSYNC|adaptive] [-Dwal.table=BOOL] [-Dgroup.window.us=W] \
+ * [-Depoch.interval.ms=N] [-Droll.forward.enabled=true|false] \
  * org.questdb.CrashVerifier <db-root>
  */
 public class CrashVerifier {
@@ -151,7 +162,8 @@ public class CrashVerifier {
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
             System.err.println("Usage: CrashVerifier [-DcommitMode=SYNC|NOSYNC|adaptive]"
-                    + " [-Dgroup.window.us=W] [-Depoch.interval.ms=N] [-Droll.forward.enabled=BOOL] <db-root>");
+                    + " [-Dwal.table=BOOL] [-Dgroup.window.us=W] [-Depoch.interval.ms=N]"
+                    + " [-Droll.forward.enabled=BOOL] <db-root>");
             System.exit(1);
         }
         final String dbRoot = args[0];
@@ -160,6 +172,19 @@ public class CrashVerifier {
         // Commit mode must match the writer (mode is not stored on disk, so we pass it consistently).
         final String modeProp = System.getProperty("commitMode", "SYNC");
         final int modeInt = CrashIngestWriter.parseCommitMode(modeProp);
+
+        // TABLE KIND, and it MUST match the writer's -Dwal.table. Same default expression, so an
+        // existing invocation that passes neither flag routes exactly as it always did.
+        //
+        // THIS FLAG HAS TO BE PASSED TWICE. The verifier runs in its OWN JVM and re-reads every
+        // -D from scratch, so a flag given to the writer and not to the verifier is silently
+        // lost. That is not hypothetical: -Dsibling.table was set for the writer alone, the
+        // verifier read FALSE, skipped the sibling check entirely, and a sweep passed 6/6 having
+        // never once looked at t2. Here the same omission would verify a WAL table with the
+        // NON-WAL oracle -- which reads a bare row count, never runs the recovery triple, and
+        // would report a barrier control as passing.
+        final boolean walTable = Boolean.parseBoolean(
+                System.getProperty("wal.table", Boolean.toString(modeInt == CommitMode.ADAPTIVE)));
 
         // -Drecover.as=nosync restarts the ENGINE under a different global commit
         // mode than the one the data was written under, while still applying the
@@ -190,8 +215,8 @@ public class CrashVerifier {
         // Negative-control hook (spec matrix cell #5): disabling roll-forward must lose/short data.
         final boolean rollForward = Boolean.parseBoolean(System.getProperty("roll.forward.enabled", "true"));
 
-        System.out.println("commitMode=" + modeProp + " (" + modeInt + ")"
-                + (modeInt == CommitMode.ADAPTIVE
+        System.out.println("commitMode=" + modeProp + " (" + modeInt + ") wal.table=" + walTable
+                + (walTable
                 ? " group.window.us=" + groupWindowUs + " epoch.interval.ms=" + epochIntervalMs
                   + " roll.forward.enabled=" + rollForward
                 : ""));
@@ -218,8 +243,11 @@ public class CrashVerifier {
             }
         };
 
-        if (modeInt == CommitMode.ADAPTIVE) {
-            verifyAdaptive(cfg, dbRoot, SYMBOLS, groupWindowUs);
+        // Route on the TABLE KIND, not the commit mode: the WAL oracle runs the production
+        // recovery triple and reads the (C, Wm) frontier pair, and that is required for any WAL
+        // table regardless of the barrier its commit mode does or does not issue.
+        if (walTable) {
+            verifyAdaptive(cfg, dbRoot, SYMBOLS, groupWindowUs, modeInt);
         } else {
             verifyNonAdaptive(cfg, dbRoot, SYMBOLS);
         }
@@ -302,11 +330,28 @@ public class CrashVerifier {
     }
 
     /**
-     * ADAPTIVE / WAL verification (SP-D4). Reopen, run the production recovery triple, bit-check, and
-     * apply the adaptive durability oracle against the captured (C, Wm).
+     * WAL-table verification (SP-D4). Reopen, run the production recovery triple, bit-check, and
+     * apply the durability oracle against the captured (C, Wm).
+     *
+     * @param modeInt the commit mode the data was WRITTEN under. It selects the bar, not the
+     *                oracle: ADAPTIVE draws on (C, Wm) and W, while SYNC and NOSYNC have no
+     *                durable frontier at all and are graded against C alone.
      */
-    private static void verifyAdaptive(CairoConfiguration cfg, String dbRoot, String[] SYMBOLS, long W) throws Exception {
+    private static void verifyAdaptive(CairoConfiguration cfg, String dbRoot, String[] SYMBOLS, long W, int modeInt) throws Exception {
         final int K = CrashIngestWriter.K;
+        // A WAL TABLE AT NOSYNC HAS NO DURABLE FRONTIER, BY CONSTRUCTION. WalWriter advances
+        // localDurableSeqTxn only under CommitMode.ADAPTIVE, so Wm stays -1 for the entire run
+        // (the same product fact that makes the QWP local durable-ack tier silent under SYNC --
+        // see scratch/questdb/qwp-durable-ack-sync/issues/01). This is the BARRIER CONTROL
+        // configuration: the data is acknowledged as committed and nothing is ever forced to the
+        // device, so a flush-boundary replay must show acknowledged txns missing.
+        final boolean noBarrier = modeInt == CommitMode.NOSYNC;
+        // ONLY ADAPTIVE HAS AN RPO WINDOW. SYNC and NOSYNC do not read
+        // cairo.adaptive.commit.group.window at all, and neither advances localDurableSeqTxn, so
+        // for both of them Wm is -1 and W is meaningless. Their bar is the acknowledged frontier
+        // C: under SYNC every commit is barriered and must survive; under NOSYNC none is and the
+        // loss is the control firing.
+        final boolean hasRpoWindow = modeInt == CommitMode.ADAPTIVE;
 
         // Parse _progress: line 1 = committed row count; "C=" = committed seqTxn; "Wm=" = local-durable seqTxn.
         long rowsWatermark = 0L;
@@ -641,7 +686,47 @@ public class CrashVerifier {
             System.exit(3);
         }
 
-        if (W == 0) {
+        if (!hasRpoWindow) {
+            // WAL TABLE AT SYNC OR NOSYNC. The bar is the ACKNOWLEDGED frontier C, never Wm: Wm
+            // is -1 in both, and -1 cannot be the basis of any bar.
+            //
+            // W IS DELIBERATELY IGNORED HERE, and that is the whole point. The group window is an
+            // ADAPTIVE knob that neither mode reads, so there is no RPO window to be bounded by
+            // and no at-risk set that is legitimately allowed to be lost. Falling through to the
+            // W>0 branch below would reach `localDurableSeqTxn >= 0 && ...`, find Wm=-1, skip the
+            // comparison entirely and print RPO_OK -- a PASS produced precisely BECAUSE the
+            // durability being tested for is absent. For the NOSYNC control that is the exact
+            // false-negative this ticket exists to rule out, so the case is handled explicitly
+            // instead of being left to fall through.
+            if (F >= committedSeqTxn) {
+                if (noBarrier) {
+                    // NOT a pass to celebrate. Either this boundary had nothing at risk, or the
+                    // control is not discriminating -- test/t10 requires a SWEEP of these to be
+                    // read as a FAILED control, not as a healthy run.
+                    System.out.printf(
+                            "DURABLE count=%d F=%d C=%d (NOSYNC WAL table: no barrier was issued, yet nothing was"
+                                    + " lost at this boundary -- legitimate where nothing was at risk, but a whole"
+                                    + " SWEEP of these means the barrier control is not discriminating)%n",
+                            count, F, committedSeqTxn);
+                } else {
+                    System.out.printf("DURABLE count=%d F=%d C=%d (SYNC WAL table, barriered, zero loss)%n",
+                            count, F, committedSeqTxn);
+                }
+            } else if (noBarrier) {
+                System.out.printf(
+                        "DURABILITY_FAILURE F=%d < C=%d \u2014 an acknowledged txn was lost by a WAL table committing"
+                                + " without a durability barrier (commitMode=NOSYNC, Wm=%d: no durable frontier"
+                                + " exists); this is the barrier control FIRING, which is the required outcome%n",
+                        F, committedSeqTxn, localDurableSeqTxn);
+                System.exit(3);
+            } else {
+                System.out.printf(
+                        "DURABILITY_FAILURE F=%d < C=%d \u2014 a committed txn was lost by a SYNC WAL table, whose"
+                                + " every commit is barriered before it is acknowledged%n",
+                        F, committedSeqTxn);
+                System.exit(3);
+            }
+        } else if (W == 0) {
             // Adaptive W=0 == SYNC: the full committed history must survive (zero loss).
             if (F >= committedSeqTxn) {
                 System.out.printf("DURABLE count=%d F=%d C=%d (adaptive W=0 == SYNC, zero loss)%n",

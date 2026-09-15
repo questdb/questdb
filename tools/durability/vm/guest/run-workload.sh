@@ -118,8 +118,15 @@ QDB_JVM="--enable-native-access=ALL-UNNAMED \
 
 case "$ARM" in
     reference)
+        # -Dwal.table decouples the TABLE KIND from the commit mode, which is what makes the
+        # barrier control (WAL table + NOSYNC, no durability barrier) expressible at all. The
+        # default below is computed by CrashIngestWriter itself from the commit mode and
+        # reproduces the historical routing, so an unset QDB_WAL_TABLE changes nothing.
+        # guest/verify.sh MUST pass the same value, or the verifier grades a WAL table with the
+        # non-WAL oracle.
         exec java $QDB_JVM -cp "$JAR" \
             -DcommitMode="$MODE" \
+            ${QDB_WAL_TABLE:+-Dwal.table="$QDB_WAL_TABLE"} \
             -Dgroup.window.us="$WINDOW" \
             -Depoch.interval.ms="$EPOCH" \
             -Dmax.rows="$ROWS" \
