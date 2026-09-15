@@ -28,6 +28,9 @@ import org.junit.Test;
 
 public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryTest {
 
+    private static final String ORDER_SENSITIVE_REJECTION =
+            "base query does not provide ASC order over designated TIMESTAMP column, required by an order-sensitive aggregate";
+
     @Test
     public void testFirstGroupedByIndexKeyIsNotRejected() throws Exception {
         assertMemoryLeak(() -> {
@@ -207,5 +210,107 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
                             " WHERE param_id IN ('SFID','HOTMIC') SAMPLE BY 1h"
             );
         });
+    }
+
+    /**
+     * The guard at the async KEYED group-by site must throw BEFORE the ownership transfer.
+     * <p>
+     * The transfer nulls {@code innerProjectionFunctions} and {@code outerProjectionFunctions},
+     * and those two variables are the only handles through which the {@code catch} at the end of
+     * {@code generateGroupBy} can reach the assembled functions: with both null,
+     * {@code GroupByUtils.freeAssembledProjectionFunctions} returns at its very first branch
+     * without closing anything. A throw placed between the transfer and the constructor therefore
+     * closes nothing that the constructor would have adopted.
+     * <p>
+     * The {@code ARRAY[...]} literal in the projection is load-bearing, not decoration. Most
+     * projection functions hold only heap state, so failing to close them is invisible to
+     * {@code assertMemoryLeak} and a test built on them would pass with the defect present. An
+     * array literal owns a {@code DirectArray}, whose backing store is native and tagged
+     * {@code NATIVE_ND_ARRAY}. Verified by mutation: with the offer and the guard moved back below
+     * this site's transfer block, this test fails with
+     * {@code Memory usage by tag: NATIVE_ND_ARRAY, difference: 24 expected:<0> but was:<24>} --
+     * eight bytes per element of the three-element literal, and on the leak check rather than on
+     * the exception, which still throws exactly as asserted.
+     */
+    @Test
+    public void testAsyncKeyedGuardRejectionFreesAssembledFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            createSymbolPatternTable();
+            assertExceptionNoLeakCheck(
+                    "SELECT sym, array_agg(price) x, ARRAY[1.0,2.0,3.0] z FROM pattern_tel WHERE sym LIKE 'A%'",
+                    0,
+                    ORDER_SENSITIVE_REJECTION
+            );
+        });
+    }
+
+    /**
+     * The async NOT-KEYED twin of
+     * {@link #testAsyncKeyedGuardRejectionFreesAssembledFunctions()}: same transfer/guard ordering
+     * hazard, same native-array detector, same code site, different position for the array: here
+     * it is the grouping key rather than an extra projection column, so the key-rewrite loop
+     * replaces the outer entry and the parsed original becomes reachable only through its paired
+     * inner slot. That is the one branch of
+     * {@code GroupByUtils.freeAssembledProjectionFunctions} that the sibling test does not walk.
+     */
+    @Test
+    public void testAsyncKeyedGuardRejectionFreesAssembledFunctionsWithArrayKey() throws Exception {
+        assertMemoryLeak(() -> {
+            createSymbolPatternTable();
+            assertExceptionNoLeakCheck(
+                    "SELECT ARRAY[1.0,2.0] k, array_agg(price) FROM pattern_tel WHERE sym LIKE 'A%'",
+                    0,
+                    ORDER_SENSITIVE_REJECTION
+            );
+        });
+    }
+
+    /**
+     * The async NOT-KEYED site: no grouping column at all, so codegen takes the
+     * {@code keyTypesCopy.getColumnCount() == 0} branch, which has its own transfer block with the
+     * same hazard and received the same fix.
+     * <p>
+     * This test pins REACHABILITY only, not the transfer ordering, and the distinction is
+     * deliberate. A native-memory detector needs a projection entry that owns native memory at
+     * compile time, and at this site every projection entry is an aggregate: any constant
+     * subexpression that could own a {@code DirectArray} is folded away before a Function is
+     * built. Four shapes were tried against a mutation of this site alone --
+     * {@code array_agg(price * ARRAY[2.0,3.0][1])}, {@code array_agg(price)[1]},
+     * {@code sum(ARRAY[1.0,5.0][2]), array_agg(price)} and
+     * {@code array_agg(price + ARRAY[1.0,2.0][2]), array_agg(price)} -- and none leaked, because
+     * constant folding removes the array before codegen. So this site's ordering is currently
+     * unobservable, and would become observable the moment a not-keyed projection function owns
+     * native memory.
+     */
+    @Test
+    public void testAsyncNotKeyedGuardRejectionIsReachableWithoutAKey() throws Exception {
+        assertMemoryLeak(() -> {
+            createSymbolPatternTable();
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(price) FROM pattern_tel WHERE sym LIKE 'A%'",
+                    0,
+                    ORDER_SENSITIVE_REJECTION
+            );
+        });
+    }
+
+    /**
+     * A POSTING-indexed symbol whose pattern filter admits under 2% of rows, which is what puts
+     * {@code AdaptiveSymbolPatternRecordCursorFactory} into its wrapped mode. Wrapped mode is the
+     * one configuration that both supplies page frames -- so the group by is generated at an
+     * ASYNC site -- and advertises {@code SCAN_DIRECTION_OTHER}, because one of the delegates it
+     * may open is the cursor-order symbol-pattern index scan. That combination is what makes the
+     * guard's throw reachable at all. A covering {@code latestBy} base cannot do it: {@code
+     * latestBy} leaves both page-frame cursors null, so it is always generated serially, and the
+     * serial sites carry no guard.
+     */
+    private void createSymbolPatternTable() throws Exception {
+        execute("CREATE TABLE pattern_tel (" +
+                "  sym SYMBOL INDEX TYPE POSTING INCLUDE (price)," +
+                "  price DOUBLE," +
+                "  ts TIMESTAMP" +
+                ") TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO pattern_tel VALUES ('AA', 1.0, 0), ('AB', 2.0, 1)");
+        execute("INSERT INTO pattern_tel SELECT 'BA', x::DOUBLE, timestamp_sequence(2, 1) FROM long_sequence(1000)");
     }
 }

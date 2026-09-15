@@ -10345,6 +10345,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 factory.getMetadata()
                         );
 
+                        // Not-keyed group by consumes its base to exhaustion too, so
+                        // the same rule applies as for the keyed path.
+                        //
+                        // This must stay ABOVE the ownership transfer below. The guard
+                        // throws, and the transfer nulls innerProjectionFunctions and
+                        // outerProjectionFunctions -- the only owners the catch at the
+                        // bottom of this method can free the assembled functions
+                        // through. With both null, freeAssembledProjectionFunctions is
+                        // a no-op, so a throw between transfer and adoption leaks every
+                        // assembled projection function.
+                        final boolean accepted = offerUnorderedScan(factory, groupByFunctions, null);
+                        validateOrderSensitiveAggregates(factory, groupByFunctions, accepted);
+
                         // Transfer ownership to the factory constructor.
                         final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
                         final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
@@ -10356,10 +10369,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         perWorkerFilters = null;
                         sharedOuterProjectionFunctions = null;
 
-                        // Not-keyed group by consumes its base to exhaustion too, so
-                        // the same rule applies as for the keyed path.
-                        final boolean accepted = offerUnorderedScan(factory, groupByFunctions0, null);
-                        validateOrderSensitiveAggregates(factory, groupByFunctions0, accepted);
                         return new AsyncGroupByNotKeyedRecordCursorFactory(
                                 executionContext.getCairoEngine(),
                                 asm,
@@ -10405,21 +10414,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factory.getMetadata()
                     );
 
-                    // Transfer ownership to the factory constructor. The factory adopts the
-                    // per-worker projection clones through the disjoint group-by/key views.
-                    final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
-                    final ObjList<Function> outerProjectionFunctions0 = outerProjectionFunctions;
-                    final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
-                    final ObjList<ObjList<Function>> perWorkerKeyFunctions0 = perWorkerKeyFunctions;
-                    final ObjList<Function> perWorkerFilters0 = perWorkerFilters;
-                    final ObjList<ObjList<Function>> sharedOuterProjectionFunctions0 = sharedOuterProjectionFunctions;
-                    innerProjectionFunctions = null;
-                    outerProjectionFunctions = null;
-                    perWorkerFilters = null;
-                    perWorkerGroupByFunctions = null;
-                    perWorkerKeyFunctions = null;
-                    sharedOuterProjectionFunctions = null;
-
                     // An order-sensitive aggregate (first/last) is only correct over a
                     // base that delivers designated-timestamp order, OR over a base that
                     // accepted the offer below and thereby owns the claim that its
@@ -10436,8 +10430,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // clear and repopulate listColumnFilterA -- that is exactly why the copy
                     // was taken. The copy is also what the factory below adopts as its key
                     // filter, so the offer reads the same grouping the factory will execute.
-                    final boolean accepted = offerUnorderedScan(factory, groupByFunctions0, listColumnFilterCopy);
-                    validateOrderSensitiveAggregates(factory, groupByFunctions0, accepted);
+                    //
+                    // This must stay ABOVE the ownership transfer below. The guard throws,
+                    // and the transfer nulls innerProjectionFunctions and
+                    // outerProjectionFunctions -- the only owners the catch at the bottom of
+                    // this method can free the assembled functions through. With both null,
+                    // freeAssembledProjectionFunctions is a no-op, so a throw between
+                    // transfer and adoption leaks every assembled projection function.
+                    final boolean accepted = offerUnorderedScan(factory, groupByFunctions, listColumnFilterCopy);
+                    validateOrderSensitiveAggregates(factory, groupByFunctions, accepted);
+
+                    // Transfer ownership to the factory constructor. The factory adopts the
+                    // per-worker projection clones through the disjoint group-by/key views.
+                    final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
+                    final ObjList<Function> outerProjectionFunctions0 = outerProjectionFunctions;
+                    final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
+                    final ObjList<ObjList<Function>> perWorkerKeyFunctions0 = perWorkerKeyFunctions;
+                    final ObjList<Function> perWorkerFilters0 = perWorkerFilters;
+                    final ObjList<ObjList<Function>> sharedOuterProjectionFunctions0 = sharedOuterProjectionFunctions;
+                    innerProjectionFunctions = null;
+                    outerProjectionFunctions = null;
+                    perWorkerFilters = null;
+                    perWorkerGroupByFunctions = null;
+                    perWorkerKeyFunctions = null;
+                    sharedOuterProjectionFunctions = null;
+
                     return generateFill(
                             model,
                             new AsyncGroupByRecordCursorFactory(
