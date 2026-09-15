@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.std.ObjList;
 import org.junit.Test;
 
 /**
@@ -79,21 +80,21 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
     /**
      * Every window-function spelling the SUBSAMPLE family exposes, with the name it reports.
      */
-    private static final String[][] ALL_WINDOW_FORMS = {
-            {"lttb(ts, v, 100)", "lttb"},
-            {"lttb(ts, v, 100, '1h')", "lttb"},
-            {"m4(ts, v, 100)", "m4"},
-            {"minmax(ts, v, 100)", "minmax"},
-            {"uniform(100)", "uniform"},
-            {"cadence(100)", "cadence"},
-            {"cadence(100, 7)", "cadence"},
-            {"sdt(ts, v, 0.5)", "sdt"},
-    };
+    private static final ObjList<ObjList<String>> ALL_WINDOW_FORMS = new ObjList<>(
+            new ObjList<>("lttb(ts, v, 100)", "lttb"),
+            new ObjList<>("lttb(ts, v, 100, '1h')", "lttb"),
+            new ObjList<>("m4(ts, v, 100)", "m4"),
+            new ObjList<>("minmax(ts, v, 100)", "minmax"),
+            new ObjList<>("uniform(100)", "uniform"),
+            new ObjList<>("cadence(100)", "cadence"),
+            new ObjList<>("cadence(100, 7)", "cadence"),
+            new ObjList<>("sdt(ts, v, 0.5)", "sdt")
+    );
 
     /**
      * Every method spelling the SUBSAMPLE clause accepts.
      */
-    private static final String[] ALL_SUBSAMPLE_METHODS = {
+    private static final ObjList<String> ALL_SUBSAMPLE_METHODS = new ObjList<>(
             "lttb(v, 100)",
             "lttb(v, 100, '1h')",
             "m4(v, 100)",
@@ -101,8 +102,8 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
             "uniform(100)",
             "cadence(100)",
             "cadence(100, 7)",
-            "sdt(v, 0.5)",
-    };
+            "sdt(v, 0.5)"
+    );
 
     /**
      * The anchored remedy the finite-influence reject suggests is unavailable for the seven
@@ -114,15 +115,16 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
     public void testAnchorRemedyUnavailableForPartitionRefusingFunctions() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (v DOUBLE, k SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            for (String[] form : ALL_WINDOW_FORMS) {
-                if ("sdt".equals(form[1])) {
+            for (int formIndex = 0; formIndex < ALL_WINDOW_FORMS.size(); formIndex++) {
+                final ObjList<String> form = ALL_WINDOW_FORMS.getQuick(formIndex);
+                if ("sdt".equals(form.getQuick(1))) {
                     continue;
                 }
                 assertException(
-                        CREATE_PREFIX + SELECT_PREFIX + form[0] + " OVER w AS keep FROM base " +
+                        CREATE_PREFIX + SELECT_PREFIX + form.getQuick(0) + " OVER w AS keep FROM base " +
                                 "WINDOW w AS (PARTITION BY k ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))",
                         FACTORY_POS,
-                        form[1] + "() does not support PARTITION BY"
+                        form.getQuick(1) + "() does not support PARTITION BY"
                 );
             }
         });
@@ -157,18 +159,19 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
     public void testBoundedFrameRemedyUnavailableForAllSubsampleFunctions() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (v DOUBLE, k SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            for (String[] form : ALL_WINDOW_FORMS) {
+            for (int formIndex = 0; formIndex < ALL_WINDOW_FORMS.size(); formIndex++) {
+                final ObjList<String> form = ALL_WINDOW_FORMS.getQuick(formIndex);
                 assertException(
-                        CREATE_PREFIX + SELECT_PREFIX + form[0] +
+                        CREATE_PREFIX + SELECT_PREFIX + form.getQuick(0) +
                                 " OVER (ORDER BY ts ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS keep FROM base",
                         FACTORY_POS,
-                        form[1] + "() does not support framing; remove ROWS/RANGE clause"
+                        form.getQuick(1) + "() does not support framing; remove ROWS/RANGE clause"
                 );
                 assertException(
-                        CREATE_PREFIX + SELECT_PREFIX + form[0] +
+                        CREATE_PREFIX + SELECT_PREFIX + form.getQuick(0) +
                                 " OVER (ORDER BY ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) AS keep FROM base",
                         FACTORY_POS,
-                        form[1] + "() does not support framing; remove ROWS/RANGE clause"
+                        form.getQuick(1) + "() does not support framing; remove ROWS/RANGE clause"
                 );
             }
         });
@@ -185,9 +188,10 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
     public void testMaterializedViewsRejectSubsampleFamily() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (v DOUBLE, k SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            for (String[] form : ALL_WINDOW_FORMS) {
+            for (int formIndex = 0; formIndex < ALL_WINDOW_FORMS.size(); formIndex++) {
+                final ObjList<String> form = ALL_WINDOW_FORMS.getQuick(formIndex);
                 assertException(
-                        "CREATE MATERIALIZED VIEW mv REFRESH IMMEDIATE AS (" + SELECT_PREFIX + form[0] +
+                        "CREATE MATERIALIZED VIEW mv REFRESH IMMEDIATE AS (" + SELECT_PREFIX + form.getQuick(0) +
                                 " OVER (ORDER BY ts) AS keep FROM base) PARTITION BY DAY",
                         64,
                         "window function on base table is not supported for materialized views: base"
@@ -196,7 +200,8 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
             // The aggregate is aliased to v so every method spelling resolves on the completed
             // projection, and SAMPLE BY supplies the interval a matview requires. The SUBSAMPLE clause
             // is therefore the only thing the matview validator can refuse.
-            for (String method : ALL_SUBSAMPLE_METHODS) {
+            for (int methodIndex = 0; methodIndex < ALL_SUBSAMPLE_METHODS.size(); methodIndex++) {
+                final String method = ALL_SUBSAMPLE_METHODS.getQuick(methodIndex);
                 assertException(
                         "CREATE MATERIALIZED VIEW mv REFRESH IMMEDIATE AS (SELECT ts, avg(v) v FROM base SAMPLE BY 1h SUBSAMPLE " +
                                 method + ") PARTITION BY DAY",
@@ -216,7 +221,8 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
     public void testSubsampleClauseRejectedByLiveViewShapeValidator() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (v DOUBLE, k SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            for (String method : ALL_SUBSAMPLE_METHODS) {
+            for (int methodIndex = 0; methodIndex < ALL_SUBSAMPLE_METHODS.size(); methodIndex++) {
+                final String method = ALL_SUBSAMPLE_METHODS.getQuick(methodIndex);
                 assertException(
                         CREATE_PREFIX + "SELECT ts, v FROM base SUBSAMPLE " + method,
                         17,
@@ -235,15 +241,16 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
     public void testSubsampleFamilyRejectedWhenNested() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (v DOUBLE, k SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            for (String[] form : ALL_WINDOW_FORMS) {
+            for (int formIndex = 0; formIndex < ALL_WINDOW_FORMS.size(); formIndex++) {
+                final ObjList<String> form = ALL_WINDOW_FORMS.getQuick(formIndex);
                 assertException(
-                        CREATE_PREFIX + "SELECT ts, v FROM (" + SELECT_PREFIX + form[0] +
+                        CREATE_PREFIX + "SELECT ts, v FROM (" + SELECT_PREFIX + form.getQuick(0) +
                                 " OVER (ORDER BY ts) AS keep FROM base) WHERE keep",
                         53,
                         "live view requires a single base table in FROM clause"
                 );
                 assertException(
-                        CREATE_PREFIX + "WITH d AS (" + SELECT_PREFIX + form[0] +
+                        CREATE_PREFIX + "WITH d AS (" + SELECT_PREFIX + form.getQuick(0) +
                                 " OVER (ORDER BY ts) AS keep FROM base) SELECT ts, v FROM d WHERE keep",
                         53,
                         "live view requires a single base table in FROM clause"
@@ -288,11 +295,12 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
     public void testWindowFormsRejectedByFiniteInfluenceRule() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (v DOUBLE, k SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            for (String[] form : ALL_WINDOW_FORMS) {
+            for (int formIndex = 0; formIndex < ALL_WINDOW_FORMS.size(); formIndex++) {
+                final ObjList<String> form = ALL_WINDOW_FORMS.getQuick(formIndex);
                 assertException(
-                        CREATE_PREFIX + SELECT_PREFIX + form[0] + " OVER (ORDER BY ts) AS keep FROM base",
+                        CREATE_PREFIX + SELECT_PREFIX + form.getQuick(0) + " OVER (ORDER BY ts) AS keep FROM base",
                         PARSER_POS,
-                        "live view select cannot use " + form[1] + "() over a frame starting at UNBOUNDED PRECEDING; " +
+                        "live view select cannot use " + form.getQuick(1) + "() over a frame starting at UNBOUNDED PRECEDING; " +
                                 "it has no finite out-of-order influence boundary, so a late row would replay the whole history"
                 );
             }

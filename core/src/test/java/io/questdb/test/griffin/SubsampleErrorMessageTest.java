@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -261,17 +262,18 @@ public class SubsampleErrorMessageTest extends AbstractCairoTest {
     public void testWindowFunctionFormOrdering() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            final String[][] calls = {
-                    {"lttb", "lttb(ts, v, 3)"},
-                    {"m4", "m4(ts, v, 3)"},
-                    {"minmax", "minmax(ts, v, 3)"},
-                    {"uniform", "uniform(3)"},
-                    {"cadence", "cadence(2)"},
-                    {"sdt", "sdt(ts, v, 0.5)"},
-            };
-            for (String[] call : calls) {
-                final String name = call[0];
-                final String fn = call[1];
+            final ObjList<ObjList<String>> calls = new ObjList<>(
+                    new ObjList<>("lttb", "lttb(ts, v, 3)"),
+                    new ObjList<>("m4", "m4(ts, v, 3)"),
+                    new ObjList<>("minmax", "minmax(ts, v, 3)"),
+                    new ObjList<>("uniform", "uniform(3)"),
+                    new ObjList<>("cadence", "cadence(2)"),
+                    new ObjList<>("sdt", "sdt(ts, v, 0.5)")
+            );
+            for (int callIndex = 0; callIndex < calls.size(); callIndex++) {
+                final ObjList<String> call = calls.getQuick(callIndex);
+                final String name = call.getQuick(0);
+                final String fn = call.getQuick(1);
                 assertError("SELECT ts, v, ^" + fn + " OVER () FROM t", name + "() requires ORDER BY");
                 if (!"uniform".equals(name) && !"cadence".equals(name)) {
                     // position-based methods accept either direction; value-based methods need ascending time

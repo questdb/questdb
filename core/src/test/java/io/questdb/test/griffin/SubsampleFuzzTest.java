@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -95,7 +96,9 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
                     for (int[] combo : combos) {
                         final int n = combo[0];
                         final int stride = combo[1];
-                        for (String tsType : new String[]{TS_US, TS_NS}) {
+                        final ObjList<String> timestampTypes = new ObjList<>(TS_US, TS_NS);
+                        for (int typeIndex = 0; typeIndex < timestampTypes.size(); typeIndex++) {
+                            final String tsType = timestampTypes.getQuick(typeIndex);
                             final String table = "t_cad_" + tableId++;
                             final Series s = new Series(n);
                             generate(new Rnd(seed, seed * 31 + stride), s, true, false, false);
@@ -194,7 +197,9 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
                     for (int[] combo : combos) {
                         final int n = combo[0];
                         final int m = combo[1];
-                        for (String method : new String[]{"m4", "minmax"}) {
+                        final ObjList<String> methods = new ObjList<>("m4", "minmax");
+                        for (int methodIndex = 0; methodIndex < methods.size(); methodIndex++) {
+                            final String method = methods.getQuick(methodIndex);
                             final String table = "t_bb_" + tableId++;
                             final Series s = new Series(n);
                             generate(new Rnd(seed, seed * 29 + m), s, true, true, true, 1L);
@@ -236,7 +241,9 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 int tableId = 0;
-                for (String tsType : new String[]{TS_US, TS_NS}) {
+                final ObjList<String> timestampTypes = new ObjList<>(TS_US, TS_NS);
+                for (int typeIndex = 0; typeIndex < timestampTypes.size(); typeIndex++) {
+                    final String tsType = timestampTypes.getQuick(typeIndex);
                     final String table = "t_equal_ts_" + tableId++;
                     createAndInsert(table, s, tsType, false);
                     assertSelectionEquals(
@@ -275,7 +282,9 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
                     for (int[] combo : combos) {
                         final int n = combo[0];
                         final int m = combo[1];
-                        for (String tsType : new String[]{TS_US, TS_NS}) {
+                        final ObjList<String> timestampTypes = new ObjList<>(TS_US, TS_NS);
+                        for (int typeIndex = 0; typeIndex < timestampTypes.size(); typeIndex++) {
+                            final String tsType = timestampTypes.getQuick(typeIndex);
                             final String table = "t_m4_" + tableId++;
                             final Series s = new Series(n);
                             generate(new Rnd(seed, seed * 17 + m), s, true, true, true);
@@ -312,7 +321,9 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
                     for (int[] combo : combos) {
                         final int n = combo[0];
                         final int m = combo[1];
-                        for (String tsType : new String[]{TS_US, TS_NS}) {
+                        final ObjList<String> timestampTypes = new ObjList<>(TS_US, TS_NS);
+                        for (int typeIndex = 0; typeIndex < timestampTypes.size(); typeIndex++) {
+                            final String tsType = timestampTypes.getQuick(typeIndex);
                             final String table = "t_mm_" + tableId++;
                             final Series s = new Series(n);
                             generate(new Rnd(seed, seed * 13 + m), s, true, true, true);
@@ -350,7 +361,9 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
                     for (int[] combo : combos) {
                         final int n = combo[0];
                         final int m = combo[1];
-                        for (String tsType : new String[]{TS_US, TS_NS}) {
+                        final ObjList<String> timestampTypes = new ObjList<>(TS_US, TS_NS);
+                        for (int typeIndex = 0; typeIndex < timestampTypes.size(); typeIndex++) {
+                            final String tsType = timestampTypes.getQuick(typeIndex);
                             final String table = "t_uni_" + tableId++;
                             final Series s = new Series(n);
                             generate(new Rnd(seed, seed * 7 + m), s, true, false, false);
@@ -395,10 +408,11 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
                     createAndInsert(us, s, TS_US, false);
                     createAndInsert(ns, s, TS_NS, false);
 
-                    final String[] methods = {
+                    final ObjList<String> methods = new ObjList<>(
                             "m4(price, 20)", "minmax(price, 20)", "uniform(20)", "cadence(7)", "sdt(price, 0.75)"
-                    };
-                    for (String method : methods) {
+                    );
+                    for (int methodIndex = 0; methodIndex < methods.size(); methodIndex++) {
+                        final String method = methods.getQuick(methodIndex);
                         final String ctx = "seed=" + seed + " method=" + method;
                         final Out a = run(compiler, "SELECT price, ts FROM " + us + " SUBSAMPLE " + method, n);
                         final Out b = run(compiler, "SELECT price, ts FROM " + ns + " SUBSAMPLE " + method, n);
@@ -609,7 +623,9 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
                     // Re-bound within one compiled statement: the second value must take effect.
                     for (int arg : new int[]{5, 23}) {
                         final String ctx = "seed=" + seed + " arg=" + arg;
-                        for (String method : new String[]{"uniform", "cadence", "m4", "minmax"}) {
+                        final ObjList<String> methods = new ObjList<>("uniform", "cadence", "m4", "minmax");
+                        for (int methodIndex = 0; methodIndex < methods.size(); methodIndex++) {
+                            final String method = methods.getQuick(methodIndex);
                             final boolean valued = "m4".equals(method) || "minmax".equals(method);
                             final String litSql = "SELECT price, ts FROM " + table + " SUBSAMPLE " +
                                     method + "(" + (valued ? "price, " : "") + arg + ")";

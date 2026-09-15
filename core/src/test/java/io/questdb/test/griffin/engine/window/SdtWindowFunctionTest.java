@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.std.MemoryTag;
@@ -166,7 +165,6 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
                             Assert.assertEquals(2L * JSON_BUFFER_SIZE, live - Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK));
                             assertLifecycleClosed(baseline);
                             Assert.assertEquals(0, tracker.getUsed());
-                            System.out.println("SDT_CANCEL light=" + isLight + " sorted=" + isSorted + " released=" + (2L * JSON_BUFFER_SIZE));
                         } finally {
                             breaker.reset();
                             ((SqlExecutionContextImpl) sqlExecutionContext).with(originalBreaker);
@@ -235,7 +233,6 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
                                     Assert.fail("expected OOM during getCursor, not during hasNext");
                                 } catch (CairoException e) {
                                     Assert.assertTrue("expected OOM: " + e.getFlyweightMessage(), e.isOutOfMemory());
-                                    System.out.println("SDT_FAILED_OPEN light=" + isLight + " sorted=" + isSorted + " error=" + e.getFlyweightMessage());
                                 }
                                 assertLifecycleClosed(baseline);
                                 Assert.assertNull("failed open must unbind its query tracker", sqlExecutionContext.getMemoryTracker());
@@ -287,7 +284,6 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
                                     }
                                     // SDT pass1 evaluates the partition key before calling the timestamp getter.
                                     Assert.assertTrue("error must follow SDT partition-key evaluation", hasSdtPass1);
-                                    System.out.println("SDT_EVALUATION_ERROR light=" + isLight + " sorted=" + isSorted + " afterKey=" + hasSdtPass1 + " error=" + e.getFlyweightMessage());
                                 }
                             }
                             Assert.assertEquals(2L * JSON_BUFFER_SIZE, live - Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK));
@@ -355,11 +351,6 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
         }
         Assert.assertNotNull(expected.getSimpleName(), current);
         Assert.assertEquals(ColumnType.BOOLEAN, factory.getMetadata().getColumnType(1));
-        TextPlanSink plan = new TextPlanSink();
-        plan.of(factory, sqlExecutionContext);
-        for (int i = 1; i <= plan.getLineCount(); i++) {
-            System.out.println("SDT_PLAN " + plan.getLine(i));
-        }
     }
 
     private void assertLifecycleResult(RecordCursorFactory factory, String expected, long rows, long baseline, int jsonFunctions) throws Exception {
@@ -377,7 +368,6 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
             Assert.assertEquals("JSON output backing released", 2L * JSON_BUFFER_SIZE * jsonFunctions, live - closed);
             assertLifecycleClosed(baseline);
             Assert.assertEquals(0, tracker.getUsed());
-            System.out.println("SDT_RELEASE functions=" + jsonFunctions + " bytes=" + (live - closed) + " retained=" + (closed - baseline));
         }
     }
 
@@ -415,14 +405,11 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
                     """);
             assertLifecycleSize(factory, 5);
             for (int run = 0; run < 3; run++) {
-                long live;
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     assertCursorTwoPass("id\tkeep\n1\ttrue\n2\tfalse\n3\tfalse\n4\tfalse\n5\ttrue\n", cursor, factory.getMetadata());
-                    live = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK) - baseline;
                 }
                 long retained = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK) - baseline;
                 maxRetained = Math.max(maxRetained, retained);
-                System.out.println("SDT_LIFECYCLE light=" + isLight + " run=" + run + " live=" + live + " retained=" + retained + " query=" + query);
             }
         }
         Assert.assertEquals("factory disposal: " + query, baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK));

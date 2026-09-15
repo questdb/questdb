@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -842,12 +843,13 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
                     "SELECT x::double AS v, timestamp_sequence(0, 7200000000) AS ts " +
                     "FROM long_sequence(1_000)) TIMESTAMP(ts)");
             drainWalQueue();
-            final String[] queries = {
+            final ObjList<String> queries = new ObjList<>(
                     "SELECT ts, m4(ts, v, 100) OVER (ORDER BY ts) FROM tab",
                     "SELECT ts, lttb(ts, v, 100, '1h') OVER (ORDER BY ts) FROM tab"
-            };
+            );
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                for (String query : queries) {
+                for (int queryIndex = 0; queryIndex < queries.size(); queryIndex++) {
+                    final String query = queries.getQuick(queryIndex);
                     try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
                         assertInTree(factory, CachedWindowLightRecordCursorFactory.class);
                         for (int i = 0; i < 5; i++) {

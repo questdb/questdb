@@ -167,7 +167,9 @@ public class CadenceWindowFunctionTest extends AbstractCairoTest {
             final CountingRnd rnd = new CountingRnd();
             sqlExecutionContext.setRandom(rnd);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                for (String table : new String[]{"empty_t", "short_t", "normal_t"}) {
+                final ObjList<String> tables = new ObjList<>("empty_t", "short_t", "normal_t");
+                for (int tableIndex = 0; tableIndex < tables.size(); tableIndex++) {
+                    final String table = tables.getQuick(tableIndex);
                     try (RecordCursorFactory factory = compiler.compile(
                             "select cadence(3, null) over (order by ts) from " + table,
                             sqlExecutionContext).getRecordCursorFactory()) {

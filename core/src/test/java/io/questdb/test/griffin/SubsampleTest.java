@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -49,7 +50,7 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("CREATE TABLE over_cap AS (" +
                     "SELECT x::double price, timestamp_sequence(0, 1) ts FROM long_sequence(6)) TIMESTAMP(ts)");
 
-            final String[] methods = {
+            final ObjList<String> methods = new ObjList<>(
                     "uniform(2)",
                     "cadence(1)",
                     "cadence(1, 7)",
@@ -59,9 +60,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     "minmax(price, 2)",
                     "lttb(price, 2)",
                     "lttb(price, 2, '1h')"
-            };
+            );
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                for (String method : methods) {
+                for (int methodIndex = 0; methodIndex < methods.size(); methodIndex++) {
+                    final String method = methods.getQuick(methodIndex);
                     try (RecordCursorFactory factory = compiler.compile(
                             "SELECT price, ts FROM at_cap SUBSAMPLE " + method,
                             sqlExecutionContext).getRecordCursorFactory();
@@ -90,12 +92,13 @@ public class SubsampleTest extends AbstractCairoTest {
 
                 // Direct public window calls are governed by the query memory tracker, not the
                 // clause-specific cap.
-                final String[] uncappedQueries = {
+                final ObjList<String> uncappedQueries = new ObjList<>(
                         "SELECT uniform(2) OVER (ORDER BY ts) FROM over_cap",
                         "SELECT cadence(1) OVER (ORDER BY ts) FROM over_cap",
                         "SELECT m4(ts, price, 2) OVER (ORDER BY ts) FROM over_cap"
-                };
-                for (String query : uncappedQueries) {
+                );
+                for (int queryIndex = 0; queryIndex < uncappedQueries.size(); queryIndex++) {
+                    final String query = uncappedQueries.getQuick(queryIndex);
                     try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
                          RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         long count = 0;
@@ -127,7 +130,7 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("CREATE TABLE sparse_prices AS (" +
                     "SELECT CASE WHEN x <= 5 THEN x::double ELSE null::double END price, timestamp_sequence(0, 1) ts FROM long_sequence(1000)) TIMESTAMP(ts)");
 
-            final String[] methods = {
+            final ObjList<String> methods = new ObjList<>(
                     "uniform(2)",
                     "cadence(2)",
                     "cadence(2, 7)",
@@ -135,9 +138,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     "minmax(price, 2)",
                     "lttb(price, 2)",
                     "lttb(price, 2, '1h')"
-            };
+            );
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                for (String method : methods) {
+                for (int methodIndex = 0; methodIndex < methods.size(); methodIndex++) {
+                    final String method = methods.getQuick(methodIndex);
                     // Five physical rows, NULLs included, sit exactly at the cap.
                     assertSubsampleCompletes(compiler, "SELECT price, ts FROM at_cap_nulls SUBSAMPLE " + method);
                     // The sixth physical row breaches the cap whether or not its value is NULL.
@@ -553,7 +557,9 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testErrorColumnNotFoundPrecedesMissingDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP)");
-            for (String method : new String[]{"lttb", "m4", "minmax"}) {
+            final ObjList<String> methods = new ObjList<>("lttb", "m4", "minmax");
+            for (int methodIndex = 0; methodIndex < methods.size(); methodIndex++) {
+                final String method = methods.getQuick(methodIndex);
                 final String sql = "SELECT * FROM t SUBSAMPLE " + method + "(nonexistent, 5)";
                 assertException(sql, sql.indexOf("nonexistent"), "column not found in SELECT list: nonexistent");
             }
@@ -566,7 +572,9 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testErrorTargetFunctionParserErrorIsNotMasked() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            for (String method : new String[]{"lttb", "m4", "minmax"}) {
+            final ObjList<String> methods = new ObjList<>("lttb", "m4", "minmax");
+            for (int methodIndex = 0; methodIndex < methods.size(); methodIndex++) {
+                final String method = methods.getQuick(methodIndex);
                 final String sql = "SELECT * FROM t SUBSAMPLE " + method + "(price, no_such_function())";
                 assertException(
                         sql,
@@ -1219,8 +1227,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     "CASE WHEN x <= 20 THEN (x * 30_000_000_000L)::timestamp_ns ELSE (x * 30_000_000_000L + 43_200_000_000_000L)::timestamp_ns END " +
                     "FROM long_sequence(40)");
 
-            final String[] thresholds = {"90s", "5m", "1h", "2h", "1d"};
-            for (String threshold : thresholds) {
+            final ObjList<String> thresholds = new ObjList<>("90s", "5m", "1h", "2h", "1d");
+            for (int thresholdIndex = 0; thresholdIndex < thresholds.size(); thresholdIndex++) {
+                final String threshold = thresholds.getQuick(thresholdIndex);
                 final String ctx = "threshold=" + threshold;
                 final String q = "SELECT price FROM (SELECT price, ts FROM %s SUBSAMPLE lttb(price, 8, '" + threshold + "'))";
                 final String us = selectPrices(String.format(q, "t_us"));
@@ -1323,15 +1332,16 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testSubsampleRejectsComputedTimestampAlias() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE rt (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            final String[] sql = {
+            final ObjList<String> sql = new ObjList<>(
                     "SELECT price, '2024-02-01'::TIMESTAMP ts FROM rt SUBSAMPLE uniform(2)",
                     "SELECT price, timestamp_sequence(0, 1) ts FROM rt SUBSAMPLE uniform(2)",
                     "SELECT price, timestamp_floor_utc('1h', ts, null, '00:00', null) ts FROM rt SUBSAMPLE uniform(2)",
                     "SELECT price, 42 ts FROM rt SUBSAMPLE uniform(2)",
                     "SELECT price, ts::STRING ts FROM rt SUBSAMPLE uniform(2)",
                     "SELECT price, ts::LONG ts FROM rt SUBSAMPLE uniform(2)"
-            };
-            for (String query : sql) {
+            );
+            for (int queryIndex = 0; queryIndex < sql.size(); queryIndex++) {
+                final String query = sql.getQuick(queryIndex);
                 assertException(query, query.indexOf("SUBSAMPLE"), "SUBSAMPLE requires a designated timestamp column");
             }
         });
@@ -1387,14 +1397,20 @@ public class SubsampleTest extends AbstractCairoTest {
             final String all = "p2\tts\n1.0E308\t2024-01-01T00:00:00.000000Z\n5.0E307\t2024-01-03T00:00:00.000000Z\n"
                     + "2.5E307\t2024-01-05T00:00:00.000000Z\n7.5E307\t2024-01-07T00:00:00.000000Z\n";
 
-            for (String[] c : new String[][]{{"minmax(p2, 2)", minmax}, {"m4(p2, 4)", all}, {"lttb(p2, 4)", all}}) {
+            final ObjList<ObjList<String>> cases = new ObjList<>(
+                    new ObjList<>("minmax(p2, 2)", minmax),
+                    new ObjList<>("m4(p2, 4)", all),
+                    new ObjList<>("lttb(p2, 4)", all)
+            );
+            for (int caseIndex = 0; caseIndex < cases.size(); caseIndex++) {
+                final ObjList<String> c = cases.getQuick(caseIndex);
                 // The projected +Inf rows must behave exactly like stored NULLs, so the same query
                 // with the overflowing rows replaced by NULL is the control and must agree.
-                assertQuery("SELECT p2, ts FROM (SELECT p * 1e308 p2, ts FROM rt) SUBSAMPLE " + c[0])
-                        .timestamp("ts").returns(c[1]);
+                assertQuery("SELECT p2, ts FROM (SELECT p * 1e308 p2, ts FROM rt) SUBSAMPLE " + c.getQuick(0))
+                        .timestamp("ts").returns(c.getQuick(1));
                 assertQuery("SELECT p2, ts FROM (SELECT CASE WHEN p > 1 THEN NULL ELSE p * 1e308 END p2, ts FROM rt)"
-                        + " SUBSAMPLE " + c[0])
-                        .timestamp("ts").returns(c[1]);
+                        + " SUBSAMPLE " + c.getQuick(0))
+                        .timestamp("ts").returns(c.getQuick(1));
             }
         });
     }
@@ -1427,7 +1443,9 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("INSERT INTO rt VALUES (10.0, '2024-01-01T00:10'), (20.0, '2024-01-01T01:10'), (30.0, '2024-01-01T02:10')");
             final String expected = "bucket\tav\n2024-01-01T00:00:00.000000Z\t10.0\n2024-01-01T02:00:00.000000Z\t30.0\n";
             final String prefix = "SELECT ts bucket, avg(price) av FROM rt SAMPLE BY 1h SUBSAMPLE ";
-            for (String method : new String[]{"uniform(2)", "cadence(2)", "m4(av, 2)", "lttb(av, 2)"}) {
+            final ObjList<String> methods = new ObjList<>("uniform(2)", "cadence(2)", "m4(av, 2)", "lttb(av, 2)");
+            for (int methodIndex = 0; methodIndex < methods.size(); methodIndex++) {
+                final String method = methods.getQuick(methodIndex);
                 assertQuery(prefix + method).timestamp("bucket").returns(expected);
             }
             // aliased SAMPLE BY must order the window by its output alias and must not leave a legacy node
@@ -1621,14 +1639,15 @@ public class SubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (name SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("CREATE TABLE j (name SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
-            final String[] queries = {
+            final ObjList<String> queries = new ObjList<>(
                     "SELECT name x, ts FROM t SUBSAMPLE lttb(x, 2)",
                     "SELECT * FROM (SELECT name x, ts FROM t) SUBSAMPLE lttb(x, 2)",
                     "WITH q AS (SELECT name x, ts FROM t) SELECT * FROM q SUBSAMPLE lttb(x, 2)",
                     "SELECT ts, first(name) x FROM t SAMPLE BY 1h SUBSAMPLE lttb(x, 2)",
                     "SELECT * FROM (SELECT t.name x, t.ts FROM t ASOF JOIN j ON (name)) SUBSAMPLE lttb(x, 2)"
-            };
-            for (String sql : queries) {
+            );
+            for (int queryIndex = 0; queryIndex < queries.size(); queryIndex++) {
+                final String sql = queries.getQuick(queryIndex);
                 assertException(
                         sql,
                         sql.lastIndexOf("x, 2"),
@@ -2807,8 +2826,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     "2024-01-01T00:00:03.000000Z\n" +
                     "2024-01-01T00:00:06.000000Z\n" +
                     "2024-01-01T00:00:09.000000Z\n";
-            final String[] types = {"DOUBLE", "FLOAT", "INT", "LONG", "SHORT", "BYTE"};
-            for (String type : types) {
+            final ObjList<String> types = new ObjList<>("DOUBLE", "FLOAT", "INT", "LONG", "SHORT", "BYTE");
+            for (int typeIndex = 0; typeIndex < types.size(); typeIndex++) {
+                final String type = types.getQuick(typeIndex);
                 final String table = "t_" + type.toLowerCase();
                 execute("CREATE TABLE " + table + " (price " + type + ", ts TIMESTAMP) TIMESTAMP(ts)");
                 execute("INSERT INTO " + table + " SELECT " +
@@ -2843,8 +2863,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     "2024-01-01T00:00:04.000000Z\n" +
                     "2024-01-01T00:00:06.000000Z\n" +
                     "2024-01-01T00:00:09.000000Z\n";
-            final String[] types = {"DOUBLE", "FLOAT", "INT", "LONG"};
-            for (String type : types) {
+            final ObjList<String> types = new ObjList<>("DOUBLE", "FLOAT", "INT", "LONG");
+            for (int typeIndex = 0; typeIndex < types.size(); typeIndex++) {
+                final String type = types.getQuick(typeIndex);
                 final String table = "tn_" + type.toLowerCase();
                 execute("CREATE TABLE " + table + " (price " + type + ", ts TIMESTAMP) TIMESTAMP(ts)");
                 execute("INSERT INTO " + table + " SELECT " +
@@ -3828,8 +3849,9 @@ public class SubsampleTest extends AbstractCairoTest {
                             "0.0\t2024-01-03T00:00:00.000000Z\n"
             );
 
-            final String[] fusedQueries = {uniform, cadence, m4, minmax, lttb, sdt};
-            for (String query : fusedQueries) {
+            final ObjList<String> fusedQueries = new ObjList<>(uniform, cadence, m4, minmax, lttb, sdt);
+            for (int queryIndex = 0; queryIndex < fusedQueries.size(); queryIndex++) {
+                final String query = fusedQueries.getQuick(queryIndex);
                 // expected a fused row-selecting plan without a separate keep filter
                 assertQuery(query).assertsPlanContaining("CachedWindowLightSelect");
                 assertQuery(query).assertsPlanNotContaining("Filter filter: __keep_subsample");
